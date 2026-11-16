@@ -16,7 +16,7 @@ blocks:
 
 ## Work
 
-- 先核实官方 DSH SDK 的当前接口、版本和构建方式；确认 `sdk-minimal` 是可用 Profile，还是仅为历史设计记录。
+- 以 DSH `0.2.2-rc.1` 的 `@deepseek-ai/dsh-sdk-minimal` 为候选基线，核实所选 SDK 的接口、构建方式及后续兼容版本；验证如何去掉本地 Shell、子进程和 unrestricted filesystem。
 - 用最小原生 Android 宿主验证启动、用户配置的模型 API 流式请求、剧本上下文传入和本地保存/恢复。
 - 记录 DSH 运行在主进程、应用子进程还是其他机制中，并列出其可执行能力；文游原型不得暴露 Shell、任意脚本或不必要权限。
 - 固定源码提交、构建环境、依赖清单和许可证证据；记录真实 APK/安装体积、冷启动时间和内存占用。

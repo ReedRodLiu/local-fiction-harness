@@ -2,7 +2,7 @@
 
 ## 项目方向
 
-先服务于希望继续游玩 AI 文游的手机用户，尤其是已有剧本、角色设定和长对话存档的玩家。DeepSeek 免费端限额带来的迁移需求是切入机会；产品长期价值仍需通过用户验证。
+初期重点服务女性向 AI 文游玩家，尤其是已有剧本、角色设定和长对话存档、希望在手机上继续故事的用户。DeepSeek 免费端限额带来的迁移需求是切入机会；产品长期价值仍需通过用户验证。
 
 产品按反馈分三阶段演进：
 
@@ -23,9 +23,11 @@
 
 DeepSeek Harness（DSH）是候选运行底座，先检查官方 SDK 与最小 Profile 的当前状态，再验证能否在手机 App 中承担流式对话、会话和本地存储。Android 方向优先验证原生打包及必要的运行时裁剪；iOS 方向并行验证进程内运行及系统政策约束。两端能否共用同一运行方式尚未确定。
 
-当前源码核对显示，官方 DSH 仓库声明 MIT 许可证；Android 移植项目 `v1.5.0-beta.22` 对应提交 `b5266d866124132b176fbf392c45100fcdb48efc` 也有 MIT 许可证。该版本说明其 DSH 引擎固定在 `0.2.2-rc.1`，Android 项目提供完整的 Bionic Node.js 运行环境及服务能力；官方发布物标注完整 APK 约 156 MB，免运行时 APK 约 29 MB，后者还需下载运行时。这些是上游发布信息，不代表本项目的实测结果或体积目标。
+当前源码核对确认，Android 移植项目 `v1.5.0-beta.22`（提交 `b5266d866124132b176fbf392c45100fcdb48efc`）固定使用 DSH `0.2.2-rc.1`；两个仓库在对应版本均声明 MIT 许可证。该 DSH 标签确实包含 `@deepseek-ai/dsh-sdk-minimal`，其清单声明 MIT 许可证。该 Profile 的依赖和运行配置仍包括本地子进程、Shell/终端、持久 Shell 和本地文件系统，并配置 `danger-full-access`；它是可研究的裁剪起点，不是可直接交付给玩家的文游安全配置。
 
-上述 MIT 声明只确认对应仓库/版本的主许可证，不能替代对每个依赖、预编译组件、插件和资源的清点。Android 移植项目包含独立 `NOTICE`，并列出部分第三方代码与资源边界；本项目目前只把它作为技术参考，不复制其应用代码、资源或完整工具环境。DeepSeek Harness 的精确依赖闭包、可用 SDK 形态和先前提到的 `sdk-minimal` 是否为当前可直接使用的 Profile，仍需在 POC 中确认。上游源码中出现过 `sdk-minimal` 相关归档设计记录，但这不能证明该 Profile 仍作为可发行能力存在。
+Android 移植项目提供完整的 Bionic Node.js 运行环境及服务能力；官方发布物标注完整 APK 约 156 MB，免运行时 APK 约 29 MB，后者还需下载运行时。这些是上游发布信息，不代表本项目的实测结果或体积目标。SDK 在 Android/iOS App 中的嵌入方式、对文游所需能力的裁剪程度及实际依赖闭包仍须验证。
+
+上述 MIT 声明只确认对应仓库/版本及其列明组件的主许可证，不能替代对每个传递依赖、预编译组件、插件和资源的清点。Android 移植项目包含独立 `NOTICE`，并列出部分第三方代码与资源边界；本项目目前只把它作为技术参考，不复制其应用代码、资源或完整工具环境。`sdk-minimal` 在目标候选版本中确实存在，但它的子依赖和 Shell/文件系统权限不符合本项目的最小权限目标；需要进一步裁剪、核对依赖许可证，并验证 SDK 能否脱离桌面 CLI 在移动 App 内工作。
 
 ## 首批验证与后续门槛
 
@@ -36,6 +38,9 @@ Wayfinder 地图首批只安排三个验证：Android 原生运行、Android 文
 ## 上游资料
 
 - [DeepSeek Harness 仓库与 MIT 许可证](https://github.com/deepseek-ai/deepseek-harness)
+- [DSH `0.2.2-rc.1` 标签的 LICENSE](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.1/LICENSE)
+- [`@deepseek-ai/dsh-sdk-minimal` `0.2.2-rc.1` 依赖清单](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.1/packages/bundle/sdk-minimal/package.json)
+- [`sdk-minimal` `0.2.2-rc.1` 运行配置](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.1/packages/bundle/sdk-minimal/cordis.patch.yml)
 - [DSH Mobile v1.5.0-beta.22 发布说明](https://github.com/Soodok/Deepseek-Harness-Local-Android/releases/tag/v1.5.0-beta.22)
 - [该版本对应提交的 LICENSE](https://github.com/Soodok/Deepseek-Harness-Local-Android/blob/b5266d866124132b176fbf392c45100fcdb48efc/LICENSE)
 - [该版本对应提交的 NOTICE](https://github.com/Soodok/Deepseek-Harness-Local-Android/blob/b5266d866124132b176fbf392c45100fcdb48efc/NOTICE)
