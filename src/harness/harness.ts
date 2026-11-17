@@ -47,7 +47,7 @@ export interface CreateStoryInput {
 
 function throwIfAborted(signal?: AbortSignalLike): void {
   if (signal?.aborted) {
-    const abortError = new Error('Operation aborted.');
+    const abortError = new Error('操作已中止。');
     abortError.name = 'AbortError';
     throw abortError;
   }
@@ -94,7 +94,7 @@ export interface FictionHarness {
     callbacks?: TurnCallbacks,
   ): Promise<TurnExecutionResult>;
   switchBranch(story: Story, targetNodeId: string): Promise<Story>;
-  rewindToNode(story: Story, targetNodeId: string): Promise<Story>;
+  rewindToNode(story: Story, targetNodeId: string | null): Promise<Story>;
 }
 
 /**
@@ -128,6 +128,15 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       }
     }
     return story;
+  };
+
+  const activateLeafNode = async (story: Story, leafId: string | null): Promise<Story> => {
+    const updated: Story = {
+      ...story,
+      activeLeafNodeId: leafId,
+      updatedAt: now(),
+    };
+    return persistStory(updated, true);
   };
 
   const streamText = async (
@@ -414,7 +423,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     ): Promise<TurnExecutionResult> {
       const trimmedInput = userInput.trim();
       if (!trimmedInput) {
-        throw new Error('Player input cannot be empty.');
+        throw new Error('玩家输入不能为空。');
       }
       return executeTurnFromParent(story, story.activeLeafNodeId, trimmedInput, config, callbacks);
     },
@@ -432,7 +441,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       }
       const trimmedInput = newInput.trim();
       if (!trimmedInput) {
-        throw new Error('Player input cannot be empty.');
+        throw new Error('玩家输入不能为空。');
       }
       return executeTurnFromParent(story, targetNode.parentId, trimmedInput, config, callbacks);
     },
@@ -478,24 +487,14 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       if (!leafId) {
         throw new Error(`目标分支节点 ${targetNodeId} 不存在。`);
       }
-      const updated: Story = {
-        ...story,
-        activeLeafNodeId: leafId,
-        updatedAt: now(),
-      };
-      return persistStory(updated, true);
+      return activateLeafNode(story, leafId);
     },
 
-    async rewindToNode(story: Story, targetNodeId: string): Promise<Story> {
-      if (!story.nodes[targetNodeId]) {
+    async rewindToNode(story: Story, targetNodeId: string | null): Promise<Story> {
+      if (targetNodeId !== null && !story.nodes[targetNodeId]) {
         throw new Error(`目标回溯节点 ${targetNodeId} 不存在。`);
       }
-      const updated: Story = {
-        ...story,
-        activeLeafNodeId: targetNodeId,
-        updatedAt: now(),
-      };
-      return persistStory(updated, true);
+      return activateLeafNode(story, targetNodeId);
     },
   };
 }

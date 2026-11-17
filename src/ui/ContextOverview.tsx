@@ -11,6 +11,7 @@ interface ContextOverviewProps {
   story: Story;
   summarySnapshot: PlotSummarySnapshot;
   metrics: ThreeZoneMetrics;
+  isStreaming: boolean;
   onSaveBlueprintTweak: (updatedBlueprint: StoryBlueprint) => Promise<void>;
   onSwitchBranch: (targetNodeId: string) => void;
 }
@@ -19,6 +20,7 @@ export function ContextOverview({
   story,
   summarySnapshot,
   metrics,
+  isStreaming,
   onSaveBlueprintTweak,
   onSwitchBranch,
 }: ContextOverviewProps) {
@@ -144,7 +146,8 @@ export function ContextOverview({
             <strong>当前剧情摘要：</strong>
             {summarySnapshot.content || '尚未触发压缩（近期窗口内保留完整对话）'}
           </p>
-          {branchLeaves.length > 1 && (
+          {(branchLeaves.length > 1 ||
+            (branchLeaves.length === 1 && !branchLeaves[0].isActive)) && (
             <div className="branch-tree-list" aria-label="平行分支树概览">
               <strong>平行分支概览：</strong>
               <ul>
@@ -153,6 +156,7 @@ export function ContextOverview({
                     <button
                       type="button"
                       className={`btn btn-sm ${branch.isActive ? 'btn-primary' : ''}`}
+                      disabled={isStreaming}
                       onClick={() => onSwitchBranch(branch.leafId)}
                     >
                       分支 {idx + 1}（{branch.turnCount} 轮）：{branch.preview}

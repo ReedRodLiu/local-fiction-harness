@@ -13,6 +13,7 @@ import {
   type ModelConfig,
   type Story,
   type StoryBlueprint,
+  type TurnCallbacks,
   type TurnExecutionResult,
 } from '../harness/index.ts';
 import { ContextOverview } from './ContextOverview.tsx';
@@ -156,7 +157,7 @@ export function App() {
   );
 
   const runStreamingExecution = async (
-    execute: (signal: AbortSignal) => Promise<TurnExecutionResult>,
+    execute: (callbacks: TurnCallbacks) => Promise<TurnExecutionResult>,
     onErrorRestore?: () => void,
   ) => {
     if (isStreaming) return;
@@ -169,7 +170,11 @@ export function App() {
     abortRef.current = controller;
 
     try {
-      const result = await execute(controller.signal);
+      const result = await execute({
+        signal: controller.signal,
+        onReasoningDelta: (delta) => setStreamReasoning((prev) => prev + delta),
+        onContentDelta: (delta) => setStreamContent((prev) => prev + delta),
+      });
       setStory(result.story);
       await refreshStories();
       setStreamReasoning('');
@@ -187,6 +192,17 @@ export function App() {
     }
   };
 
+  const applyStoryTransition = async (transition: () => Promise<Story>) => {
+    if (isStreaming) return;
+    try {
+      const updated = await transition();
+      setStory(updated);
+      await refreshStories();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : '切换分支失败。');
+    }
+  };
+
   const sendAction = async (userPrompt: string, restoreOnError = false) => {
     const trimmed = userPrompt.trim();
     if (!trimmed) return;
@@ -194,12 +210,7 @@ export function App() {
       setInput('');
     }
     await runStreamingExecution(
-      (signal) =>
-        harness.runTurn(story, trimmed, config, {
-          signal,
-          onReasoningDelta: (delta) => setStreamReasoning((prev) => prev + delta),
-          onContentDelta: (delta) => setStreamContent((prev) => prev + delta),
-        }),
+      (callbacks) => harness.runTurn(story, trimmed, config, callbacks),
       restoreOnError ? () => setInput(trimmed) : undefined,
     );
   };
@@ -207,36 +218,22 @@ export function App() {
   const handleEditAndBranch = async (targetUserNodeId: string, newContent: string) => {
     const trimmed = newContent.trim();
     if (!trimmed) return;
-    await runStreamingExecution((signal) =>
-      harness.editAndBranch(story, targetUserNodeId, trimmed, config, {
-        signal,
-        onReasoningDelta: (delta) => setStreamReasoning((prev) => prev + delta),
-        onContentDelta: (delta) => setStreamContent((prev) => prev + delta),
-      }),
+    await runStreamingExecution((callbacks) =>
+      harness.editAndBranch(story, targetUserNodeId, trimmed, config, callbacks),
     );
   };
 
   const handleRegenerateNode = async (targetAssistantNodeId: string) => {
-    await runStreamingExecution((signal) =>
-      harness.regenerateNode(story, targetAssistantNodeId, config, {
-        signal,
-        onReasoningDelta: (delta) => setStreamReasoning((prev) => prev + delta),
-        onContentDelta: (delta) => setStreamContent((prev) => prev + delta),
-      }),
+    await runStreamingExecution((callbacks) =>
+      harness.regenerateNode(story, targetAssistantNodeId, config, callbacks),
     );
   };
 
-  const handleSwitchBranch = async (targetNodeId: string) => {
-    const updated = await harness.switchBranch(story, targetNodeId);
-    setStory(updated);
-    await refreshStories();
-  };
+  const handleSwitchBranch = (targetNodeId: string) =>
+    applyStoryTransition(() => harness.switchBranch(story, targetNodeId));
 
-  const handleRewindToNode = async (targetNodeId: string) => {
-    const updated = await harness.rewindToNode(story, targetNodeId);
-    setStory(updated);
-    await refreshStories();
-  };
+  const handleRewindToNode = (targetNodeId: string) =>
+    applyStoryTransition(() => harness.rewindToNode(story, targetNodeId));
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -456,6 +453,7 @@ export function App() {
               story={story}
               summarySnapshot={activeSummary}
               metrics={contextPreview.metrics}
+              isStreaming={isStreaming}
               onSaveBlueprintTweak={handleSaveBlueprintTweak}
               onSwitchBranch={(id) => void handleSwitchBranch(id)}
             />

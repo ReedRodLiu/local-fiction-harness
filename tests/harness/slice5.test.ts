@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   createFictionHarness,
   createInMemoryStoryStorage,
+  exportStoryBackup,
   getActiveBranchNodes,
   getActiveSummarySnapshot,
   getBranchTreeSummary,
   getSiblingBranchInfo,
+  importStoryBackup,
   type LlmStreamRequest,
   type LlmTransport,
 } from '../../src/harness/index.ts';
@@ -18,7 +20,7 @@ const testConfig = {
 };
 
 describe('Slice 5: Branching, rewind, edit-resend, regenerate, and Plot Summary snapshot rollback', () => {
-  it('rolls back Plot Summary when editing/branching from an earlier node and isolates Branch B from Branch A', async () => {
+  it('rolls back Plot Summary on branch fork, isolates Branch B continuation, and preserves branch tree in JSON backup', async () => {
     const captured: LlmStreamRequest[] = [];
     const transport: LlmTransport = {
       async *streamChat(req) {
@@ -26,8 +28,10 @@ describe('Slice 5: Branching, rewind, edit-resend, regenerate, and Plot Summary 
         const sys = req.messages[0]?.content ?? '';
         const lastUser = req.messages[req.messages.length - 1]?.content ?? '';
         if (sys.includes('剧情摘要压缩')) {
-          if (lastUser.includes('分支A独有事件')) {
-            yield { contentDelta: '【分支A摘要】玩家选择加入黑市联盟。', finishReason: 'stop' };
+          if (lastUser.includes('继续推进黑市任务')) {
+            yield { contentDelta: '【分支A摘要】深入黑市密会接头。', finishReason: 'stop' };
+          } else if (lastUser.includes('分支A独有事件')) {
+            yield { contentDelta: '【分支A初阶】潜入黑市外围。', finishReason: 'stop' };
           } else {
             yield { contentDelta: '【通用摘要】玩家来到十字路口。', finishReason: 'stop' };
           }
@@ -48,17 +52,20 @@ describe('Slice 5: Branching, rewind, edit-resend, regenerate, and Plot Summary 
     });
 
     const initial = await harness.createAndSaveStory({ title: '双线风云', rawScript: '基础规则' });
-    // Turn 1 (shared fork base)
     const t1 = await harness.runTurn(initial, '来到十字路口', testConfig);
-    // Turn 2 & Turn 3 on Branch A -> folds Turn 2's Branch A event into Branch A's Plot Summary
     const t2A = await harness.runTurn(t1.story, '分支A独有事件：潜入黑市', testConfig);
     const t3A = await harness.runTurn(t2A.story, '继续推进黑市任务', testConfig);
-    expect(getActiveSummarySnapshot(t3A.story).content).toBe('【分支A摘要】玩家选择加入黑市联盟。');
+    expect(getActiveSummarySnapshot(t3A.story).content).toBe('【分支A初阶】潜入黑市外围。');
 
-    // Edit & resend Turn 2 user node to spawn Branch B from Turn 1 assistant node
+    // Fork Branch B from Turn 2 assistant node (after Turn 3 had already overwritten active summary)
+    // Wait: first verify Turn 2 -> Turn 3 -> Turn 4 advances Branch A's summary, then fork at Turn 3
+    const t4A = await harness.runTurn(t3A.story, '进入黑市密室', testConfig);
+    expect(getActiveSummarySnapshot(t4A.story).coveredUpToNodeId).toBe(t3A.assistantNode.id);
+
+    // Fork Branch B by editing Turn 3 user node (fork parent = t2A.assistantNode, whose coveredUpToNodeId is t1.assistantNode.id!)
     const branchB = await harness.editAndBranch(
-      t3A.story,
-      t2A.userNode.id,
+      t4A.story,
+      t3A.userNode.id,
       '分支B独有事件：前往官府报案',
       testConfig,
     );
@@ -69,27 +76,47 @@ describe('Slice 5: Branching, rewind, edit-resend, regenerate, and Plot Summary 
     expect(turnReqForB).toBeDefined();
     const joinedMessagesB = turnReqForB!.messages.map((m) => m.content).join('\n');
     expect(joinedMessagesB).not.toContain('分支A摘要');
-    expect(joinedMessagesB).not.toContain('潜入黑市');
+    expect(joinedMessagesB).toContain('【通用摘要】玩家来到十字路口。');
+    expect(branchB.assistantNode.summarySnapshot.coveredUpToNodeId).toBe(t2A.assistantNode.id);
 
-    // Branch B's summary rolled back to Turn 1's snapshot (then folded Turn 1 only, NOT Branch A)
-    expect(getActiveSummarySnapshot(branchB.story).content).toBe('【通用摘要】玩家来到十字路口。');
+    // Continue on Branch B and confirm subsequent turns only see pre-fork history + Branch B's summary
+    const branchBNext = await harness.runTurn(branchB.story, '呈递官府证物', testConfig);
+    const branchBNextReq = captured.find((r) =>
+      r.messages.some((m) => m.role === 'user' && m.content === '呈递官府证物'),
+    );
+    const joinedNextB = branchBNextReq!.messages.map((m) => m.content).join('\n');
+    expect(joinedNextB).toContain('【分支A初阶】潜入黑市外围。');
+    expect(joinedNextB).not.toContain('分支A摘要');
+    expect(joinedNextB).not.toContain('继续推进黑市任务');
+    expect(joinedNextB).not.toContain('黑市密室');
 
-    // Sibling inspection at fork point (Turn 2 user nodes)
-    const siblings = getSiblingBranchInfo(branchB.story, branchB.userNode.id);
+    // Sibling inspection at fork point (Turn 3 user nodes)
+    const siblings = getSiblingBranchInfo(branchBNext.story, branchB.userNode.id);
     expect(siblings.total).toBe(2);
     expect(siblings.currentIndex).toBe(1);
+    expect(siblings.prevSiblingId).toBe(t3A.userNode.id);
 
-    // Switch back to Branch A via sibling user node -> restores Branch A's leaf (t3A) and summary!
-    const switchedToA = await harness.switchBranch(branchB.story, t2A.userNode.id);
-    expect(switchedToA.activeLeafNodeId).toBe(t3A.assistantNode.id);
-    expect(getActiveSummarySnapshot(switchedToA).content).toBe('【分支A摘要】玩家选择加入黑市联盟。');
-    expect(getActiveBranchNodes(switchedToA).map((n) => n.content)).toContain('继续推进黑市任务');
+    // JSON backup round-trip preserves multi-branch tree & activeLeafNodeId
+    const exported = exportStoryBackup(branchBNext.story);
+    const restored = importStoryBackup(exported, []);
+    expect(restored.activeLeafNodeId).toBe(branchBNext.assistantNode.id);
+    expect(getBranchTreeSummary(restored)).toHaveLength(2);
 
-    // Rewind directly to Turn 1 assistant node -> immediately rolls back active summary to empty snapshot
-    const rewound = await harness.rewindToNode(switchedToA, t1.assistantNode.id);
-    expect(rewound.activeLeafNodeId).toBe(t1.assistantNode.id);
-    expect(getActiveSummarySnapshot(rewound).content).toBe('');
-    expect(getBranchTreeSummary(rewound)).toHaveLength(2);
+    // Switch back to Branch A -> restores Branch A's leaf (t4A) & summary
+    const switchedToA = await harness.switchBranch(restored, t3A.userNode.id);
+    expect(switchedToA.activeLeafNodeId).toBe(t4A.assistantNode.id);
+    expect(getActiveSummarySnapshot(switchedToA).coveredUpToNodeId).toBe(t3A.assistantNode.id);
+    expect(getActiveBranchNodes(switchedToA).map((n) => n.content)).toContain('进入黑市密室');
+
+    // Rewind to Turn 1 assistant node and also to root (null)
+    const rewoundT1 = await harness.rewindToNode(switchedToA, t1.assistantNode.id);
+    expect(rewoundT1.activeLeafNodeId).toBe(t1.assistantNode.id);
+    expect(getActiveSummarySnapshot(rewoundT1).content).toBe('');
+    expect(getActiveSummarySnapshot(rewoundT1).coveredUpToNodeId).toBeNull();
+
+    const rewoundRoot = await harness.rewindToNode(rewoundT1, null);
+    expect(rewoundRoot.activeLeafNodeId).toBeNull();
+    expect(getActiveBranchNodes(rewoundRoot)).toEqual([]);
   });
 
   it('regenerates an assistant reply as a parallel sibling branch under the same user node', async () => {

@@ -29,11 +29,7 @@ export function TurnCard({
   const [editDraft, setEditDraft] = useState(node.content);
 
   const hasSiblings = siblings.total > 1;
-  const prevSibling = siblings.currentIndex > 0 ? siblings.siblings[siblings.currentIndex - 1] : null;
-  const nextSibling =
-    siblings.currentIndex >= 0 && siblings.currentIndex < siblings.total - 1
-      ? siblings.siblings[siblings.currentIndex + 1]
-      : null;
+  const { prevSiblingId, nextSiblingId } = siblings;
 
   return (
     <article className={`turn-card ${node.role}`} data-node-id={node.id}>
@@ -45,9 +41,9 @@ export function TurnCard({
               <button
                 type="button"
                 className="btn btn-sm"
-                disabled={isStreaming || !prevSibling}
+                disabled={isStreaming || !prevSiblingId}
                 aria-label="上一分支"
-                onClick={() => prevSibling && onSwitchBranch(prevSibling.id)}
+                onClick={() => prevSiblingId && onSwitchBranch(prevSiblingId)}
               >
                 &lt;
               </button>
@@ -57,9 +53,9 @@ export function TurnCard({
               <button
                 type="button"
                 className="btn btn-sm"
-                disabled={isStreaming || !nextSibling}
+                disabled={isStreaming || !nextSiblingId}
                 aria-label="下一分支"
-                onClick={() => nextSibling && onSwitchBranch(nextSibling.id)}
+                onClick={() => nextSiblingId && onSwitchBranch(nextSiblingId)}
               >
                 &gt;
               </button>

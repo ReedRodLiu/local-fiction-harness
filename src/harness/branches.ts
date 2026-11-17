@@ -1,17 +1,17 @@
-import type { PlotSummarySnapshot, Story, TurnNode } from './types.ts';
+import type { Story, TurnNode } from './types.ts';
 
 export interface SiblingBranchInfo {
   siblings: TurnNode[];
   currentIndex: number;
   total: number;
+  prevSiblingId: string | null;
+  nextSiblingId: string | null;
 }
 
 export interface BranchLeafSummary {
   leafId: string;
   turnCount: number;
   preview: string;
-  summarySnapshot: PlotSummarySnapshot;
-  updatedAt: number;
   isActive: boolean;
 }
 
@@ -27,7 +27,13 @@ function sortNodesChronologically(nodes: TurnNode[]): TurnNode[] {
 export function getSiblingBranchInfo(story: Story, targetNodeId: string): SiblingBranchInfo {
   const target = story.nodes[targetNodeId];
   if (!target) {
-    return { siblings: [], currentIndex: -1, total: 0 };
+    return {
+      siblings: [],
+      currentIndex: -1,
+      total: 0,
+      prevSiblingId: null,
+      nextSiblingId: null,
+    };
   }
 
   const rawSiblings =
@@ -43,6 +49,11 @@ export function getSiblingBranchInfo(story: Story, targetNodeId: string): Siblin
     siblings,
     currentIndex,
     total: siblings.length,
+    prevSiblingId: currentIndex > 0 ? siblings[currentIndex - 1].id : null,
+    nextSiblingId:
+      currentIndex >= 0 && currentIndex < siblings.length - 1
+        ? siblings[currentIndex + 1].id
+        : null,
   };
 }
 
@@ -107,13 +118,12 @@ export function getBranchTreeSummary(story: Story): BranchLeafSummary[] {
       cursor = node.parentId;
     }
 
-    const snippet = leaf.content.replace(/\s+/g, ' ').trim().slice(0, 44);
+    const normalized = leaf.content.replace(/\s+/g, ' ').trim();
+    const snippet = normalized.slice(0, 44);
     summaries.push({
       leafId: leaf.id,
       turnCount: Math.ceil(depth / 2),
-      preview: snippet + (leaf.content.length > 44 ? '…' : ''),
-      summarySnapshot: leaf.summarySnapshot,
-      updatedAt: leaf.createdAt,
+      preview: normalized.length > 44 ? `${snippet}…` : snippet,
       isActive: leaf.id === story.activeLeafNodeId,
     });
   }

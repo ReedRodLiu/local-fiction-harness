@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "typecheck:harness": "tsc -p tsconfig.harness.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "node tests/e2e/run-e2e.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.3",
