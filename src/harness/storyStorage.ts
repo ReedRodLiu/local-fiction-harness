@@ -1,4 +1,6 @@
+import { createDefaultId } from './id.ts';
 import type {
+  PlotSummarySnapshot,
   Story,
   StoryBackupEnvelope,
   StoryBlueprint,
@@ -8,14 +10,6 @@ import type {
 
 function cloneStory(story: Story): Story {
   return JSON.parse(JSON.stringify(story)) as Story;
-}
-
-function defaultCreateId(): string {
-  const cryptoObj = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (cryptoObj && typeof cryptoObj.randomUUID === 'function') {
-    return cryptoObj.randomUUID();
-  }
-  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function createInMemoryStoryStorage(): StoryStorage {
@@ -59,27 +53,67 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function validateBlueprint(raw: unknown): StoryBlueprint {
-  if (!isRecord(raw) || typeof raw.title !== 'string') {
-    throw new Error('备份文件缺少有效的故事蓝图字段。');
+function assertStringArray(value: unknown, fieldName: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new Error(`备份文件字段 ${fieldName} 必须为字符串数组。`);
   }
+  return value;
+}
+
+function validateBlueprint(raw: unknown): StoryBlueprint {
+  if (
+    !isRecord(raw) ||
+    typeof raw.title !== 'string' ||
+    typeof raw.protagonist !== 'string' ||
+    typeof raw.openingHook !== 'string' ||
+    (raw.extractionStatus !== 'complete' && raw.extractionStatus !== 'partial_fallback')
+  ) {
+    throw new Error('备份文件的故事蓝图字段无效。');
+  }
+
+  const worldRules = assertStringArray(raw.worldRules, 'blueprint.worldRules');
+  const taboos = assertStringArray(raw.taboos, 'blueprint.taboos');
+
+  if (!Array.isArray(raw.npcs)) {
+    throw new Error('备份文件字段 blueprint.npcs 必须为数组。');
+  }
+
+  const npcs = raw.npcs.map((n, index) => {
+    if (
+      !isRecord(n) ||
+      typeof n.name !== 'string' ||
+      typeof n.role !== 'string' ||
+      typeof n.traits !== 'string'
+    ) {
+      throw new Error(`备份文件角色条目 npcs[${index}] 结构无效。`);
+    }
+    return { name: n.name, role: n.role, traits: n.traits };
+  });
+
   return {
     title: raw.title,
-    worldRules: Array.isArray(raw.worldRules) ? raw.worldRules.filter((x): x is string => typeof x === 'string') : [],
-    protagonist: typeof raw.protagonist === 'string' ? raw.protagonist : '',
-    npcs: Array.isArray(raw.npcs)
-      ? raw.npcs
-          .filter(isRecord)
-          .map((n) => ({
-            name: typeof n.name === 'string' ? n.name : '',
-            role: typeof n.role === 'string' ? n.role : '',
-            traits: typeof n.traits === 'string' ? n.traits : '',
-          }))
-          .filter((n) => n.name.length > 0)
-      : [],
-    taboos: Array.isArray(raw.taboos) ? raw.taboos.filter((x): x is string => typeof x === 'string') : [],
-    openingHook: typeof raw.openingHook === 'string' ? raw.openingHook : '',
-    extractionStatus: raw.extractionStatus === 'complete' ? 'complete' : 'partial_fallback',
+    worldRules,
+    protagonist: raw.protagonist,
+    npcs,
+    taboos,
+    openingHook: raw.openingHook,
+    extractionStatus: raw.extractionStatus,
+  };
+}
+
+function validateSummarySnapshot(raw: unknown, nodeId: string): PlotSummarySnapshot {
+  if (
+    !isRecord(raw) ||
+    typeof raw.content !== 'string' ||
+    (raw.coveredUpToNodeId !== null && typeof raw.coveredUpToNodeId !== 'string') ||
+    typeof raw.summarizedTurnCount !== 'number'
+  ) {
+    throw new Error(`备份文件节点 ${nodeId} 的剧情摘要快照无效。`);
+  }
+  return {
+    content: raw.content,
+    coveredUpToNodeId: raw.coveredUpToNodeId,
+    summarizedTurnCount: raw.summarizedTurnCount,
   };
 }
 
@@ -91,28 +125,35 @@ function validateNodes(raw: unknown): Record<string, TurnNode> {
   for (const [id, entry] of Object.entries(raw)) {
     if (
       !isRecord(entry) ||
-      typeof entry.id !== 'string' ||
+      entry.id !== id ||
+      (entry.parentId !== null && typeof entry.parentId !== 'string') ||
       (entry.role !== 'user' && entry.role !== 'assistant') ||
-      typeof entry.content !== 'string'
+      typeof entry.content !== 'string' ||
+      typeof entry.createdAt !== 'number' ||
+      (entry.reasoningContent !== undefined && typeof entry.reasoningContent !== 'string')
     ) {
       throw new Error(`备份文件中的节点 ${id} 格式无效。`);
     }
-    const snap = isRecord(entry.summarySnapshot) ? entry.summarySnapshot : {};
     nodes[id] = {
       id: entry.id,
-      parentId: typeof entry.parentId === 'string' ? entry.parentId : null,
+      parentId: entry.parentId,
       role: entry.role,
       content: entry.content,
-      ...(typeof entry.reasoningContent === 'string' ? { reasoningContent: entry.reasoningContent } : {}),
-      createdAt: typeof entry.createdAt === 'number' ? entry.createdAt : Date.now(),
-      summarySnapshot: {
-        content: typeof snap.content === 'string' ? snap.content : '',
-        coveredUpToNodeId:
-          typeof snap.coveredUpToNodeId === 'string' ? snap.coveredUpToNodeId : null,
-        summarizedTurnCount:
-          typeof snap.summarizedTurnCount === 'number' ? snap.summarizedTurnCount : 0,
-      },
+      ...(entry.reasoningContent !== undefined ? { reasoningContent: entry.reasoningContent } : {}),
+      createdAt: entry.createdAt,
+      summarySnapshot: validateSummarySnapshot(entry.summarySnapshot, id),
     };
+  }
+
+  for (const node of Object.values(nodes)) {
+    if (node.parentId !== null && !nodes[node.parentId]) {
+      throw new Error(`备份文件节点 ${node.id} 引用了不存在的父节点 ${node.parentId}。`);
+    }
+    if (node.summarySnapshot.coveredUpToNodeId && !nodes[node.summarySnapshot.coveredUpToNodeId]) {
+      throw new Error(
+        `备份文件节点 ${node.id} 的摘要指针 ${node.summarySnapshot.coveredUpToNodeId} 不存在。`,
+      );
+    }
   }
   return nodes;
 }
@@ -132,7 +173,7 @@ export function exportStoryBackup(story: Story, now: () => number = () => Date.n
 export function importStoryBackup(
   jsonText: string,
   existingStoryIds: Iterable<string>,
-  createId: () => string = defaultCreateId,
+  createId: () => string = createDefaultId,
   now: () => number = () => Date.now(),
 ): Story {
   let parsed: unknown;
@@ -152,16 +193,28 @@ export function importStoryBackup(
     !rawStory.id.trim() ||
     typeof rawStory.title !== 'string' ||
     typeof rawStory.rawScript !== 'string' ||
-    !Array.isArray(rawStory.rootNodeIds)
+    typeof rawStory.createdAt !== 'number' ||
+    typeof rawStory.updatedAt !== 'number' ||
+    (rawStory.activeLeafNodeId !== null && typeof rawStory.activeLeafNodeId !== 'string')
   ) {
     throw new Error('备份文件中的故事主体结构不完整。');
   }
 
+  const rootNodeIds = assertStringArray(rawStory.rootNodeIds, 'story.rootNodeIds');
   const blueprint = validateBlueprint(rawStory.blueprint);
   const nodes = validateNodes(rawStory.nodes);
+
+  for (const rootId of rootNodeIds) {
+    if (!nodes[rootId]) {
+      throw new Error(`备份文件 rootNodeIds 包含不存在的节点 ${rootId}。`);
+    }
+  }
+  if (rawStory.activeLeafNodeId !== null && !nodes[rawStory.activeLeafNodeId]) {
+    throw new Error(`备份文件 activeLeafNodeId ${rawStory.activeLeafNodeId} 不存在。`);
+  }
+
   const existingSet = new Set(existingStoryIds);
   const hasCollision = existingSet.has(rawStory.id);
-  const timestamp = now();
 
   return {
     id: hasCollision ? createId() : rawStory.id,
@@ -169,10 +222,9 @@ export function importStoryBackup(
     rawScript: rawStory.rawScript,
     blueprint,
     nodes,
-    rootNodeIds: rawStory.rootNodeIds.filter((id): id is string => typeof id === 'string'),
-    activeLeafNodeId:
-      typeof rawStory.activeLeafNodeId === 'string' ? rawStory.activeLeafNodeId : null,
-    createdAt: typeof rawStory.createdAt === 'number' ? rawStory.createdAt : timestamp,
-    updatedAt: timestamp,
+    rootNodeIds,
+    activeLeafNodeId: rawStory.activeLeafNodeId,
+    createdAt: rawStory.createdAt,
+    updatedAt: hasCollision ? now() : rawStory.updatedAt,
   };
 }

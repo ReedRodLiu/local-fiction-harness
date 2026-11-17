@@ -13,6 +13,7 @@ import {
   type StoryBlueprint,
 } from '../harness/index.ts';
 import { ImportPanel } from './ImportPanel.tsx';
+import { StoryLibrary } from './StoryLibrary.tsx';
 import { createIndexedDbStoryStorage } from './indexedDbStorage.ts';
 
 interface DevTestConfigResponse {
@@ -59,8 +60,9 @@ export function App() {
   const [stories, setStories] = useState<Story[]>([]);
   const [story, setStory] = useState<Story>(() => harness.createStory({ title: '新故事' }));
   const [showImport, setShowImport] = useState(false);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState('');
+  const [editingBlueprint, setEditingBlueprint] = useState(false);
+  const [bpProtagonistDraft, setBpProtagonistDraft] = useState('');
+  const [bpTaboosDraft, setBpTaboosDraft] = useState('');
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamReasoning, setStreamReasoning] = useState('');
@@ -68,7 +70,6 @@ export function App() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
-  const backupInputRef = useRef<HTMLInputElement | null>(null);
 
   const refreshStories = useCallback(async () => {
     const list = await harness.listStories();
@@ -95,7 +96,7 @@ export function App() {
         }
       } catch (err) {
         if (!cancelled) {
-          setErrorMsg(err instanceof Error ? err.message : '读取本地存档失败。');
+          setErrorMsg(err instanceof Error ? err.message : '读取本地故事失败。');
         }
       }
     })();
@@ -202,6 +203,7 @@ export function App() {
     setStory(created);
     await refreshStories();
     setShowImport(false);
+    setEditingBlueprint(false);
     setErrorMsg(null);
   };
 
@@ -210,13 +212,13 @@ export function App() {
     if (switched) {
       setStory(switched);
       setShowImport(false);
+      setEditingBlueprint(false);
       setErrorMsg(null);
     }
   };
 
-  const handleSaveRename = async (id: string) => {
-    const updated = await harness.renameStory(id, renameDraft);
-    setRenamingId(null);
+  const handleRenameStory = async (id: string, title: string) => {
+    const updated = await harness.renameStory(id, title);
     if (updated) {
       if (story.id === id) {
         setStory(updated);
@@ -231,10 +233,25 @@ export function App() {
     if (story.id === id) {
       const next = remaining[0] ?? harness.createStory({ title: '新故事' });
       setStory(next);
+      setEditingBlueprint(false);
       if (remaining[0]) {
         await harness.setActiveStory(remaining[0].id);
       }
     }
+  };
+
+  const handleSaveBlueprintTweak = async () => {
+    const updated = await harness.updateStoryBlueprint(story, {
+      ...story.blueprint,
+      protagonist: bpProtagonistDraft.trim(),
+      taboos: bpTaboosDraft
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    });
+    setStory(updated);
+    await refreshStories();
+    setEditingBlueprint(false);
   };
 
   const handleExportBackup = () => {
@@ -283,105 +300,15 @@ export function App() {
           {showImport ? '返回游玩界面' : '导入剧本 / 新建故事'}
         </button>
 
-        <section className="story-library" aria-label="本地故事列表与备份">
-          <div className="panel-header">
-            <h3>我的故事（{stories.length}）</h3>
-            <div className="btn-group">
-              <button type="button" className="btn btn-sm" onClick={handleExportBackup}>
-                导出 JSON
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => backupInputRef.current?.click()}
-              >
-                导入 JSON
-              </button>
-              <input
-                ref={backupInputRef}
-                type="file"
-                accept=".json,application/json"
-                aria-label="导入故事 JSON 备份"
-                className="visually-hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = '';
-                  if (file) {
-                    void handleImportBackupFile(file);
-                  }
-                }}
-              />
-            </div>
-          </div>
-
-          {stories.length === 0 ? (
-            <p className="status-text">尚无已保存故事，导入剧本或发送第一轮后将自动保存。</p>
-          ) : (
-            <ul className="story-list">
-              {stories.map((item) => {
-                const isActive = item.id === story.id;
-                return (
-                  <li key={item.id} className={`story-item ${isActive ? 'active' : ''}`}>
-                    {renamingId === item.id ? (
-                      <div className="rename-row">
-                        <input
-                          type="text"
-                          aria-label="重命名故事标题"
-                          value={renameDraft}
-                          onChange={(e) => setRenameDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                              void handleSaveRename(item.id);
-                            }
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={() => void handleSaveRename(item.id)}
-                        >
-                          保存
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className="story-select-btn"
-                          aria-current={isActive ? 'true' : undefined}
-                          onClick={() => void handleSelectStory(item.id)}
-                        >
-                          {item.title}
-                        </button>
-                        <div className="btn-group">
-                          <button
-                            type="button"
-                            className="btn btn-sm"
-                            aria-label={`重命名 ${item.title}`}
-                            onClick={() => {
-                              setRenamingId(item.id);
-                              setRenameDraft(item.title);
-                            }}
-                          >
-                            改名
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-sm"
-                            aria-label={`删除 ${item.title}`}
-                            onClick={() => void handleDeleteStory(item.id)}
-                          >
-                            删除
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
+        <StoryLibrary
+          stories={stories}
+          activeStoryId={story.id}
+          onSelectStory={(id) => void handleSelectStory(id)}
+          onRenameStory={(id, title) => void handleRenameStory(id, title)}
+          onDeleteStory={(id) => void handleDeleteStory(id)}
+          onExportBackup={handleExportBackup}
+          onImportBackupFile={(file) => void handleImportBackupFile(file)}
+        />
 
         <div className="notice-box" role="note">
           <strong>安全提示：</strong>
@@ -493,31 +420,83 @@ export function App() {
                   故事蓝图与原始剧本锚定（原文 {story.rawScript.length} 字符）
                 </summary>
                 <div className="blueprint-summary">
-                  {story.blueprint.protagonist && (
-                    <p>
-                      <strong>主角：</strong>
-                      {story.blueprint.protagonist}
-                    </p>
-                  )}
-                  {story.blueprint.worldRules.length > 0 && (
-                    <p>
-                      <strong>规则：</strong>
-                      {story.blueprint.worldRules.join('；')}
-                    </p>
-                  )}
-                  {story.blueprint.taboos.length > 0 && (
-                    <p>
-                      <strong>禁忌：</strong>
-                      {story.blueprint.taboos.join('；')}
-                    </p>
-                  )}
-                  {story.blueprint.npcs.length > 0 && (
-                    <p>
-                      <strong>角色：</strong>
-                      {story.blueprint.npcs
-                        .map((n) => `${n.name}${n.role ? `(${n.role})` : ''}`)
-                        .join('、')}
-                    </p>
+                  {editingBlueprint ? (
+                    <div className="config-form" style={{ marginTop: '0.5rem' }}>
+                      <div className="field">
+                        <label htmlFor="tweak-protagonist">微调主角设定</label>
+                        <input
+                          id="tweak-protagonist"
+                          type="text"
+                          value={bpProtagonistDraft}
+                          onChange={(e) => setBpProtagonistDraft(e.target.value)}
+                        />
+                      </div>
+                      <div className="field">
+                        <label htmlFor="tweak-taboos">微调禁忌条款（每行一条）</label>
+                        <textarea
+                          id="tweak-taboos"
+                          rows={2}
+                          value={bpTaboosDraft}
+                          onChange={(e) => setBpTaboosDraft(e.target.value)}
+                        />
+                      </div>
+                      <div className="btn-group">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary"
+                          onClick={() => void handleSaveBlueprintTweak()}
+                        >
+                          保存蓝图微调
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => setEditingBlueprint(false)}
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {story.blueprint.protagonist && (
+                        <p>
+                          <strong>主角：</strong>
+                          {story.blueprint.protagonist}
+                        </p>
+                      )}
+                      {story.blueprint.worldRules.length > 0 && (
+                        <p>
+                          <strong>规则：</strong>
+                          {story.blueprint.worldRules.join('；')}
+                        </p>
+                      )}
+                      {story.blueprint.taboos.length > 0 && (
+                        <p>
+                          <strong>禁忌：</strong>
+                          {story.blueprint.taboos.join('；')}
+                        </p>
+                      )}
+                      {story.blueprint.npcs.length > 0 && (
+                        <p>
+                          <strong>角色：</strong>
+                          {story.blueprint.npcs
+                            .map((n) => `${n.name}${n.role ? `(${n.role})` : ''}`)
+                            .join('、')}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => {
+                          setBpProtagonistDraft(story.blueprint.protagonist);
+                          setBpTaboosDraft(story.blueprint.taboos.join('\n'));
+                          setEditingBlueprint(true);
+                        }}
+                      >
+                        微调蓝图
+                      </button>
+                    </>
                   )}
                 </div>
               </details>

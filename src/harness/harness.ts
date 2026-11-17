@@ -1,3 +1,4 @@
+import { createDefaultId } from './id.ts';
 import { DEFAULT_STORY_TITLE } from './scriptParser.ts';
 import {
   buildBlueprintExtractionMessages,
@@ -37,14 +38,6 @@ const EMPTY_SUMMARY: PlotSummarySnapshot = {
   coveredUpToNodeId: null,
   summarizedTurnCount: 0,
 };
-
-function defaultCreateId(): string {
-  const cryptoObj = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (cryptoObj && typeof cryptoObj.randomUUID === 'function') {
-    return cryptoObj.randomUUID();
-  }
-  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
 
 function throwIfAborted(signal?: AbortSignalLike): void {
   if (signal?.aborted) {
@@ -107,6 +100,7 @@ export interface FictionHarness {
   loadActiveStory(): Promise<Story | null>;
   setActiveStory(id: string | null): Promise<Story | null>;
   renameStory(id: string, title: string): Promise<Story | null>;
+  updateStoryBlueprint(story: Story, blueprint: StoryBlueprint): Promise<Story>;
   deleteStory(id: string): Promise<void>;
   extractStoryBlueprint(
     rawScript: string,
@@ -127,7 +121,7 @@ export interface FictionHarness {
  */
 export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
   const now = deps.now ?? (() => Date.now());
-  const createId = deps.createId ?? defaultCreateId;
+  const createId = deps.createId ?? createDefaultId;
 
   const createStoryRecord = (input: CreateStoryInput): Story => {
     const timestamp = now();
@@ -202,6 +196,17 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       };
       await deps.storage.saveStory(updated);
       return updated;
+    },
+
+    async updateStoryBlueprint(story: Story, blueprint: StoryBlueprint): Promise<Story> {
+      const trimmedTitle = blueprint.title.trim() || story.title;
+      const updated: Story = {
+        ...story,
+        title: trimmedTitle,
+        blueprint: { ...blueprint, title: trimmedTitle },
+        updatedAt: now(),
+      };
+      return persistStory(updated, false);
     },
 
     async deleteStory(id: string): Promise<void> {
