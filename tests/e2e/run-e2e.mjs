@@ -85,7 +85,7 @@ async function main() {
       const sys = reqBody.messages?.[0]?.content || '';
       const lastMsg = reqBody.messages?.[reqBody.messages.length - 1]?.content || '';
 
-      if (sys.includes('故事蓝图')) {
+      if (sys.includes('严格只输出一个 JSON 对象')) {
         await route.fulfill({
           status: 200,
           contentType: 'text/event-stream',
@@ -159,10 +159,10 @@ async function main() {
     fs.writeFileSync(docxPath, buildFixtureDocx());
     await page.click('button:has-text("导入剧本 / 新建故事")');
     await page.setInputFiles('#import-file', docxPath);
-    const extractedRaw = await page.inputValue('#import-raw-script');
-    if (!extractedRaw.includes('| 人气 | 50 |')) {
-      throw new Error('Docx table missing after parse');
-    }
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#import-raw-script');
+      return el && 'value' in el && String(el.value).includes('| 人气 | 50 |');
+    });
     await page.click('button:has-text("拆解故事蓝图")');
     await page.waitForSelector('#bp-title');
     await page.click('button:has-text("确认蓝图并开始故事")');
