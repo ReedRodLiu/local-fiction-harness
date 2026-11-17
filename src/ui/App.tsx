@@ -1,16 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_MODEL_CONFIG,
   createFictionHarness,
   createModelConfigStore,
   createOpenAiTransport,
+  exportStoryBackup,
   getActiveBranchNodes,
+  importStoryBackup,
   type FetchLike,
   type ModelConfig,
   type Story,
   type StoryBlueprint,
 } from '../harness/index.ts';
 import { ImportPanel } from './ImportPanel.tsx';
+import { createIndexedDbStoryStorage } from './indexedDbStorage.ts';
 
 interface DevTestConfigResponse {
   available: boolean;
@@ -21,6 +24,7 @@ interface DevTestConfigResponse {
 
 export function App() {
   const configStore = useMemo(() => createModelConfigStore(window.localStorage), []);
+  const storyStorage = useMemo(() => createIndexedDbStoryStorage(), []);
   const useDevEnvKeyRef = useRef(false);
 
   const harness = useMemo(() => {
@@ -36,8 +40,11 @@ export function App() {
         signal: init.signal as AbortSignal | undefined,
       });
     };
-    return createFictionHarness({ transport: createOpenAiTransport(devAwareFetch) });
-  }, []);
+    return createFictionHarness({
+      transport: createOpenAiTransport(devAwareFetch),
+      storage: storyStorage,
+    });
+  }, [storyStorage]);
 
   const [config, setConfig] = useState<ModelConfig>(() => {
     const loaded = configStore.load();
@@ -49,10 +56,11 @@ export function App() {
   const [useDevEnvKey, setUseDevEnvKey] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [devTestInfo, setDevTestInfo] = useState<DevTestConfigResponse | null>(null);
-  const [story, setStory] = useState<Story>(() =>
-    harness.createStory({ title: '新故事（最小测试）' }),
-  );
+  const [stories, setStories] = useState<Story[]>([]);
+  const [story, setStory] = useState<Story>(() => harness.createStory({ title: '新故事' }));
   const [showImport, setShowImport] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamReasoning, setStreamReasoning] = useState('');
@@ -60,10 +68,41 @@ export function App() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+  const backupInputRef = useRef<HTMLInputElement | null>(null);
+
+  const refreshStories = useCallback(async () => {
+    const list = await harness.listStories();
+    setStories(list);
+    return list;
+  }, [harness]);
 
   useEffect(() => {
     useDevEnvKeyRef.current = useDevEnvKey;
   }, [useDevEnvKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [list, active] = await Promise.all([
+          harness.listStories(),
+          harness.loadActiveStory(),
+        ]);
+        if (cancelled) return;
+        setStories(list);
+        if (active) {
+          setStory(active);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setErrorMsg(err instanceof Error ? err.message : '读取本地存档失败。');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [harness]);
 
   useEffect(() => {
     if (!import.meta.env.DEV) {
@@ -131,6 +170,7 @@ export function App() {
         onContentDelta: (delta) => setStreamContent((prev) => prev + delta),
       });
       setStory(result.story);
+      await refreshStories();
       setStreamReasoning('');
       setStreamContent('');
     } catch (err) {
@@ -153,15 +193,78 @@ export function App() {
     void sendAction(input, true);
   };
 
-  const handleConfirmImportedStory = (imported: {
+  const handleConfirmImportedStory = async (imported: {
     title: string;
     rawScript: string;
     blueprint: StoryBlueprint;
   }) => {
-    const created = harness.createStory(imported);
+    const created = await harness.createAndSaveStory(imported);
     setStory(created);
+    await refreshStories();
     setShowImport(false);
     setErrorMsg(null);
+  };
+
+  const handleSelectStory = async (id: string) => {
+    const switched = await harness.setActiveStory(id);
+    if (switched) {
+      setStory(switched);
+      setShowImport(false);
+      setErrorMsg(null);
+    }
+  };
+
+  const handleSaveRename = async (id: string) => {
+    const updated = await harness.renameStory(id, renameDraft);
+    setRenamingId(null);
+    if (updated) {
+      if (story.id === id) {
+        setStory(updated);
+      }
+      await refreshStories();
+    }
+  };
+
+  const handleDeleteStory = async (id: string) => {
+    await harness.deleteStory(id);
+    const remaining = await refreshStories();
+    if (story.id === id) {
+      const next = remaining[0] ?? harness.createStory({ title: '新故事' });
+      setStory(next);
+      if (remaining[0]) {
+        await harness.setActiveStory(remaining[0].id);
+      }
+    }
+  };
+
+  const handleExportBackup = () => {
+    const json = exportStoryBackup(story);
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${story.title.replace(/[\\/:*?"<>|]+/g, '_') || 'story'}.lfh.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportBackupFile = async (file: File) => {
+    setErrorMsg(null);
+    try {
+      const jsonText = await file.text();
+      const existing = await harness.listStories();
+      const restored = importStoryBackup(
+        jsonText,
+        existing.map((s) => s.id),
+      );
+      await harness.saveStory(restored);
+      await harness.setActiveStory(restored.id);
+      setStory(restored);
+      await refreshStories();
+      setShowImport(false);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : '导入 JSON 备份失败。');
+    }
   };
 
   return (
@@ -179,6 +282,106 @@ export function App() {
         >
           {showImport ? '返回游玩界面' : '导入剧本 / 新建故事'}
         </button>
+
+        <section className="story-library" aria-label="本地故事列表与备份">
+          <div className="panel-header">
+            <h3>我的故事（{stories.length}）</h3>
+            <div className="btn-group">
+              <button type="button" className="btn btn-sm" onClick={handleExportBackup}>
+                导出 JSON
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => backupInputRef.current?.click()}
+              >
+                导入 JSON
+              </button>
+              <input
+                ref={backupInputRef}
+                type="file"
+                accept=".json,application/json"
+                aria-label="导入故事 JSON 备份"
+                className="visually-hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (file) {
+                    void handleImportBackupFile(file);
+                  }
+                }}
+              />
+            </div>
+          </div>
+
+          {stories.length === 0 ? (
+            <p className="status-text">尚无已保存故事，导入剧本或发送第一轮后将自动保存。</p>
+          ) : (
+            <ul className="story-list">
+              {stories.map((item) => {
+                const isActive = item.id === story.id;
+                return (
+                  <li key={item.id} className={`story-item ${isActive ? 'active' : ''}`}>
+                    {renamingId === item.id ? (
+                      <div className="rename-row">
+                        <input
+                          type="text"
+                          aria-label="重命名故事标题"
+                          value={renameDraft}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                              void handleSaveRename(item.id);
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => void handleSaveRename(item.id)}
+                        >
+                          保存
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="story-select-btn"
+                          aria-current={isActive ? 'true' : undefined}
+                          onClick={() => void handleSelectStory(item.id)}
+                        >
+                          {item.title}
+                        </button>
+                        <div className="btn-group">
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            aria-label={`重命名 ${item.title}`}
+                            onClick={() => {
+                              setRenamingId(item.id);
+                              setRenameDraft(item.title);
+                            }}
+                          >
+                            改名
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            aria-label={`删除 ${item.title}`}
+                            onClick={() => void handleDeleteStory(item.id)}
+                          >
+                            删除
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
 
         <div className="notice-box" role="note">
           <strong>安全提示：</strong>
@@ -279,7 +482,7 @@ export function App() {
             extractBlueprint={(raw, cfg, title, signal) =>
               harness.extractStoryBlueprint(raw, cfg, title, signal)
             }
-            onConfirmStory={handleConfirmImportedStory}
+            onConfirmStory={(imported) => void handleConfirmImportedStory(imported)}
             onCancel={() => setShowImport(false)}
           />
         ) : (
@@ -335,7 +538,11 @@ export function App() {
                       <button
                         type="button"
                         className="btn btn-primary"
-                        onClick={() => void sendAction('开始故事，请按照剧本开场规则生成第一幕与初始状态栏。')}
+                        onClick={() =>
+                          void sendAction(
+                            '开始故事，请按照剧本开场规则生成第一幕与初始状态栏。',
+                          )
+                        }
                       >
                         开启第一幕
                       </button>

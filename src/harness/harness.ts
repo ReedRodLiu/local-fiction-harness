@@ -13,6 +13,7 @@ import type {
   PlotSummarySnapshot,
   Story,
   StoryBlueprint,
+  StoryStorage,
   TurnCallbacks,
   TurnExecutionResult,
   TurnNode,
@@ -20,6 +21,7 @@ import type {
 
 export interface FictionHarnessDeps {
   transport: LlmTransport;
+  storage?: StoryStorage;
   now?: () => number;
   createId?: () => string;
 }
@@ -99,6 +101,13 @@ function buildSystemAnchorPrompt(story: Story): string {
 
 export interface FictionHarness {
   createStory(input: CreateStoryInput): Story;
+  createAndSaveStory(input: CreateStoryInput): Promise<Story>;
+  saveStory(story: Story): Promise<Story>;
+  listStories(): Promise<Story[]>;
+  loadActiveStory(): Promise<Story | null>;
+  setActiveStory(id: string | null): Promise<Story | null>;
+  renameStory(id: string, title: string): Promise<Story | null>;
+  deleteStory(id: string): Promise<void>;
   extractStoryBlueprint(
     rawScript: string,
     config: ModelConfig,
@@ -120,21 +129,84 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
   const now = deps.now ?? (() => Date.now());
   const createId = deps.createId ?? defaultCreateId;
 
+  const createStoryRecord = (input: CreateStoryInput): Story => {
+    const timestamp = now();
+    const title = input.title.trim() || DEFAULT_STORY_TITLE;
+    return {
+      id: createId(),
+      title,
+      rawScript: input.rawScript ?? '',
+      blueprint: input.blueprint ?? createDefaultBlueprint(title),
+      nodes: {},
+      rootNodeIds: [],
+      activeLeafNodeId: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+  };
+
+  const persistStory = async (story: Story, activate = false): Promise<Story> => {
+    if (deps.storage) {
+      await deps.storage.saveStory(story);
+      if (activate) {
+        await deps.storage.setActiveStoryId(story.id);
+      }
+    }
+    return story;
+  };
+
   return {
-    createStory(input: CreateStoryInput): Story {
-      const timestamp = now();
-      const title = input.title.trim() || DEFAULT_STORY_TITLE;
-      return {
-        id: createId(),
-        title,
-        rawScript: input.rawScript ?? '',
-        blueprint: input.blueprint ?? createDefaultBlueprint(title),
-        nodes: {},
-        rootNodeIds: [],
-        activeLeafNodeId: null,
-        createdAt: timestamp,
-        updatedAt: timestamp,
+    createStory: createStoryRecord,
+
+    async createAndSaveStory(input: CreateStoryInput): Promise<Story> {
+      const story = createStoryRecord(input);
+      return persistStory(story, true);
+    },
+
+    async saveStory(story: Story): Promise<Story> {
+      return persistStory(story, false);
+    },
+
+    async listStories(): Promise<Story[]> {
+      if (!deps.storage) return [];
+      return deps.storage.listStories();
+    },
+
+    async loadActiveStory(): Promise<Story | null> {
+      if (!deps.storage) return null;
+      const activeId = await deps.storage.getActiveStoryId();
+      if (activeId) {
+        const found = await deps.storage.getStory(activeId);
+        if (found) return found;
+      }
+      const all = await deps.storage.listStories();
+      return all[0] ?? null;
+    },
+
+    async setActiveStory(id: string | null): Promise<Story | null> {
+      if (!deps.storage) return null;
+      await deps.storage.setActiveStoryId(id);
+      return id ? deps.storage.getStory(id) : null;
+    },
+
+    async renameStory(id: string, title: string): Promise<Story | null> {
+      if (!deps.storage) return null;
+      const existing = await deps.storage.getStory(id);
+      if (!existing) return null;
+      const trimmedTitle = title.trim() || DEFAULT_STORY_TITLE;
+      const updated: Story = {
+        ...existing,
+        title: trimmedTitle,
+        blueprint: { ...existing.blueprint, title: trimmedTitle },
+        updatedAt: now(),
       };
+      await deps.storage.saveStory(updated);
+      return updated;
+    },
+
+    async deleteStory(id: string): Promise<void> {
+      if (!deps.storage) return;
+      await deps.storage.deleteStory(id);
     },
 
     async extractStoryBlueprint(
@@ -256,6 +328,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         activeLeafNodeId: assistantNode.id,
         updatedAt: assistantCreatedAt,
       };
+
+      await persistStory(updatedStory, true);
 
       return {
         userNode,

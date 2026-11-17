@@ -69,6 +69,21 @@ export interface KeyValueStorage {
   removeItem(key: string): void;
 }
 
+export interface StoryStorage {
+  listStories(): Promise<Story[]>;
+  getStory(id: string): Promise<Story | null>;
+  saveStory(story: Story): Promise<void>;
+  deleteStory(id: string): Promise<void>;
+  getActiveStoryId(): Promise<string | null>;
+  setActiveStoryId(id: string | null): Promise<void>;
+}
+
+export interface StoryBackupEnvelope {
+  schemaVersion: 1;
+  exportedAt: number;
+  story: Story;
+}
+
 export interface ModelConfig {
   baseUrl: string;
   model: string;
