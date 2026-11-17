@@ -79,6 +79,21 @@ describe('Slice 1: OpenAI SSE streaming & reasoning separation', () => {
 
     await expect(collect()).rejects.toThrow(/401/);
   });
+
+  it('throws on in-stream SSE error payload', async () => {
+    const ssePayload = 'data: {"error":{"message":"Rate limit reached"}}\n\n';
+    async function* chunks(): AsyncIterable<string> {
+      yield ssePayload;
+    }
+
+    const collect = async () => {
+      for await (const _ of parseOpenAiSseStream(chunks())) {
+        // no-op
+      }
+    };
+
+    await expect(collect()).rejects.toThrow(/Rate limit reached/);
+  });
 });
 
 describe('Slice 1: BYOK ModelConfigStore persistence & session-memory toggle', () => {
@@ -183,5 +198,28 @@ describe('Slice 1: FictionHarness streaming turn execution', () => {
     expect(secondMessages.some((m) => m.content.includes('推理1'))).toBe(false);
     expect(secondMessages.some((m) => m.content.includes('第一幕：你在雨夜推开茶馆木门。'))).toBe(true);
     expect(second.story.activeLeafNodeId).toBe(second.assistantNode.id);
+  });
+
+  it('aborts runTurn cleanly when AbortSignal is triggered mid-stream', async () => {
+    const controller = new AbortController();
+    const transport: LlmTransport = {
+      async *streamChat() {
+        yield { contentDelta: '第一句' };
+        controller.abort();
+        yield { contentDelta: '不应提交的内容' };
+      },
+    };
+
+    const harness = createFictionHarness({ transport });
+    const story = harness.createStory({ title: '测试中断' });
+
+    await expect(
+      harness.runTurn(
+        story,
+        '继续',
+        { baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', apiKey: 'k', memoryOnly: true },
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

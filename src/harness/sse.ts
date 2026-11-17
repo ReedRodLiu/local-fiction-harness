@@ -180,9 +180,7 @@ export function createOpenAiTransport(fetchImpl?: FetchLike): LlmTransport {
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
       };
-      if (req.useDevEnvKey) {
-        headers['x-use-dev-env-key'] = '1';
-      } else if (req.apiKey.trim()) {
+      if (req.apiKey.trim()) {
         headers.Authorization = `Bearer ${req.apiKey.trim()}`;
       }
 
@@ -193,8 +191,6 @@ export function createOpenAiTransport(fetchImpl?: FetchLike): LlmTransport {
           model: req.model,
           messages: req.messages,
           stream: true,
-          ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-          ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
         }),
         signal: req.signal,
       });

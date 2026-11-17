@@ -13,7 +13,6 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
 export interface ModelConfigStore {
   load(): ModelConfig;
   save(config: ModelConfig): void;
-  clearApiKey(): void;
 }
 
 /**
@@ -37,15 +36,11 @@ export function createModelConfigStore(persistentStorage: KeyValueStorage): Mode
 
       const memoryOnly = Boolean(meta.memoryOnly);
       const persistedKey = memoryOnly ? '' : (persistentStorage.getItem(CONFIG_API_KEY) ?? '');
-      if (memoryOnly && persistentStorage.getItem(CONFIG_API_KEY) !== null) {
-        persistentStorage.removeItem(CONFIG_API_KEY);
-      }
 
       return {
         baseUrl: typeof meta.baseUrl === 'string' && meta.baseUrl ? meta.baseUrl : DEFAULT_MODEL_CONFIG.baseUrl,
         model: typeof meta.model === 'string' && meta.model ? meta.model : DEFAULT_MODEL_CONFIG.model,
         memoryOnly,
-        ...(meta.useDevEnvKey ? { useDevEnvKey: true } : {}),
         apiKey: memoryOnly ? memoryApiKey : persistedKey,
       };
     },
@@ -55,7 +50,6 @@ export function createModelConfigStore(persistentStorage: KeyValueStorage): Mode
         baseUrl: config.baseUrl,
         model: config.model,
         memoryOnly: config.memoryOnly,
-        useDevEnvKey: Boolean(config.useDevEnvKey),
       };
       persistentStorage.setItem(CONFIG_META_KEY, JSON.stringify(meta));
 
@@ -70,11 +64,6 @@ export function createModelConfigStore(persistentStorage: KeyValueStorage): Mode
           persistentStorage.removeItem(CONFIG_API_KEY);
         }
       }
-    },
-
-    clearApiKey(): void {
-      memoryApiKey = '';
-      persistentStorage.removeItem(CONFIG_API_KEY);
     },
   };
 }

@@ -49,21 +49,6 @@
   }
 }
 
-@supports (color: light-dark(white, black)) {
-  :root {
-    --bg-page: light-dark(var(--bg-page-light), var(--bg-page-dark));
-    --bg-surface: light-dark(var(--bg-surface-light), var(--bg-surface-dark));
-    --bg-subtle: light-dark(var(--bg-subtle-light), var(--bg-subtle-dark));
-    --text-main: light-dark(var(--text-main-light), var(--text-main-dark));
-    --text-muted: light-dark(var(--text-muted-light), var(--text-muted-dark));
-    --border-color: light-dark(var(--border-light), var(--border-dark));
-    --brand: light-dark(var(--brand-light), var(--brand-dark));
-    --brand-text: light-dark(var(--brand-text-light), var(--brand-text-dark));
-    --warn-bg: light-dark(var(--warn-bg-light), var(--warn-bg-dark));
-    --warn-border: light-dark(var(--warn-border-light), var(--warn-border-dark));
-  }
-}
-
 html {
   accent-color: var(--brand);
 }

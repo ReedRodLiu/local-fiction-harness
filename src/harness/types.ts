@@ -49,8 +49,6 @@ export interface LlmStreamDelta {
 
 export interface AbortSignalLike {
   readonly aborted: boolean;
-  addEventListener?(type: string, listener: () => void): void;
-  removeEventListener?(type: string, listener: () => void): void;
 }
 
 export interface LlmStreamRequest {
@@ -58,10 +56,7 @@ export interface LlmStreamRequest {
   apiKey: string;
   model: string;
   messages: LlmMessage[];
-  maxTokens?: number;
-  temperature?: number;
   signal?: AbortSignalLike;
-  useDevEnvKey?: boolean;
 }
 
 export interface LlmTransport {
@@ -79,7 +74,6 @@ export interface ModelConfig {
   model: string;
   apiKey: string;
   memoryOnly: boolean;
-  useDevEnvKey?: boolean;
 }
 
 export interface TurnCallbacks {

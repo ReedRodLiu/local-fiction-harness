@@ -148,14 +148,24 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       let content = '';
       let reasoningContent = '';
 
+      const throwIfAborted = () => {
+        if (callbacks?.signal?.aborted) {
+          const abortError = new Error('Turn generation aborted.');
+          abortError.name = 'AbortError';
+          throw abortError;
+        }
+      };
+
+      throwIfAborted();
+
       for await (const delta of deps.transport.streamChat({
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
         model: config.model,
         messages,
         signal: callbacks?.signal,
-        useDevEnvKey: config.useDevEnvKey,
       })) {
+        throwIfAborted();
         if (delta.reasoningDelta) {
           reasoningContent += delta.reasoningDelta;
           callbacks?.onReasoningDelta?.(delta.reasoningDelta);
@@ -165,6 +175,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
           callbacks?.onContentDelta?.(delta.contentDelta);
         }
       }
+
+      throwIfAborted();
 
       const userCreatedAt = now();
       const userNode: TurnNode = {

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  DEFAULT_MODEL_CONFIG,
   createFictionHarness,
   createModelConfigStore,
   createOpenAiTransport,
   getActiveBranchNodes,
+  type FetchLike,
   type ModelConfig,
   type Story,
 } from '../harness/index.ts';
@@ -17,16 +19,36 @@ interface DevTestConfigResponse {
 
 export function App() {
   const configStore = useMemo(() => createModelConfigStore(window.localStorage), []);
-  const harness = useMemo(
-    () => createFictionHarness({ transport: createOpenAiTransport() }),
-    [],
-  );
+  const useDevEnvKeyRef = useRef(false);
 
-  const [config, setConfig] = useState<ModelConfig>(() => configStore.load());
+  const harness = useMemo(() => {
+    const devAwareFetch: FetchLike = (url, init) => {
+      const headers = { ...init.headers };
+      if (import.meta.env.DEV && useDevEnvKeyRef.current && url.startsWith('/__dev_llm_proxy')) {
+        headers['x-use-dev-env-key'] = '1';
+      }
+      return fetch(url, {
+        method: init.method,
+        headers,
+        body: init.body,
+        signal: init.signal as AbortSignal | undefined,
+      });
+    };
+    return createFictionHarness({ transport: createOpenAiTransport(devAwareFetch) });
+  }, []);
+
+  const [config, setConfig] = useState<ModelConfig>(() => {
+    const loaded = configStore.load();
+    if (!import.meta.env.DEV && loaded.baseUrl.startsWith('/__dev_llm_proxy')) {
+      return { ...loaded, baseUrl: DEFAULT_MODEL_CONFIG.baseUrl };
+    }
+    return loaded;
+  });
+  const [useDevEnvKey, setUseDevEnvKey] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [devTestInfo, setDevTestInfo] = useState<DevTestConfigResponse | null>(null);
   const [story, setStory] = useState<Story>(() =>
-    harness.createStory({ title: '新故事（最小测试会话）' }),
+    harness.createStory({ title: '新故事（最小测试）' }),
   );
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -35,6 +57,10 @@ export function App() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    useDevEnvKeyRef.current = useDevEnvKey;
+  }, [useDevEnvKey]);
 
   useEffect(() => {
     if (!import.meta.env.DEV) {
@@ -56,20 +82,23 @@ export function App() {
     };
   }, []);
 
-  const updateConfig = (next: ModelConfig) => {
+  const updateConfig = (next: ModelConfig, nextUseDevEnvKey = useDevEnvKey) => {
     setConfig(next);
+    setUseDevEnvKey(nextUseDevEnvKey);
+    useDevEnvKeyRef.current = nextUseDevEnvKey;
     configStore.save(next);
   };
 
   const applyDevTestConfig = () => {
     if (!devTestInfo) return;
-    updateConfig({
+    setConfig({
       baseUrl: devTestInfo.proxyBaseUrl,
       model: devTestInfo.model || config.model,
       apiKey: '',
       memoryOnly: config.memoryOnly,
-      useDevEnvKey: devTestInfo.hasEnvKey,
     });
+    setUseDevEnvKey(devTestInfo.hasEnvKey);
+    useDevEnvKeyRef.current = devTestInfo.hasEnvKey;
     setErrorMsg(null);
   };
 
@@ -79,10 +108,6 @@ export function App() {
     e?.preventDefault();
     const trimmed = input.trim();
     if (!trimmed || isStreaming) {
-      return;
-    }
-    if (!config.useDevEnvKey && !config.apiKey.trim()) {
-      setErrorMsg('请先填写模型 API Key，或在本地开发模式启用 .env.local 测试代理配置。');
       return;
     }
 
@@ -142,9 +167,7 @@ export function App() {
               autoCorrect="off"
               autoCapitalize="none"
               spellCheck={false}
-              onChange={(e) =>
-                updateConfig({ ...config, baseUrl: e.target.value, useDevEnvKey: false })
-              }
+              onChange={(e) => updateConfig({ ...config, baseUrl: e.target.value }, false)}
             />
           </div>
 
@@ -170,12 +193,10 @@ export function App() {
                 name="apiKey"
                 type={showKey ? 'text' : 'password'}
                 value={config.apiKey}
-                disabled={Boolean(config.useDevEnvKey)}
-                placeholder={config.useDevEnvKey ? '当前使用开发代理内置测试 Key' : 'sk-...'}
+                disabled={useDevEnvKey}
+                placeholder={useDevEnvKey ? '当前使用开发代理内置测试 Key' : 'sk-...（本地无鉴权端点可留空）'}
                 autoComplete="off"
-                onChange={(e) =>
-                  updateConfig({ ...config, apiKey: e.target.value, useDevEnvKey: false })
-                }
+                onChange={(e) => updateConfig({ ...config, apiKey: e.target.value }, false)}
               />
               <button
                 type="button"
