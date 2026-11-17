@@ -483,3 +483,9 @@ summary:focus-visible {
   border-color: var(--brand);
   background: var(--bg-subtle);
 }
+
+.overview-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}

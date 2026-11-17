@@ -19,11 +19,11 @@ export function MessageContent({
     <div className="message-content">
       {parsed.segments.map((seg, idx) =>
         seg.type === 'codeblock' ? (
-          <pre key={idx} className="hud-panel" aria-label="状态面板">
+          <pre key={`code-${idx}`} className="hud-panel" aria-label="状态面板">
             <code>{seg.code}</code>
           </pre>
         ) : (
-          <div key={idx} className="turn-body">
+          <div key={`text-${idx}`} className="turn-body">
             {seg.content}
           </div>
         ),
@@ -31,9 +31,9 @@ export function MessageContent({
 
       {showChoices && parsed.choices.length > 0 && onSelectChoice && (
         <div className="choices-row" role="group" aria-label="快捷选项">
-          {parsed.choices.map((choice) => (
+          {parsed.choices.map((choice, idx) => (
             <button
-              key={choice.key}
+              key={`choice-${choice.key}-${idx}`}
               type="button"
               className="btn choice-btn"
               disabled={disabled}

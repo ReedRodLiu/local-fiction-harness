@@ -1,6 +1,6 @@
 export type MessageSegment =
   | { type: 'text'; content: string }
-  | { type: 'codeblock'; lang: string; code: string };
+  | { type: 'codeblock'; code: string };
 
 export interface ParsedChoice {
   key: string;
@@ -15,7 +15,7 @@ export interface ParsedAssistantMessage {
 
 function splitCodeSegments(raw: string): MessageSegment[] {
   const segments: MessageSegment[] = [];
-  const fenceRegex = /```([a-zA-Z0-9_-]*)\r?\n([\s\S]*?)```/g;
+  const fenceRegex = /```(?:[a-zA-Z0-9_-]*)\r?\n([\s\S]*?)```/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -26,8 +26,7 @@ function splitCodeSegments(raw: string): MessageSegment[] {
     }
     segments.push({
       type: 'codeblock',
-      lang: match[1] || 'text',
-      code: match[2].replace(/\r?\n$/, ''),
+      code: match[1].replace(/\r?\n$/, ''),
     });
     lastIndex = fenceRegex.lastIndex;
   }
@@ -41,7 +40,7 @@ function splitCodeSegments(raw: string): MessageSegment[] {
 
 function extractTrailingChoices(raw: string): ParsedChoice[] {
   const lines = raw.split(/\r?\n/);
-  const choiceRegex = /^\s*([A-D]|[1-4])\s*[\.、:：\)]\s*(.+?)\s*$/;
+  const choiceRegex = /^\s*([A-Za-z]|[1-9]\d?)\s*[\.、:：\)]\s*(.+?)\s*$/;
   const collected: ParsedChoice[] = [];
 
   for (let i = lines.length - 1; i >= 0; i--) {

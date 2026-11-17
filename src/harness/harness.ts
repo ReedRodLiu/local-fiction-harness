@@ -14,9 +14,11 @@ import {
   getUncoveredNodes,
   selectNodesToSummarize,
   type ContextBudgetConfig,
+  type ThreeZoneContextResult,
 } from './context.ts';
 import type {
   AbortSignalLike,
+  LlmMessage,
   LlmTransport,
   ModelConfig,
   PlotSummarySnapshot,
@@ -60,6 +62,11 @@ export interface FictionHarness {
   renameStory(id: string, title: string): Promise<Story | null>;
   updateStoryBlueprint(story: Story, blueprint: StoryBlueprint): Promise<Story>;
   deleteStory(id: string): Promise<void>;
+  assembleContext(
+    story: Story,
+    targetParentId?: string | null,
+    userInput?: string,
+  ): ThreeZoneContextResult;
   extractStoryBlueprint(
     rawScript: string,
     config: ModelConfig,
@@ -107,6 +114,36 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     return story;
   };
 
+  const streamText = async (
+    config: ModelConfig,
+    messages: LlmMessage[],
+    callbacks?: TurnCallbacks,
+  ): Promise<{ content: string; reasoningContent: string }> => {
+    let content = '';
+    let reasoningContent = '';
+
+    throwIfAborted(callbacks?.signal);
+    for await (const delta of deps.transport.streamChat({
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      model: config.model,
+      messages,
+      signal: callbacks?.signal,
+    })) {
+      throwIfAborted(callbacks?.signal);
+      if (delta.reasoningDelta) {
+        reasoningContent += delta.reasoningDelta;
+        callbacks?.onReasoningDelta?.(delta.reasoningDelta);
+      }
+      if (delta.contentDelta) {
+        content += delta.contentDelta;
+        callbacks?.onContentDelta?.(delta.contentDelta);
+      }
+    }
+    throwIfAborted(callbacks?.signal);
+    return { content, reasoningContent };
+  };
+
   const summarizeOverflowTurns = async (
     story: Story,
     parentSnapshot: PlotSummarySnapshot,
@@ -123,23 +160,21 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
 
     let compressed = '';
     try {
-      for await (const delta of deps.transport.streamChat({
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        model: config.model,
-        messages: buildSummaryCompressionMessages(parentSnapshot.content, toSummarize),
-        signal,
-      })) {
-        if (signal?.aborted) break;
-        if (delta.contentDelta) {
-          compressed += delta.contentDelta;
-        }
+      const result = await streamText(
+        config,
+        buildSummaryCompressionMessages(parentSnapshot.content, toSummarize),
+        { signal },
+      );
+      compressed = result.content;
+    } catch (err) {
+      if ((err as { name?: string }).name === 'AbortError') {
+        throw err;
       }
-    } catch {
       compressed = '';
     }
 
-    const finalContent = compressed.trim() || buildFallbackSummary(parentSnapshot.content, toSummarize);
+    const finalContent =
+      compressed.trim() || buildFallbackSummary(parentSnapshot.content, toSummarize);
     return {
       content: finalContent,
       coveredUpToNodeId: toSummarize[toSummarize.length - 1].id,
@@ -212,6 +247,14 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       await deps.storage.deleteStory(id);
     },
 
+    assembleContext(
+      story: Story,
+      targetParentId = story.activeLeafNodeId,
+      userInput?: string,
+    ): ThreeZoneContextResult {
+      return assembleThreeZoneContext(story, targetParentId, userInput, deps.contextBudget);
+    },
+
     async extractStoryBlueprint(
       rawScript: string,
       config: ModelConfig,
@@ -223,30 +266,19 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         return createDefaultBlueprint(fallbackTitle);
       }
 
-      throwIfAborted(signal);
-      let rawResponse = '';
-
       try {
-        for await (const delta of deps.transport.streamChat({
-          baseUrl: config.baseUrl,
-          apiKey: config.apiKey,
-          model: config.model,
-          messages: buildBlueprintExtractionMessages(trimmed),
-          signal,
-        })) {
-          throwIfAborted(signal);
-          if (delta.contentDelta) {
-            rawResponse += delta.contentDelta;
-          }
-        }
+        const { content } = await streamText(
+          config,
+          buildBlueprintExtractionMessages(trimmed),
+          { signal },
+        );
+        return parseBlueprintResponse(content, fallbackTitle);
       } catch (err) {
         if ((err as { name?: string }).name === 'AbortError') {
           throw err;
         }
         return createDefaultBlueprint(fallbackTitle);
       }
-
-      return parseBlueprintResponse(rawResponse, fallbackTitle);
     },
 
     async runTurn(
@@ -273,30 +305,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         deps.contextBudget,
       );
 
-      let content = '';
-      let reasoningContent = '';
-
-      throwIfAborted(callbacks?.signal);
-
-      for await (const delta of deps.transport.streamChat({
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        model: config.model,
-        messages,
-        signal: callbacks?.signal,
-      })) {
-        throwIfAborted(callbacks?.signal);
-        if (delta.reasoningDelta) {
-          reasoningContent += delta.reasoningDelta;
-          callbacks?.onReasoningDelta?.(delta.reasoningDelta);
-        }
-        if (delta.contentDelta) {
-          content += delta.contentDelta;
-          callbacks?.onContentDelta?.(delta.contentDelta);
-        }
-      }
-
-      throwIfAborted(callbacks?.signal);
+      const { content, reasoningContent } = await streamText(config, messages, callbacks);
 
       const userCreatedAt = now();
       const userNode: TurnNode = {

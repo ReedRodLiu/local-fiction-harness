@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_MODEL_CONFIG,
-  assembleThreeZoneContext,
   createFictionHarness,
   createModelConfigStore,
   createOpenAiTransport,
@@ -14,6 +13,7 @@ import {
   type Story,
   type StoryBlueprint,
 } from '../harness/index.ts';
+import { ContextOverview } from './ContextOverview.tsx';
 import { ImportPanel } from './ImportPanel.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
@@ -63,9 +63,6 @@ export function App() {
   const [stories, setStories] = useState<Story[]>([]);
   const [story, setStory] = useState<Story>(() => harness.createStory({ title: '新故事' }));
   const [showImport, setShowImport] = useState(false);
-  const [editingBlueprint, setEditingBlueprint] = useState(false);
-  const [bpProtagonistDraft, setBpProtagonistDraft] = useState('');
-  const [bpTaboosDraft, setBpTaboosDraft] = useState('');
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamReasoning, setStreamReasoning] = useState('');
@@ -151,8 +148,8 @@ export function App() {
   const activeNodes = getActiveBranchNodes(story);
   const activeSummary = getActiveSummarySnapshot(story);
   const contextPreview = useMemo(
-    () => assembleThreeZoneContext(story, story.activeLeafNodeId),
-    [story],
+    () => harness.assembleContext(story, story.activeLeafNodeId),
+    [harness, story],
   );
 
   const sendAction = async (userPrompt: string, restoreOnError = false) => {
@@ -211,7 +208,6 @@ export function App() {
     setStory(created);
     await refreshStories();
     setShowImport(false);
-    setEditingBlueprint(false);
     setErrorMsg(null);
   };
 
@@ -220,7 +216,6 @@ export function App() {
     if (switched) {
       setStory(switched);
       setShowImport(false);
-      setEditingBlueprint(false);
       setErrorMsg(null);
     }
   };
@@ -241,25 +236,16 @@ export function App() {
     if (story.id === id) {
       const next = remaining[0] ?? harness.createStory({ title: '新故事' });
       setStory(next);
-      setEditingBlueprint(false);
       if (remaining[0]) {
         await harness.setActiveStory(remaining[0].id);
       }
     }
   };
 
-  const handleSaveBlueprintTweak = async () => {
-    const updated = await harness.updateStoryBlueprint(story, {
-      ...story.blueprint,
-      protagonist: bpProtagonistDraft.trim(),
-      taboos: bpTaboosDraft
-        .split(/\r?\n/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    });
+  const handleSaveBlueprintTweak = async (updatedBlueprint: StoryBlueprint) => {
+    const updated = await harness.updateStoryBlueprint(story, updatedBlueprint);
     setStory(updated);
     await refreshStories();
-    setEditingBlueprint(false);
   };
 
   const handleExportBackup = () => {
@@ -422,113 +408,12 @@ export function App() {
           />
         ) : (
           <>
-            {(story.rawScript || story.blueprint.worldRules.length > 0) && (
-              <details className="reasoning-details">
-                <summary>
-                  故事蓝图与原始剧本锚定（原文 {story.rawScript.length} 字符）
-                </summary>
-                <div className="blueprint-summary">
-                  {editingBlueprint ? (
-                    <div className="config-form" style={{ marginTop: '0.5rem' }}>
-                      <div className="field">
-                        <label htmlFor="tweak-protagonist">微调主角设定</label>
-                        <input
-                          id="tweak-protagonist"
-                          type="text"
-                          value={bpProtagonistDraft}
-                          onChange={(e) => setBpProtagonistDraft(e.target.value)}
-                        />
-                      </div>
-                      <div className="field">
-                        <label htmlFor="tweak-taboos">微调禁忌条款（每行一条）</label>
-                        <textarea
-                          id="tweak-taboos"
-                          rows={2}
-                          value={bpTaboosDraft}
-                          onChange={(e) => setBpTaboosDraft(e.target.value)}
-                        />
-                      </div>
-                      <div className="btn-group">
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-primary"
-                          onClick={() => void handleSaveBlueprintTweak()}
-                        >
-                          保存蓝图微调
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={() => setEditingBlueprint(false)}
-                        >
-                          取消
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      {story.blueprint.protagonist && (
-                        <p>
-                          <strong>主角：</strong>
-                          {story.blueprint.protagonist}
-                        </p>
-                      )}
-                      {story.blueprint.worldRules.length > 0 && (
-                        <p>
-                          <strong>规则：</strong>
-                          {story.blueprint.worldRules.join('；')}
-                        </p>
-                      )}
-                      {story.blueprint.taboos.length > 0 && (
-                        <p>
-                          <strong>禁忌：</strong>
-                          {story.blueprint.taboos.join('；')}
-                        </p>
-                      )}
-                      {story.blueprint.npcs.length > 0 && (
-                        <p>
-                          <strong>角色：</strong>
-                          {story.blueprint.npcs
-                            .map((n) => `${n.name}${n.role ? `(${n.role})` : ''}`)
-                            .join('、')}
-                        </p>
-                      )}
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        onClick={() => {
-                          setBpProtagonistDraft(story.blueprint.protagonist);
-                          setBpTaboosDraft(story.blueprint.taboos.join('\n'));
-                          setEditingBlueprint(true);
-                        }}
-                      >
-                        微调蓝图
-                      </button>
-                    </>
-                  )}
-                </div>
-              </details>
-            )}
-
-            <details className="reasoning-details" data-testid="context-overview">
-              <summary>
-                三区上下文与剧情摘要（估算 {contextPreview.metrics.totalEstimatedTokens} tokens · 已压缩{' '}
-                {activeSummary.summarizedTurnCount} 条历史）
-              </summary>
-              <div className="blueprint-summary">
-                <p>
-                  <strong>三区占比：</strong>
-                  固定锚定 {contextPreview.metrics.anchorChars} 字 / 滚动摘要{' '}
-                  {contextPreview.metrics.summaryChars} 字 / 近期窗口{' '}
-                  {contextPreview.metrics.recentNodeCount} 条（{contextPreview.metrics.recentChars}{' '}
-                  字）
-                </p>
-                <p data-testid="active-plot-summary">
-                  <strong>当前剧情摘要：</strong>
-                  {activeSummary.content || '尚未触发压缩（近期窗口内保留完整对话）'}
-                </p>
-              </div>
-            </details>
+            <ContextOverview
+              story={story}
+              summarySnapshot={activeSummary}
+              metrics={contextPreview.metrics}
+              onSaveBlueprintTweak={handleSaveBlueprintTweak}
+            />
 
             <section className="timeline" aria-label="故事对话记录">
               {activeNodes.length === 0 && !isStreaming && (

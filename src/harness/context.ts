@@ -1,6 +1,9 @@
 import { formatConfirmedBlueprintAnchor } from './blueprint.ts';
 import type { LlmMessage, PlotSummarySnapshot, Story, TurnNode } from './types.ts';
 
+const ESTIMATED_TOKENS_PER_CHAR = 0.65;
+const MIN_RECENT_NODES_PER_TURN = 2;
+
 export interface ContextBudgetConfig {
   recentMaxNodes: number;
   recentMaxChars: number;
@@ -30,9 +33,9 @@ export const EMPTY_SUMMARY_SNAPSHOT: PlotSummarySnapshot = {
   summarizedTurnCount: 0,
 };
 
-export function estimateTokens(text: string): number {
-  if (!text) return 0;
-  return Math.ceil(text.length * 0.65);
+export function estimateTokensFromChars(charCount: number): number {
+  if (charCount <= 0) return 0;
+  return Math.ceil(charCount * ESTIMATED_TOKENS_PER_CHAR);
 }
 
 /**
@@ -87,7 +90,7 @@ export function getUncoveredNodes(
 export function buildSystemAnchorPrompt(story: Story): string {
   const sections: string[] = [
     '你正在运行一个本地优先交互式文游播放器，请严格遵循以下剧本设定与交互原则：',
-    '- 始终保持角色一致性与设定约束，不要替玩家代操抉择。',
+    '- 始终保持角色一致性（防 OOC）与设定约束，不要替玩家代操抉择。',
   ];
 
   const blueprintSummary = formatConfirmedBlueprintAnchor(story.blueprint);
@@ -102,13 +105,21 @@ export function buildSystemAnchorPrompt(story: Story): string {
   return sections.join('\n\n');
 }
 
-function trimRecentWindow(nodes: TurnNode[], budget: ContextBudgetConfig): TurnNode[] {
-  if (nodes.length === 0) return [];
-  const maxNodes = Math.max(2, budget.recentMaxNodes);
-  let windowed = nodes.length > maxNodes ? nodes.slice(nodes.length - maxNodes) : [...nodes];
+function sumNodeChars(nodes: readonly TurnNode[]): number {
+  return nodes.reduce((sum, n) => sum + n.content.length, 0);
+}
 
-  let totalChars = windowed.reduce((sum, n) => sum + n.content.length, 0);
-  while (windowed.length > 2 && totalChars > budget.recentMaxChars) {
+function trimRecentWindow(
+  nodes: TurnNode[],
+  budget: ContextBudgetConfig,
+  pendingUserChars: number,
+): TurnNode[] {
+  if (nodes.length === 0) return [];
+  const maxNodes = Math.max(MIN_RECENT_NODES_PER_TURN, budget.recentMaxNodes);
+  const windowed = nodes.length > maxNodes ? nodes.slice(nodes.length - maxNodes) : [...nodes];
+
+  let totalChars = sumNodeChars(windowed) + pendingUserChars;
+  while (windowed.length > MIN_RECENT_NODES_PER_TURN && totalChars > budget.recentMaxChars) {
     const removed = windowed.shift()!;
     totalChars -= removed.content.length;
   }
@@ -130,7 +141,8 @@ export function assembleThreeZoneContext(
   const snapshot = getActiveSummarySnapshot(story, targetParentId);
   const branchNodes = getActiveBranchNodes(story, targetParentId);
   const uncovered = getUncoveredNodes(branchNodes, snapshot.coveredUpToNodeId);
-  const recentNodes = trimRecentWindow(uncovered, budget);
+  const trimmedInput = userInput?.trim() ?? '';
+  const recentNodes = trimRecentWindow(uncovered, budget, trimmedInput.length);
 
   const messages: LlmMessage[] = [{ role: 'system', content: anchorText }];
   let summaryChars = 0;
@@ -150,10 +162,9 @@ export function assembleThreeZoneContext(
     });
   }
 
-  if (userInput !== undefined && userInput.trim()) {
-    const trimmed = userInput.trim();
-    recentChars += trimmed.length;
-    messages.push({ role: 'user', content: trimmed });
+  if (trimmedInput) {
+    recentChars += trimmedInput.length;
+    messages.push({ role: 'user', content: trimmedInput });
   }
 
   const totalChars = anchorText.length + summaryChars + recentChars;
@@ -164,7 +175,7 @@ export function assembleThreeZoneContext(
       summaryChars,
       recentChars,
       recentNodeCount: recentNodes.length,
-      totalEstimatedTokens: estimateTokens('x'.repeat(totalChars)),
+      totalEstimatedTokens: estimateTokensFromChars(totalChars),
     },
   };
 }
@@ -178,32 +189,26 @@ export function selectNodesToSummarize(
   budgetOverrides?: Partial<ContextBudgetConfig>,
 ): TurnNode[] {
   const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...budgetOverrides };
-  const totalChars = uncoveredNodes.reduce((sum, n) => sum + n.content.length, 0);
+  const maxNodes = Math.max(MIN_RECENT_NODES_PER_TURN, budget.recentMaxNodes);
+  const totalChars = sumNodeChars(uncoveredNodes);
 
-  if (uncoveredNodes.length <= budget.recentMaxNodes && totalChars <= budget.recentMaxChars) {
+  if (uncoveredNodes.length <= maxNodes && totalChars <= budget.recentMaxChars) {
     return [];
   }
 
-  // Keep at least the latest turn pair (2 nodes) in the recent window when possible
-  const maxCutEnd = Math.max(0, uncoveredNodes.length - 2);
-  if (maxCutEnd < 2) {
+  // Keep at least the latest turn pair in the recent window when possible
+  const maxCutEnd = Math.max(0, uncoveredNodes.length - MIN_RECENT_NODES_PER_TURN);
+  if (maxCutEnd < MIN_RECENT_NODES_PER_TURN) {
     return [];
   }
 
-  let cutCount = Math.max(2, uncoveredNodes.length - budget.recentMaxNodes);
-  if (cutCount > maxCutEnd) {
-    cutCount = maxCutEnd;
-  }
-
-  let remainingChars = uncoveredNodes
-    .slice(cutCount)
-    .reduce((sum, n) => sum + n.content.length, 0);
+  let cutCount = Math.min(maxCutEnd, Math.max(MIN_RECENT_NODES_PER_TURN, uncoveredNodes.length - maxNodes));
+  let remainingChars = sumNodeChars(uncoveredNodes.slice(cutCount));
   while (cutCount < maxCutEnd && remainingChars > budget.recentMaxChars) {
     remainingChars -= uncoveredNodes[cutCount].content.length;
     cutCount += 1;
   }
 
-  // Align cut boundary to an assistant turn when available
   if (uncoveredNodes[cutCount - 1]?.role !== 'assistant' && cutCount + 1 <= maxCutEnd) {
     cutCount += 1;
   }
