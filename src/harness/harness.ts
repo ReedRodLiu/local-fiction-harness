@@ -1,4 +1,11 @@
+import {
+  buildBlueprintExtractionMessages,
+  createDefaultBlueprint,
+  formatConfirmedBlueprintAnchor,
+  parseBlueprintResponse,
+} from './blueprint.ts';
 import type {
+  AbortSignalLike,
   LlmMessage,
   LlmTransport,
   ModelConfig,
@@ -36,22 +43,21 @@ function defaultCreateId(): string {
   return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export function createDefaultBlueprint(title: string): StoryBlueprint {
-  return {
-    title,
-    worldRules: [],
-    protagonist: '',
-    npcs: [],
-    taboos: [],
-    openingHook: '',
-    extractionStatus: 'partial_fallback',
-  };
+function throwIfAborted(signal?: AbortSignalLike): void {
+  if (signal?.aborted) {
+    const abortError = new Error('Operation aborted.');
+    abortError.name = 'AbortError';
+    throw abortError;
+  }
 }
 
 /**
  * Walks from the target leaf node back to the root to reconstruct the linear active branch.
  */
-export function getActiveBranchNodes(story: Story, leafId: string | null = story.activeLeafNodeId): TurnNode[] {
+export function getActiveBranchNodes(
+  story: Story,
+  leafId: string | null = story.activeLeafNodeId,
+): TurnNode[] {
   const path: TurnNode[] = [];
   const visited = new Set<string>();
   let cursor = leafId;
@@ -78,6 +84,11 @@ function buildSystemAnchorPrompt(story: Story): string {
     '- 始终保持角色一致性与设定约束，不要替玩家代操抉择。',
   ];
 
+  const blueprintSummary = formatConfirmedBlueprintAnchor(story.blueprint);
+  if (blueprintSummary) {
+    sections.push(`## 已确认故事蓝图\n${blueprintSummary}`);
+  }
+
   if (story.rawScript.trim()) {
     sections.push(`## 原始剧本全文（最高权威锚定）\n${story.rawScript.trim()}`);
   }
@@ -87,6 +98,12 @@ function buildSystemAnchorPrompt(story: Story): string {
 
 export interface FictionHarness {
   createStory(input: CreateStoryInput): Story;
+  extractStoryBlueprint(
+    rawScript: string,
+    config: ModelConfig,
+    fallbackTitle?: string,
+    signal?: AbortSignalLike,
+  ): Promise<StoryBlueprint>;
   runTurn(
     story: Story,
     userInput: string,
@@ -105,7 +122,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
   return {
     createStory(input: CreateStoryInput): Story {
       const timestamp = now();
-      const title = input.title.trim() || '未命名故事';
+      const title = input.title.trim() || '未命名剧本';
       return {
         id: createId(),
         title,
@@ -117,6 +134,43 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         createdAt: timestamp,
         updatedAt: timestamp,
       };
+    },
+
+    async extractStoryBlueprint(
+      rawScript: string,
+      config: ModelConfig,
+      fallbackTitle = '未命名剧本',
+      signal?: AbortSignalLike,
+    ): Promise<StoryBlueprint> {
+      const trimmed = rawScript.trim();
+      if (!trimmed) {
+        return createDefaultBlueprint(fallbackTitle);
+      }
+
+      throwIfAborted(signal);
+      let rawResponse = '';
+
+      try {
+        for await (const delta of deps.transport.streamChat({
+          baseUrl: config.baseUrl,
+          apiKey: config.apiKey,
+          model: config.model,
+          messages: buildBlueprintExtractionMessages(trimmed),
+          signal,
+        })) {
+          throwIfAborted(signal);
+          if (delta.contentDelta) {
+            rawResponse += delta.contentDelta;
+          }
+        }
+      } catch (err) {
+        if ((err as { name?: string }).name === 'AbortError') {
+          throw err;
+        }
+        return createDefaultBlueprint(fallbackTitle);
+      }
+
+      return parseBlueprintResponse(rawResponse, fallbackTitle);
     },
 
     async runTurn(
@@ -131,9 +185,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       }
 
       const parentId = story.activeLeafNodeId;
-      const parentSnapshot = parentId && story.nodes[parentId]
-        ? story.nodes[parentId].summarySnapshot
-        : EMPTY_SUMMARY;
+      const parentSnapshot =
+        parentId && story.nodes[parentId] ? story.nodes[parentId].summarySnapshot : EMPTY_SUMMARY;
 
       const historyNodes = getActiveBranchNodes(story, parentId);
       const messages: LlmMessage[] = [
@@ -148,15 +201,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       let content = '';
       let reasoningContent = '';
 
-      const throwIfAborted = () => {
-        if (callbacks?.signal?.aborted) {
-          const abortError = new Error('Turn generation aborted.');
-          abortError.name = 'AbortError';
-          throw abortError;
-        }
-      };
-
-      throwIfAborted();
+      throwIfAborted(callbacks?.signal);
 
       for await (const delta of deps.transport.streamChat({
         baseUrl: config.baseUrl,
@@ -165,7 +210,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         messages,
         signal: callbacks?.signal,
       })) {
-        throwIfAborted();
+        throwIfAborted(callbacks?.signal);
         if (delta.reasoningDelta) {
           reasoningContent += delta.reasoningDelta;
           callbacks?.onReasoningDelta?.(delta.reasoningDelta);
@@ -176,7 +221,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         }
       }
 
-      throwIfAborted();
+      throwIfAborted(callbacks?.signal);
 
       const userCreatedAt = now();
       const userNode: TurnNode = {
