@@ -7,16 +7,19 @@ import {
   exportStoryBackup,
   getActiveBranchNodes,
   getActiveSummarySnapshot,
+  getSiblingBranchInfo,
   importStoryBackup,
   type FetchLike,
   type ModelConfig,
   type Story,
   type StoryBlueprint,
+  type TurnExecutionResult,
 } from '../harness/index.ts';
 import { ContextOverview } from './ContextOverview.tsx';
 import { ImportPanel } from './ImportPanel.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
+import { TurnCard } from './TurnCard.tsx';
 import { createIndexedDbStoryStorage } from './indexedDbStorage.ts';
 
 interface DevTestConfigResponse {
@@ -152,29 +155,21 @@ export function App() {
     [harness, story],
   );
 
-  const sendAction = async (userPrompt: string, restoreOnError = false) => {
-    const trimmed = userPrompt.trim();
-    if (!trimmed || isStreaming) {
-      return;
-    }
-
+  const runStreamingExecution = async (
+    execute: (signal: AbortSignal) => Promise<TurnExecutionResult>,
+    onErrorRestore?: () => void,
+  ) => {
+    if (isStreaming) return;
     setErrorMsg(null);
     setIsStreaming(true);
     setStreamReasoning('');
     setStreamContent('');
-    if (restoreOnError) {
-      setInput('');
-    }
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
-      const result = await harness.runTurn(story, trimmed, config, {
-        signal: controller.signal,
-        onReasoningDelta: (delta) => setStreamReasoning((prev) => prev + delta),
-        onContentDelta: (delta) => setStreamContent((prev) => prev + delta),
-      });
+      const result = await execute(controller.signal);
       setStory(result.story);
       await refreshStories();
       setStreamReasoning('');
@@ -185,13 +180,62 @@ export function App() {
       } else {
         setErrorMsg(err instanceof Error ? err.message : '生成失败，请检查模型端点与配置。');
       }
-      if (restoreOnError) {
-        setInput(trimmed);
-      }
+      onErrorRestore?.();
     } finally {
       abortRef.current = null;
       setIsStreaming(false);
     }
+  };
+
+  const sendAction = async (userPrompt: string, restoreOnError = false) => {
+    const trimmed = userPrompt.trim();
+    if (!trimmed) return;
+    if (restoreOnError) {
+      setInput('');
+    }
+    await runStreamingExecution(
+      (signal) =>
+        harness.runTurn(story, trimmed, config, {
+          signal,
+          onReasoningDelta: (delta) => setStreamReasoning((prev) => prev + delta),
+          onContentDelta: (delta) => setStreamContent((prev) => prev + delta),
+        }),
+      restoreOnError ? () => setInput(trimmed) : undefined,
+    );
+  };
+
+  const handleEditAndBranch = async (targetUserNodeId: string, newContent: string) => {
+    const trimmed = newContent.trim();
+    if (!trimmed) return;
+    await runStreamingExecution((signal) =>
+      harness.editAndBranch(story, targetUserNodeId, trimmed, config, {
+        signal,
+        onReasoningDelta: (delta) => setStreamReasoning((prev) => prev + delta),
+        onContentDelta: (delta) => setStreamContent((prev) => prev + delta),
+      }),
+    );
+  };
+
+  const handleRegenerateNode = async (targetAssistantNodeId: string) => {
+    await runStreamingExecution((signal) =>
+      harness.regenerateNode(story, targetAssistantNodeId, config, {
+        signal,
+        onReasoningDelta: (delta) => setStreamReasoning((prev) => prev + delta),
+        onContentDelta: (delta) => setStreamContent((prev) => prev + delta),
+      }),
+    );
+  };
+
+  const handleSwitchBranch = async (targetNodeId: string) => {
+    const updated = await harness.switchBranch(story, targetNodeId);
+    setStory(updated);
+    await refreshStories();
+  };
+
+  const handleRewindToNode = async (targetNodeId: string) => {
+    const updated = await harness.rewindToNode(story, targetNodeId);
+    setStory(updated);
+    await refreshStories();
   };
 
   const handleSubmit = (e?: React.FormEvent) => {
@@ -413,6 +457,7 @@ export function App() {
               summarySnapshot={activeSummary}
               metrics={contextPreview.metrics}
               onSaveBlueprintTweak={handleSaveBlueprintTweak}
+              onSwitchBranch={(id) => void handleSwitchBranch(id)}
             />
 
             <section className="timeline" aria-label="故事对话记录">
@@ -443,30 +488,20 @@ export function App() {
                 </div>
               )}
 
-              {activeNodes.map((node) => {
-                const isActiveLeaf = node.id === story.activeLeafNodeId;
-                return (
-                  <article key={node.id} className={`turn-card ${node.role}`}>
-                    <div className="turn-role">{node.role === 'user' ? '玩家' : '叙事 AI'}</div>
-                    {node.reasoningContent && (
-                      <details className="reasoning-details">
-                        <summary>思考过程（不回传后续上下文）</summary>
-                        <div className="reasoning-content">{node.reasoningContent}</div>
-                      </details>
-                    )}
-                    {node.role === 'assistant' ? (
-                      <MessageContent
-                        content={node.content}
-                        showChoices={isActiveLeaf}
-                        disabled={isStreaming}
-                        onSelectChoice={(choiceText) => void sendAction(choiceText)}
-                      />
-                    ) : (
-                      <div className="turn-body">{node.content}</div>
-                    )}
-                  </article>
-                );
-              })}
+              {activeNodes.map((node) => (
+                <TurnCard
+                  key={node.id}
+                  node={node}
+                  isActiveLeaf={node.id === story.activeLeafNodeId}
+                  isStreaming={isStreaming}
+                  siblings={getSiblingBranchInfo(story, node.id)}
+                  onSelectChoice={(choiceText) => void sendAction(choiceText)}
+                  onSwitchBranch={(targetId) => void handleSwitchBranch(targetId)}
+                  onEditAndBranch={(nodeId, text) => void handleEditAndBranch(nodeId, text)}
+                  onRegenerate={(nodeId) => void handleRegenerateNode(nodeId)}
+                  onRewindToNode={(nodeId) => void handleRewindToNode(nodeId)}
+                />
+              ))}
 
               {isStreaming && (
                 <article className="turn-card assistant" aria-live="polite">

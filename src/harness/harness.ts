@@ -5,6 +5,7 @@ import {
   createDefaultBlueprint,
   parseBlueprintResponse,
 } from './blueprint.ts';
+import { findLeafForBranchNode } from './branches.ts';
 import {
   EMPTY_SUMMARY_SNAPSHOT,
   assembleThreeZoneContext,
@@ -79,6 +80,21 @@ export interface FictionHarness {
     config: ModelConfig,
     callbacks?: TurnCallbacks,
   ): Promise<TurnExecutionResult>;
+  editAndBranch(
+    story: Story,
+    targetUserNodeId: string,
+    newInput: string,
+    config: ModelConfig,
+    callbacks?: TurnCallbacks,
+  ): Promise<TurnExecutionResult>;
+  regenerateNode(
+    story: Story,
+    targetAssistantNodeId: string,
+    config: ModelConfig,
+    callbacks?: TurnCallbacks,
+  ): Promise<TurnExecutionResult>;
+  switchBranch(story: Story, targetNodeId: string): Promise<Story>;
+  rewindToNode(story: Story, targetNodeId: string): Promise<Story>;
 }
 
 /**
@@ -180,6 +196,115 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       coveredUpToNodeId: toSummarize[toSummarize.length - 1].id,
       summarizedTurnCount: parentSnapshot.summarizedTurnCount + toSummarize.length,
     };
+  };
+
+  const finalizeAssistantReply = async (opts: {
+    baseStory: Story;
+    userNode: TurnNode;
+    baseSnapshot: PlotSummarySnapshot;
+    content: string;
+    reasoningContent: string;
+    extraNodes: Record<string, TurnNode>;
+    rootNodeIds: string[];
+    config: ModelConfig;
+    signal?: AbortSignalLike;
+  }): Promise<TurnExecutionResult> => {
+    const assistantCreatedAt = now();
+    const initialAssistantNode: TurnNode = {
+      id: createId(),
+      parentId: opts.userNode.id,
+      role: 'assistant',
+      content: opts.content,
+      ...(opts.reasoningContent ? { reasoningContent: opts.reasoningContent } : {}),
+      createdAt: assistantCreatedAt,
+      summarySnapshot: opts.baseSnapshot,
+    };
+
+    const provisionalStory: Story = {
+      ...opts.baseStory,
+      nodes: {
+        ...opts.baseStory.nodes,
+        ...opts.extraNodes,
+        [initialAssistantNode.id]: initialAssistantNode,
+      },
+      rootNodeIds: opts.rootNodeIds,
+      activeLeafNodeId: initialAssistantNode.id,
+      updatedAt: assistantCreatedAt,
+    };
+
+    const updatedSnapshot = await summarizeOverflowTurns(
+      provisionalStory,
+      opts.baseSnapshot,
+      opts.config,
+      opts.signal,
+    );
+
+    const finalAssistantNode: TurnNode =
+      updatedSnapshot === opts.baseSnapshot
+        ? initialAssistantNode
+        : { ...initialAssistantNode, summarySnapshot: updatedSnapshot };
+
+    const updatedStory: Story =
+      finalAssistantNode === initialAssistantNode
+        ? provisionalStory
+        : {
+            ...provisionalStory,
+            nodes: {
+              ...provisionalStory.nodes,
+              [finalAssistantNode.id]: finalAssistantNode,
+            },
+          };
+
+    await persistStory(updatedStory, true);
+
+    return {
+      userNode: opts.userNode,
+      assistantNode: finalAssistantNode,
+      story: updatedStory,
+    };
+  };
+
+  const executeTurnFromParent = async (
+    story: Story,
+    parentId: string | null,
+    trimmedInput: string,
+    config: ModelConfig,
+    callbacks?: TurnCallbacks,
+  ): Promise<TurnExecutionResult> => {
+    const parentSnapshot =
+      parentId && story.nodes[parentId]
+        ? story.nodes[parentId].summarySnapshot
+        : EMPTY_SUMMARY_SNAPSHOT;
+
+    const { messages } = assembleThreeZoneContext(
+      story,
+      parentId,
+      trimmedInput,
+      deps.contextBudget,
+    );
+
+    const { content, reasoningContent } = await streamText(config, messages, callbacks);
+
+    const userNode: TurnNode = {
+      id: createId(),
+      parentId,
+      role: 'user',
+      content: trimmedInput,
+      createdAt: now(),
+      summarySnapshot: parentSnapshot,
+    };
+
+    return finalizeAssistantReply({
+      baseStory: story,
+      userNode,
+      baseSnapshot: parentSnapshot,
+      content,
+      reasoningContent,
+      extraNodes: { [userNode.id]: userNode },
+      rootNodeIds: parentId === null ? [...story.rootNodeIds, userNode.id] : story.rootNodeIds,
+      config,
+      signal: callbacks?.signal,
+    });
   };
 
   return {
@@ -291,85 +416,86 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       if (!trimmedInput) {
         throw new Error('Player input cannot be empty.');
       }
+      return executeTurnFromParent(story, story.activeLeafNodeId, trimmedInput, config, callbacks);
+    },
 
-      const parentId = story.activeLeafNodeId;
-      const parentSnapshot =
-        parentId && story.nodes[parentId]
-          ? story.nodes[parentId].summarySnapshot
-          : EMPTY_SUMMARY_SNAPSHOT;
+    async editAndBranch(
+      story: Story,
+      targetUserNodeId: string,
+      newInput: string,
+      config: ModelConfig,
+      callbacks?: TurnCallbacks,
+    ): Promise<TurnExecutionResult> {
+      const targetNode = story.nodes[targetUserNodeId];
+      if (!targetNode || targetNode.role !== 'user') {
+        throw new Error('只能从玩家节点发起编辑重发分支。');
+      }
+      const trimmedInput = newInput.trim();
+      if (!trimmedInput) {
+        throw new Error('Player input cannot be empty.');
+      }
+      return executeTurnFromParent(story, targetNode.parentId, trimmedInput, config, callbacks);
+    },
+
+    async regenerateNode(
+      story: Story,
+      targetAssistantNodeId: string,
+      config: ModelConfig,
+      callbacks?: TurnCallbacks,
+    ): Promise<TurnExecutionResult> {
+      const targetNode = story.nodes[targetAssistantNodeId];
+      if (!targetNode || targetNode.role !== 'assistant' || !targetNode.parentId) {
+        throw new Error('只能针对有效的 AI 回复节点重新生成分支。');
+      }
+      const userNode = story.nodes[targetNode.parentId];
+      if (!userNode || userNode.role !== 'user') {
+        throw new Error('AI 节点缺少关联的玩家输入父节点。');
+      }
 
       const { messages } = assembleThreeZoneContext(
         story,
-        parentId,
-        trimmedInput,
+        userNode.id,
+        undefined,
         deps.contextBudget,
       );
-
       const { content, reasoningContent } = await streamText(config, messages, callbacks);
 
-      const userCreatedAt = now();
-      const userNode: TurnNode = {
-        id: createId(),
-        parentId,
-        role: 'user',
-        content: trimmedInput,
-        createdAt: userCreatedAt,
-        summarySnapshot: parentSnapshot,
-      };
-
-      const assistantCreatedAt = now();
-      const initialAssistantNode: TurnNode = {
-        id: createId(),
-        parentId: userNode.id,
-        role: 'assistant',
-        content,
-        ...(reasoningContent ? { reasoningContent } : {}),
-        createdAt: assistantCreatedAt,
-        summarySnapshot: parentSnapshot,
-      };
-
-      const provisionalStory: Story = {
-        ...story,
-        nodes: {
-          ...story.nodes,
-          [userNode.id]: userNode,
-          [initialAssistantNode.id]: initialAssistantNode,
-        },
-        rootNodeIds: parentId === null ? [...story.rootNodeIds, userNode.id] : story.rootNodeIds,
-        activeLeafNodeId: initialAssistantNode.id,
-        updatedAt: assistantCreatedAt,
-      };
-
-      const updatedSnapshot = await summarizeOverflowTurns(
-        provisionalStory,
-        parentSnapshot,
-        config,
-        callbacks?.signal,
-      );
-
-      const finalAssistantNode: TurnNode =
-        updatedSnapshot === parentSnapshot
-          ? initialAssistantNode
-          : { ...initialAssistantNode, summarySnapshot: updatedSnapshot };
-
-      const updatedStory: Story =
-        finalAssistantNode === initialAssistantNode
-          ? provisionalStory
-          : {
-              ...provisionalStory,
-              nodes: {
-                ...provisionalStory.nodes,
-                [finalAssistantNode.id]: finalAssistantNode,
-              },
-            };
-
-      await persistStory(updatedStory, true);
-
-      return {
+      return finalizeAssistantReply({
+        baseStory: story,
         userNode,
-        assistantNode: finalAssistantNode,
-        story: updatedStory,
+        baseSnapshot: userNode.summarySnapshot,
+        content,
+        reasoningContent,
+        extraNodes: {},
+        rootNodeIds: story.rootNodeIds,
+        config,
+        signal: callbacks?.signal,
+      });
+    },
+
+    async switchBranch(story: Story, targetNodeId: string): Promise<Story> {
+      const leafId = findLeafForBranchNode(story, targetNodeId);
+      if (!leafId) {
+        throw new Error(`目标分支节点 ${targetNodeId} 不存在。`);
+      }
+      const updated: Story = {
+        ...story,
+        activeLeafNodeId: leafId,
+        updatedAt: now(),
       };
+      return persistStory(updated, true);
+    },
+
+    async rewindToNode(story: Story, targetNodeId: string): Promise<Story> {
+      if (!story.nodes[targetNodeId]) {
+        throw new Error(`目标回溯节点 ${targetNodeId} 不存在。`);
+      }
+      const updated: Story = {
+        ...story,
+        activeLeafNodeId: targetNodeId,
+        updatedAt: now(),
+      };
+      return persistStory(updated, true);
     },
   };
 }

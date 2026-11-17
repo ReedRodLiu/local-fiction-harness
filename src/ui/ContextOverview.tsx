@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import type {
-  PlotSummarySnapshot,
-  Story,
-  StoryBlueprint,
-  ThreeZoneMetrics,
+import {
+  getBranchTreeSummary,
+  type PlotSummarySnapshot,
+  type Story,
+  type StoryBlueprint,
+  type ThreeZoneMetrics,
 } from '../harness/index.ts';
 
 interface ContextOverviewProps {
@@ -11,6 +12,7 @@ interface ContextOverviewProps {
   summarySnapshot: PlotSummarySnapshot;
   metrics: ThreeZoneMetrics;
   onSaveBlueprintTweak: (updatedBlueprint: StoryBlueprint) => Promise<void>;
+  onSwitchBranch: (targetNodeId: string) => void;
 }
 
 export function ContextOverview({
@@ -18,6 +20,7 @@ export function ContextOverview({
   summarySnapshot,
   metrics,
   onSaveBlueprintTweak,
+  onSwitchBranch,
 }: ContextOverviewProps) {
   const [editingBlueprint, setEditingBlueprint] = useState(false);
   const [protagonistDraft, setProtagonistDraft] = useState('');
@@ -25,6 +28,7 @@ export function ContextOverview({
 
   const hasBlueprintOrScript =
     Boolean(story.rawScript) || story.blueprint.worldRules.length > 0;
+  const branchLeaves = getBranchTreeSummary(story);
 
   return (
     <div className="overview-stack">
@@ -128,7 +132,7 @@ export function ContextOverview({
       <details className="reasoning-details" data-testid="context-overview">
         <summary>
           三区上下文与剧情摘要（估算 {metrics.totalEstimatedTokens} tokens · 已压缩{' '}
-          {summarySnapshot.summarizedTurnCount} 条历史）
+          {summarySnapshot.summarizedTurnCount} 条历史 · {branchLeaves.length} 条分支）
         </summary>
         <div className="blueprint-summary">
           <p>
@@ -140,6 +144,24 @@ export function ContextOverview({
             <strong>当前剧情摘要：</strong>
             {summarySnapshot.content || '尚未触发压缩（近期窗口内保留完整对话）'}
           </p>
+          {branchLeaves.length > 1 && (
+            <div className="branch-tree-list" aria-label="平行分支树概览">
+              <strong>平行分支概览：</strong>
+              <ul>
+                {branchLeaves.map((branch, idx) => (
+                  <li key={branch.leafId}>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${branch.isActive ? 'btn-primary' : ''}`}
+                      onClick={() => onSwitchBranch(branch.leafId)}
+                    >
+                      分支 {idx + 1}（{branch.turnCount} 轮）：{branch.preview}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </details>
     </div>
