@@ -1,0 +1,19 @@
+# OS & editor
+.DS_Store
+**/.DS_Store
+
+# Environment & local secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies & build outputs
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+
+# Local private corpus & chat exports (never commit or push)
+docs/文游500篇/
+docs/chatgpt-开源项目商用分析/
