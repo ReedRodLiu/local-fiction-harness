@@ -17,7 +17,7 @@ function buildSyntheticDocx(): Uint8Array {
       <w:r><w:t>第一章：规则总纲 &amp; 禁忌</w:t></w:r>
     </w:p>
     <w:p>
-      <w:r><w:t>每次输出必须附带状态栏。</w:t></w:r>
+      <w:r><w:t>每次输出必须附带状态栏。</w:t><w:br/><w:t>第二行</w:t><w:tab/><w:t>对齐</w:t></w:r>
     </w:p>
     <w:tbl>
       <w:tr>
@@ -50,9 +50,19 @@ describe('Slice 2: Free-format script parsing (.docx / .md / .txt / paste)', () 
 
     expect(parsed.suggestedTitle).toBe('宫廷测试');
     expect(parsed.rawScript).toContain('## 第一章：规则总纲 & 禁忌');
-    expect(parsed.rawScript).toContain('每次输出必须附带状态栏。');
+    expect(parsed.rawScript).toContain('每次输出必须附带状态栏。\n第二行\t对齐');
     expect(parsed.rawScript).toContain('| 角色 | 好感度 | 备注 |');
     expect(parsed.rawScript).toContain('| 沈砚 | 20 | 表面冷淡 |');
+  });
+
+  it('parses pasted script text and derives suggested title cleanly', () => {
+    const pasted = parseScriptInput({
+      kind: 'paste',
+      text: '【海岛恋综测试】\r\n规则一：每晚匿名投票。\r\nA. 邀请对话\r\nB. 独自离开',
+    });
+    expect(pasted.sourceType).toBe('paste');
+    expect(pasted.suggestedTitle).toBe('海岛恋综测试');
+    expect(pasted.rawScript).toContain('规则一：每晚匿名投票。');
   });
 
   it('decodes UTF-8 and falls back to GB18030 for legacy .txt files while preserving markers', async () => {

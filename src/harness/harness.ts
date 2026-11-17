@@ -1,3 +1,4 @@
+import { DEFAULT_STORY_TITLE } from './scriptParser.ts';
 import {
   buildBlueprintExtractionMessages,
   createDefaultBlueprint,
@@ -122,7 +123,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
   return {
     createStory(input: CreateStoryInput): Story {
       const timestamp = now();
-      const title = input.title.trim() || '未命名剧本';
+      const title = input.title.trim() || DEFAULT_STORY_TITLE;
       return {
         id: createId(),
         title,
@@ -139,7 +140,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     async extractStoryBlueprint(
       rawScript: string,
       config: ModelConfig,
-      fallbackTitle = '未命名剧本',
+      fallbackTitle = DEFAULT_STORY_TITLE,
       signal?: AbortSignalLike,
     ): Promise<StoryBlueprint> {
       const trimmed = rawScript.trim();

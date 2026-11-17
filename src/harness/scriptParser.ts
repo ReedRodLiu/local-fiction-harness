@@ -1,4 +1,7 @@
 import { unzipSync } from 'fflate';
+import { decodeUtf8WithGbFallback } from './encoding.ts';
+
+export const DEFAULT_STORY_TITLE = '未命名故事';
 
 export type ScriptInput =
   | { kind: 'paste'; text: string; title?: string }
@@ -8,30 +11,6 @@ export interface ParsedScript {
   suggestedTitle: string;
   rawScript: string;
   sourceType: 'docx' | 'md' | 'txt' | 'paste';
-}
-
-interface TextDecoderLike {
-  decode(input?: Uint8Array, options?: { stream?: boolean }): string;
-}
-
-type TextDecoderCtor = new (label?: string, options?: { fatal?: boolean }) => TextDecoderLike;
-
-function getTextDecoderCtor(): TextDecoderCtor {
-  const ctor = (globalThis as { TextDecoder?: TextDecoderCtor }).TextDecoder;
-  if (!ctor) {
-    throw new Error('TextDecoder is not available in this JavaScript runtime.');
-  }
-  return ctor;
-}
-
-function decodeTextBytes(bytes: Uint8Array): string {
-  const Decoder = getTextDecoderCtor();
-  try {
-    const utf8 = new Decoder('utf-8', { fatal: true }).decode(bytes);
-    return utf8.replace(/^\uFEFF/, '');
-  } catch {
-    return new Decoder('gb18030').decode(bytes).replace(/^\uFEFF/, '');
-  }
 }
 
 function decodeXmlEntities(input: string): string {
@@ -46,16 +25,17 @@ function decodeXmlEntities(input: string): string {
 }
 
 function extractParagraphText(pXml: string): string {
-  const normalized = pXml
-    .replace(/<w:tab(?:\s+[^>]*)?\/>/g, '\t')
-    .replace(/<w:br(?:\s+[^>]*)?\/>/g, '\n')
-    .replace(/<w:cr(?:\s+[^>]*)?\/>/g, '\n');
-
+  const tokenRegex = /<w:t(?:\s+[^>]*)?>([\s\S]*?)<\/w:t>|<w:(tab|br|cr)(?:\s+[^>]*)?\/>/g;
   let result = '';
-  const textTagRegex = /<w:t(?:\s+[^>]*)?>([\s\S]*?)<\/w:t>/g;
   let match: RegExpExecArray | null;
-  while ((match = textTagRegex.exec(normalized)) !== null) {
-    result += decodeXmlEntities(match[1]);
+  while ((match = tokenRegex.exec(pXml)) !== null) {
+    if (match[1] !== undefined) {
+      result += decodeXmlEntities(match[1]);
+    } else if (match[2] === 'tab') {
+      result += '\t';
+    } else {
+      result += '\n';
+    }
   }
   return result.trim();
 }
@@ -72,106 +52,117 @@ function formatParagraph(pXml: string): string {
   const text = extractParagraphText(pXml);
   if (!text) return '';
   const level = extractHeadingLevel(pXml);
-  if (level > 0) {
-    return `${'#'.repeat(level)} ${text}`;
-  }
-  return text;
+  return level > 0 ? `${'#'.repeat(level)} ${text}` : text;
 }
 
-function matchTopLevelBlocks(bodyXml: string): Array<{ type: 'p' | 'tbl'; xml: string }> {
-  const blocks: Array<{ type: 'p' | 'tbl'; xml: string }> = [];
+function findMatchingTagEnd(xml: string, tag: string, openTagEnd: number): number {
+  const closeTag = `</${tag}>`;
+  let depth = 1;
+  let pos = openTagEnd + 1;
+
+  while (depth > 0) {
+    const nextOpen = xml.indexOf(`<${tag}`, pos);
+    const nextClose = xml.indexOf(closeTag, pos);
+    if (nextClose === -1) return -1;
+
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      const ch = xml[nextOpen + tag.length + 1];
+      if (ch === '>' || ch === ' ') {
+        const innerEnd = xml.indexOf('>', nextOpen);
+        if (innerEnd !== -1 && xml[innerEnd - 1] !== '/') {
+          depth += 1;
+        }
+      }
+      pos = nextOpen + tag.length + 1;
+    } else {
+      depth -= 1;
+      pos = nextClose + closeTag.length;
+    }
+  }
+  return pos;
+}
+
+function extractTopLevelElements(xml: string, tags: readonly string[]): Array<{ tag: string; xml: string }> {
+  const items: Array<{ tag: string; xml: string }> = [];
   let cursor = 0;
 
-  while (cursor < bodyXml.length) {
-    const nextP = bodyXml.indexOf('<w:p', cursor);
-    const nextTbl = bodyXml.indexOf('<w:tbl', cursor);
-    if (nextP === -1 && nextTbl === -1) break;
-
-    const useTbl = nextTbl !== -1 && (nextP === -1 || nextTbl < nextP);
-    const tag = useTbl ? 'w:tbl' : 'w:p';
-    const start = useTbl ? nextTbl : nextP;
-    const afterName = bodyXml[start + tag.length + 1];
-    if (afterName !== '>' && afterName !== ' ' && afterName !== '/') {
-      cursor = start + tag.length + 1;
-      continue;
-    }
-
-    const openTagEnd = bodyXml.indexOf('>', start);
-    if (openTagEnd === -1) break;
-    if (bodyXml[openTagEnd - 1] === '/') {
-      cursor = openTagEnd + 1;
-      continue;
-    }
-
-    const closeTag = `</${tag}>`;
-    let depth = 1;
-    let searchPos = openTagEnd + 1;
-    let endPos = -1;
-
-    while (depth > 0) {
-      const nextOpen = bodyXml.indexOf(`<${tag}`, searchPos);
-      const nextClose = bodyXml.indexOf(closeTag, searchPos);
-      if (nextClose === -1) break;
-
-      if (nextOpen !== -1 && nextOpen < nextClose) {
-        const ch = bodyXml[nextOpen + tag.length + 1];
-        if (ch === '>' || ch === ' ') {
-          const innerEnd = bodyXml.indexOf('>', nextOpen);
-          if (innerEnd !== -1 && bodyXml[innerEnd - 1] !== '/') {
-            depth += 1;
-          }
-        }
-        searchPos = nextOpen + tag.length + 1;
-      } else {
-        depth -= 1;
-        endPos = nextClose + closeTag.length;
-        searchPos = endPos;
+  while (cursor < xml.length) {
+    let bestTag: string | null = null;
+    let bestStart = -1;
+    for (const tag of tags) {
+      const idx = xml.indexOf(`<${tag}`, cursor);
+      if (idx !== -1 && (bestStart === -1 || idx < bestStart)) {
+        bestStart = idx;
+        bestTag = tag;
       }
     }
+    if (!bestTag || bestStart === -1) break;
 
+    const afterName = xml[bestStart + bestTag.length + 1];
+    if (afterName !== '>' && afterName !== ' ' && afterName !== '/') {
+      cursor = bestStart + bestTag.length + 1;
+      continue;
+    }
+
+    const openEnd = xml.indexOf('>', bestStart);
+    if (openEnd === -1) break;
+    if (xml[openEnd - 1] === '/') {
+      cursor = openEnd + 1;
+      continue;
+    }
+
+    const endPos = findMatchingTagEnd(xml, bestTag, openEnd);
     if (endPos === -1) break;
-    blocks.push({ type: useTbl ? 'tbl' : 'p', xml: bodyXml.slice(start, endPos) });
+    items.push({ tag: bestTag, xml: xml.slice(bestStart, endPos) });
     cursor = endPos;
   }
-
-  return blocks;
+  return items;
 }
 
-function formatTable(tblXml: string): string {
-  const rowRegex = /<w:tr\b[^>]*>([\s\S]*?)<\/w:tr>/g;
-  const rows: string[][] = [];
-  let rowMatch: RegExpExecArray | null;
-
-  while ((rowMatch = rowRegex.exec(tblXml)) !== null) {
-    const cellRegex = /<w:tc\b[^>]*>([\s\S]*?)<\/w:tc>/g;
-    const cells: string[] = [];
-    let cellMatch: RegExpExecArray | null;
-    while ((cellMatch = cellRegex.exec(rowMatch[1])) !== null) {
-      const pRegex = /<w:p\b[^>]*>([\s\S]*?)<\/w:p>/g;
-      const cellLines: string[] = [];
-      let pMatch: RegExpExecArray | null;
-      while ((pMatch = pRegex.exec(cellMatch[1])) !== null) {
-        const text = extractParagraphText(pMatch[0]);
-        if (text) cellLines.push(text);
-      }
-      cells.push(cellLines.join(' ').replace(/\|/g, '\\|').trim());
+function formatCellContent(cellXml: string): string {
+  const inner = cellXml.replace(/^<w:tc\b[^>]*>|<\/w:tc>$/g, '');
+  const blocks = extractTopLevelElements(inner, ['w:p', 'w:tbl']);
+  const parts: string[] = [];
+  for (const block of blocks) {
+    if (block.tag === 'w:p') {
+      const text = extractParagraphText(block.xml);
+      if (text) parts.push(text);
+    } else {
+      const nestedRows = extractTableRows(block.xml);
+      parts.push(nestedRows.map((r) => r.join(' / ')).join('; '));
     }
+  }
+  return parts.join(' ').replace(/\s*\n\s*/g, ' ').replace(/\|/g, '\\|').trim();
+}
+
+function extractTableRows(tblXml: string): string[][] {
+  const inner = tblXml.replace(/^<w:tbl\b[^>]*>|<\/w:tbl>$/g, '');
+  const rowBlocks = extractTopLevelElements(inner, ['w:tr']);
+  const rows: string[][] = [];
+
+  for (const row of rowBlocks) {
+    const rowInner = row.xml.replace(/^<w:tr\b[^>]*>|<\/w:tr>$/g, '');
+    const cellBlocks = extractTopLevelElements(rowInner, ['w:tc']);
+    const cells = cellBlocks.map((cell) => formatCellContent(cell.xml));
     if (cells.length > 0) {
       rows.push(cells);
     }
   }
+  return rows;
+}
 
+function formatTable(tblXml: string): string {
+  const rows = extractTableRows(tblXml);
   if (rows.length === 0) return '';
   const colCount = Math.max(...rows.map((r) => r.length));
   const padRow = (r: string[]) =>
     `| ${Array.from({ length: colCount }, (_, i) => r[i] ?? '').join(' | ')} |`;
 
-  const lines = [
+  return [
     padRow(rows[0]),
     `| ${Array.from({ length: colCount }, () => '---').join(' | ')} |`,
     ...rows.slice(1).map(padRow),
-  ];
-  return lines.join('\n');
+  ].join('\n');
 }
 
 function parseDocxBytes(bytes: Uint8Array): string {
@@ -187,15 +178,15 @@ function parseDocxBytes(bytes: Uint8Array): string {
     throw new Error('.docx 文件缺少 word/document.xml 正文内容。');
   }
 
-  const xml = decodeTextBytes(docBytes);
+  const xml = decodeUtf8WithGbFallback(docBytes);
   const bodyMatch = /<w:body\b[^>]*>([\s\S]*?)<\/w:body>/.exec(xml);
   const bodyXml = bodyMatch ? bodyMatch[1] : xml;
 
-  const blocks = matchTopLevelBlocks(bodyXml);
+  const blocks = extractTopLevelElements(bodyXml, ['w:p', 'w:tbl']);
   const parts: string[] = [];
 
   for (const block of blocks) {
-    const formatted = block.type === 'tbl' ? formatTable(block.xml) : formatParagraph(block.xml);
+    const formatted = block.tag === 'w:tbl' ? formatTable(block.xml) : formatParagraph(block.xml);
     if (formatted) {
       parts.push(formatted);
     }
@@ -206,7 +197,7 @@ function parseDocxBytes(bytes: Uint8Array): string {
 
 function deriveTitleFromFileName(fileName: string): string {
   const base = fileName.replace(/\.[^.]+$/, '').trim();
-  return base || '未命名剧本';
+  return base || DEFAULT_STORY_TITLE;
 }
 
 function deriveTitleFromText(text: string): string {
@@ -214,7 +205,7 @@ function deriveTitleFromText(text: string): string {
     .split(/\r?\n/)
     .map((line) => line.replace(/^[#*\s「『【]+|[」』】\s]+$/g, '').trim())
     .find((line) => line.length > 0);
-  if (!firstLine) return '未命名剧本';
+  if (!firstLine) return DEFAULT_STORY_TITLE;
   return firstLine.length > 36 ? `${firstLine.slice(0, 36)}…` : firstLine;
 }
 
@@ -222,7 +213,7 @@ function deriveTitleFromText(text: string): string {
  * Pure client-side script parser supporting .docx (paragraphs, headings, and tables),
  * .md, .txt (UTF-8 with GB18030 fallback), and direct pasted text.
  */
-export async function parseScriptInput(input: ScriptInput): Promise<ParsedScript> {
+export function parseScriptInput(input: ScriptInput): ParsedScript {
   if (input.kind === 'paste') {
     const rawScript = input.text.replace(/\r\n/g, '\n').trim();
     if (!rawScript) {
@@ -246,7 +237,7 @@ export async function parseScriptInput(input: ScriptInput): Promise<ParsedScript
     return { suggestedTitle, rawScript, sourceType: 'docx' };
   }
 
-  const rawScript = decodeTextBytes(input.bytes).replace(/\r\n/g, '\n').trim();
+  const rawScript = decodeUtf8WithGbFallback(input.bytes).replace(/\r\n/g, '\n').trim();
   if (!rawScript) {
     throw new Error('导入的文件内容为空。');
   }

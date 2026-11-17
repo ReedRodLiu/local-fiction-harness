@@ -1,3 +1,4 @@
+import { getTextDecoderCtor, type TextDecoderLike } from './encoding.ts';
 import type {
   FetchLike,
   FetchResponseLike,
@@ -6,17 +7,8 @@ import type {
   LlmTransport,
 } from './types.ts';
 
-interface StreamingTextDecoder {
-  decode(input?: Uint8Array, options?: { stream?: boolean }): string;
-}
-
-function createUtf8Decoder(): StreamingTextDecoder {
-  const DecoderCtor = (
-    globalThis as { TextDecoder?: new (label?: string) => StreamingTextDecoder }
-  ).TextDecoder;
-  if (!DecoderCtor) {
-    throw new Error('TextDecoder is not available in this JavaScript runtime.');
-  }
+function createUtf8Decoder(): TextDecoderLike {
+  const DecoderCtor = getTextDecoderCtor();
   return new DecoderCtor('utf-8');
 }
 

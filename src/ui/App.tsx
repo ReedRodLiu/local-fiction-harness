@@ -107,7 +107,7 @@ export function App() {
 
   const activeNodes = getActiveBranchNodes(story);
 
-  const sendAction = async (userPrompt: string) => {
+  const sendAction = async (userPrompt: string, restoreOnError = false) => {
     const trimmed = userPrompt.trim();
     if (!trimmed || isStreaming) {
       return;
@@ -117,7 +117,9 @@ export function App() {
     setIsStreaming(true);
     setStreamReasoning('');
     setStreamContent('');
-    setInput('');
+    if (restoreOnError) {
+      setInput('');
+    }
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -137,7 +139,9 @@ export function App() {
       } else {
         setErrorMsg(err instanceof Error ? err.message : '生成失败，请检查模型端点与配置。');
       }
-      setInput(trimmed);
+      if (restoreOnError) {
+        setInput(trimmed);
+      }
     } finally {
       abortRef.current = null;
       setIsStreaming(false);
@@ -146,7 +150,7 @@ export function App() {
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    void sendAction(input);
+    void sendAction(input, true);
   };
 
   const handleConfirmImportedStory = (imported: {

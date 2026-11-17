@@ -1,3 +1,4 @@
+import { DEFAULT_STORY_TITLE } from './scriptParser.ts';
 import type { LlmMessage, StoryBlueprint } from './types.ts';
 
 export function createDefaultBlueprint(title: string): StoryBlueprint {
@@ -76,7 +77,7 @@ function extractBalancedJsonObject(text: string): string | null {
  * and falling back to partial_fallback when the response is incomplete or malformed.
  */
 export function parseBlueprintResponse(rawText: string, fallbackTitle: string): StoryBlueprint {
-  const safeTitle = fallbackTitle.trim() || '未命名剧本';
+  const safeTitle = fallbackTitle.trim() || DEFAULT_STORY_TITLE;
   const cleaned = rawText
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
     .replace(/```(?:json)?\s*([\s\S]*?)```/gi, '$1')

@@ -126,6 +126,7 @@ body {
 }
 
 .field input,
+.field textarea,
 .composer textarea {
   font: inherit;
   font-size: max(1rem, 0.95rem);
@@ -134,6 +135,10 @@ body {
   border: 1px solid var(--border-color);
   background: var(--bg-page);
   color: var(--text-main);
+}
+
+.field textarea {
+  resize: vertical;
 }
 
 .field input:focus-visible,
@@ -333,15 +338,16 @@ summary:focus-visible {
   background: var(--bg-subtle);
 }
 
-.field textarea {
-  font: inherit;
-  font-size: max(1rem, 0.95rem);
-  padding: 0.55rem 0.7rem;
+.dropzone {
+  border: 2px dashed var(--border-color);
   border-radius: 8px;
-  border: 1px solid var(--border-color);
+  padding: 0.75rem;
   background: var(--bg-page);
-  color: var(--text-main);
-  resize: vertical;
+}
+
+.dropzone.dragging {
+  border-color: var(--brand);
+  background: var(--bg-subtle);
 }
 
 .blueprint-summary p {
