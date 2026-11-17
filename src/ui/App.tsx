@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_MODEL_CONFIG,
+  assembleThreeZoneContext,
   createFictionHarness,
   createModelConfigStore,
   createOpenAiTransport,
   exportStoryBackup,
   getActiveBranchNodes,
+  getActiveSummarySnapshot,
   importStoryBackup,
   type FetchLike,
   type ModelConfig,
@@ -13,6 +15,7 @@ import {
   type StoryBlueprint,
 } from '../harness/index.ts';
 import { ImportPanel } from './ImportPanel.tsx';
+import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
 import { createIndexedDbStoryStorage } from './indexedDbStorage.ts';
 
@@ -146,6 +149,11 @@ export function App() {
   };
 
   const activeNodes = getActiveBranchNodes(story);
+  const activeSummary = getActiveSummarySnapshot(story);
+  const contextPreview = useMemo(
+    () => assembleThreeZoneContext(story, story.activeLeafNodeId),
+    [story],
+  );
 
   const sendAction = async (userPrompt: string, restoreOnError = false) => {
     const trimmed = userPrompt.trim();
@@ -502,6 +510,26 @@ export function App() {
               </details>
             )}
 
+            <details className="reasoning-details" data-testid="context-overview">
+              <summary>
+                三区上下文与剧情摘要（估算 {contextPreview.metrics.totalEstimatedTokens} tokens · 已压缩{' '}
+                {activeSummary.summarizedTurnCount} 条历史）
+              </summary>
+              <div className="blueprint-summary">
+                <p>
+                  <strong>三区占比：</strong>
+                  固定锚定 {contextPreview.metrics.anchorChars} 字 / 滚动摘要{' '}
+                  {contextPreview.metrics.summaryChars} 字 / 近期窗口{' '}
+                  {contextPreview.metrics.recentNodeCount} 条（{contextPreview.metrics.recentChars}{' '}
+                  字）
+                </p>
+                <p data-testid="active-plot-summary">
+                  <strong>当前剧情摘要：</strong>
+                  {activeSummary.content || '尚未触发压缩（近期窗口内保留完整对话）'}
+                </p>
+              </div>
+            </details>
+
             <section className="timeline" aria-label="故事对话记录">
               {activeNodes.length === 0 && !isStreaming && (
                 <div className="turn-card">
@@ -530,18 +558,30 @@ export function App() {
                 </div>
               )}
 
-              {activeNodes.map((node) => (
-                <article key={node.id} className={`turn-card ${node.role}`}>
-                  <div className="turn-role">{node.role === 'user' ? '玩家' : '叙事 AI'}</div>
-                  {node.reasoningContent && (
-                    <details className="reasoning-details">
-                      <summary>思考过程（不回传后续上下文）</summary>
-                      <div className="reasoning-content">{node.reasoningContent}</div>
-                    </details>
-                  )}
-                  <div className="turn-body">{node.content}</div>
-                </article>
-              ))}
+              {activeNodes.map((node) => {
+                const isActiveLeaf = node.id === story.activeLeafNodeId;
+                return (
+                  <article key={node.id} className={`turn-card ${node.role}`}>
+                    <div className="turn-role">{node.role === 'user' ? '玩家' : '叙事 AI'}</div>
+                    {node.reasoningContent && (
+                      <details className="reasoning-details">
+                        <summary>思考过程（不回传后续上下文）</summary>
+                        <div className="reasoning-content">{node.reasoningContent}</div>
+                      </details>
+                    )}
+                    {node.role === 'assistant' ? (
+                      <MessageContent
+                        content={node.content}
+                        showChoices={isActiveLeaf}
+                        disabled={isStreaming}
+                        onSelectChoice={(choiceText) => void sendAction(choiceText)}
+                      />
+                    ) : (
+                      <div className="turn-body">{node.content}</div>
+                    )}
+                  </article>
+                );
+              })}
 
               {isStreaming && (
                 <article className="turn-card assistant" aria-live="polite">
@@ -552,7 +592,11 @@ export function App() {
                       <div className="reasoning-content">{streamReasoning}</div>
                     </details>
                   )}
-                  <div className="turn-body">{streamContent || '正在等待响应…'}</div>
+                  {streamContent ? (
+                    <MessageContent content={streamContent} />
+                  ) : (
+                    <div className="turn-body">正在等待响应…</div>
+                  )}
                 </article>
               )}
             </section>

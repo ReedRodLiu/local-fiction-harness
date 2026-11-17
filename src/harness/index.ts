@@ -4,4 +4,6 @@ export * from './keyConfig.ts';
 export * from './scriptParser.ts';
 export * from './blueprint.ts';
 export * from './storyStorage.ts';
+export * from './context.ts';
+export * from './messageFormat.ts';
 export * from './harness.ts';

@@ -3,12 +3,20 @@ import { DEFAULT_STORY_TITLE } from './scriptParser.ts';
 import {
   buildBlueprintExtractionMessages,
   createDefaultBlueprint,
-  formatConfirmedBlueprintAnchor,
   parseBlueprintResponse,
 } from './blueprint.ts';
+import {
+  EMPTY_SUMMARY_SNAPSHOT,
+  assembleThreeZoneContext,
+  buildFallbackSummary,
+  buildSummaryCompressionMessages,
+  getActiveBranchNodes,
+  getUncoveredNodes,
+  selectNodesToSummarize,
+  type ContextBudgetConfig,
+} from './context.ts';
 import type {
   AbortSignalLike,
-  LlmMessage,
   LlmTransport,
   ModelConfig,
   PlotSummarySnapshot,
@@ -23,6 +31,7 @@ import type {
 export interface FictionHarnessDeps {
   transport: LlmTransport;
   storage?: StoryStorage;
+  contextBudget?: Partial<ContextBudgetConfig>;
   now?: () => number;
   createId?: () => string;
 }
@@ -33,63 +42,12 @@ export interface CreateStoryInput {
   blueprint?: StoryBlueprint;
 }
 
-const EMPTY_SUMMARY: PlotSummarySnapshot = {
-  content: '',
-  coveredUpToNodeId: null,
-  summarizedTurnCount: 0,
-};
-
 function throwIfAborted(signal?: AbortSignalLike): void {
   if (signal?.aborted) {
     const abortError = new Error('Operation aborted.');
     abortError.name = 'AbortError';
     throw abortError;
   }
-}
-
-/**
- * Walks from the target leaf node back to the root to reconstruct the linear active branch.
- */
-export function getActiveBranchNodes(
-  story: Story,
-  leafId: string | null = story.activeLeafNodeId,
-): TurnNode[] {
-  const path: TurnNode[] = [];
-  const visited = new Set<string>();
-  let cursor = leafId;
-
-  while (cursor) {
-    if (visited.has(cursor)) {
-      break;
-    }
-    visited.add(cursor);
-    const node = story.nodes[cursor];
-    if (!node) {
-      break;
-    }
-    path.push(node);
-    cursor = node.parentId;
-  }
-
-  return path.reverse();
-}
-
-function buildSystemAnchorPrompt(story: Story): string {
-  const sections: string[] = [
-    '你正在运行一个本地优先交互式文游播放器，请严格遵循以下剧本设定与交互原则：',
-    '- 始终保持角色一致性与设定约束，不要替玩家代操抉择。',
-  ];
-
-  const blueprintSummary = formatConfirmedBlueprintAnchor(story.blueprint);
-  if (blueprintSummary) {
-    sections.push(`## 已确认故事蓝图\n${blueprintSummary}`);
-  }
-
-  if (story.rawScript.trim()) {
-    sections.push(`## 原始剧本全文（最高权威锚定）\n${story.rawScript.trim()}`);
-  }
-
-  return sections.join('\n\n');
 }
 
 export interface FictionHarness {
@@ -147,6 +105,46 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       }
     }
     return story;
+  };
+
+  const summarizeOverflowTurns = async (
+    story: Story,
+    parentSnapshot: PlotSummarySnapshot,
+    config: ModelConfig,
+    signal?: AbortSignalLike,
+  ): Promise<PlotSummarySnapshot> => {
+    const branchNodes = getActiveBranchNodes(story, story.activeLeafNodeId);
+    const uncovered = getUncoveredNodes(branchNodes, parentSnapshot.coveredUpToNodeId);
+    const toSummarize = selectNodesToSummarize(uncovered, deps.contextBudget);
+
+    if (toSummarize.length === 0) {
+      return parentSnapshot;
+    }
+
+    let compressed = '';
+    try {
+      for await (const delta of deps.transport.streamChat({
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        model: config.model,
+        messages: buildSummaryCompressionMessages(parentSnapshot.content, toSummarize),
+        signal,
+      })) {
+        if (signal?.aborted) break;
+        if (delta.contentDelta) {
+          compressed += delta.contentDelta;
+        }
+      }
+    } catch {
+      compressed = '';
+    }
+
+    const finalContent = compressed.trim() || buildFallbackSummary(parentSnapshot.content, toSummarize);
+    return {
+      content: finalContent,
+      coveredUpToNodeId: toSummarize[toSummarize.length - 1].id,
+      summarizedTurnCount: parentSnapshot.summarizedTurnCount + toSummarize.length,
+    };
   };
 
   return {
@@ -264,17 +262,16 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
 
       const parentId = story.activeLeafNodeId;
       const parentSnapshot =
-        parentId && story.nodes[parentId] ? story.nodes[parentId].summarySnapshot : EMPTY_SUMMARY;
+        parentId && story.nodes[parentId]
+          ? story.nodes[parentId].summarySnapshot
+          : EMPTY_SUMMARY_SNAPSHOT;
 
-      const historyNodes = getActiveBranchNodes(story, parentId);
-      const messages: LlmMessage[] = [
-        { role: 'system', content: buildSystemAnchorPrompt(story) },
-        ...historyNodes.map((node) => ({
-          role: node.role,
-          content: node.content,
-        })),
-        { role: 'user', content: trimmedInput },
-      ];
+      const { messages } = assembleThreeZoneContext(
+        story,
+        parentId,
+        trimmedInput,
+        deps.contextBudget,
+      );
 
       let content = '';
       let reasoningContent = '';
@@ -312,7 +309,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       };
 
       const assistantCreatedAt = now();
-      const assistantNode: TurnNode = {
+      const initialAssistantNode: TurnNode = {
         id: createId(),
         parentId: userNode.id,
         role: 'assistant',
@@ -322,23 +319,46 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         summarySnapshot: parentSnapshot,
       };
 
-      const updatedStory: Story = {
+      const provisionalStory: Story = {
         ...story,
         nodes: {
           ...story.nodes,
           [userNode.id]: userNode,
-          [assistantNode.id]: assistantNode,
+          [initialAssistantNode.id]: initialAssistantNode,
         },
         rootNodeIds: parentId === null ? [...story.rootNodeIds, userNode.id] : story.rootNodeIds,
-        activeLeafNodeId: assistantNode.id,
+        activeLeafNodeId: initialAssistantNode.id,
         updatedAt: assistantCreatedAt,
       };
+
+      const updatedSnapshot = await summarizeOverflowTurns(
+        provisionalStory,
+        parentSnapshot,
+        config,
+        callbacks?.signal,
+      );
+
+      const finalAssistantNode: TurnNode =
+        updatedSnapshot === parentSnapshot
+          ? initialAssistantNode
+          : { ...initialAssistantNode, summarySnapshot: updatedSnapshot };
+
+      const updatedStory: Story =
+        finalAssistantNode === initialAssistantNode
+          ? provisionalStory
+          : {
+              ...provisionalStory,
+              nodes: {
+                ...provisionalStory.nodes,
+                [finalAssistantNode.id]: finalAssistantNode,
+              },
+            };
 
       await persistStory(updatedStory, true);
 
       return {
         userNode,
-        assistantNode,
+        assistantNode: finalAssistantNode,
         story: updatedStory,
       };
     },

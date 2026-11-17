@@ -446,3 +446,40 @@ summary:focus-visible {
   font-size: 0.76rem;
   padding: 0.25rem 0.5rem;
 }
+
+.message-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.hud-panel {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-page);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.choices-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.choice-btn {
+  text-align: start;
+  justify-content: flex-start;
+  background: var(--bg-page);
+}
+
+.choice-btn:hover:not(:disabled) {
+  border-color: var(--brand);
+  background: var(--bg-subtle);
+}
