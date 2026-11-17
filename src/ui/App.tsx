@@ -30,10 +30,14 @@ interface DevTestConfigResponse {
   hasEnvKey: boolean;
 }
 
+const DEV_SESSION_PROXY_KEY = 'lfh.dev_proxy_session';
+
 export function App() {
   const configStore = useMemo(() => createModelConfigStore(window.localStorage), []);
   const storyStorage = useMemo(() => createIndexedDbStoryStorage(), []);
-  const useDevEnvKeyRef = useRef(false);
+  const useDevEnvKeyRef = useRef(
+    import.meta.env.DEV ? Boolean(window.sessionStorage.getItem(DEV_SESSION_PROXY_KEY)) : false,
+  );
 
   const harness = useMemo(() => {
     const devAwareFetch: FetchLike = (url, init) => {
@@ -56,12 +60,29 @@ export function App() {
 
   const [config, setConfig] = useState<ModelConfig>(() => {
     const loaded = configStore.load();
-    if (!import.meta.env.DEV && loaded.baseUrl.startsWith('/__dev_llm_proxy')) {
+    if (import.meta.env.DEV) {
+      const devSession = window.sessionStorage.getItem(DEV_SESSION_PROXY_KEY);
+      if (devSession) {
+        try {
+          const parsed = JSON.parse(devSession) as { baseUrl?: string; model?: string };
+          return {
+            ...loaded,
+            baseUrl: parsed.baseUrl || '/__dev_llm_proxy',
+            model: parsed.model || loaded.model,
+            apiKey: '',
+          };
+        } catch {
+          // ignore malformed session state
+        }
+      }
+    } else if (loaded.baseUrl.startsWith('/__dev_llm_proxy')) {
       return { ...loaded, baseUrl: DEFAULT_MODEL_CONFIG.baseUrl };
     }
     return loaded;
   });
-  const [useDevEnvKey, setUseDevEnvKey] = useState(false);
+  const [useDevEnvKey, setUseDevEnvKey] = useState(() =>
+    import.meta.env.DEV ? Boolean(window.sessionStorage.getItem(DEV_SESSION_PROXY_KEY)) : false,
+  );
   const [showKey, setShowKey] = useState(false);
   const [devTestInfo, setDevTestInfo] = useState<DevTestConfigResponse | null>(null);
   const [stories, setStories] = useState<Story[]>([]);
@@ -133,14 +154,24 @@ export function App() {
     setConfig(next);
     setUseDevEnvKey(nextUseDevEnvKey);
     useDevEnvKeyRef.current = nextUseDevEnvKey;
+    if (import.meta.env.DEV && !nextUseDevEnvKey) {
+      window.sessionStorage.removeItem(DEV_SESSION_PROXY_KEY);
+    }
     configStore.save(next);
   };
 
   const applyDevTestConfig = () => {
     if (!devTestInfo) return;
+    const devModel = devTestInfo.model || config.model;
+    if (import.meta.env.DEV) {
+      window.sessionStorage.setItem(
+        DEV_SESSION_PROXY_KEY,
+        JSON.stringify({ baseUrl: devTestInfo.proxyBaseUrl, model: devModel }),
+      );
+    }
     setConfig({
       baseUrl: devTestInfo.proxyBaseUrl,
-      model: devTestInfo.model || config.model,
+      model: devModel,
       apiKey: '',
       memoryOnly: config.memoryOnly,
     });
