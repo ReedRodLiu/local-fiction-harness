@@ -15,6 +15,22 @@ coverage/
 playwright-report/
 test-results/
 
+# Android / Gradle build caches & artifacts
+android/.gradle/
+android/build/
+android/*/build/
+android/local.properties
+android/.idea/
+android/captures/
+android/app/src/main/assets/public/
+android/capacitor-cordova-android-plugins/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.keystore
+*.jks
+
 # Local private corpus & chat exports (never commit or push)
 docs/文游500篇/
 docs/chatgpt-开源项目商用分析/
