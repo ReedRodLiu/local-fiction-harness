@@ -1,5 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import type { PlatformRuntime } from '../harness/index.ts';
+import { createAndroidPlatformRuntime } from './androidRuntime.ts';
 import { createWebPlatformRuntime, type WebRuntimeOptions } from './webRuntime.ts';
 
 export {
@@ -11,6 +12,7 @@ export {
   writeDevSessionProxy,
   type DevTestConfigResponse,
 } from './devProxy.ts';
+export { createAndroidPlatformRuntime, type AndroidRuntimeOptions } from './androidRuntime.ts';
 export { createWebPlatformRuntime, type WebRuntimeOptions } from './webRuntime.ts';
 
 export interface CapacitorDetector {
@@ -36,13 +38,11 @@ export function detectRuntimePlatform(
 
 /**
  * Resolves the active PlatformRuntime at app startup.
- * Native Android bridges are plugged in via Slices C & D; until then Android falls back
- * explicitly to Web-compatible adapters (`platform: 'web'`, dev proxy disabled).
  */
 export function createPlatformRuntime(options: WebRuntimeOptions = {}): PlatformRuntime {
   const platform = detectRuntimePlatform();
   if (platform === 'android') {
-    return createWebPlatformRuntime({ ...options, isDev: false });
+    return createAndroidPlatformRuntime(options);
   }
   return createWebPlatformRuntime(options);
 }
