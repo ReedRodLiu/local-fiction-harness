@@ -8,19 +8,17 @@ import {
 } from '../../scripts/audit-artifacts.mjs';
 
 describe('Offline artifact & minimal-permission audit', () => {
-  it('extracts non-trivial secret values from .env.local content', () => {
+  it('extracts only secret/key/token/password values from .env.local content', () => {
     const secrets = extractEnvSecretValues(
       [
         '# comment',
         'VITE_TEST_API_KEY=sk-test-secret-123456',
-        'VITE_TEST_BASE_URL=https://internal.example.com/v1',
-        'VITE_TEST_MODEL=gpt',
-        'EMPTY_VAR=',
+        'VITE_TEST_BASE_URL=https://api.deepseek.com',
+        'VITE_TEST_MODEL=deepseek-chat',
+        'EMPTY_KEY=',
       ].join('\n'),
     );
-    expect(secrets).toContain('sk-test-secret-123456');
-    expect(secrets).toContain('https://internal.example.com/v1');
-    expect(secrets).not.toContain('gpt');
+    expect(secrets).toEqual(['sk-test-secret-123456']);
   });
 
   it('allows minimal INTERNET manifest and rejects extra permissions or allowBackup=true', () => {
@@ -84,5 +82,14 @@ describe('Offline artifact & minimal-permission audit', () => {
       'lib/arm64-v8a/libnode.so': strToU8('elf'),
     });
     expect(() => auditApkArchive(bloatedNodeApk, [])).toThrow(/libnode\.so/);
+
+    const shellApk = zipSync({
+      'assets/public/index.html': strToU8('<html></html>'),
+      'assets/capacitor.config.json': strToU8(
+        JSON.stringify({ plugins: { CapacitorHttp: { enabled: false } } }),
+      ),
+      'assets/bin/sh': strToU8('#!/bin/sh'),
+    });
+    expect(() => auditApkArchive(shellApk, [])).toThrow(/bin\/sh/);
   });
 });

@@ -16,10 +16,9 @@ const FORBIDDEN_ASSET_MARKERS = [
   'VITE_TEST_BASE_URL',
 ];
 const FORBIDDEN_APK_PATH_PATTERNS = [
-  /(^|\/)libnode\.so$/i,
-  /(^|\/)(node|proot|busybox|bash|dsh)(\.so)?$/i,
+  /(^|\/)(lib)?(node|proot|busybox|bash|dash|ash|sh|dsh)(\.so)?$/i,
   /ubuntu/i,
-  /(^|\/)\.env(\.local)?$/i,
+  /(^|\/)\.env(\.[^/]+)?$/i,
 ];
 
 export function extractEnvSecretValues(envText) {
@@ -29,6 +28,8 @@ export function extractEnvSecretValues(envText) {
     if (!line || line.startsWith('#')) continue;
     const eqIndex = line.indexOf('=');
     if (eqIndex <= 0) continue;
+    const key = line.slice(0, eqIndex).trim();
+    if (!/(_KEY|_SECRET|_TOKEN|_PASSWORD)$/i.test(key)) continue;
     const val = line.slice(eqIndex + 1).trim().replace(/^['"]|['"]$/g, '');
     if (val.length >= 6) {
       secrets.push(val);
@@ -114,8 +115,13 @@ function collectTextFiles(dirPath, prefix = '') {
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
       collected.push(...collectTextFiles(abs, rel));
-    } else if (/\.(html|js|css|json|txt)$/i.test(entry.name)) {
-      collected.push({ path: rel, content: fs.readFileSync(abs, 'utf8') });
+    } else {
+      if (/^\.env(\.|$)/i.test(entry.name)) {
+        throw new Error(`Forbidden env file found in built directory: ${rel}`);
+      }
+      if (/\.(html|js|css|json|txt)$/i.test(entry.name)) {
+        collected.push({ path: rel, content: fs.readFileSync(abs, 'utf8') });
+      }
     }
   }
   return collected;
