@@ -1,7 +1,10 @@
 import {
   createKeyValueSecretStore,
   createOpenAiTransport,
+  createWebBinaryDownloader,
   type BackupExporter,
+  type BinaryDownloader,
+  type BinaryFetchLike,
   type FetchLike,
   type KeyValueStorage,
   type PlatformRuntime,
@@ -14,6 +17,8 @@ export interface WebRuntimeOptions {
   keyValueStorage?: KeyValueStorage;
   storyStorage?: StoryStorage;
   fetchImpl?: FetchLike;
+  binaryFetchImpl?: BinaryFetchLike;
+  binaryDownloader?: BinaryDownloader;
   exportJsonFile?: (fileName: string, jsonContent: string) => Promise<void>;
   devUseEnvKey?: () => boolean;
   isDev?: boolean;
@@ -62,9 +67,18 @@ export function createWebPlatformRuntime(options: WebRuntimeOptions = {}): Platf
     return baseFetch(url, { ...init, headers });
   };
 
+  const binaryFetch: BinaryFetchLike =
+    options.binaryFetchImpl ??
+    ((url, init) =>
+      fetch(url, {
+        method: init.method,
+        signal: init.signal as AbortSignal | undefined,
+      }));
+
   return {
     platform: 'web',
     transport: createOpenAiTransport(devAwareFetch),
+    binaryDownloader: options.binaryDownloader ?? createWebBinaryDownloader(binaryFetch),
     storyStorage: options.storyStorage ?? createIndexedDbStoryStorage(),
     secretStore: createKeyValueSecretStore(kvStorage),
     backupExporter: options.exportJsonFile

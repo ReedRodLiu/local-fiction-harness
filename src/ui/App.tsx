@@ -38,7 +38,10 @@ import { TurnCard } from './TurnCard.tsx';
 import { toErrorMessage } from './textHelpers.ts';
 
 function hasModelCredentials(config: ModelConfig, useDevEnvKey: boolean): boolean {
-  if (config.apiKey.trim() || useDevEnvKey || isDevProxyBaseUrl(config.baseUrl)) {
+  if (
+    config.apiKey.trim() ||
+    (import.meta.env.DEV && (useDevEnvKey || isDevProxyBaseUrl(config.baseUrl)))
+  ) {
     return true;
   }
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(config.baseUrl.trim());
@@ -948,6 +951,7 @@ export function App({ runtime }: AppProps) {
             resetKey={importResetKey}
             config={config}
             transport={runtime.transport}
+            binaryDownloader={runtime.binaryDownloader}
             hasCredentials={hasCredentials}
             onRequireByok={openByokPrompt}
             extractBlueprint={(raw, cfg, title, signal) =>

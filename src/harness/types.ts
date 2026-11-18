@@ -115,9 +115,23 @@ export interface BackupExporter {
   exportJsonFile(fileName: string, jsonContent: string): Promise<void>;
 }
 
+export interface BinaryDownloadResult {
+  bytes: Uint8Array;
+  contentType?: string;
+}
+
+export interface BinaryDownloader {
+  downloadZipBytes(
+    url: string,
+    maxBytes: number,
+    signal?: AbortSignalLike,
+  ): Promise<BinaryDownloadResult>;
+}
+
 export interface PlatformRuntime {
   platform: 'web' | 'android';
   transport: LlmTransport;
+  binaryDownloader: BinaryDownloader;
   storyStorage: StoryStorage;
   secretStore: SecretStore;
   backupExporter: BackupExporter;
@@ -161,3 +175,28 @@ export type FetchLike = (
     signal?: AbortSignalLike;
   },
 ) => Promise<FetchResponseLike>;
+
+export interface BinaryFetchResponseLike {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  headers?: { get(name: string): string | null };
+  body:
+    | AsyncIterable<Uint8Array>
+    | {
+        getReader(): {
+          read(): Promise<{ done: boolean; value?: Uint8Array }>;
+          releaseLock(): void;
+        };
+      }
+    | null;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
+export type BinaryFetchLike = (
+  url: string,
+  init: {
+    method: 'GET';
+    signal?: AbortSignalLike;
+  },
+) => Promise<BinaryFetchResponseLike>;

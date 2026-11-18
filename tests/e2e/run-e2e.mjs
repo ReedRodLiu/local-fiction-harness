@@ -376,7 +376,55 @@ async function main() {
       });
     });
 
+    await page.route('https://cdn.deepseek.example/**', async (route) => {
+      const reqUrl = route.request().url();
+      if (reqUrl.endsWith('/export-html.zip')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/html; charset=utf-8',
+          body: '<!DOCTYPE html><html><body>请登录 DeepSeek</body></html>',
+        });
+        return;
+      }
+      if (reqUrl.endsWith('/export-cors.zip')) {
+        await route.abort('failed');
+        return;
+      }
+      if (reqUrl.endsWith('/export-valid.zip')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/zip',
+          body: Buffer.from(buildSyntheticDeepSeekZipE2E()),
+        });
+        return;
+      }
+      await route.fulfill({ status: 404, body: 'Not Found' });
+    });
+
     await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+
+    // 0-url. DeepSeek HTTPS export link fetch (HTML login fallback, CORS fallback, and valid ZIP fetch)
+    await page.click('button:has-text("从 DeepSeek 继续")');
+    await page.click('button[role="tab"]:has-text("粘贴导出 .zip 下载链接")');
+    await page.waitForSelector('#deepseek-zip-url-input');
+
+    await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/export-html.zip');
+    await page.click('button:has-text("拉取并预览")');
+    await page.waitForSelector('[data-testid="deepseek-import-panel"] .error-banner:has-text("HTML")');
+
+    await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/export-cors.zip');
+    await page.click('button:has-text("拉取并预览")');
+    await page.waitForSelector('[data-testid="deepseek-import-panel"] .error-banner:has-text("CORS")');
+
+    await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/export-valid.zip');
+    await page.click('button:has-text("拉取并预览")');
+    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
+    const urlPreviewText = await page.locator('[data-testid="deepseek-preview-card"]').textContent();
+    if (!urlPreviewText?.includes('合成宫斗测试档')) {
+      throw new Error(`Expected fetched ZIP preview, got: ${urlPreviewText}`);
+    }
+    // Switch back to local file tab to also verify local file upload flow below
+    await page.click('button[role="tab"]:has-text("选择本地 .zip 文件")');
 
     // 0. Keyless DeepSeek .zip import -> preview -> batch 1-to-1 import -> Continue This Story -> inline BYOK prompt -> stream
     const dsZipPath = path.join(tmpDir, 'deepseek-export.zip');

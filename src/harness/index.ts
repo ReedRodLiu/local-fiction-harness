@@ -10,4 +10,5 @@ export * from './messageFormat.ts';
 export * from './branches.ts';
 export * from './storyTree.ts';
 export * from './deepseekImport.ts';
+export * from './binaryDownload.ts';
 export * from './harness.ts';

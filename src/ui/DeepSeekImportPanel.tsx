@@ -1,8 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  DEFAULT_ZIP_MAX_BYTES,
   assistFilterDeepSeekSessions,
+  isAbortError,
   previewDeepSeekSessions,
   scanDeepSeekExportZip,
+  type BinaryDownloader,
   type DeepSeekImportBatchResult,
   type DeepSeekSessionIndexItem,
   type DeepSeekZipScanResult,
@@ -23,6 +26,7 @@ const SUMMARY_STATUS_LABELS: Record<ImportSummaryStatus, string> = {
 interface DeepSeekImportPanelProps {
   config: ModelConfig;
   transport: LlmTransport;
+  binaryDownloader: BinaryDownloader;
   hasCredentials: boolean;
   onRequireByok: (actionLabel: string, resume: (resolvedConfig: ModelConfig) => void) => void;
   onImportBatch: (
@@ -36,11 +40,16 @@ interface DeepSeekImportPanelProps {
 export function DeepSeekImportPanel({
   config,
   transport,
+  binaryDownloader,
   hasCredentials,
   onRequireByok,
   onImportBatch,
   onContinueStory,
 }: DeepSeekImportPanelProps) {
+  const [sourceMode, setSourceMode] = useState<'file' | 'url'>('file');
+  const [zipUrl, setZipUrl] = useState('');
+  const [isFetchingUrl, setIsFetchingUrl] = useState(false);
+  const urlAbortRef = useRef<AbortController | null>(null);
   const [zipBytes, setZipBytes] = useState<Uint8Array | null>(null);
   const [scanResult, setScanResult] = useState<DeepSeekZipScanResult | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -56,25 +65,69 @@ export function DeepSeekImportPanel({
   const [receipt, setReceipt] = useState<DeepSeekImportBatchResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  useEffect(() => {
+    return () => {
+      urlAbortRef.current?.abort();
+    };
+  }, []);
+
+  const loadZipBytes = (bytes: Uint8Array) => {
+    const scanned = scanDeepSeekExportZip(bytes);
+    setZipBytes(bytes);
+    setScanResult(scanned);
+    setAiMatchedIds(null);
+    setScriptRangeOverrides({});
+    const firstLikely = scanned.sessions.find((s) => s.isLikelyFiction) ?? scanned.sessions[0];
+    setSelectedIds(firstLikely ? [firstLikely.sessionId] : []);
+    setPreviewSessionId(firstLikely?.sessionId ?? null);
+  };
+
+  const resetLoadedZip = () => {
+    setZipBytes(null);
+    setScanResult(null);
+    setSelectedIds([]);
+    setPreviewSessionId(null);
+  };
+
   const handleZipFile = async (file: File) => {
     setErrorMsg(null);
     setReceipt(null);
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
-      const scanned = scanDeepSeekExportZip(buf);
-      setZipBytes(buf);
-      setScanResult(scanned);
-      setAiMatchedIds(null);
-      setScriptRangeOverrides({});
-      const firstLikely = scanned.sessions.find((s) => s.isLikelyFiction) ?? scanned.sessions[0];
-      setSelectedIds(firstLikely ? [firstLikely.sessionId] : []);
-      setPreviewSessionId(firstLikely?.sessionId ?? null);
+      loadZipBytes(buf);
     } catch (err) {
-      setZipBytes(null);
-      setScanResult(null);
-      setSelectedIds([]);
-      setPreviewSessionId(null);
+      resetLoadedZip();
       setErrorMsg(toErrorMessage(err, '解析 DeepSeek 导出 .zip 文件失败。'));
+    }
+  };
+
+  const handleFetchZipUrl = async () => {
+    if (isFetchingUrl) return;
+    setErrorMsg(null);
+    setReceipt(null);
+    const controller = new AbortController();
+    urlAbortRef.current = controller;
+    setIsFetchingUrl(true);
+    try {
+      const result = await binaryDownloader.downloadZipBytes(
+        zipUrl,
+        DEFAULT_ZIP_MAX_BYTES,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      loadZipBytes(result.bytes);
+    } catch (err) {
+      resetLoadedZip();
+      if (isAbortError(err)) {
+        setErrorMsg('已取消拉取导出压缩包。');
+      } else {
+        setErrorMsg(toErrorMessage(err, '拉取 DeepSeek 导出链接失败，请改用本地 .zip 文件导入。'));
+      }
+    } finally {
+      if (urlAbortRef.current === controller) {
+        urlAbortRef.current = null;
+        setIsFetchingUrl(false);
+      }
     }
   };
 
@@ -251,30 +304,102 @@ export function DeepSeekImportPanel({
     <div className="ds-import-box" data-testid="deepseek-import-panel">
       {errorMsg && (
         <div className="error-banner" role="alert">
-          {errorMsg}
+          <div>{errorMsg}</div>
+          {sourceMode === 'url' && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{ marginTop: '0.45rem' }}
+              onClick={() => {
+                setSourceMode('file');
+                setErrorMsg(null);
+              }}
+            >
+              改用本地 .zip 文件导入
+            </button>
+          )}
         </div>
       )}
 
       <div className="notice-box" role="note">
         <strong>免密钥本地预览：</strong>
-        选择 DeepSeek「设置 → 数据管理」导出的 <code>.zip</code> 包，本地按需筛选、预览剧情树与附件并保存故事，<strong>无需提前填写 API Key</strong>。
+        选择 DeepSeek「设置 → 数据管理」导出的本地 <code>.zip</code> 包，或粘贴 HTTPS 下载链接，本地按需筛选、预览剧情树与附件并保存故事，<strong>无需提前填写 API Key</strong>。
       </div>
 
-      <div className="field">
-        <label htmlFor="deepseek-zip-input">选择本地 DeepSeek 导出压缩包（.zip）</label>
-        <input
-          id="deepseek-zip-input"
-          name="deepseekZip"
-          type="file"
-          accept=".zip"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) {
-              void handleZipFile(file);
-            }
-          }}
-        />
+      <div className="btn-group" role="tablist" aria-label="DeepSeek 导入来源">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={sourceMode === 'file'}
+          className={`btn btn-sm ${sourceMode === 'file' ? 'btn-primary' : ''}`}
+          onClick={() => setSourceMode('file')}
+        >
+          选择本地 .zip 文件
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={sourceMode === 'url'}
+          className={`btn btn-sm ${sourceMode === 'url' ? 'btn-primary' : ''}`}
+          onClick={() => setSourceMode('url')}
+        >
+          粘贴导出 .zip 下载链接
+        </button>
       </div>
+
+      {sourceMode === 'file' ? (
+        <div className="field">
+          <label htmlFor="deepseek-zip-input">选择本地 DeepSeek 导出压缩包（.zip）</label>
+          <input
+            id="deepseek-zip-input"
+            name="deepseekZip"
+            type="file"
+            accept=".zip"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                void handleZipFile(file);
+              }
+            }}
+          />
+        </div>
+      ) : (
+        <div className="field">
+          <label htmlFor="deepseek-zip-url-input">粘贴 DeepSeek 数据管理生成的 HTTPS .zip 下载链接</label>
+          <div className="key-input-row">
+            <input
+              id="deepseek-zip-url-input"
+              name="deepseekZipUrl"
+              type="url"
+              placeholder="https://..."
+              value={zipUrl}
+              disabled={isFetchingUrl}
+              onChange={(e) => setZipUrl(e.target.value)}
+            />
+            {isFetchingUrl ? (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => urlAbortRef.current?.abort()}
+              >
+                取消拉取
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!zipUrl.trim()}
+                onClick={() => void handleFetchZipUrl()}
+              >
+                拉取并预览
+              </button>
+            )}
+          </div>
+          <span className="status-text">
+            仅客户端直连拉取并校验 HTTPS 与 PK 魔数头；若目标站点要求浏览器登录态或限制跨域（CORS），可点击切换本地文件导入。
+          </span>
+        </div>
+      )}
 
       {scanResult && (
         <>

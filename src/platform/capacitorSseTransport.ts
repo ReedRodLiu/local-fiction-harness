@@ -3,11 +3,15 @@ import {
   buildOpenAiChatRequest,
   createDefaultId,
   parseOpenAiSseStream,
-  type AbortSignalLike,
   type LlmStreamDelta,
   type LlmStreamRequest,
   type LlmTransport,
 } from '../harness/index.ts';
+import {
+  bindAbortSignal,
+  createAbortError,
+  decodeBase64ToBytes,
+} from './nativeBridgeHelpers.ts';
 
 export interface NativeSseEventMap {
   sseChunk: { requestId: string; chunkBase64: string };
@@ -30,32 +34,6 @@ export interface NativeSsePluginLike {
 }
 
 const NativeSse = registerPlugin<NativeSsePluginLike>('NativeSse');
-
-function decodeBase64ToBytes(base64: string): Uint8Array {
-  try {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  } catch (err) {
-    throw new Error(
-      `无法解码原生 SSE 分块数据: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-function createAbortError(message = '操作已中止。'): Error {
-  const err = new Error(message);
-  err.name = 'AbortError';
-  return err;
-}
-
-interface AbortEventTargetLike {
-  addEventListener?: (type: string, listener: () => void, options?: { once?: boolean }) => void;
-  removeEventListener?: (type: string, listener: () => void) => void;
-}
 
 /**
  * Adapts the Capacitor NativeSse chunked streaming plugin into the shared LlmTransport contract,
@@ -98,11 +76,7 @@ export function createCapacitorSseTransport(
         }
       };
 
-      const signalTarget = req.signal as (AbortSignalLike & AbortEventTargetLike) | undefined;
-      const hasEventTargetAbort = typeof signalTarget?.addEventListener === 'function';
-      if (hasEventTargetAbort) {
-        signalTarget!.addEventListener!('abort', onAbort, { once: true });
-      }
+      const { hasEventTargetAbort, unbind } = bindAbortSignal(req.signal, onAbort);
 
       const handles: PluginListenerHandle[] = [];
       try {
@@ -110,7 +84,7 @@ export function createCapacitorSseTransport(
           plugin.addListener('sseChunk', (ev) => {
             if (ev.requestId !== requestId || streamDone || streamError) return;
             try {
-              queue.push(decodeBase64ToBytes(ev.chunkBase64));
+              queue.push(decodeBase64ToBytes(ev.chunkBase64, '原生 SSE 分块数据'));
             } catch (err) {
               streamError = err instanceof Error ? err : new Error(String(err));
             }
@@ -181,9 +155,7 @@ export function createCapacitorSseTransport(
 
         yield* parseOpenAiSseStream(rawByteChunks());
       } finally {
-        if (hasEventTargetAbort) {
-          signalTarget?.removeEventListener?.('abort', onAbort);
-        }
+        unbind();
         if (started && !streamDone && !streamError) {
           void plugin.abortStream({ requestId }).catch(() => {});
         }

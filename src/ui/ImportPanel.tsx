@@ -4,6 +4,7 @@ import {
   createDefaultBlueprint,
   isAbortError,
   parseScriptInput,
+  type BinaryDownloader,
   type DeepSeekImportBatchResult,
   type LlmTransport,
   type ModelConfig,
@@ -20,6 +21,7 @@ interface ImportPanelProps {
   resetKey?: number;
   config: ModelConfig;
   transport: LlmTransport;
+  binaryDownloader: BinaryDownloader;
   hasCredentials: boolean;
   onRequireByok: (actionLabel: string, resume: (resolvedConfig: ModelConfig) => void) => void;
   extractBlueprint: (
@@ -76,6 +78,7 @@ export function ImportPanel({
   resetKey = 0,
   config,
   transport,
+  binaryDownloader,
   hasCredentials,
   onRequireByok,
   extractBlueprint,
@@ -268,7 +271,7 @@ export function ImportPanel({
           className={`btn ${importMode === 'deepseek' ? 'btn-primary' : ''}`}
           onClick={() => setImportMode('deepseek')}
         >
-          从 DeepSeek 继续（.zip 导出包）
+          从 DeepSeek 继续（.zip / 链接）
         </button>
         <button
           type="button"
@@ -286,6 +289,7 @@ export function ImportPanel({
           key={resetKey}
           config={config}
           transport={transport}
+          binaryDownloader={binaryDownloader}
           hasCredentials={hasCredentials}
           onRequireByok={onRequireByok}
           onImportBatch={onImportDeepSeekBatch}
