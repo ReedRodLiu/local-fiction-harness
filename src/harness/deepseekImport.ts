@@ -77,9 +77,25 @@ export interface DeepSeekSessionIndexItem {
   isLikelyFiction: boolean;
 }
 
+export interface DeepSeekStructureStats {
+  exportFormatVersion: number;
+  totalSessions: number;
+  danglingParentCount: number;
+  emptyTitleCount: number;
+  unknownFragmentTypes: string[];
+  attachmentExtensions: Record<string, number>;
+}
+
 export interface DeepSeekZipScanResult {
   exportFormatVersion: number;
   sessions: DeepSeekSessionIndexItem[];
+  structure: DeepSeekStructureStats;
+}
+
+export class UnsupportedDeepSeekExportVersionError extends Error {
+  constructor(readonly exportFormatVersion: number | undefined) {
+    super(`不支持的 DeepSeek 导出格式版本：${exportFormatVersion ?? '未知'}（当前仅支持 v3）。`);
+  }
 }
 
 export interface DeepSeekAttachmentResult {
@@ -210,7 +226,7 @@ function normalizeDiagnosticStatus(status?: string): NodeDiagnosticStatus | unde
   return undefined;
 }
 
-function extractFragments(msg: DeepSeekRawMessage): {
+function extractFragments(msg: DeepSeekRawMessage, unknownTypes?: Set<string>): {
   text: string;
   reasoning: string;
   fileRefs: DeepSeekRawFileRef[];
@@ -222,7 +238,10 @@ function extractFragments(msg: DeepSeekRawMessage): {
   let hasContentRisk = false;
 
   for (const frag of msg.fragments ?? []) {
-    const t = (frag.type ?? '').toUpperCase();
+    const t = typeof frag.type === 'string' ? frag.type.toUpperCase() : '';
+    if (unknownTypes && isUnknownFragmentType(t)) {
+      unknownTypes.add(SAFE_FRAGMENT_TYPE_REGEX.test(t) ? t : 'INVALID_TYPE_NAME');
+    }
     if (t === 'REQUEST' || t === 'RESPONSE') {
       if (typeof frag.content === 'string' && frag.content.trim()) {
         textParts.push(frag.content.trim());
@@ -308,7 +327,7 @@ function parseManifestAndCheckVersion(entries: Record<string, Uint8Array>): numb
   if (!manifestBytes) {
     throw new Error('压缩包缺少 manifest.json，无法识别为 DeepSeek 导出包。');
   }
-  let manifest: { export_format_version?: unknown };
+  let manifest: { export_format_version?: unknown } | null;
   try {
     manifest = JSON.parse(decodeUtf8WithGbFallback(manifestBytes)) as {
       export_format_version?: unknown;
@@ -316,9 +335,12 @@ function parseManifestAndCheckVersion(entries: Record<string, Uint8Array>): numb
   } catch {
     throw new Error('DeepSeek 导出包的 manifest.json 格式无效。');
   }
-  if (manifest.export_format_version !== 3) {
-    throw new Error(
-      `不支持的 DeepSeek 导出格式版本：${String(manifest.export_format_version ?? '未知')}（当前仅支持 v3）。`,
+  const version = manifest?.export_format_version;
+  if (version !== 3) {
+    throw new UnsupportedDeepSeekExportVersionError(
+      typeof version === 'number' && Number.isSafeInteger(version) && version >= 0
+        ? version
+        : undefined,
     );
   }
   return 3;
@@ -330,6 +352,34 @@ function resolveAttachmentPath(sessionId: string, fileRef: DeepSeekRawFileRef): 
   }
   const fileName = fileRef.file_name ?? 'attachment';
   return normalizeZipPath(`chat_sessions/${sessionId}/${fileName}`);
+}
+
+const KNOWN_FRAGMENT_TYPES = new Set([
+  'REQUEST',
+  'RESPONSE',
+  'THINK',
+  'FILE',
+  'CONTENT_RISK',
+  'TIP',
+  'TEMPLATE_RESPONSE',
+  'PARTIAL_FILE_READ',
+  'READ_LINK',
+  'TOOL_SEARCH',
+  'TOOL_OPEN',
+  'TOOL_FIND',
+]);
+const SAFE_FRAGMENT_TYPE_REGEX = /^[A-Z][A-Z0-9_]{0,31}$/;
+const SAFE_EXTENSION_REGEX = /^\.[a-z0-9]{1,8}$/;
+
+function isUnknownFragmentType(upperType: string): boolean {
+  return upperType !== '' && !KNOWN_FRAGMENT_TYPES.has(upperType);
+}
+
+function countDanglingParents(messages: readonly DeepSeekRawMessage[]): number {
+  const ids = new Set(messages.map((m) => String(m.id)));
+  return messages.filter(
+    (m) => m.parent_id !== null && m.parent_id !== undefined && !ids.has(String(m.parent_id)),
+  ).length;
 }
 
 /**
@@ -355,6 +405,10 @@ export function scanDeepSeekExportZip(zipBytes: Uint8Array): DeepSeekZipScanResu
   const exportFormatVersion = parseManifestAndCheckVersion(entries);
   const sessions: DeepSeekSessionIndexItem[] = [];
   const nowFallback = Date.now();
+  const unknownFragmentTypes = new Set<string>();
+  const attachmentExtensions: Record<string, number> = {};
+  let danglingParentCount = 0;
+  let emptyTitleCount = 0;
 
   for (const [rawPath, bytes] of Object.entries(entries)) {
     const filePath = normalizeZipPath(rawPath);
@@ -369,6 +423,7 @@ export function scanDeepSeekExportZip(zipBytes: Uint8Array): DeepSeekZipScanResu
     if (!raw || typeof raw.id !== 'string') continue;
 
     const messages = getSessionMessages(raw);
+    danglingParentCount += countDanglingParents(messages);
     const attachments: DeepSeekAttachmentMeta[] = [];
     const seenPaths = new Set<string>();
     let diagnosticCount = 0;
@@ -376,7 +431,7 @@ export function scanDeepSeekExportZip(zipBytes: Uint8Array): DeepSeekZipScanResu
     let latestSnippet = '';
 
     for (const msg of messages) {
-      const { text, fileRefs, hasContentRisk } = extractFragments(msg);
+      const { text, fileRefs, hasContentRisk } = extractFragments(msg, unknownFragmentTypes);
       if (normalizeDiagnosticStatus(msg.status) || hasContentRisk) {
         diagnosticCount += 1;
       }
@@ -391,10 +446,13 @@ export function scanDeepSeekExportZip(zipBytes: Uint8Array): DeepSeekZipScanResu
         const exportPath = resolveAttachmentPath(raw.id, f);
         if (seenPaths.has(exportPath)) continue;
         seenPaths.add(exportPath);
+        const ext = getFileExtension(fileName);
+        const safeExt = SAFE_EXTENSION_REGEX.test(ext) ? ext : ext ? '.other' : '.none';
+        attachmentExtensions[safeExt] = (attachmentExtensions[safeExt] ?? 0) + 1;
         attachments.push({
           fileName,
           exportPath,
-          ext: getFileExtension(fileName),
+          ext,
           kind: classifyAttachment(fileName, f.is_image),
           fileSize: typeof f.file_size === 'number' ? f.file_size : 0,
         });
@@ -402,6 +460,7 @@ export function scanDeepSeekExportZip(zipBytes: Uint8Array): DeepSeekZipScanResu
     }
 
     const { title, hasNullTitle } = resolveSessionTitle(raw.title, firstUserSnippet);
+    if (hasNullTitle) emptyTitleCount += 1;
     const forkCount = countForkPoints(messages);
     const fictionScore = scoreSessionAsFiction(title, messages, attachments, forkCount);
 
@@ -438,7 +497,18 @@ export function scanDeepSeekExportZip(zipBytes: Uint8Array): DeepSeekZipScanResu
     return b.updatedAt - a.updatedAt;
   });
 
-  return { exportFormatVersion, sessions };
+  return {
+    exportFormatVersion,
+    sessions,
+    structure: {
+      exportFormatVersion,
+      totalSessions: sessions.length,
+      danglingParentCount,
+      emptyTitleCount,
+      unknownFragmentTypes: Array.from(unknownFragmentTypes).sort(),
+      attachmentExtensions,
+    },
+  };
 }
 
 function detectRawScriptFromActivePath(

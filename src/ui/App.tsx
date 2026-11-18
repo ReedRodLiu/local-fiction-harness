@@ -29,6 +29,7 @@ import {
   type DevTestConfigResponse,
 } from '../platform/runtime.ts';
 import { ContextOverview } from './ContextOverview.tsx';
+import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
 import { mergeBranchSummaryResult } from './storyConcurrency.ts';
 import { ImportPanel, type ImportMode } from './ImportPanel.tsx';
 import { MessageContent } from './MessageContent.tsx';
@@ -129,6 +130,7 @@ export function App({ runtime }: AppProps) {
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamContent, setStreamContent] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const streamSeqRef = useRef(0);
@@ -524,10 +526,17 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleSwitchBranch = async (targetNodeId: string) => {
+    const switchStartedAt = Date.now();
     const switched = await runStoryTransition(
       () => harness.switchBranch(storyRef.current!, targetNodeId),
       '切换分支失败。',
     );
+    runtime.diagnostics.recordEvent({
+      level: switched ? 'info' : 'warn',
+      category: 'branch',
+      action: switched ? 'switch_branch' : 'switch_branch_failed',
+      durationMs: Date.now() - switchStartedAt,
+    });
     const targetLeafId = switched?.activeLeafNodeId ?? null;
     if (
       switched &&
@@ -897,7 +906,27 @@ export function App({ runtime }: AppProps) {
             </button>
           )}
         </form>
+
+        <button
+          type="button"
+          className="btn"
+          data-testid="open-diagnostics"
+          onClick={() => setShowDiagnostics(true)}
+        >
+          导出最近 30 分钟脱敏日志
+        </button>
       </aside>
+
+      {showDiagnostics && (
+        <DiagnosticsPreview
+          buildBundle={() => runtime.diagnostics.buildBundle({
+            ...config,
+            isDevProxy: import.meta.env.DEV && isDevProxyBaseUrl(config.baseUrl),
+          })}
+          onExport={(fileName, json) => runtime.backupExporter.exportJsonFile(fileName, json)}
+          onClose={() => setShowDiagnostics(false)}
+        />
+      )}
 
       <main className="main-stage">
         <header className="stage-header">
@@ -1006,6 +1035,7 @@ export function App({ runtime }: AppProps) {
             }
             onConfirmStory={handleConfirmImportedStory}
             onImportDeepSeekBatch={handleImportDeepSeekBatch}
+            diagnostics={runtime.diagnostics}
             onContinueStory={(storyId) => void handleContinueImportedStory(storyId)}
             onCancel={() => setShowImport(false)}
           />

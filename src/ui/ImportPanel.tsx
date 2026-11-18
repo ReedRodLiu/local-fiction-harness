@@ -6,6 +6,7 @@ import {
   parseScriptInput,
   type BinaryDownloader,
   type DeepSeekImportBatchResult,
+  type DiagnosticCollector,
   type LlmTransport,
   type ModelConfig,
   type ScriptTurnRange,
@@ -41,6 +42,7 @@ interface ImportPanelProps {
     scriptRangeOverrides: Record<string, ScriptTurnRange>,
   ) => Promise<DeepSeekImportBatchResult>;
   onContinueStory: (storyId: string) => void;
+  diagnostics: DiagnosticCollector;
   onCancel?: () => void;
 }
 
@@ -85,6 +87,7 @@ export function ImportPanel({
   onConfirmStory,
   onImportDeepSeekBatch,
   onContinueStory,
+  diagnostics,
   onCancel,
 }: ImportPanelProps) {
   const [importMode, setImportMode] = useState<ImportMode>(initialMode);
@@ -294,6 +297,7 @@ export function ImportPanel({
           onRequireByok={onRequireByok}
           onImportBatch={onImportDeepSeekBatch}
           onContinueStory={onContinueStory}
+          diagnostics={diagnostics}
         />
       ) : (
         <>

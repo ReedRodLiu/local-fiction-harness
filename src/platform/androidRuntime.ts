@@ -1,10 +1,14 @@
-import type {
-  BackupExporter,
-  BinaryDownloader,
-  LlmTransport,
-  PlatformRuntime,
-  SecretStore,
-  StoryStorage,
+import {
+  createDiagnosticCollector,
+  createDiagnosticStoryStorage,
+  createDiagnosticTransport,
+  type BackupExporter,
+  type BinaryDownloader,
+  type KeyValueStorage,
+  type LlmTransport,
+  type PlatformRuntime,
+  type SecretStore,
+  type StoryStorage,
 } from '../harness/index.ts';
 import { createCapacitorBinaryDownloader } from './capacitorBinaryDownloader.ts';
 import { createCapacitorSseTransport } from './capacitorSseTransport.ts';
@@ -20,6 +24,15 @@ export interface AndroidRuntimeOptions {
   storyStorage?: StoryStorage;
   secretStore?: SecretStore;
   backupExporter?: BackupExporter;
+  diagnosticsStorage?: KeyValueStorage;
+}
+
+function resolveBrowserLocalStorage(): KeyValueStorage | undefined {
+  try {
+    return typeof window !== 'undefined' ? window.localStorage : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -29,11 +42,22 @@ export interface AndroidRuntimeOptions {
 export function createAndroidPlatformRuntime(
   options: AndroidRuntimeOptions = {},
 ): PlatformRuntime {
+  const diagnostics = createDiagnosticCollector({
+    platform: 'android',
+    storage: options.diagnosticsStorage ?? resolveBrowserLocalStorage(),
+  });
   return {
     platform: 'android',
-    transport: options.transport ?? createCapacitorSseTransport(),
+    diagnostics,
+    transport: createDiagnosticTransport(
+      options.transport ?? createCapacitorSseTransport(),
+      diagnostics,
+    ),
     binaryDownloader: options.binaryDownloader ?? createCapacitorBinaryDownloader(),
-    storyStorage: options.storyStorage ?? createAndroidStoryStorage(),
+    storyStorage: createDiagnosticStoryStorage(
+      options.storyStorage ?? createAndroidStoryStorage(),
+      diagnostics,
+    ),
     secretStore: options.secretStore ?? createAndroidSecretStore(),
     backupExporter: options.backupExporter ?? createAndroidBackupExporter(),
     supportsMemoryOnlySession: true,

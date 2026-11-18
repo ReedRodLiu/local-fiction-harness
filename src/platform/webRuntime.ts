@@ -1,4 +1,7 @@
 import {
+  createDiagnosticCollector,
+  createDiagnosticStoryStorage,
+  createDiagnosticTransport,
   createKeyValueSecretStore,
   createOpenAiTransport,
   createWebBinaryDownloader,
@@ -15,6 +18,7 @@ import { isDevProxyBaseUrl, readDevSessionProxy } from './devProxy.ts';
 
 export interface WebRuntimeOptions {
   keyValueStorage?: KeyValueStorage;
+  diagnosticsStorage?: KeyValueStorage;
   storyStorage?: StoryStorage;
   fetchImpl?: FetchLike;
   binaryFetchImpl?: BinaryFetchLike;
@@ -75,11 +79,20 @@ export function createWebPlatformRuntime(options: WebRuntimeOptions = {}): Platf
         signal: init.signal as AbortSignal | undefined,
       }));
 
+  const diagnostics = createDiagnosticCollector({
+    platform: 'web',
+    storage: options.diagnosticsStorage ?? kvStorage,
+  });
+
   return {
     platform: 'web',
-    transport: createOpenAiTransport(devAwareFetch),
+    diagnostics,
+    transport: createDiagnosticTransport(createOpenAiTransport(devAwareFetch), diagnostics),
     binaryDownloader: options.binaryDownloader ?? createWebBinaryDownloader(binaryFetch),
-    storyStorage: options.storyStorage ?? createIndexedDbStoryStorage(),
+    storyStorage: createDiagnosticStoryStorage(
+      options.storyStorage ?? createIndexedDbStoryStorage(),
+      diagnostics,
+    ),
     secretStore: createKeyValueSecretStore(kvStorage),
     backupExporter: options.exportJsonFile
       ? { exportJsonFile: options.exportJsonFile }

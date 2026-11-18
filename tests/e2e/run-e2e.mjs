@@ -805,6 +805,7 @@ async function main() {
     await checkNoHorizontalOverflow('mobile import view');
 
     await runComprehensiveSpec18MobileE2E(browser, port, tmpDir);
+    await runSpec26DiagnosticsE2E(browser, port, tmpDir);
 
     console.log('ALL_E2E_CHECKS_PASSED');
   } finally {
@@ -1091,6 +1092,162 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     await assertNoOverflow('spec18 mobile post-reload');
   } finally {
     await mobileCtx.close();
+  }
+}
+
+const SPEC26_CANARIES = [
+  'sk-e2e-canary-9988776655443322',
+  'my-private-relay.example.com',
+  '绝密玩家行动_CANARY',
+  '规则附件.docx',
+  '合成宫斗测试档',
+  '原进度抵达东侧练歌房',
+  '第1章 初入星光营',
+  '星光训练营规则',
+  'SYNTHETIC_BEARER_VALUE',
+  'SYNTHETIC_QUERY_VALUE',
+  'SYNTHETIC_REASONING_TEXT',
+  'SYNTHETIC_SUMMARY_TEXT',
+  'SYNTHETIC_BRANCH_NAME',
+  'SYNTHETIC_INVALID_ARCHIVE.zip',
+];
+
+function assertZeroLeak(label, text) {
+  for (const canary of SPEC26_CANARIES) {
+    if (text.includes(canary)) {
+      throw new Error(`Spec26 privacy leak in ${label}: found canary ${canary}`);
+    }
+  }
+}
+
+async function runSpec26DiagnosticsE2E(browser, port, tmpDir) {
+  const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 390, height: 844 } });
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: `http://localhost:${port}`,
+  });
+  const page = await ctx.newPage();
+  try {
+    await page.route('**/chat/completions', async (route) => {
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: {
+            message: `401 Bearer SYNTHETIC_BEARER_VALUE https://my-private-relay.example.com/v1?token=SYNTHETIC_QUERY_VALUE ${SPEC26_CANARIES.join(' ')}`,
+          },
+        }),
+      });
+    });
+
+    await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+    // DeepSeek import (success radar) with canary title / attachment names
+    const zipPath = path.join(tmpDir, 'spec26-deepseek.zip');
+    fs.writeFileSync(zipPath, buildSyntheticDeepSeekZipE2E());
+    await page.click('button:has-text("从 DeepSeek 继续")');
+    await page.waitForSelector('#deepseek-zip-input');
+    await page.setInputFiles('#deepseek-zip-input', {
+      name: 'SYNTHETIC_INVALID_ARCHIVE.zip',
+      mimeType: 'application/zip',
+      buffer: Buffer.from(zipSync({
+        'manifest.json': strToU8(JSON.stringify({ export_format_version: 137 })),
+      })),
+    });
+    await page.waitForSelector('[data-testid="deepseek-import-panel"] [role="alert"]');
+    await page.setInputFiles('#deepseek-zip-input', {
+      name: 'SYNTHETIC_MALFORMED_SESSIONS.zip',
+      mimeType: 'application/zip',
+      buffer: Buffer.from(zipSync({
+        'manifest.json': strToU8(JSON.stringify({ export_format_version: 3 })),
+        'chat_sessions/SYNTHETIC_MALFORMED_SESSION.json': strToU8('malformed session JSON'),
+      })),
+    });
+    await page.getByText(/共 0 条会话/).waitFor();
+    await page.setInputFiles('#deepseek-zip-input', zipPath);
+    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
+    await page.click('[data-testid="ds-confirm-import-btn"]');
+    await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
+
+    // Business error: 401 from private relay
+    await page.getByRole('button', { name: '继续这条故事' }).click();
+    await page.fill('#cfg-base-url', 'https://my-private-relay.example.com/v1');
+    await page.fill('#cfg-api-key', 'sk-e2e-canary-9988776655443322');
+    await page.fill('#turn-input', '绝密玩家行动_CANARY');
+    await page.click('button:has-text("发送行动")');
+    await page.waitForSelector('.error-banner');
+
+    await page.click('[data-testid="open-diagnostics"]');
+    await page.waitForSelector('[data-testid="diagnostics-preview"]');
+    const previewText = await page.locator('[data-testid="diagnostics-json"]').textContent();
+    assertZeroLeak('preview', previewText ?? '');
+    if (!/relay_[0-9a-f]{8}/.test(previewText ?? '')) {
+      throw new Error('Preview missing hashed relay host');
+    }
+    for (const needle of ['stream_error', '"statusCode": 401', 'importRadars', '"status": "success"']) {
+      if (!previewText?.includes(needle)) {
+        throw new Error(`Preview missing ${needle}`);
+      }
+    }
+    const { events, importRadars } = JSON.parse(previewText);
+    const streamError = events.find((event) => event.action === 'stream_error');
+    if (!streamError?.sanitizedMessage?.includes('HTTP 401') ||
+        !streamError?.stackTop?.some((frame) => /^sse\.ts:\d+:\d+$/.test(frame)) ||
+        !Number.isInteger(streamError?.tsOffsetSec) || 'ts' in streamError) {
+      throw new Error('Diagnostic error is missing a safe error summary, stack frame or relative timestamp');
+    }
+    const failedScan = importRadars.find((radar) => radar.status === 'error' && radar.exportFormatVersion === 137);
+    const malformedScan = importRadars.find((radar) => radar.status === 'error' && radar.exportFormatVersion === 3);
+    const imported = importRadars.find((radar) => radar.status === 'success');
+    if (failedScan?.sourceMode !== 'zip_file' || failedScan?.totalSessions !== 0 ||
+        malformedScan?.sourceMode !== 'zip_file' || malformedScan?.totalSessions !== 0 ||
+        imported?.sourceMode !== 'zip_file' || imported?.exportFormatVersion !== 3 ||
+        imported?.totalSessions !== 2 || imported?.selectedSessions !== 1 ||
+        imported?.emptyTitleCount !== 1 || imported?.attachmentExtensions?.['.docx'] !== 1 ||
+        !Number.isFinite(failedScan?.durationMs) || !Number.isFinite(imported?.durationMs)) {
+      throw new Error('Diagnostic import radar did not describe the failed scan and successful import');
+    }
+    const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    if (scrollWidth > clientWidth) {
+      throw new Error(`Diagnostics modal overflow on 390px (${scrollWidth} > ${clientWidth})`);
+    }
+
+    await page.click('button:has-text("复制到剪贴板")');
+    await page.waitForSelector('[data-testid="diagnostics-preview"] [role="status"]:has-text("已复制")');
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    assertZeroLeak('clipboard', clip);
+    if (clip !== previewText) throw new Error('Clipboard differs from diagnostic preview');
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.click('button:has-text("导出 .json")'),
+    ]);
+    const exportedPath = path.join(tmpDir, 'spec26-export.json');
+    await download.saveAs(exportedPath);
+    const exported = fs.readFileSync(exportedPath, 'utf8');
+    assertZeroLeak('export file', exported);
+    if (exported !== previewText) throw new Error('Download differs from diagnostic preview');
+    const parsed = JSON.parse(exported);
+    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.events) || parsed.events.length === 0) {
+      throw new Error('Exported diagnostic bundle malformed');
+    }
+    await page.keyboard.press('Escape');
+    await page.getByTestId('diagnostics-preview').waitFor({ state: 'detached' });
+
+    // Persisted slot survives reload
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.click('[data-testid="open-diagnostics"]');
+    await page.waitForSelector('[data-testid="diagnostics-preview"]');
+    const afterReload = await page.locator('[data-testid="diagnostics-json"]').textContent();
+    assertZeroLeak('post-reload preview', afterReload ?? '');
+    if (!afterReload?.includes('stream_error')) {
+      throw new Error('Diagnostics did not survive reload');
+    }
+    const persisted = await page.evaluate(() => localStorage.getItem('lfh.diagnostics.v1') ?? '');
+    assertZeroLeak('persisted slot', persisted);
+  } finally {
+    await ctx.close();
   }
 }
 

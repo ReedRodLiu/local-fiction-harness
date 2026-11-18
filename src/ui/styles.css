@@ -804,3 +804,34 @@ summary:focus-visible {
   flex-wrap: wrap;
   gap: 0.35rem 0.5rem;
 }
+
+.modal-card::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.modal-card[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(720px, calc(100% - 24px));
+  max-height: 90dvh;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  color: var(--text-main);
+  background: var(--bg-surface);
+}
+
+.diagnostics-json {
+  flex: 1;
+  min-height: 120px;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+}

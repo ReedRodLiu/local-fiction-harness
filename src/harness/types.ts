@@ -1,3 +1,5 @@
+import type { DiagnosticCollector } from './diagnostics.ts';
+
 export interface StoryBlueprint {
   title: string;
   worldRules: string[];
@@ -131,6 +133,7 @@ export interface BinaryDownloader {
 
 export interface PlatformRuntime {
   platform: 'web' | 'android';
+  diagnostics: DiagnosticCollector;
   transport: LlmTransport;
   binaryDownloader: BinaryDownloader;
   storyStorage: StoryStorage;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_ZIP_MAX_BYTES,
+  UnsupportedDeepSeekExportVersionError,
   assistFilterDeepSeekSessions,
   isAbortError,
   previewDeepSeekSessions,
@@ -8,6 +9,8 @@ import {
   type BinaryDownloader,
   type DeepSeekImportBatchResult,
   type DeepSeekSessionIndexItem,
+  type DeepSeekStructureStats,
+  type DiagnosticCollector,
   type DeepSeekZipScanResult,
   type ImportSummaryStatus,
   type LlmTransport,
@@ -35,6 +38,7 @@ interface DeepSeekImportPanelProps {
     scriptRangeOverrides: Record<string, ScriptTurnRange>,
   ) => Promise<DeepSeekImportBatchResult>;
   onContinueStory: (storyId: string) => void;
+  diagnostics: DiagnosticCollector;
 }
 
 export function DeepSeekImportPanel({
@@ -45,11 +49,13 @@ export function DeepSeekImportPanel({
   onRequireByok,
   onImportBatch,
   onContinueStory,
+  diagnostics,
 }: DeepSeekImportPanelProps) {
   const [sourceMode, setSourceMode] = useState<'file' | 'url'>('file');
   const [zipUrl, setZipUrl] = useState('');
   const [isFetchingUrl, setIsFetchingUrl] = useState(false);
   const urlAbortRef = useRef<AbortController | null>(null);
+  const [loadedSource, setLoadedSource] = useState<'zip_file' | 'url'>('zip_file');
   const [zipBytes, setZipBytes] = useState<Uint8Array | null>(null);
   const [scanResult, setScanResult] = useState<DeepSeekZipScanResult | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -71,8 +77,58 @@ export function DeepSeekImportPanel({
     };
   }, []);
 
-  const loadZipBytes = (bytes: Uint8Array) => {
+  const recordImportRadar = (
+    structure: Partial<DeepSeekStructureStats> | undefined,
+    source: 'zip_file' | 'url',
+    status: 'success' | 'error',
+    selectedSessions: number,
+    durationMs: number,
+    confidenceCounts = { strong: 0, ambiguous: 0 },
+  ) => {
+    diagnostics.recordImportRadar({
+      exportFormatVersion: structure?.exportFormatVersion ?? null,
+      sourceMode: source,
+      totalSessions: structure?.totalSessions ?? 0,
+      selectedSessions,
+      danglingParentCount: structure?.danglingParentCount ?? 0,
+      emptyTitleCount: structure?.emptyTitleCount ?? 0,
+      unknownFragmentTypes: structure?.unknownFragmentTypes ?? [],
+      attachmentExtensions: structure?.attachmentExtensions ?? {},
+      scriptConfidenceCounts: confidenceCounts,
+      status,
+      durationMs,
+    });
+  };
+
+  const recordScanFailure = (
+    error: unknown,
+    source: 'zip_file' | 'url',
+    durationMs: number,
+    structure?: Partial<DeepSeekStructureStats>,
+  ) => {
+    const scanVersion = error instanceof UnsupportedDeepSeekExportVersionError
+      ? { exportFormatVersion: error.exportFormatVersion }
+      : undefined;
+    recordImportRadar(structure ?? scanVersion, source, 'error', 0, durationMs);
+    diagnostics.recordError({
+      category: 'import',
+      action: source === 'zip_file' ? 'deepseek_scan_error' : 'deepseek_url_error',
+      error,
+      durationMs,
+    });
+  };
+
+  const loadZipBytes = (bytes: Uint8Array, source: 'zip_file' | 'url', startedAt: number) => {
     const scanned = scanDeepSeekExportZip(bytes);
+    if (scanned.sessions.length === 0) {
+      recordScanFailure(
+        new Error('DeepSeek 导出包中没有可导入的会话。'),
+        source,
+        Date.now() - startedAt,
+        scanned.structure,
+      );
+    }
+    setLoadedSource(source);
     setZipBytes(bytes);
     setScanResult(scanned);
     setAiMatchedIds(null);
@@ -90,19 +146,22 @@ export function DeepSeekImportPanel({
   };
 
   const handleZipFile = async (file: File) => {
+    const startedAt = Date.now();
     setErrorMsg(null);
     setReceipt(null);
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
-      loadZipBytes(buf);
+      loadZipBytes(buf, 'zip_file', startedAt);
     } catch (err) {
       resetLoadedZip();
+      recordScanFailure(err, 'zip_file', Date.now() - startedAt);
       setErrorMsg(toErrorMessage(err, '解析 DeepSeek 导出 .zip 文件失败。'));
     }
   };
 
   const handleFetchZipUrl = async () => {
     if (isFetchingUrl) return;
+    const startedAt = Date.now();
     setErrorMsg(null);
     setReceipt(null);
     const controller = new AbortController();
@@ -115,14 +174,12 @@ export function DeepSeekImportPanel({
         controller.signal,
       );
       if (controller.signal.aborted) return;
-      loadZipBytes(result.bytes);
+      loadZipBytes(result.bytes, 'url', startedAt);
     } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) return;
       resetLoadedZip();
-      if (isAbortError(err)) {
-        setErrorMsg('已取消拉取导出压缩包。');
-      } else {
-        setErrorMsg(toErrorMessage(err, '拉取 DeepSeek 导出链接失败，请改用本地 .zip 文件导入。'));
-      }
+      recordScanFailure(err, 'url', Date.now() - startedAt);
+      setErrorMsg(toErrorMessage(err, '拉取 DeepSeek 导出链接失败，请改用本地 .zip 文件导入。'));
     } finally {
       if (urlAbortRef.current === controller) {
         urlAbortRef.current = null;
@@ -194,12 +251,27 @@ export function DeepSeekImportPanel({
 
   const handleConfirmImport = async () => {
     if (!zipBytes || selectedIds.length === 0 || isImporting) return;
+    const startedAt = Date.now();
     setErrorMsg(null);
     setIsImporting(true);
     try {
       const result = await onImportBatch(zipBytes, selectedIds, scriptRangeOverrides);
+      const confidenceCounts = { strong: 0, ambiguous: 0 };
+      for (const p of result.previews) confidenceCounts[p.scriptConfidence] += 1;
+      recordImportRadar(
+        scanResult?.structure, loadedSource, 'success', selectedIds.length,
+        Date.now() - startedAt, confidenceCounts,
+      );
       setReceipt(result);
     } catch (err) {
+      const durationMs = Date.now() - startedAt;
+      recordImportRadar(scanResult?.structure, loadedSource, 'error', selectedIds.length, durationMs);
+      diagnostics.recordError({
+        category: 'import',
+        action: 'deepseek_import_error',
+        error: err,
+        durationMs,
+      });
       setErrorMsg(toErrorMessage(err, '导入所选故事失败。'));
     } finally {
       setIsImporting(false);
@@ -380,7 +452,10 @@ export function DeepSeekImportPanel({
               <button
                 type="button"
                 className="btn"
-                onClick={() => urlAbortRef.current?.abort()}
+                onClick={() => {
+                  urlAbortRef.current?.abort();
+                  setErrorMsg('已取消拉取导出压缩包。');
+                }}
               >
                 取消拉取
               </button>

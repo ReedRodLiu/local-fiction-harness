@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createAsyncModelConfigStore, type Story } from '../../src/harness/index.ts';
+import {
+  createAsyncModelConfigStore,
+  createDiagnosticCollector,
+  type Story,
+} from '../../src/harness/index.ts';
 import {
   createAndroidBackupExporter,
   createAndroidSecretStore,
@@ -179,6 +183,39 @@ describe('Android NativeVault TS adapters & PlatformRuntime parity', () => {
     expect(events).toEqual(['start:1:第一版', 'end:1:第一版', 'start:2:第二版', 'end:2:第二版']);
     expect(latest?.title).toBe('第二版');
     expect(latest?.updatedAt).toBe(200);
+  });
+
+  it('delivers a diagnostic bundle unchanged through the native export bridge', async () => {
+    const fake = createFakeNativeVault();
+    const diagnostics = createDiagnosticCollector({ platform: 'android', now: () => 1000 });
+    diagnostics.recordImportRadar({
+      exportFormatVersion: 3,
+      sourceMode: 'zip_file',
+      totalSessions: 0,
+      selectedSessions: 0,
+      danglingParentCount: 0,
+      emptyTitleCount: 0,
+      unknownFragmentTypes: [],
+      attachmentExtensions: {},
+      scriptConfidenceCounts: { strong: 0, ambiguous: 0 },
+      status: 'error',
+      durationMs: 12,
+    });
+    const json = JSON.stringify(diagnostics.buildBundle({
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+      apiKey: '',
+      memoryOnly: true,
+    }));
+
+    await createAndroidBackupExporter(fake.plugin).exportJsonFile('lfh-diagnostics-v1.json', json);
+
+    expect(fake.exported).toEqual([{ fileName: 'lfh-diagnostics-v1.json', jsonContent: json }]);
+    expect(fake.callLog).toContain('exportJsonFile:lfh-diagnostics-v1.json');
+    expect(JSON.parse(fake.exported[0].jsonContent)).toMatchObject({
+      platform: 'android',
+      importRadars: [{ exportFormatVersion: 3, totalSessions: 0, status: 'error' }],
+    });
   });
 
   it('supports BackupExporter and wires all native adapters into createAndroidPlatformRuntime', async () => {

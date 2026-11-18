@@ -209,7 +209,7 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
         setActiveStoryId: async () => {},
       },
     });
-    expect(runtime.transport).toBe(transport);
+    expect(typeof runtime.transport.streamChat).toBe('function');
 
     const abortRun = (async () => {
       for await (const _ of runtime.transport.streamChat({
