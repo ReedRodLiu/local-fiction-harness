@@ -739,14 +739,24 @@ export function App({ runtime }: AppProps) {
                 <div>
                   {isStreaming ? (
                     <button
+                      key="stop-generation-btn"
                       type="button"
                       className="btn"
-                      onClick={() => abortRef.current?.abort()}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        abortRef.current?.abort();
+                      }}
                     >
                       停止生成
                     </button>
                   ) : (
-                    <button type="submit" className="btn btn-primary" disabled={!input.trim()}>
+                    <button
+                      key="send-action-btn"
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={!input.trim()}
+                    >
                       发送行动
                     </button>
                   )}

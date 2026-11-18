@@ -81,11 +81,18 @@ async function main() {
     const page = await context.newPage();
     const replyCounts = new Map();
     let failNextBlueprintWith401 = false;
+    let delayNextTurnMs = 0;
 
     await page.route('**/chat/completions', async (route) => {
       const reqBody = JSON.parse(route.request().postData() || '{}');
       const sys = reqBody.messages?.[0]?.content || '';
       const lastMsg = reqBody.messages?.[reqBody.messages.length - 1]?.content || '';
+
+      if (delayNextTurnMs > 0 && !sys.includes('严格只输出一个 JSON 对象') && !sys.includes('剧情摘要压缩')) {
+        const waitMs = delayNextTurnMs;
+        delayNextTurnMs = 0;
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
 
       if (sys.includes('严格只输出一个 JSON 对象')) {
         if (failNextBlueprintWith401) {
@@ -319,6 +326,24 @@ async function main() {
     await page.waitForSelector('#bp-title');
     await page.click('button:has-text("确认蓝图并开始故事")');
     await page.waitForFunction(() => document.querySelectorAll('.story-item').length === 2);
+
+    // 10b. Mid-stream abort via 停止生成 must NOT re-submit the composer form
+    delayNextTurnMs = 3000;
+    await page.fill('#turn-input', '测试停止生成不重发');
+    await page.click('button:has-text("发送行动")');
+    await page.waitForSelector('button:has-text("停止生成")');
+    await page.click('button:has-text("停止生成")');
+    await page.waitForSelector('.main-stage > .error-banner');
+    const abortMsg = await page.locator('.main-stage > .error-banner').textContent();
+    if (!abortMsg?.includes('已中止本次生成')) {
+      throw new Error(`Expected abort banner, got: ${abortMsg}`);
+    }
+    if ((await page.inputValue('#turn-input')) !== '测试停止生成不重发') {
+      throw new Error('Expected aborted input restored cleanly without re-submitting');
+    }
+    if ((await page.locator('.turn-card.user, .turn-card.assistant').count()) !== 0) {
+      throw new Error('Expected aborted turn not to commit any turn card');
+    }
 
     // 11. Mobile narrow viewport check (390x844, no horizontal overflow)
     await page.setViewportSize({ width: 390, height: 844 });
