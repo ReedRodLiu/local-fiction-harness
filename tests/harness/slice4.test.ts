@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   assembleThreeZoneContext,
+  buildFallbackSummary,
   createFictionHarness,
   parseAssistantMessage,
   type LlmStreamRequest,
   type LlmTransport,
+  type TurnNode,
 } from '../../src/harness/index.ts';
 
 const testConfig = {
@@ -159,6 +161,75 @@ describe('Slice 4: Three-Zone Context & incremental Plot Summary compression', (
     await expect(
       harness.runTurn(t1.story, '二', testConfig, { signal: controller.signal }),
     ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('trims recent window in user+assistant pairs for pendingUserChars without leaving an orphaned assistant after system', async () => {
+    let turn = 0;
+    const transport: LlmTransport = {
+      async *streamChat() {
+        turn += 1;
+        yield {
+          contentDelta: turn === 1 ? 'A'.repeat(40) : 'B'.repeat(20),
+          finishReason: 'stop',
+        };
+      },
+    };
+    const harness = createFictionHarness({
+      transport,
+      contextBudget: { recentMaxNodes: 8, recentMaxChars: 500 },
+    });
+
+    const t1 = await harness.runTurn(harness.createStory({ title: '配对裁剪' }), 'U'.repeat(40), testConfig);
+    const t2 = await harness.runTurn(t1.story, 'V'.repeat(20), testConfig);
+
+    // 40+40+20+20 = 120; pending 20 -> 140 > 100. Dropping only U(40) would leave orphaned A(40) right after system!
+    const ctx = assembleThreeZoneContext(t2.story, t2.story.activeLeafNodeId, 'W'.repeat(20), {
+      recentMaxNodes: 8,
+      recentMaxChars: 100,
+    });
+    const nonSystem = ctx.messages.filter((m) => m.role !== 'system');
+    expect(nonSystem[0]?.role).toBe('user');
+    expect(nonSystem.map((m) => m.content)).toEqual(['V'.repeat(20), 'B'.repeat(20), 'W'.repeat(20)]);
+    expect(ctx.metrics.recentNodeCount).toBe(2);
+
+    // Even when pending input alone exceeds recentMaxChars, keep at least MIN_RECENT_NODES_PER_TURN (2)
+    const minKept = assembleThreeZoneContext(t2.story, t2.story.activeLeafNodeId, 'Z'.repeat(200), {
+      recentMaxNodes: 8,
+      recentMaxChars: 100,
+    });
+    expect(minKept.metrics.recentNodeCount).toBe(2);
+    expect(minKept.messages.filter((m) => m.role !== 'system')[0]?.role).toBe('user');
+  });
+
+  it('builds deterministic buildFallbackSummary digests with truncation and previous summary retention', () => {
+    const emptySnapshot = { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 };
+    const longText = '玩家探索了漫长的走廊'.repeat(12); // > 80 chars
+    const nodes: TurnNode[] = [
+      {
+        id: 'u1',
+        parentId: null,
+        role: 'user',
+        content: longText,
+        createdAt: 1,
+        summarySnapshot: emptySnapshot,
+      },
+      {
+        id: 'a1',
+        parentId: 'u1',
+        role: 'assistant',
+        content: '发现一扇暗门。',
+        createdAt: 2,
+        summarySnapshot: emptySnapshot,
+      },
+    ];
+
+    const fresh = buildFallbackSummary('', nodes);
+    expect(fresh).toContain('- 玩家：');
+    expect(fresh).toContain('…');
+    expect(fresh).toContain('- 叙事：发现一扇暗门。');
+
+    const appended = buildFallbackSummary('既有摘要要点', nodes);
+    expect(appended.startsWith('既有摘要要点\n- 玩家：')).toBe(true);
   });
 });
 

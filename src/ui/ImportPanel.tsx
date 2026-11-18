@@ -1,11 +1,13 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_STORY_TITLE,
   createDefaultBlueprint,
+  isAbortError,
   parseScriptInput,
   type ModelConfig,
   type StoryBlueprint,
 } from '../harness/index.ts';
+import { splitNonEmptyLines, toErrorMessage } from './textHelpers.ts';
 
 interface ImportPanelProps {
   config: ModelConfig;
@@ -19,7 +21,7 @@ interface ImportPanelProps {
     title: string;
     rawScript: string;
     blueprint: StoryBlueprint;
-  }) => void;
+  }) => Promise<void> | void;
   onCancel?: () => void;
 }
 
@@ -28,13 +30,6 @@ interface BlueprintDraft {
   rulesText: string;
   taboosText: string;
   npcsText: string;
-}
-
-function splitNonEmptyLines(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
 }
 
 function formatNpcsLines(npcs: StoryBlueprint['npcs']): string {
@@ -71,13 +66,33 @@ export function ImportPanel({
   const [isDragging, setIsDragging] = useState(false);
   const [draft, setDraft] = useState<BlueprintDraft | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const extractSeqRef = useRef(0);
+  const fileSeqRef = useRef(0);
+
+  const abortInFlightExtraction = () => {
+    extractSeqRef.current += 1;
+    const controller = abortRef.current;
+    abortRef.current = null;
+    controller?.abort();
+  };
+
+  useEffect(() => {
+    return () => {
+      abortInFlightExtraction();
+    };
+  }, []);
 
   const handleFile = async (file: File) => {
+    abortInFlightExtraction();
+    setIsExtracting(false);
     setParseError(null);
+    const fileSeq = ++fileSeqRef.current;
     try {
       const buffer = await file.arrayBuffer();
+      if (fileSeqRef.current !== fileSeq) return;
       const parsed = parseScriptInput({
         kind: 'file',
         fileName: file.name,
@@ -90,7 +105,9 @@ export function ImportPanel({
       );
       setDraft(null);
     } catch (err) {
-      setParseError(err instanceof Error ? err.message : '文件解析失败。');
+      if (fileSeqRef.current === fileSeq) {
+        setParseError(toErrorMessage(err, '文件解析失败。'));
+      }
     }
   };
 
@@ -106,24 +123,35 @@ export function ImportPanel({
   };
 
   const handleExtract = async () => {
+    if (isExtracting) return;
     setParseError(null);
+    let controller: AbortController | null = null;
+    const seq = ++extractSeqRef.current;
     try {
       const { rawScript, fallbackTitle } = preparePasteScript();
       setIsExtracting(true);
-      const controller = new AbortController();
+      controller = new AbortController();
       abortRef.current = controller;
 
       const extracted = await extractBlueprint(rawScript, config, fallbackTitle, controller.signal);
+      if (extractSeqRef.current !== seq || controller.signal.aborted) {
+        return;
+      }
       setDraft(toDraft(extracted));
     } catch (err) {
-      if ((err as { name?: string }).name === 'AbortError') {
+      if (extractSeqRef.current !== seq) {
+        return;
+      }
+      if (isAbortError(err)) {
         setParseError('已中止蓝图拆解。');
       } else {
-        setParseError(err instanceof Error ? err.message : '拆解蓝图失败。');
+        setParseError(toErrorMessage(err, '拆解蓝图失败。'));
       }
     } finally {
-      abortRef.current = null;
-      setIsExtracting(false);
+      if (controller && abortRef.current === controller) {
+        abortRef.current = null;
+        setIsExtracting(false);
+      }
     }
   };
 
@@ -133,24 +161,32 @@ export function ImportPanel({
       const { fallbackTitle } = preparePasteScript();
       setDraft(toDraft(createDefaultBlueprint(fallbackTitle)));
     } catch (err) {
-      setParseError(err instanceof Error ? err.message : '剧本文本不能为空。');
+      setParseError(toErrorMessage(err, '剧本文本不能为空。'));
     }
   };
 
-  const handleConfirm = () => {
-    if (!draft) return;
-    const finalizedBlueprint: StoryBlueprint = {
-      ...draft.blueprint,
-      title: draft.blueprint.title.trim() || suggestedTitle.trim() || DEFAULT_STORY_TITLE,
-      worldRules: splitNonEmptyLines(draft.rulesText),
-      taboos: splitNonEmptyLines(draft.taboosText),
-      npcs: parseNpcsLines(draft.npcsText),
-    };
-    onConfirmStory({
-      title: finalizedBlueprint.title,
-      rawScript: rawText.trim(),
-      blueprint: finalizedBlueprint,
-    });
+  const handleConfirm = async () => {
+    if (!draft || isConfirming) return;
+    setParseError(null);
+    setIsConfirming(true);
+    try {
+      const finalizedBlueprint: StoryBlueprint = {
+        ...draft.blueprint,
+        title: draft.blueprint.title.trim() || suggestedTitle.trim() || DEFAULT_STORY_TITLE,
+        worldRules: splitNonEmptyLines(draft.rulesText),
+        taboos: splitNonEmptyLines(draft.taboosText),
+        npcs: parseNpcsLines(draft.npcsText),
+      };
+      await onConfirmStory({
+        title: finalizedBlueprint.title,
+        rawScript: rawText.trim(),
+        blueprint: finalizedBlueprint,
+      });
+    } catch (err) {
+      setParseError(toErrorMessage(err, '保存导入故事失败。'));
+    } finally {
+      setIsConfirming(false);
+    }
   };
 
   return (
@@ -158,7 +194,15 @@ export function ImportPanel({
       <div className="panel-header">
         <h3>导入自由格式剧本</h3>
         {onCancel && (
-          <button type="button" className="btn" onClick={onCancel}>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              abortInFlightExtraction();
+              setIsExtracting(false);
+              onCancel();
+            }}
+          >
             返回当前故事
           </button>
         )}
@@ -225,6 +269,10 @@ export function ImportPanel({
           value={rawText}
           placeholder="粘贴任意格式的文游设定、规则、表格或伪代码块模板…"
           onChange={(e) => {
+            if (isExtracting) {
+              abortInFlightExtraction();
+              setIsExtracting(false);
+            }
             setRawText(e.target.value);
             setDraft(null);
           }}
@@ -346,7 +394,12 @@ export function ImportPanel({
 
           <div className="composer-actions">
             <span className="status-text">原始剧本全文将作为固定锚定保留在上下文中</span>
-            <button type="button" className="btn btn-primary" onClick={handleConfirm}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={isConfirming}
+              onClick={() => void handleConfirm()}
+            >
               确认蓝图并开始故事
             </button>
           </div>

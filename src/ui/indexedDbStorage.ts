@@ -23,18 +23,26 @@ function transactionDone(tx: IDBTransaction): Promise<void> {
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = window.indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_STORIES)) {
-        db.createObjectStore(STORE_STORIES, { keyPath: 'id' });
+    try {
+      if (!window.indexedDB) {
+        reject(new Error('IndexedDB is not available in this browser environment.'));
+        return;
       }
-      if (!db.objectStoreNames.contains(STORE_META)) {
-        db.createObjectStore(STORE_META, { keyPath: 'key' });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error ?? new Error('Failed to open IndexedDB.'));
+      const req = window.indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(STORE_STORIES)) {
+          db.createObjectStore(STORE_STORIES, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains(STORE_META)) {
+          db.createObjectStore(STORE_META, { keyPath: 'key' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error ?? new Error('Failed to open IndexedDB.'));
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error('Failed to open IndexedDB.'));
+    }
   });
 }
 
@@ -45,7 +53,22 @@ export function createIndexedDbStoryStorage(): StoryStorage {
   let dbPromise: Promise<IDBDatabase> | null = null;
   const getDb = () => {
     if (!dbPromise) {
-      dbPromise = openDatabase();
+      const pending = openDatabase()
+        .then((db) => {
+          db.onclose = () => {
+            if (dbPromise === pending) dbPromise = null;
+          };
+          db.onversionchange = () => {
+            db.close();
+            if (dbPromise === pending) dbPromise = null;
+          };
+          return db;
+        })
+        .catch((err) => {
+          if (dbPromise === pending) dbPromise = null;
+          throw err;
+        });
+      dbPromise = pending;
     }
     return dbPromise;
   };
@@ -57,9 +80,15 @@ export function createIndexedDbStoryStorage(): StoryStorage {
   ): Promise<T> => {
     const db = await getDb();
     const tx = db.transaction(storeNames, mode);
-    const result = await run(tx);
-    await transactionDone(tx);
-    return result;
+    const done = transactionDone(tx);
+    try {
+      const result = await run(tx);
+      await done;
+      return result;
+    } catch (err) {
+      done.catch(() => {});
+      throw err;
+    }
   };
 
   return {

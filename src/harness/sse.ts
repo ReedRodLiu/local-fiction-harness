@@ -36,7 +36,19 @@ function toAsyncChunks(
   };
 }
 
-function parseSseDataLine(dataText: string): { done: boolean; delta?: LlmStreamDelta } {
+function isCompleteSsePayload(payload: string): boolean {
+  const trimmed = payload.trim();
+  if (!trimmed) return false;
+  if (trimmed === '[DONE]') return true;
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function parseSseEventData(dataText: string): { done: boolean; delta?: LlmStreamDelta } {
   const trimmed = dataText.trim();
   if (!trimmed) {
     return { done: false };
@@ -100,30 +112,55 @@ function parseSseDataLine(dataText: string): { done: boolean; delta?: LlmStreamD
 
 /**
  * Parses an OpenAI-compatible Server-Sent Events stream into typed deltas,
- * decoding UTF-8 across chunk boundaries and separating reasoning from content.
+ * decoding UTF-8 across chunk boundaries, assembling multi-line data: events,
+ * and separating reasoning from content.
  */
 export async function* parseOpenAiSseStream(
   chunks: AsyncIterable<Uint8Array | string>,
 ): AsyncIterable<LlmStreamDelta> {
   const decoder = createUtf8Decoder();
   let buffer = '';
+  let dataLines: string[] = [];
+
+  const flushEvent = function* (): Generator<LlmStreamDelta, boolean> {
+    if (dataLines.length === 0) {
+      return false;
+    }
+    const payload = dataLines.join('\n');
+    dataLines = [];
+    const parsed = parseSseEventData(payload);
+    if (parsed.done) {
+      return true;
+    }
+    if (parsed.delta) {
+      yield parsed.delta;
+    }
+    return false;
+  };
 
   const processLines = function* (flushRemaining: boolean): Generator<LlmStreamDelta, boolean> {
     const lines = buffer.split(/\r?\n/);
     buffer = flushRemaining ? '' : (lines.pop() ?? '');
 
     for (const line of lines) {
+      if (line === '') {
+        const ended = yield* flushEvent();
+        if (ended) return true;
+        continue;
+      }
       if (!line.startsWith('data:')) {
         continue;
       }
-      const payload = line.slice(5);
-      const parsed = parseSseDataLine(payload);
-      if (parsed.done) {
-        return true;
+      if (dataLines.length > 0 && isCompleteSsePayload(dataLines.join('\n'))) {
+        const ended = yield* flushEvent();
+        if (ended) return true;
       }
-      if (parsed.delta) {
-        yield parsed.delta;
-      }
+      const value = line[5] === ' ' ? line.slice(6) : line.slice(5);
+      dataLines.push(value);
+    }
+
+    if (flushRemaining) {
+      return yield* flushEvent();
     }
     return false;
   };
@@ -137,7 +174,7 @@ export async function* parseOpenAiSseStream(
   }
 
   buffer += decoder.decode(undefined, { stream: false });
-  if (buffer.trim()) {
+  if (buffer.length > 0 || dataLines.length > 0) {
     yield* processLines(true);
   }
 }

@@ -148,4 +148,82 @@ describe('Slice 5: Branching, rewind, edit-resend, regenerate, and Plot Summary 
     const switchedBack = await harness.switchBranch(regen.story, t1.assistantNode.id);
     expect(switchedBack.activeLeafNodeId).toBe(t1.assistantNode.id);
   });
+
+  it('regenerates an assistant reply cleanly after prior summary compression without orphaning recent turns', async () => {
+    const captured: LlmStreamRequest[] = [];
+    let regenSeq = 0;
+    const transport: LlmTransport = {
+      async *streamChat(req) {
+        captured.push(req);
+        const sys = req.messages[0]?.content ?? '';
+        if (sys.includes('剧情摘要压缩')) {
+          const body = req.messages[1]?.content ?? '';
+          yield {
+            contentDelta: body.includes('第二轮行动') ? '【摘要2】含第二轮' : '【摘要1】含第一轮',
+            finishReason: 'stop',
+          };
+          return;
+        }
+        regenSeq += 1;
+        const lastUser = req.messages[req.messages.length - 1]?.content ?? '';
+        yield { contentDelta: `第${regenSeq}次响应:${lastUser}`, finishReason: 'stop' };
+      },
+    };
+
+    let seq = 0;
+    const harness = createFictionHarness({
+      transport,
+      contextBudget: { recentMaxNodes: 2, recentMaxChars: 4000 },
+      now: () => 1700000000000 + seq * 1000,
+      createId: () => `rc-${++seq}`,
+    });
+
+    const s0 = harness.createStory({ title: '压缩后重生成' });
+    const t1 = await harness.runTurn(s0, '第一轮行动', testConfig);
+    const t2 = await harness.runTurn(t1.story, '第二轮行动', testConfig);
+    const t3 = await harness.runTurn(t2.story, '第三轮行动', testConfig);
+
+    captured.length = 0;
+    const regen = await harness.regenerateNode(t3.story, t3.assistantNode.id, testConfig);
+
+    const regenTurnReq = captured.find((r) => !(r.messages[0]?.content ?? '').includes('剧情摘要压缩'));
+    expect(regenTurnReq).toBeDefined();
+    const nonSystemRoles = regenTurnReq!.messages.filter((m) => m.role !== 'system').map((m) => m.role);
+    expect(nonSystemRoles).toEqual(['user', 'assistant', 'user']);
+    expect(regenTurnReq!.messages.map((m) => m.content)).toContain('第二轮行动');
+    expect(regen.assistantNode.summarySnapshot.coveredUpToNodeId).toBe(t2.assistantNode.id);
+    expect(regen.assistantNode.summarySnapshot.content).toBe('【摘要2】含第二轮');
+  });
+
+  it('forks a second root branch when editAndBranch targets Turn 1 user node (parentId: null)', async () => {
+    const transport: LlmTransport = {
+      async *streamChat(req) {
+        const lastUser = req.messages[req.messages.length - 1]?.content ?? '';
+        yield { contentDelta: `开局分支：${lastUser}`, finishReason: 'stop' };
+      },
+    };
+    let seq = 0;
+    const harness = createFictionHarness({
+      transport,
+      now: () => 1700000000000 + seq * 1000,
+      createId: () => `r1-${++seq}`,
+    });
+
+    const story = harness.createStory({ title: '首轮分叉测试' });
+    const t1 = await harness.runTurn(story, '原始开局选择A', testConfig);
+    expect(t1.userNode.parentId).toBeNull();
+
+    const forked = await harness.editAndBranch(t1.story, t1.userNode.id, '改走开局选择B', testConfig);
+    expect(forked.userNode.parentId).toBeNull();
+    expect(forked.story.rootNodeIds).toEqual([t1.userNode.id, forked.userNode.id]);
+
+    const rootSiblings = getSiblingBranchInfo(forked.story, forked.userNode.id);
+    expect(rootSiblings.total).toBe(2);
+    expect(rootSiblings.currentIndex).toBe(1);
+    expect(rootSiblings.prevSiblingId).toBe(t1.userNode.id);
+    expect(getActiveBranchNodes(forked.story).map((n) => n.content)).toEqual([
+      '改走开局选择B',
+      '开局分支：改走开局选择B',
+    ]);
+  });
 });

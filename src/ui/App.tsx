@@ -9,6 +9,7 @@ import {
   getActiveSummarySnapshot,
   getSiblingBranchInfo,
   importStoryBackup,
+  isAbortError,
   type FetchLike,
   type ModelConfig,
   type Story,
@@ -22,6 +23,7 @@ import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
 import { TurnCard } from './TurnCard.tsx';
 import { createIndexedDbStoryStorage } from './indexedDbStorage.ts';
+import { toErrorMessage } from './textHelpers.ts';
 
 interface DevTestConfigResponse {
   available: boolean;
@@ -30,19 +32,64 @@ interface DevTestConfigResponse {
   hasEnvKey: boolean;
 }
 
+const DEV_PROXY_BASE_URL = '/__dev_llm_proxy';
 const DEV_SESSION_PROXY_KEY = 'lfh.dev_proxy_session';
+
+function isDevProxyBaseUrl(url: string): boolean {
+  const trimmed = url.trim();
+  return trimmed === DEV_PROXY_BASE_URL || trimmed.startsWith(`${DEV_PROXY_BASE_URL}/`);
+}
+
+function loadInitialConfigState(configStore: ReturnType<typeof createModelConfigStore>): {
+  initialConfig: ModelConfig;
+  initialUseDevEnvKey: boolean;
+} {
+  const loaded = configStore.load();
+  if (import.meta.env.DEV) {
+    const devSession = window.sessionStorage.getItem(DEV_SESSION_PROXY_KEY);
+    if (devSession) {
+      try {
+        const parsed = JSON.parse(devSession) as {
+          baseUrl?: string;
+          model?: string;
+          hasEnvKey?: boolean;
+        };
+        const sessionBaseUrl = parsed.baseUrl || DEV_PROXY_BASE_URL;
+        if (isDevProxyBaseUrl(sessionBaseUrl)) {
+          const useEnvKey = parsed.hasEnvKey !== false;
+          return {
+            initialConfig: {
+              ...loaded,
+              baseUrl: sessionBaseUrl,
+              model: typeof parsed.model === 'string' && parsed.model ? parsed.model : loaded.model,
+              apiKey: useEnvKey ? '' : loaded.apiKey,
+            },
+            initialUseDevEnvKey: useEnvKey,
+          };
+        }
+      } catch {
+        // ignore malformed session state
+      }
+    }
+  } else if (isDevProxyBaseUrl(loaded.baseUrl)) {
+    return {
+      initialConfig: { ...loaded, baseUrl: DEFAULT_MODEL_CONFIG.baseUrl },
+      initialUseDevEnvKey: false,
+    };
+  }
+  return { initialConfig: loaded, initialUseDevEnvKey: false };
+}
 
 export function App() {
   const configStore = useMemo(() => createModelConfigStore(window.localStorage), []);
   const storyStorage = useMemo(() => createIndexedDbStoryStorage(), []);
-  const useDevEnvKeyRef = useRef(
-    import.meta.env.DEV ? Boolean(window.sessionStorage.getItem(DEV_SESSION_PROXY_KEY)) : false,
-  );
+  const initialProxyState = useMemo(() => loadInitialConfigState(configStore), [configStore]);
+  const useDevEnvKeyRef = useRef(initialProxyState.initialUseDevEnvKey);
 
   const harness = useMemo(() => {
     const devAwareFetch: FetchLike = (url, init) => {
       const headers = { ...init.headers };
-      if (import.meta.env.DEV && useDevEnvKeyRef.current && url.startsWith('/__dev_llm_proxy')) {
+      if (import.meta.env.DEV && useDevEnvKeyRef.current && isDevProxyBaseUrl(url)) {
         headers['x-use-dev-env-key'] = '1';
       }
       return fetch(url, {
@@ -58,31 +105,8 @@ export function App() {
     });
   }, [storyStorage]);
 
-  const [config, setConfig] = useState<ModelConfig>(() => {
-    const loaded = configStore.load();
-    if (import.meta.env.DEV) {
-      const devSession = window.sessionStorage.getItem(DEV_SESSION_PROXY_KEY);
-      if (devSession) {
-        try {
-          const parsed = JSON.parse(devSession) as { baseUrl?: string; model?: string };
-          return {
-            ...loaded,
-            baseUrl: parsed.baseUrl || '/__dev_llm_proxy',
-            model: parsed.model || loaded.model,
-            apiKey: '',
-          };
-        } catch {
-          // ignore malformed session state
-        }
-      }
-    } else if (loaded.baseUrl.startsWith('/__dev_llm_proxy')) {
-      return { ...loaded, baseUrl: DEFAULT_MODEL_CONFIG.baseUrl };
-    }
-    return loaded;
-  });
-  const [useDevEnvKey, setUseDevEnvKey] = useState(() =>
-    import.meta.env.DEV ? Boolean(window.sessionStorage.getItem(DEV_SESSION_PROXY_KEY)) : false,
-  );
+  const [config, setConfig] = useState<ModelConfig>(initialProxyState.initialConfig);
+  const [useDevEnvKey, setUseDevEnvKey] = useState(initialProxyState.initialUseDevEnvKey);
   const [showKey, setShowKey] = useState(false);
   const [devTestInfo, setDevTestInfo] = useState<DevTestConfigResponse | null>(null);
   const [stories, setStories] = useState<Story[]>([]);
@@ -95,6 +119,24 @@ export function App() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+  const streamSeqRef = useRef(0);
+  const storyOpSeqRef = useRef(0);
+  const suppressedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet());
+
+  const abortActiveStream = useCallback((suppressNotice = true) => {
+    const controller = abortRef.current;
+    if (controller) {
+      if (suppressNotice) {
+        suppressedAbortRef.current.add(controller);
+      }
+      abortRef.current = null;
+      controller.abort();
+    }
+    streamSeqRef.current += 1;
+    setIsStreaming(false);
+    setStreamReasoning('');
+    setStreamContent('');
+  }, []);
 
   const refreshStories = useCallback(async () => {
     const list = await harness.listStories();
@@ -107,21 +149,28 @@ export function App() {
   }, [useDevEnvKey]);
 
   useEffect(() => {
+    return () => {
+      abortActiveStream(true);
+    };
+  }, [abortActiveStream]);
+
+  useEffect(() => {
     let cancelled = false;
+    const loadSeq = storyOpSeqRef.current;
     (async () => {
       try {
         const [list, active] = await Promise.all([
           harness.listStories(),
           harness.loadActiveStory(),
         ]);
-        if (cancelled) return;
+        if (cancelled || storyOpSeqRef.current !== loadSeq) return;
         setStories(list);
         if (active) {
           setStory(active);
         }
       } catch (err) {
-        if (!cancelled) {
-          setErrorMsg(err instanceof Error ? err.message : '读取本地故事失败。');
+        if (!cancelled && storyOpSeqRef.current === loadSeq) {
+          setErrorMsg(toErrorMessage(err, '读取本地故事失败。'));
         }
       }
     })();
@@ -151,10 +200,30 @@ export function App() {
   }, []);
 
   const updateConfig = (next: ModelConfig, nextUseDevEnvKey = useDevEnvKey) => {
+    const effectiveUseDevEnvKey =
+      import.meta.env.DEV && nextUseDevEnvKey && isDevProxyBaseUrl(next.baseUrl);
     setConfig(next);
-    setUseDevEnvKey(nextUseDevEnvKey);
-    useDevEnvKeyRef.current = nextUseDevEnvKey;
-    if (import.meta.env.DEV && !nextUseDevEnvKey) {
+    setUseDevEnvKey(effectiveUseDevEnvKey);
+    useDevEnvKeyRef.current = effectiveUseDevEnvKey;
+    if (import.meta.env.DEV) {
+      if (effectiveUseDevEnvKey) {
+        window.sessionStorage.setItem(
+          DEV_SESSION_PROXY_KEY,
+          JSON.stringify({
+            baseUrl: next.baseUrl.trim(),
+            model: next.model,
+            hasEnvKey: true,
+          }),
+        );
+        const persisted = configStore.load();
+        configStore.save({
+          ...next,
+          baseUrl: isDevProxyBaseUrl(persisted.baseUrl)
+            ? DEFAULT_MODEL_CONFIG.baseUrl
+            : persisted.baseUrl,
+        });
+        return;
+      }
       window.sessionStorage.removeItem(DEV_SESSION_PROXY_KEY);
     }
     configStore.save(next);
@@ -166,13 +235,17 @@ export function App() {
     if (import.meta.env.DEV) {
       window.sessionStorage.setItem(
         DEV_SESSION_PROXY_KEY,
-        JSON.stringify({ baseUrl: devTestInfo.proxyBaseUrl, model: devModel }),
+        JSON.stringify({
+          baseUrl: devTestInfo.proxyBaseUrl,
+          model: devModel,
+          hasEnvKey: devTestInfo.hasEnvKey,
+        }),
       );
     }
     setConfig({
       baseUrl: devTestInfo.proxyBaseUrl,
       model: devModel,
-      apiKey: '',
+      apiKey: devTestInfo.hasEnvKey ? '' : config.apiKey,
       memoryOnly: config.memoryOnly,
     });
     setUseDevEnvKey(devTestInfo.hasEnvKey);
@@ -191,7 +264,7 @@ export function App() {
     execute: (callbacks: TurnCallbacks) => Promise<TurnExecutionResult>,
     onErrorRestore?: () => void,
   ) => {
-    if (isStreaming) return;
+    if (abortRef.current || isStreaming) return;
     setErrorMsg(null);
     setIsStreaming(true);
     setStreamReasoning('');
@@ -199,44 +272,74 @@ export function App() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    const streamSeq = ++streamSeqRef.current;
+    const storySeqAtStart = storyOpSeqRef.current;
+
+    const isStale = () =>
+      controller.signal.aborted ||
+      abortRef.current !== controller ||
+      streamSeqRef.current !== streamSeq ||
+      storyOpSeqRef.current !== storySeqAtStart;
 
     try {
       const result = await execute({
         signal: controller.signal,
-        onReasoningDelta: (delta) => setStreamReasoning((prev) => prev + delta),
-        onContentDelta: (delta) => setStreamContent((prev) => prev + delta),
+        onReasoningDelta: (delta) => {
+          if (!isStale()) {
+            setStreamReasoning((prev) => prev + delta);
+          }
+        },
+        onContentDelta: (delta) => {
+          if (!isStale()) {
+            setStreamContent((prev) => prev + delta);
+          }
+        },
       });
+      if (isStale()) {
+        return;
+      }
       setStory(result.story);
       await refreshStories();
-      setStreamReasoning('');
-      setStreamContent('');
+      if (!isStale()) {
+        setStreamReasoning('');
+        setStreamContent('');
+      }
     } catch (err) {
-      if ((err as { name?: string }).name === 'AbortError') {
+      if (suppressedAbortRef.current.has(controller) || storyOpSeqRef.current !== storySeqAtStart) {
+        return;
+      }
+      if (isAbortError(err)) {
         setErrorMsg('已中止本次生成。');
       } else {
-        setErrorMsg(err instanceof Error ? err.message : '生成失败，请检查模型端点与配置。');
+        setErrorMsg(toErrorMessage(err, '生成失败，请检查模型端点与配置。'));
       }
       onErrorRestore?.();
     } finally {
-      abortRef.current = null;
-      setIsStreaming(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setIsStreaming(false);
+      }
     }
   };
 
   const applyStoryTransition = async (transition: () => Promise<Story>) => {
-    if (isStreaming) return;
+    if (abortRef.current || isStreaming) return;
+    const opSeq = storyOpSeqRef.current;
     try {
       const updated = await transition();
+      if (storyOpSeqRef.current !== opSeq) return;
       setStory(updated);
       await refreshStories();
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : '切换分支失败。');
+      if (storyOpSeqRef.current === opSeq) {
+        setErrorMsg(toErrorMessage(err, '切换分支失败。'));
+      }
     }
   };
 
   const sendAction = async (userPrompt: string, restoreOnError = false) => {
     const trimmed = userPrompt.trim();
-    if (!trimmed) return;
+    if (!trimmed || abortRef.current || isStreaming) return;
     if (restoreOnError) {
       setInput('');
     }
@@ -276,48 +379,92 @@ export function App() {
     rawScript: string;
     blueprint: StoryBlueprint;
   }) => {
-    const created = await harness.createAndSaveStory(imported);
-    setStory(created);
-    await refreshStories();
-    setShowImport(false);
+    abortActiveStream(true);
+    const opSeq = ++storyOpSeqRef.current;
     setErrorMsg(null);
+    try {
+      const created = await harness.createAndSaveStory(imported);
+      if (storyOpSeqRef.current !== opSeq) return;
+      setStory(created);
+      await refreshStories();
+      setShowImport(false);
+    } catch (err) {
+      if (storyOpSeqRef.current === opSeq) {
+        setErrorMsg(toErrorMessage(err, '保存导入故事失败。'));
+      }
+    }
   };
 
   const handleSelectStory = async (id: string) => {
-    const switched = await harness.setActiveStory(id);
-    if (switched) {
-      setStory(switched);
-      setShowImport(false);
-      setErrorMsg(null);
+    abortActiveStream(true);
+    const opSeq = ++storyOpSeqRef.current;
+    setErrorMsg(null);
+    try {
+      const switched = await harness.setActiveStory(id);
+      if (storyOpSeqRef.current !== opSeq) return;
+      if (switched) {
+        setStory(switched);
+        setShowImport(false);
+      }
+    } catch (err) {
+      if (storyOpSeqRef.current === opSeq) {
+        setErrorMsg(toErrorMessage(err, '切换故事失败。'));
+      }
     }
   };
 
   const handleRenameStory = async (id: string, title: string) => {
-    const updated = await harness.renameStory(id, title);
-    if (updated) {
-      if (story.id === id) {
-        setStory(updated);
+    setErrorMsg(null);
+    try {
+      const updated = await harness.renameStory(id, title);
+      if (updated) {
+        setStory((prev) => (prev.id === id ? updated : prev));
+        await refreshStories();
       }
-      await refreshStories();
+    } catch (err) {
+      setErrorMsg(toErrorMessage(err, '重命名故事失败。'));
     }
   };
 
   const handleDeleteStory = async (id: string) => {
-    await harness.deleteStory(id);
-    const remaining = await refreshStories();
-    if (story.id === id) {
-      const next = remaining[0] ?? harness.createStory({ title: '新故事' });
-      setStory(next);
-      if (remaining[0]) {
-        await harness.setActiveStory(remaining[0].id);
+    abortActiveStream(true);
+    const opSeq = ++storyOpSeqRef.current;
+    const deletedActiveStory = story.id === id;
+    setErrorMsg(null);
+    try {
+      await harness.deleteStory(id);
+      if (storyOpSeqRef.current !== opSeq) return;
+      const remaining = await refreshStories();
+      if (storyOpSeqRef.current !== opSeq) return;
+      if (deletedActiveStory) {
+        const next = remaining[0] ?? harness.createStory({ title: '新故事' });
+        setStory(next);
+        if (remaining[0]) {
+          await harness.setActiveStory(remaining[0].id);
+        }
+      }
+    } catch (err) {
+      if (storyOpSeqRef.current === opSeq) {
+        setErrorMsg(toErrorMessage(err, '删除故事失败。'));
       }
     }
   };
 
-  const handleSaveBlueprintTweak = async (updatedBlueprint: StoryBlueprint) => {
-    const updated = await harness.updateStoryBlueprint(story, updatedBlueprint);
-    setStory(updated);
-    await refreshStories();
+  const handleSaveBlueprintTweak = async (updatedBlueprint: StoryBlueprint): Promise<boolean> => {
+    setErrorMsg(null);
+    const opSeq = storyOpSeqRef.current;
+    try {
+      const updated = await harness.updateStoryBlueprint(story, updatedBlueprint);
+      if (storyOpSeqRef.current !== opSeq) return false;
+      setStory(updated);
+      await refreshStories();
+      return true;
+    } catch (err) {
+      if (storyOpSeqRef.current === opSeq) {
+        setErrorMsg(toErrorMessage(err, '保存蓝图微调失败。'));
+      }
+      return false;
+    }
   };
 
   const handleExportBackup = () => {
@@ -332,21 +479,28 @@ export function App() {
   };
 
   const handleImportBackupFile = async (file: File) => {
+    abortActiveStream(true);
+    const opSeq = ++storyOpSeqRef.current;
     setErrorMsg(null);
     try {
       const jsonText = await file.text();
+      if (storyOpSeqRef.current !== opSeq) return;
       const existing = await harness.listStories();
+      if (storyOpSeqRef.current !== opSeq) return;
       const restored = importStoryBackup(
         jsonText,
         existing.map((s) => s.id),
       );
       await harness.saveStory(restored);
       await harness.setActiveStory(restored.id);
+      if (storyOpSeqRef.current !== opSeq) return;
       setStory(restored);
       await refreshStories();
       setShowImport(false);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : '导入 JSON 备份失败。');
+      if (storyOpSeqRef.current === opSeq) {
+        setErrorMsg(toErrorMessage(err, '导入 JSON 备份失败。'));
+      }
     }
   };
 
@@ -361,7 +515,10 @@ export function App() {
         <button
           type="button"
           className="btn btn-primary"
-          onClick={() => setShowImport((prev) => !prev)}
+          onClick={() => {
+            abortActiveStream(true);
+            setShowImport((prev) => !prev);
+          }}
         >
           {showImport ? '返回游玩界面' : '导入剧本 / 新建故事'}
         </button>
@@ -475,7 +632,7 @@ export function App() {
             extractBlueprint={(raw, cfg, title, signal) =>
               harness.extractStoryBlueprint(raw, cfg, title, signal)
             }
-            onConfirmStory={(imported) => void handleConfirmImportedStory(imported)}
+            onConfirmStory={handleConfirmImportedStory}
             onCancel={() => setShowImport(false)}
           />
         ) : (

@@ -83,6 +83,41 @@ describe('Slice 2: Free-format script parsing (.docx / .md / .txt / paste)', () 
     });
     expect(parsedMd.rawScript).toBe(mdText);
   });
+
+  it('extracts nested tables inside .docx table cells without corrupting outer rows', () => {
+    const nestedDocXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>阵营</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>详情</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>青云宗</w:t></w:r></w:p></w:tc>
+        <w:tc>
+          <w:p><w:r><w:t>核心弟子：</w:t></w:r></w:p>
+          <w:tbl>
+            <w:tr>
+              <w:tc><w:p><w:r><w:t>姓名</w:t></w:r></w:p></w:tc>
+              <w:tc><w:p><w:r><w:t>境界</w:t></w:r></w:p></w:tc>
+            </w:tr>
+            <w:tr>
+              <w:tc><w:p><w:r><w:t>沈清秋</w:t></w:r></w:p></w:tc>
+              <w:tc><w:p><w:r><w:t>金丹</w:t></w:r></w:p></w:tc>
+            </w:tr>
+          </w:tbl>
+        </w:tc>
+      </w:tr>
+    </w:tbl>
+  </w:body>
+</w:document>`;
+    const bytes = zipSync({ 'word/document.xml': strToU8(nestedDocXml) });
+    const parsed = parseScriptInput({ kind: 'file', fileName: 'nested.docx', bytes });
+
+    expect(parsed.rawScript).toContain('| 阵营 | 详情 |');
+    expect(parsed.rawScript).toContain('| 青云宗 | 核心弟子： 姓名 / 境界; 沈清秋 / 金丹 |');
+  });
 });
 
 describe('Slice 2: Blueprint extraction & full rawScript anchoring', () => {
@@ -113,6 +148,64 @@ describe('Slice 2: Blueprint extraction & full rawScript anchoring', () => {
     expect(blueprint.extractionStatus).toBe('partial_fallback');
     expect(blueprint.title).toBe('备用剧本名');
     expect(blueprint.worldRules).toEqual([]);
+  });
+
+  it('ignores preamble braces or unrelated JSON objects before the actual blueprint JSON', () => {
+    const rawWithPreamble = [
+      '说明：请按如下结构 {title, worldRules} 输出，示例 {"meta":"ignored"}：',
+      '```json',
+      JSON.stringify({
+        title: '雾港迷踪',
+        worldRules: ['每夜子时封港'],
+        protagonist: '调查员周舟',
+        npcs: [{ name: '码头守卫', role: '哨兵', traits: '警惕' }],
+        taboos: ['不可提及三号灯塔'],
+        openingHook: '浓雾中响起了汽笛声。',
+      }),
+      '```',
+    ].join('\n');
+
+    const blueprint = parseBlueprintResponse(rawWithPreamble, '默认标题');
+    expect(blueprint.extractionStatus).toBe('complete');
+    expect(blueprint.title).toBe('雾港迷踪');
+    expect(blueprint.worldRules).toEqual(['每夜子时封港']);
+    expect(blueprint.protagonist).toBe('调查员周舟');
+    expect(blueprint.npcs).toEqual([{ name: '码头守卫', role: '哨兵', traits: '警惕' }]);
+    expect(blueprint.taboos).toEqual(['不可提及三号灯塔']);
+    expect(blueprint.openingHook).toBe('浓雾中响起了汽笛声。');
+  });
+
+  it('salvages completed fields from truncated/unclosed JSON as partial_fallback', () => {
+    const truncated = [
+      '以下是解析结果 {前置说明}：',
+      '```json',
+      '{',
+      '  "title": "宫闱浮沉录",',
+      '  "worldRules": ["每轮必须附带状态栏", "后宫严禁私藏利器"],',
+      '  "protagonist": "庶出三皇子",',
+      '  "npcs": [',
+      '    {"name": "皇后", "role": "嫡母", "traits": "笑里藏刀"},',
+      '    {"name": "太傅", "role": "师长", "traits": "刚正',
+    ].join('\n');
+
+    const blueprint = parseBlueprintResponse(truncated, '备用标题');
+    expect(blueprint.extractionStatus).toBe('partial_fallback');
+    expect(blueprint.title).toBe('宫闱浮沉录');
+    expect(blueprint.worldRules).toEqual(['每轮必须附带状态栏', '后宫严禁私藏利器']);
+    expect(blueprint.protagonist).toBe('庶出三皇子');
+    expect(blueprint.npcs[0]).toEqual({ name: '皇后', role: '嫡母', traits: '笑里藏刀' });
+
+    const truncatedLater = [
+      '{',
+      '  "title": "深海回响",',
+      '  "taboos": ["禁止开启舱门", "不可直视深渊"],',
+      '  "openingHook": "声呐屏幕上出现了一个未标记',
+    ].join('\n');
+    const salvagedLater = parseBlueprintResponse(truncatedLater, '备用标题');
+    expect(salvagedLater.extractionStatus).toBe('partial_fallback');
+    expect(salvagedLater.title).toBe('深海回响');
+    expect(salvagedLater.taboos).toEqual(['禁止开启舱门', '不可直视深渊']);
+    expect(salvagedLater.openingHook).toBe('');
   });
 
   it('extracts blueprint via LLM and retains full rawScript plus confirmed blueprint in turn system prompt', async () => {
@@ -176,5 +269,33 @@ describe('Slice 2: Blueprint extraction & full rawScript anchoring', () => {
     expect(systemPrompt).toContain('每周三食堂二楼不供应番茄炒蛋');
     // User edits to confirmed blueprint MUST also appear
     expect(systemPrompt).toContain('用户补充禁忌：不可单独进地下室');
+  });
+
+  it('rethrows HTTP/network transport errors from extractStoryBlueprint instead of swallowing them as partial_fallback', async () => {
+    const failingTransport: LlmTransport = {
+      async *streamChat() {
+        throw new Error('Model request failed with HTTP 401 Unauthorized');
+      },
+    };
+    const harness = createFictionHarness({ transport: failingTransport });
+
+    await expect(
+      harness.extractStoryBlueprint(
+        '【规则】测试剧本',
+        { baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', apiKey: 'bad', memoryOnly: true },
+        '测试剧本',
+      ),
+    ).rejects.toThrow(/HTTP 401/);
+
+    const abortController = new AbortController();
+    abortController.abort();
+    await expect(
+      harness.extractStoryBlueprint(
+        '【规则】测试剧本',
+        { baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', apiKey: 'k', memoryOnly: true },
+        '测试剧本',
+        abortController.signal,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

@@ -79,6 +79,8 @@ async function main() {
   try {
     const context = await browser.newContext({ acceptDownloads: true });
     const page = await context.newPage();
+    const replyCounts = new Map();
+    let failNextBlueprintWith401 = false;
 
     await page.route('**/chat/completions', async (route) => {
       const reqBody = JSON.parse(route.request().postData() || '{}');
@@ -86,6 +88,15 @@ async function main() {
       const lastMsg = reqBody.messages?.[reqBody.messages.length - 1]?.content || '';
 
       if (sys.includes('严格只输出一个 JSON 对象')) {
+        if (failNextBlueprintWith401) {
+          failNextBlueprintWith401 = false;
+          await route.fulfill({
+            status: 401,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: { message: 'Invalid API key' } }),
+          });
+          return;
+        }
         await route.fulfill({
           status: 200,
           contentType: 'text/event-stream',
@@ -124,8 +135,12 @@ async function main() {
         return;
       }
 
+      const nextCount = (replyCounts.get(lastMsg) ?? 0) + 1;
+      replyCounts.set(lastMsg, nextCount);
+      const replyPrefix = nextCount === 1 ? '回执' : `回执#${nextCount}`;
+
       const content = [
-        `回执：${lastMsg}`,
+        `${replyPrefix}：${lastMsg}`,
         '```text',
         `[状态 | 人气: 60 | 节点: ${lastMsg.slice(0, 6)}]`,
         '```',
@@ -230,6 +245,96 @@ async function main() {
     await page.setInputFiles('input[aria-label="导入故事 JSON 备份"]', backupFile);
     await page.waitForSelector('.story-item.active');
     await page.waitForSelector('.turn-card.assistant:has-text("回执：A. 继续训练声乐")');
+
+    // 8. Collapsible reasoning panel rendering (.reasoning-content)
+    const firstAssistant = page.locator('.turn-card.assistant').first();
+    const reasoningDetails = firstAssistant.locator('.reasoning-details');
+    const reasoningContent = firstAssistant.locator('.reasoning-content');
+    if ((await reasoningDetails.evaluate((el) => el.open)) || (await reasoningContent.isVisible())) {
+      throw new Error('Expected .reasoning-details to be collapsed by default');
+    }
+    await reasoningDetails.locator('summary').click();
+    if (!(await reasoningDetails.evaluate((el) => el.open)) || !(await reasoningContent.isVisible())) {
+      throw new Error('Expected .reasoning-content visible after expanding');
+    }
+    const reasoningText = await reasoningContent.textContent();
+    if (!reasoningText?.includes('推理(')) {
+      throw new Error(`Unexpected reasoning content: ${reasoningText}`);
+    }
+    await reasoningDetails.locator('summary').click();
+    if (await reasoningContent.isVisible()) {
+      throw new Error('Expected .reasoning-content hidden after collapsing');
+    }
+
+    // 9. regenerateNode & rewindToNode UI actions
+    const lastAssistant = page.locator('.turn-card.assistant').last();
+    await lastAssistant.locator('button:has-text("重新生成分支")').click();
+    await page.waitForSelector('.turn-card.assistant:has-text("回执#2：A. 继续训练声乐")');
+    const regenPager = await page.locator('.turn-card.assistant').last().locator('.branch-pager').textContent();
+    if (!regenPager?.includes('2 / 2')) {
+      throw new Error(`Expected regenerated branch pager 2 / 2, got: ${regenPager}`);
+    }
+    await page.locator('.turn-card.assistant').last().locator('button[aria-label="上一分支"]').click();
+    await page.waitForSelector('.turn-card.assistant:has-text("回执：A. 继续训练声乐")');
+
+    await firstAssistant.locator('button:has-text("回溯至此")').click();
+    await page.waitForFunction(() => document.querySelectorAll('.turn-card.assistant').length === 1);
+    if ((await firstAssistant.locator('button:has-text("回溯至此")').count()) !== 0) {
+      throw new Error('Expected active rewound leaf not to show 回溯至此');
+    }
+    await page.click('[data-testid="context-overview"] summary');
+    const rewoundSummary = await page.locator('[data-testid="active-plot-summary"]').textContent();
+    if (!rewoundSummary?.includes('尚未触发压缩')) {
+      throw new Error(`Expected rewound summary reset, got: ${rewoundSummary}`);
+    }
+
+    // 10. .txt and .md file import + HTTP 401 non-blocking blueprint error banner
+    const txtPath = path.join(tmpDir, 'notes.txt');
+    const mdPath = path.join(tmpDir, 'camp.md');
+    fs.writeFileSync(txtPath, '【纯文本剧本】\n规则：每晚点名。', 'utf8');
+    fs.writeFileSync(mdPath, '# 星光练习生 Markdown\n- 不可迟到\n```\n[体力: 100]\n```', 'utf8');
+
+    await page.click('button:has-text("导入剧本 / 新建故事")');
+    await page.setInputFiles('#import-file', txtPath);
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#import-raw-script');
+      return el && 'value' in el && String(el.value).includes('【纯文本剧本】');
+    });
+
+    await page.setInputFiles('#import-file', mdPath);
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#import-raw-script');
+      return el && 'value' in el && String(el.value).includes('# 星光练习生 Markdown');
+    });
+
+    failNextBlueprintWith401 = true;
+    await page.click('button:has-text("拆解故事蓝图")');
+    await page.waitForSelector('.import-panel .error-banner');
+    const bpError = await page.locator('.import-panel .error-banner').textContent();
+    if (!bpError?.includes('401')) {
+      throw new Error(`Expected 401 error banner in ImportPanel, got: ${bpError}`);
+    }
+    // Non-blocking: user can still skip to manual blueprint fallback
+    await page.click('button:has-text("跳过模型拆解")');
+    await page.waitForSelector('#bp-title');
+    await page.click('button:has-text("确认蓝图并开始故事")');
+    await page.waitForFunction(() => document.querySelectorAll('.story-item').length === 2);
+
+    // 11. Mobile narrow viewport check (390x844, no horizontal overflow)
+    await page.setViewportSize({ width: 390, height: 844 });
+    const checkNoHorizontalOverflow = async (label) => {
+      const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+      }));
+      if (scrollWidth > clientWidth) {
+        throw new Error(`Horizontal overflow on ${label} (${scrollWidth} > ${clientWidth})`);
+      }
+    };
+    await checkNoHorizontalOverflow('mobile main view');
+    await page.click('button:has-text("导入剧本 / 新建故事")');
+    await page.waitForSelector('.import-panel');
+    await checkNoHorizontalOverflow('mobile import view');
 
     console.log('ALL_E2E_CHECKS_PASSED');
   } finally {

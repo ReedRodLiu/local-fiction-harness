@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   getBranchTreeSummary,
   type PlotSummarySnapshot,
@@ -6,13 +6,14 @@ import {
   type StoryBlueprint,
   type ThreeZoneMetrics,
 } from '../harness/index.ts';
+import { splitNonEmptyLines, toErrorMessage } from './textHelpers.ts';
 
 interface ContextOverviewProps {
   story: Story;
   summarySnapshot: PlotSummarySnapshot;
   metrics: ThreeZoneMetrics;
   isStreaming: boolean;
-  onSaveBlueprintTweak: (updatedBlueprint: StoryBlueprint) => Promise<void>;
+  onSaveBlueprintTweak: (updatedBlueprint: StoryBlueprint) => Promise<boolean | void>;
   onSwitchBranch: (targetNodeId: string) => void;
 }
 
@@ -27,6 +28,33 @@ export function ContextOverview({
   const [editingBlueprint, setEditingBlueprint] = useState(false);
   const [protagonistDraft, setProtagonistDraft] = useState('');
   const [taboosDraft, setTaboosDraft] = useState('');
+  const [isSavingTweak, setIsSavingTweak] = useState(false);
+  const [tweakError, setTweakError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEditingBlueprint(false);
+    setTweakError(null);
+  }, [story.id]);
+
+  const handleSaveTweak = async () => {
+    if (isSavingTweak || isStreaming) return;
+    setIsSavingTweak(true);
+    setTweakError(null);
+    try {
+      const saved = await onSaveBlueprintTweak({
+        ...story.blueprint,
+        protagonist: protagonistDraft.trim(),
+        taboos: splitNonEmptyLines(taboosDraft),
+      });
+      if (saved !== false) {
+        setEditingBlueprint(false);
+      }
+    } catch (err) {
+      setTweakError(toErrorMessage(err, '保存蓝图微调失败。'));
+    } finally {
+      setIsSavingTweak(false);
+    }
+  };
 
   const hasBlueprintOrScript =
     Boolean(story.rawScript) || story.blueprint.worldRules.length > 0;
@@ -42,6 +70,11 @@ export function ContextOverview({
           <div className="blueprint-summary">
             {editingBlueprint ? (
               <div className="config-form" style={{ marginTop: '0.5rem' }}>
+                {tweakError && (
+                  <div className="error-banner" role="alert">
+                    {tweakError}
+                  </div>
+                )}
                 <div className="field">
                   <label htmlFor="tweak-protagonist">微调主角设定</label>
                   <input
@@ -64,23 +97,19 @@ export function ContextOverview({
                   <button
                     type="button"
                     className="btn btn-sm btn-primary"
-                    onClick={() => {
-                      void onSaveBlueprintTweak({
-                        ...story.blueprint,
-                        protagonist: protagonistDraft.trim(),
-                        taboos: taboosDraft
-                          .split(/\r?\n/)
-                          .map((s) => s.trim())
-                          .filter(Boolean),
-                      }).then(() => setEditingBlueprint(false));
-                    }}
+                    disabled={isSavingTweak || isStreaming}
+                    onClick={() => void handleSaveTweak()}
                   >
                     保存蓝图微调
                   </button>
                   <button
                     type="button"
                     className="btn btn-sm"
-                    onClick={() => setEditingBlueprint(false)}
+                    disabled={isSavingTweak}
+                    onClick={() => {
+                      setTweakError(null);
+                      setEditingBlueprint(false);
+                    }}
                   >
                     取消
                   </button>

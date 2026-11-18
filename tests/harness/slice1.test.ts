@@ -94,6 +94,89 @@ describe('Slice 1: OpenAI SSE streaming & reasoning separation', () => {
 
     await expect(collect()).rejects.toThrow(/Rate limit reached/);
   });
+
+  it('accumulates multi-line data: blocks within a single SSE event frame and preserves real-time per-event streaming', async () => {
+    const firstChunk = [
+      'event: message\r\n',
+      ': keepalive\r\n',
+      'data: {\r\n',
+      'data:   "choices": [{\r\n',
+      'data:     "delta": {"content": "跨行"}\r\n',
+      'data:   }]\r\n',
+      'data: }\r\n',
+      '\r\n',
+    ].join('');
+    const secondChunk = 'data: {"choices":[{"delta":{"content":"实时"},"finish_reason":"stop"}]}\n\n';
+    const doneChunk = 'data: [DONE]\n\n';
+
+    async function* chunks(): AsyncIterable<string> {
+      yield firstChunk;
+      yield secondChunk;
+      yield doneChunk;
+    }
+
+    const iter = parseOpenAiSseStream(chunks())[Symbol.asyncIterator]();
+    const first = await iter.next();
+    expect(first.done).toBe(false);
+    expect(first.value?.contentDelta).toBe('跨行');
+
+    const second = await iter.next();
+    expect(second.done).toBe(false);
+    expect(second.value?.contentDelta).toBe('实时');
+    expect(second.value?.finishReason).toBe('stop');
+
+    const end = await iter.next();
+    expect(end.done).toBe(true);
+  });
+
+  it('streams chunks via getReader() ReadableStream body and releases lock when finished', async () => {
+    const encoder = new TextEncoder();
+    const payloads = [
+      encoder.encode('data: {"choices":[{"delta":{"reasoning_content":"先查"}}]}\n\n'),
+      encoder.encode('data: {"choices":[{"delta":{"content":"再答"},"finish_reason":"stop"}]}\n\n'),
+      encoder.encode('data: [DONE]\n\n'),
+    ];
+    let index = 0;
+    let lockReleased = false;
+
+    const transport = createOpenAiTransport(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '',
+      body: {
+        getReader() {
+          return {
+            async read() {
+              if (index >= payloads.length) {
+                return { done: true };
+              }
+              return { done: false, value: payloads[index++] };
+            },
+            releaseLock() {
+              lockReleased = true;
+            },
+          };
+        },
+      },
+    }));
+
+    const deltas = [];
+    for await (const d of transport.streamChat({
+      baseUrl: 'https://example.invalid/v1',
+      apiKey: 'k',
+      model: 'deepseek-chat',
+      messages: [{ role: 'user', content: 'hi' }],
+    })) {
+      deltas.push(d);
+    }
+
+    expect(deltas).toEqual([
+      { contentDelta: undefined, reasoningDelta: '先查', finishReason: undefined },
+      { contentDelta: '再答', reasoningDelta: undefined, finishReason: 'stop' },
+    ]);
+    expect(lockReleased).toBe(true);
+  });
 });
 
 describe('Slice 1: BYOK ModelConfigStore persistence & session-memory toggle', () => {

@@ -1,6 +1,18 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+function isLoopbackRequest(remoteAddress: string | undefined): boolean {
+  return Boolean(remoteAddress && LOOPBACK_ADDRESSES.has(remoteAddress));
+}
+
+function isExposedHost(host: string | boolean | undefined): boolean {
+  if (host === true) return true;
+  if (typeof host !== 'string' || !host) return false;
+  return host !== 'localhost' && !LOOPBACK_ADDRESSES.has(host);
+}
+
 function devTestConfigPlugin(options: {
   baseUrl: string;
   model: string;
@@ -10,14 +22,20 @@ function devTestConfigPlugin(options: {
     name: 'dev-test-config',
     apply: 'serve',
     configureServer(server) {
-      server.middlewares.use('/__dev_test_config', (_req, res) => {
+      if (options.hasEnvKey && isExposedHost(server.config.server.host)) {
+        console.warn(
+          '[dev-test-config] Detected non-loopback Vite host (--host). Forwarding x-use-dev-env-key remains restricted to loopback connections (127.0.0.1 / ::1).',
+        );
+      }
+      server.middlewares.use('/__dev_test_config', (req, res) => {
+        const isLoopback = isLoopbackRequest(req.socket?.remoteAddress);
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.end(
           JSON.stringify({
             available: Boolean(options.baseUrl),
             proxyBaseUrl: '/__dev_llm_proxy',
             model: options.model,
-            hasEnvKey: options.hasEnvKey,
+            hasEnvKey: options.hasEnvKey && isLoopback,
           }),
         );
       });
@@ -72,7 +90,7 @@ export default defineConfig(({ command, mode }) => {
                   proxy.on('proxyReq', (proxyReq, req) => {
                     const useDevKey = req.headers['x-use-dev-env-key'] === '1';
                     proxyReq.removeHeader('x-use-dev-env-key');
-                    if (useDevKey && testApiKey) {
+                    if (useDevKey && testApiKey && isLoopbackRequest(req.socket?.remoteAddress)) {
                       proxyReq.setHeader('Authorization', `Bearer ${testApiKey}`);
                     }
                   });

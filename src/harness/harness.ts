@@ -45,6 +45,13 @@ export interface CreateStoryInput {
   blueprint?: StoryBlueprint;
 }
 
+/**
+ * Returns true when an error represents an aborted async request.
+ */
+export function isAbortError(err: unknown): boolean {
+  return Boolean(err && typeof err === 'object' && (err as { name?: unknown }).name === 'AbortError');
+}
+
 function throwIfAborted(signal?: AbortSignalLike): void {
   if (signal?.aborted) {
     const abortError = new Error('操作已中止。');
@@ -192,7 +199,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       );
       compressed = result.content;
     } catch (err) {
-      if ((err as { name?: string }).name === 'AbortError') {
+      if (isAbortError(err)) {
         throw err;
       }
       compressed = '';
@@ -264,6 +271,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
             },
           };
 
+    throwIfAborted(opts.signal);
     await persistStory(updatedStory, true);
 
     return {
@@ -400,19 +408,12 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         return createDefaultBlueprint(fallbackTitle);
       }
 
-      try {
-        const { content } = await streamText(
-          config,
-          buildBlueprintExtractionMessages(trimmed),
-          { signal },
-        );
-        return parseBlueprintResponse(content, fallbackTitle);
-      } catch (err) {
-        if ((err as { name?: string }).name === 'AbortError') {
-          throw err;
-        }
-        return createDefaultBlueprint(fallbackTitle);
-      }
+      const { content } = await streamText(
+        config,
+        buildBlueprintExtractionMessages(trimmed),
+        { signal },
+      );
+      return parseBlueprintResponse(content, fallbackTitle);
     },
 
     async runTurn(
@@ -463,8 +464,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
 
       const { messages } = assembleThreeZoneContext(
         story,
-        userNode.id,
-        undefined,
+        userNode.parentId,
+        userNode.content,
         deps.contextBudget,
       );
       const { content, reasoningContent } = await streamText(config, messages, callbacks);

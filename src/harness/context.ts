@@ -118,10 +118,21 @@ function trimRecentWindow(
   const maxNodes = Math.max(MIN_RECENT_NODES_PER_TURN, budget.recentMaxNodes);
   const windowed = nodes.length > maxNodes ? nodes.slice(nodes.length - maxNodes) : [...nodes];
 
+  while (windowed.length > MIN_RECENT_NODES_PER_TURN && windowed[0]?.role === 'assistant') {
+    windowed.shift();
+  }
+
   let totalChars = sumNodeChars(windowed) + pendingUserChars;
   while (windowed.length > MIN_RECENT_NODES_PER_TURN && totalChars > budget.recentMaxChars) {
-    const removed = windowed.shift()!;
-    totalChars -= removed.content.length;
+    const dropCount =
+      windowed[0]?.role === 'user' && windowed[1]?.role === 'assistant' ? 2 : 1;
+    if (windowed.length - dropCount < MIN_RECENT_NODES_PER_TURN) {
+      break;
+    }
+    for (let i = 0; i < dropCount; i++) {
+      const removed = windowed.shift()!;
+      totalChars -= removed.content.length;
+    }
   }
   return windowed;
 }
