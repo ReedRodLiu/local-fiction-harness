@@ -7,11 +7,15 @@ const MIN_RECENT_NODES_PER_TURN = 2;
 export interface ContextBudgetConfig {
   recentMaxNodes: number;
   recentMaxChars: number;
+  summaryBatchMaxNodes: number;
+  summaryBatchMaxChars: number;
 }
 
 export const DEFAULT_CONTEXT_BUDGET: ContextBudgetConfig = {
   recentMaxNodes: 8,
   recentMaxChars: 6000,
+  summaryBatchMaxNodes: 16,
+  summaryBatchMaxChars: 10000,
 };
 
 export interface ThreeZoneMetrics {
@@ -107,6 +111,41 @@ export function buildSystemAnchorPrompt(story: Story): string {
 
 export const SETUP_NODE_PLACEHOLDER =
   '（开局设定与剧本附件已完整锚定于系统提示词原始剧本区，此处略去重复全文）';
+
+const SUMMARY_PREVIOUS_TRUNCATION_MARKER = '…（较早摘要已省略，以下保留最近内容）…';
+
+function takeLastTextChars(text: string, maxChars: number): string {
+  const limit = Math.max(0, Math.floor(maxChars));
+  if (limit === 0) return '';
+
+  let start = Math.max(0, text.length - limit);
+  if (start > 0 && start < text.length) {
+    const previousCodeUnit = text.charCodeAt(start - 1);
+    const firstCodeUnit = text.charCodeAt(start);
+    if (
+      previousCodeUnit >= 0xd800 &&
+      previousCodeUnit <= 0xdbff &&
+      firstCodeUnit >= 0xdc00 &&
+      firstCodeUnit <= 0xdfff
+    ) {
+      start += 1;
+    }
+  }
+  return text.slice(start);
+}
+
+function capPreviousSummary(previousSummary: string, maxChars: number): string {
+  const normalized = previousSummary.trim();
+  if (normalized.length <= maxChars) return normalized;
+
+  if (maxChars <= SUMMARY_PREVIOUS_TRUNCATION_MARKER.length) {
+    return takeLastTextChars(normalized, maxChars);
+  }
+  return `${SUMMARY_PREVIOUS_TRUNCATION_MARKER}${takeLastTextChars(
+    normalized,
+    maxChars - SUMMARY_PREVIOUS_TRUNCATION_MARKER.length,
+  )}`;
+}
 
 export interface SetupNodeFilter {
   readonly setupNodeIds?: ReadonlySet<string>;
@@ -259,6 +298,7 @@ export function buildSummaryCompressionMessages(
   previousSummary: string,
   nodesToFold: TurnNode[],
   filter?: SetupNodeFilter,
+  maxPreviousSummaryChars = DEFAULT_CONTEXT_BUDGET.summaryBatchMaxChars,
 ): LlmMessage[] {
   const turnsText = nodesToFold
     .map(
@@ -266,6 +306,7 @@ export function buildSummaryCompressionMessages(
         `[${n.role === 'user' ? '玩家' : '叙事'}]: ${getEffectiveNodeContent(n, filter)}`,
     )
     .join('\n\n');
+  const boundedPreviousSummary = capPreviousSummary(previousSummary, maxPreviousSummaryChars);
 
   return [
     {
@@ -278,7 +319,9 @@ export function buildSummaryCompressionMessages(
     {
       role: 'user',
       content: [
-        previousSummary.trim() ? `### 既有剧情摘要\n${previousSummary.trim()}` : '### 既有剧情摘要\n（暂无）',
+        boundedPreviousSummary
+          ? `### 既有剧情摘要\n${boundedPreviousSummary}`
+          : '### 既有剧情摘要\n（暂无）',
         `### 需要压缩并合入的历史轮次\n${turnsText}`,
       ].join('\n\n'),
     },

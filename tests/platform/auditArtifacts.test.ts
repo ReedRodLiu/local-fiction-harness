@@ -37,7 +37,14 @@ describe('Offline artifact & minimal-permission audit', () => {
         <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
       </manifest>
     `;
-    expect(() => auditManifestXml(unsafeManifest)).toThrow(/allowBackup|READ_EXTERNAL_STORAGE/);
+    expect(() => auditManifestXml(unsafeManifest)).toThrow(/allowBackup/);
+    expect(() =>
+      auditManifestXml(unsafeManifest.replace('allowBackup="true"', 'allowBackup="false"')),
+    ).toThrow(/READ_EXTERNAL_STORAGE/);
+  });
+
+  it('rejects a manifest that leaves application backup enabled by default', () => {
+    expect(() => auditManifestXml('<manifest><application /></manifest>')).toThrow(/allowBackup/);
   });
 
   it('rejects leaked .env.local secrets or dev-proxy markers in built assets', () => {

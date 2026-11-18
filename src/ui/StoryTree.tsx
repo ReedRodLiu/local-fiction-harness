@@ -10,6 +10,7 @@ import {
 export interface StoryTreeProps {
   story: Story;
   isBusy?: boolean;
+  isRenameBusy?: boolean;
   onSwitchBranch?: (targetNodeId: string) => void;
   onRenameBranch?: (branchEntryNodeId: string, name: string) => Promise<void> | void;
   onExtractBranchGist?: (branchEntryNodeId: string) => Promise<void> | void;
@@ -36,6 +37,7 @@ export function formatDiagnosticTags(
 export function StoryTree({
   story,
   isBusy = false,
+  isRenameBusy,
   onSwitchBranch,
   onRenameBranch,
   onExtractBranchGist,
@@ -46,6 +48,7 @@ export function StoryTree({
   const [renamingEntryId, setRenamingEntryId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [extractingGistId, setExtractingGistId] = useState<string | null>(null);
+  const renameBusy = isRenameBusy ?? isBusy;
 
   const spine = useMemo(() => projectStoryTreeSpine(story), [story]);
 
@@ -59,7 +62,7 @@ export function StoryTree({
   };
 
   const commitRename = async (branchEntryNodeId: string) => {
-    if (!onRenameBranch || isBusy) return;
+    if (!onRenameBranch || renameBusy) return;
     await onRenameBranch(branchEntryNodeId, renameDraft);
     setRenamingEntryId(null);
     setRenameDraft('');
@@ -211,7 +214,7 @@ export function StoryTree({
                                   <button
                                     type="button"
                                     className="btn btn-sm btn-primary"
-                                    disabled={isBusy}
+                                    disabled={renameBusy}
                                     onClick={() => void commitRename(branch.entryNodeId)}
                                   >
                                     保存名称
@@ -240,7 +243,7 @@ export function StoryTree({
                                     <button
                                       type="button"
                                       className="btn btn-sm"
-                                      disabled={isBusy}
+                                      disabled={renameBusy}
                                       onClick={() => startRename(branch)}
                                     >
                                       重命名

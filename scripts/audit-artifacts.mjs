@@ -39,7 +39,7 @@ export function extractEnvSecretValues(envText) {
 }
 
 export function auditManifestXml(xmlText) {
-  if (/android:allowBackup\s*=\s*"true"/i.test(xmlText)) {
+  if (!/<application\b[^>]*\bandroid:allowBackup\s*=\s*"false"/i.test(xmlText)) {
     throw new Error('AndroidManifest.xml must keep android:allowBackup="false".');
   }
   if (/android:usesCleartextTraffic\s*=\s*"true"/i.test(xmlText)) {
@@ -147,13 +147,14 @@ export function runRepoArtifactAudit(rootDir = process.cwd()) {
   );
   auditManifestXml(sourceManifest);
 
-  const mergedManifestPath = path.join(
+  const packagedManifestPath = path.join(
     rootDir,
-    'android/app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml',
+    'android/app/build/intermediates/packaged_manifests/debug/processDebugManifestForPackage/AndroidManifest.xml',
   );
-  if (fs.existsSync(mergedManifestPath)) {
-    auditManifestXml(fs.readFileSync(mergedManifestPath, 'utf8'));
+  if (!fs.existsSync(packagedManifestPath)) {
+    throw new Error(`Packaged Debug manifest not found at ${packagedManifestPath}`);
   }
+  auditManifestXml(fs.readFileSync(packagedManifestPath, 'utf8'));
 
   const apkPath = path.join(rootDir, 'android/app/build/outputs/apk/debug/app-debug.apk');
   if (!fs.existsSync(apkPath)) {

@@ -33,7 +33,10 @@ import {
 import { ContextOverview } from './ContextOverview.tsx';
 import { setCrashDiagnosticBundleBuilder } from './crashDiagnosticContext.ts';
 import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
-import { mergeBranchSummaryResult } from './storyConcurrency.ts';
+import {
+  mergeBranchRenameResult,
+  mergeBranchSummaryResult,
+} from './storyConcurrency.ts';
 import { ImportPanel, type ImportMode } from './ImportPanel.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
@@ -130,6 +133,7 @@ export function App({ runtime }: AppProps) {
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [isBranchSwitchSummarizing, setIsBranchSwitchSummarizing] = useState(false);
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamContent, setStreamContent] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -140,6 +144,7 @@ export function App({ runtime }: AppProps) {
   const streamSeqRef = useRef(0);
   const storyOpSeqRef = useRef(0);
   const summarySeqRef = useRef(0);
+  const storyCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
   const storyRef = useRef<Story | null>(story);
   storyRef.current = story;
   const configEditSeqRef = useRef(0);
@@ -205,9 +210,30 @@ export function App({ runtime }: AppProps) {
     [refreshStories],
   );
 
+  const enqueueStoryCommit = useCallback(
+    (merge: (latestStory: Story | null) => Story | null): Promise<Story | null> => {
+      const commit = storyCommitQueueRef.current.then(async () => {
+        const updated = merge(storyRef.current);
+        if (!updated) return null;
+        storyRef.current = updated;
+        setStory(updated);
+        await harness.saveStory(updated);
+        await refreshStories();
+        return updated;
+      });
+      storyCommitQueueRef.current = commit.then(
+        () => undefined,
+        () => undefined,
+      );
+      return commit;
+    },
+    [harness, refreshStories],
+  );
+
   const invalidateSummaryTask = useCallback(() => {
     summarySeqRef.current += 1;
     setIsSummarizing(false);
+    setIsBranchSwitchSummarizing(false);
   }, []);
 
   useEffect(() => {
@@ -412,7 +438,12 @@ export function App({ runtime }: AppProps) {
   const runStoryTransition = async (
     transition: () => Promise<Story>,
     fallbackError: string,
-    opts?: { blockBusy?: boolean; trackSummarizing?: boolean; preserveSummaryTask?: boolean },
+    opts?: {
+      blockBusy?: boolean;
+      trackSummarizing?: boolean;
+      preserveSummaryTask?: boolean;
+      mergeWithLatest?: (latestStory: Story | null, transitionedStory: Story) => Story | null;
+    },
   ): Promise<Story | null> => {
     if (opts?.blockBusy !== false && (abortRef.current || isStreaming || isSummarizing)) {
       return null;
@@ -422,12 +453,21 @@ export function App({ runtime }: AppProps) {
     setErrorMsg(null);
     if (opts?.trackSummarizing) {
       setIsSummarizing(true);
+      setIsBranchSwitchSummarizing(false);
     } else if (!opts?.preserveSummaryTask) {
       setIsSummarizing(false);
+      setIsBranchSwitchSummarizing(false);
     }
     try {
       const updated = await transition();
       if (storyOpSeqRef.current !== opSeq) return null;
+      if (opts?.mergeWithLatest) {
+        return await enqueueStoryCommit((latest) =>
+          storyOpSeqRef.current === opSeq
+            ? opts.mergeWithLatest!(latest, updated)
+            : null,
+        );
+      }
       await commitStoryState(updated);
       return updated;
     } catch (err) {
@@ -535,23 +575,19 @@ export function App({ runtime }: AppProps) {
     targetLeafId: string,
     activeCfg: ModelConfig,
     fallbackError: string,
+    allowRenameDuringSummary = false,
   ) => {
     const summarySeq = ++summarySeqRef.current;
     setIsSummarizing(true);
+    setIsBranchSwitchSummarizing(allowRenameDuringSummary);
     try {
-      const summarized = await harness.ensureActiveBranchSummary(targetStory, activeCfg);
+      const summarized = await harness.calculateActiveBranchSummary(targetStory, activeCfg);
       if (summarySeqRef.current !== summarySeq) return;
-      const latest = storyRef.current;
-      const merged = latest
-        ? mergeBranchSummaryResult(latest, summarized, targetLeafId)
-        : null;
-      if (merged) {
-        // Update React state synchronously before awaiting storage so concurrent metadata edits aren't overwritten
-        storyRef.current = merged;
-        setStory(merged);
-        await harness.saveStory(merged);
-        await refreshStories();
-      }
+      await enqueueStoryCommit((latest) =>
+        summarySeqRef.current === summarySeq && latest
+          ? mergeBranchSummaryResult(latest, summarized, targetLeafId)
+          : null,
+      );
     } catch (err) {
       if (summarySeqRef.current === summarySeq) {
         setErrorMsg(toErrorMessage(err, fallbackError));
@@ -559,6 +595,7 @@ export function App({ runtime }: AppProps) {
     } finally {
       if (summarySeqRef.current === summarySeq) {
         setIsSummarizing(false);
+        setIsBranchSwitchSummarizing(false);
       }
     }
   };
@@ -587,15 +624,22 @@ export function App({ runtime }: AppProps) {
         targetLeafId,
         config,
         '补算支线剧情摘要失败，可稍后重试。',
+        true,
       );
     }
   };
 
   const handleRenameBranch = async (branchEntryNodeId: string, name: string) => {
     await runStoryTransition(
-      () => harness.renameBranch(storyRef.current!, branchEntryNodeId, name),
+      async () =>
+        harness.calculateBranchRename(storyRef.current!, branchEntryNodeId, name),
       '重命名分支失败。',
-      { blockBusy: false, preserveSummaryTask: true },
+      {
+        blockBusy: false,
+        preserveSummaryTask: true,
+        mergeWithLatest: (latest, renamed) =>
+          latest ? mergeBranchRenameResult(latest, renamed, branchEntryNodeId) : null,
+      },
     );
   };
 
@@ -1099,6 +1143,7 @@ export function App({ runtime }: AppProps) {
             <StoryTree
               story={story}
               isBusy={isStreaming || isSummarizing}
+              isRenameBusy={isStreaming || (isSummarizing && !isBranchSwitchSummarizing)}
               onSwitchBranch={(id) => void handleSwitchBranch(id)}
               onRenameBranch={handleRenameBranch}
               onExtractBranchGist={handleExtractBranchGist}

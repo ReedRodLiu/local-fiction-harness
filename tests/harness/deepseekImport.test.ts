@@ -313,6 +313,13 @@ describe('Slice 2 (#20): DeepSeek v3 two-stage .zip scan, sanitization, Node Dia
     expect(p.skippedAttachments.find((a) => a.fileName === '旧版大纲.doc')?.hint).toContain('.docx');
     expect(p.rawScript).toContain('【宫廷剧本】主角：沈知微');
     expect(p.rawScript).toContain('补充设定：每晚子时触发随机事件');
+    const [manual] = previewDeepSeekSessions(zipBytes, ['sess-fiction-1'], {
+      scriptRangeOverrides: { 'sess-fiction-1': { startTurn: 1, endTurn: 1 } },
+    });
+    for (const preview of [p, manual]) {
+      expect(preview.rawScript.split('【宫廷剧本】主角：沈知微')).toHaveLength(2);
+      expect(preview.rawScript.split('补充设定：每晚子时触发随机事件')).toHaveLength(2);
+    }
     expect(p.scriptConfidence).toBe('strong');
     expect(p.story.activeLeafNodeId).toBeTruthy();
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { strToU8, zipSync } from 'fflate';
 import {
+  DEFAULT_CONTEXT_BUDGET,
   assembleThreeZoneContext,
   createFictionHarness,
   createInMemoryStoryStorage,
@@ -94,6 +95,169 @@ function createSummaryAwareTransport(
 }
 
 describe('Spec #25 Slice 1: Pre-turn catch-up & chunked rolling Plot Summary', () => {
+  it('uses the configured batch defaults and rolls oversized node text across bounded requests', async () => {
+    expect(DEFAULT_CONTEXT_BUDGET.summaryBatchMaxNodes).toBe(16);
+    expect(DEFAULT_CONTEXT_BUDGET.summaryBatchMaxChars).toBe(10000);
+
+    const captured: LlmStreamRequest[] = [];
+    let batchIndex = 0;
+    const transport: LlmTransport = {
+      async *streamChat(req) {
+        captured.push(req);
+        if ((req.messages[0]?.content ?? '').includes('剧情摘要压缩')) {
+          batchIndex += 1;
+          yield { contentDelta: `滚动摘要片段${batchIndex}`, finishReason: 'stop' };
+          return;
+        }
+        yield { contentDelta: '续写回复。', finishReason: 'stop' };
+      },
+    };
+    const oversizedContent = `BEGIN_${'剧'.repeat(11990)}_END`;
+    const baseStory = buildLongLinearStory(2, 10);
+    const story: Story = {
+      ...baseStory,
+      nodes: {
+        ...baseStory.nodes,
+        'u-1': { ...baseStory.nodes['u-1'], content: oversizedContent },
+      },
+    };
+    const harness = createFictionHarness({
+      transport,
+      contextBudget: { recentMaxNodes: 2, recentMaxChars: 10000 },
+    });
+
+    await harness.runTurn(story, '继续', testConfig);
+    const summaryRequests = captured.filter((request) => {
+      const prompt = request.messages[1]?.content ?? '';
+      return (
+        (request.messages[0]?.content ?? '').includes('剧情摘要压缩') &&
+        (prompt.includes('BEGIN_') || prompt.includes('滚动摘要片段1'))
+      );
+    });
+    const chunkTexts = summaryRequests.map((request) => {
+      const history = request.messages[1]?.content.split('### 需要压缩并合入的历史轮次\n')[1] ?? '';
+      expect(history.startsWith('[玩家]: ')).toBe(true);
+      const text = history.slice('[玩家]: '.length);
+      expect(text.length).toBeLessThanOrEqual(DEFAULT_CONTEXT_BUDGET.summaryBatchMaxChars);
+      return text;
+    });
+
+    expect(chunkTexts).toHaveLength(2);
+    expect(chunkTexts.join('')).toBe(oversizedContent);
+    expect(summaryRequests[1].messages[1]?.content).toContain('滚动摘要片段1');
+    const mainRequest = captured.find(
+      (request) => !(request.messages[0]?.content ?? '').includes('剧情摘要压缩'),
+    );
+    expect(mainRequest?.messages[1]?.content).toContain('已覆盖 1 条历史节点');
+    expect(mainRequest?.messages[1]?.content).toContain('滚动摘要片段2');
+  });
+
+  it('bounds complete compression messages after oversized prior and model summaries', async () => {
+    const captured: LlmStreamRequest[] = [];
+    const modelSummary = `${'模型生成的超长摘要片段。'.repeat(1000)}模型摘要末尾线索。`;
+    const transport: LlmTransport = {
+      async *streamChat(req) {
+        captured.push(req);
+        if ((req.messages[0]?.content ?? '').includes('剧情摘要压缩')) {
+          yield { contentDelta: modelSummary, finishReason: 'stop' };
+          return;
+        }
+        yield { contentDelta: '续写回复。', finishReason: 'stop' };
+      },
+    };
+    const baseStory = buildLongLinearStory(8, 20);
+    const priorSummary = `旧摘要开端应省略。${'早期剧情。'.repeat(300)}最新剧情标记。`;
+    const story: Story = {
+      ...baseStory,
+      nodes: {
+        ...baseStory.nodes,
+        'a-8': {
+          ...baseStory.nodes['a-8'],
+          summarySnapshot: {
+            content: priorSummary,
+            coveredUpToNodeId: 'a-4',
+            summarizedTurnCount: 8,
+          },
+        },
+      },
+    };
+    const batchMaxChars = 80;
+    const harness = createFictionHarness({
+      transport,
+      contextBudget: {
+        recentMaxNodes: 2,
+        recentMaxChars: 5000,
+        summaryBatchMaxNodes: 2,
+        summaryBatchMaxChars: batchMaxChars,
+      },
+    });
+
+    await harness.ensureActiveBranchSummary(story, testConfig);
+
+    const summaryRequests = captured.filter((request) =>
+      (request.messages[0]?.content ?? '').includes('剧情摘要压缩'),
+    );
+    expect(summaryRequests.length).toBeGreaterThanOrEqual(2);
+    expect(summaryRequests[0].messages[1]?.content).toContain('最新剧情标记。');
+    expect(summaryRequests[0].messages[1]?.content).not.toContain('旧摘要开端应省略。');
+    expect(summaryRequests[1].messages[1]?.content).toContain('模型摘要末尾线索。');
+
+    for (const request of summaryRequests) {
+      const messageChars = request.messages.reduce(
+        (sum, message) => sum + message.role.length + message.content.length,
+        0,
+      );
+      // Two 80-char inputs plus a conservative fixed allowance for instructions,
+      // section framing, message roles, and labels/separator for these two nodes.
+      expect(messageChars).toBeLessThanOrEqual(2 * batchMaxChars + 300);
+    }
+  });
+
+  it('calculates a branch summary without persisting or activating it, while ensureActiveBranchSummary keeps its existing persistence behavior', async () => {
+    const storage = createInMemoryStoryStorage();
+    const story = buildLongLinearStory(12, 120);
+    await storage.saveStory(story);
+    await storage.setActiveStoryId('another-story');
+    const captured: LlmStreamRequest[] = [];
+    const harness = createFictionHarness({
+      transport: createSummaryAwareTransport(captured, '滚动摘要结果', '主线回复'),
+      storage,
+    });
+
+    const calculated = await harness.calculateActiveBranchSummary(story, testConfig);
+    expect(calculated.nodes['a-12'].summarySnapshot.content).toBe('滚动摘要结果');
+    expect((await storage.getStory(story.id))?.nodes['a-12'].summarySnapshot).toEqual(EMPTY_SNAP);
+    expect(await storage.getActiveStoryId()).toBe('another-story');
+
+    const ensured = await harness.ensureActiveBranchSummary(story, testConfig);
+    expect(ensured.nodes['a-12'].summarySnapshot.content).toBe('滚动摘要结果');
+    expect((await storage.getStory(story.id))?.nodes['a-12'].summarySnapshot.content).toBe(
+      '滚动摘要结果',
+    );
+    expect(await storage.getActiveStoryId()).toBe(story.id);
+  });
+
+  it('calculates a branch rename without writing, while renameBranch keeps its existing persistence behavior', async () => {
+    const storage = createInMemoryStoryStorage();
+    const story = buildLongLinearStory(2, 30);
+    await storage.saveStory(story);
+    await storage.setActiveStoryId('another-story');
+    const harness = createFictionHarness({
+      transport: createSummaryAwareTransport([], '', ''),
+      storage,
+    });
+
+    const calculated = harness.calculateBranchRename(story, 'u-2', ' 新分支名称 ');
+    expect(calculated.branchNames).toEqual({ 'u-2': '新分支名称' });
+    expect((await storage.getStory(story.id))?.branchNames).toBeUndefined();
+    expect(await storage.getActiveStoryId()).toBe('another-story');
+
+    const renamed = await harness.renameBranch(story, 'u-2', '新分支名称');
+    expect(renamed.branchNames).toEqual({ 'u-2': '新分支名称' });
+    expect((await storage.getStory(story.id))?.branchNames).toEqual({ 'u-2': '新分支名称' });
+    expect(await storage.getActiveStoryId()).toBe('another-story');
+  });
+
   it('runs chunked rolling summary compression BEFORE main reply when runTurn starts with over-window uncovered history', async () => {
     const captured: LlmStreamRequest[] = [];
     let summaryBatchIndex = 0;

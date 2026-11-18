@@ -226,6 +226,17 @@ function sseResponse(payloads) {
   return `${chunks}data: [DONE]\n\n`;
 }
 
+async function newOfflineContext(browser, port, options) {
+  const context = await browser.newContext({ ...options, serviceWorkers: 'block' });
+  // Page-level fixture routes take precedence. Unmocked HTTP traffic stays on the local Vite origin.
+  await context.route('**/*', (route) =>
+    new URL(route.request().url()).origin === `http://localhost:${port}`
+      ? route.continue()
+      : route.abort('internetdisconnected'),
+  );
+  return context;
+}
+
 async function main() {
   const port = 4177;
   const srv = await startViteServer(port);
@@ -236,7 +247,7 @@ async function main() {
   });
 
   try {
-    const context = await browser.newContext({ acceptDownloads: true });
+    const context = await newOfflineContext(browser, port, { acceptDownloads: true });
     const page = await context.newPage();
     const replyCounts = new Map();
     let failNextBlueprintWith401 = false;
@@ -805,7 +816,11 @@ async function main() {
     await checkNoHorizontalOverflow('mobile import view');
 
     await runComprehensiveSpec18MobileE2E(browser, port, tmpDir);
-    await runDiagnosticsE2E(browser, port, tmpDir);
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      await runSpec24LongImportE2E(browser, port, viewport);
+      await runDiagnosticsE2E(browser, port, tmpDir, viewport);
+      console.log(`SPEC24_E2E_PASSED ${viewport.width}x${viewport.height} (long import, catch-up, concurrent rename, diagnostics, crash recovery, privacy)`);
+    }
 
     console.log('ALL_E2E_CHECKS_PASSED');
   } finally {
@@ -913,7 +928,7 @@ function buildComprehensiveSpec18ZipE2E() {
 }
 
 async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
-  const mobileCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const mobileCtx = await newOfflineContext(browser, port, { viewport: { width: 390, height: 844 } });
   const page = await mobileCtx.newPage();
   const capturedTurns = [];
 
@@ -1116,16 +1131,218 @@ const DIAGNOSTICS_CANARIES = [
   'SYNTHETIC_BROKEN_DIAGNOSTIC_CONTEXT',
 ];
 
-function assertZeroLeak(label, text) {
-  for (const canary of DIAGNOSTICS_CANARIES) {
+function assertZeroLeak(label, text, canaries = DIAGNOSTICS_CANARIES) {
+  if (/"(?:rawScript|reasoningContent|branchNames|branchSummaries|apiKey|title|content)"\s*:/.test(text)) {
+    throw new Error(`Diagnostic payload contains a private field in ${label}`);
+  }
+  for (const canary of canaries) {
     if (text.includes(canary)) {
       throw new Error(`Diagnostic privacy leak in ${label}: found canary ${canary}`);
     }
   }
 }
 
-async function runDiagnosticsE2E(browser, port, tmpDir) {
-  const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 390, height: 844 } });
+const LONG_SCRIPT = '合成长档剧本_CANARY。' + '剧本片段。'.repeat(2200);
+const SETUP_REQUEST = '请按附件规则开局，保留蓝色钥匙_CANARY。';
+const OVERSIZED_BEGIN = '超长正文起点_CANARY';
+const OVERSIZED_END = '超长正文终点_CANARY';
+const LONG_STORY_TITLE = '合成长档原始标题_CANARY';
+const LONG_ATTACHMENT = '合成长档匿名附件_CANARY.docx';
+const LONG_RELAY = 'synthetic-long-private-relay.example.invalid';
+const LONG_KEY = 'sk-synthetic-long-fixture-canary';
+const LONG_REASONING = '合成长档推理_CANARY';
+const LONG_BRANCH_NAME = '合成长档重命名_CANARY';
+const LONG_BRANCH_GIST = '合成长档分支梗概_CANARY';
+const EARLY_BRANCH_A = '主线早期伏笔_CANARY';
+const EARLY_BRANCH_B = '备用线早期伏笔_CANARY';
+const SUMMARY_A = '合成长档主线摘要_CANARY';
+const SUMMARY_B = '合成长档备用线摘要_CANARY';
+const LONG_REPLY = '合成长档当前续写正文_CANARY';
+
+function buildLongSpec24Zip() {
+  const docx = zipSync({
+    'word/document.xml': strToU8(
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+      `<w:body><w:p><w:r><w:t>${LONG_SCRIPT}</w:t></w:r></w:p></w:body></w:document>`,
+    ),
+  });
+  const attachmentPath = `chat_sessions/spec24-session/${LONG_ATTACHMENT}`;
+  const timestamp = '2026-11-01T08:00:00Z';
+  const messages = [];
+  const add = (parent_id, role, fragments) => {
+    const id = messages.length + 1;
+    const inserted_at = new Date(Date.parse(timestamp) + id * 1000).toISOString();
+    messages.push({ id, parent_id, role, fragments, status: 'FINISHED', inserted_at });
+    return id;
+  };
+  const setup = add(null, 'USER', [
+    { type: 'FILE', files: [{ file_name: LONG_ATTACHMENT, file_size: docx.length, export_path: attachmentPath }] },
+    { type: 'REQUEST', content: SETUP_REQUEST },
+  ]);
+  const fork = add(setup, 'ASSISTANT', [{ type: 'RESPONSE', content: '从合成线索的分叉处开始。' }]);
+  const leaves = [];
+  for (const [name, clue] of [['主线', EARLY_BRANCH_A], ['备用线', EARLY_BRANCH_B]]) {
+    let parent = fork;
+    for (let turn = 1; turn <= 35; turn += 1) {
+      const action = turn === 1 ? clue : `${name}：调查第 ${turn} 处合成线索`;
+      const reply = name === '主线' && turn === 2
+        ? OVERSIZED_BEGIN + '长'.repeat(12000) + OVERSIZED_END
+        : `${name}第 ${turn} 轮合成回执`;
+      const user = add(parent, 'USER', [{ type: 'REQUEST', content: action }]);
+      parent = add(user, 'ASSISTANT', [
+        { type: 'THINK', content: LONG_REASONING },
+        { type: 'RESPONSE', content: reply },
+      ]);
+    }
+    leaves.push(parent);
+  }
+  return zipSync({
+    'manifest.json': strToU8(JSON.stringify({ export_format_version: 3 })),
+    'chat_sessions/spec24-session.json': strToU8(JSON.stringify({
+      id: 'spec24-session', title: LONG_STORY_TITLE, current_message_id: leaves[0],
+      inserted_at: timestamp, updated_at: timestamp, messages,
+    })),
+    [attachmentPath]: docx,
+  });
+}
+
+async function runSpec24LongImportE2E(browser, port, viewport) {
+  const ctx = await newOfflineContext(browser, port, { viewport });
+  const page = await ctx.newPage();
+  const requests = [];
+  let alternateSelected = false;
+  let releaseBranch;
+  const branchGate = new Promise((resolve) => { releaseBranch = resolve; });
+  try {
+    await page.route('**/chat/completions', async (route) => {
+      const { messages } = route.request().postDataJSON();
+      const summary = messages[0].content.includes('剧情摘要压缩');
+      const gist = messages[0].content.includes('分支梗概助手');
+      requests.push({ summary, messages });
+      const branchB = alternateSelected;
+      if (summary && branchB) {
+        await branchGate;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: sseResponse([{ choices: [{
+          delta: { content: summary ? (branchB ? SUMMARY_B : SUMMARY_A) : gist ? LONG_BRANCH_GIST : LONG_REPLY },
+          finish_reason: 'stop',
+        }] }]),
+      });
+    });
+
+    await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: '从 DeepSeek 继续', exact: true }).click();
+    await page.locator('#deepseek-zip-input').setInputFiles({
+      name: 'spec24-long-synthetic.zip',
+      mimeType: 'application/zip',
+      buffer: Buffer.from(buildLongSpec24Zip()),
+    });
+    await page.getByTestId('deepseek-preview-card').waitFor();
+    await page.getByTestId('ds-confirm-import-btn').click();
+    await page.getByTestId('deepseek-import-receipt').waitFor();
+    await page.getByRole('button', { name: '继续这条故事' }).click();
+    await page.locator('.turn-card.assistant', { hasText: '主线第 35 轮合成回执' }).waitFor();
+    if (requests.length !== 0) throw new Error('Keyless long import made model requests');
+
+    await page.fill('#cfg-base-url', `https://${LONG_RELAY}/v1`);
+    await page.fill('#cfg-api-key', LONG_KEY);
+    await page.fill('#turn-input', '继续当前主线');
+    const submit = page.getByRole('button', { name: '发送行动' });
+    await submit.click();
+    await page.locator('.turn-card.assistant[data-node-id]', { hasText: LONG_REPLY }).waitFor();
+    const generationAt = requests.findIndex(({ summary }) => !summary);
+    const batches = requests.slice(0, generationAt).map(({ messages }) => messages.at(-1).content);
+    const continuation = requests[generationAt]?.messages ?? [];
+    if (generationAt < 2 || !batches.some((text) => text.includes(EARLY_BRANCH_A)) ||
+        !continuation.some(({ role, content }) => role === 'system' && content.includes(SUMMARY_A))) {
+      throw new Error('Long first continuation did not wait for multiple catch-up batches covering early history');
+    }
+    if (!batches.some((text) => text.includes(OVERSIZED_BEGIN)) ||
+        !batches.some((text) => text.includes(OVERSIZED_END)) ||
+        batches.some((text) => text.includes(OVERSIZED_BEGIN) && text.includes(OVERSIZED_END))) {
+      throw new Error('Oversized history node did not reach summary in bounded chunks');
+    }
+    const inAnchor = continuation[0].role === 'system' && continuation[0].content.includes(LONG_SCRIPT);
+    const scriptOccurrences = continuation.map(({ content }) => content).join('\n').split(LONG_SCRIPT).length - 1;
+    const outsideAnchor = [...batches, ...continuation.slice(1).map(({ content }) => content)].some((text) =>
+      text.includes(LONG_SCRIPT.slice(0, 24)) || text.includes('剧本片段。'.repeat(10)),
+    );
+    if (!inAnchor || scriptOccurrences !== 1 || outsideAnchor) {
+      throw new Error(`Setup Node DOCX anchor mismatch (inAnchor=${inAnchor}, occurrences=${scriptOccurrences}, outsideAnchor=${outsideAnchor})`);
+    }
+    if (!continuation.some(({ content }) => content.includes(SETUP_REQUEST))) {
+      throw new Error('The nonduplicate instruction from the attachment setup was lost');
+    }
+
+    const fork = page.locator('[data-testid^="story-tree-fork-"]').first();
+    await submit.waitFor();
+    if ((await fork.getAttribute('aria-expanded')) !== 'true') await fork.click();
+    const alternateId = await page.locator('.story-tree-sibling', {
+      hasText: '备用线第 35 轮合成回执',
+    }).getAttribute('data-testid', { timeout: 5000 });
+    const alternate = page.getByTestId(alternateId);
+    const alternateRequestStart = requests.length;
+    alternateSelected = true;
+    await Promise.all([
+      page.waitForRequest((req) => {
+        return req.method() === 'POST' &&
+          req.url().endsWith('/chat/completions') &&
+          req.postDataJSON()?.messages?.[0]?.content.includes('剧情摘要压缩');
+      }, { timeout: 10000 }),
+      alternate.getByRole('button', { name: '切换至此分支' }).click(),
+    ]);
+    await page.getByRole('button', { name: '补算摘要中…' }).waitFor();
+    await page.locator('.turn-card.assistant[data-node-id]', { hasText: '备用线第 35 轮合成回执' }).waitFor();
+    await page.fill('#turn-input', '等待备用线补算');
+    if (!(await submit.isDisabled())) throw new Error('Composer was enabled while branch summary was in flight');
+    await alternate.getByRole('button', { name: '重命名' }).click({ timeout: 5000 });
+    await alternate.getByRole('textbox', { name: '分支名称' }).fill(LONG_BRANCH_NAME);
+    await alternate.getByRole('button', { name: '保存名称' }).click();
+    await page.getByText(LONG_BRANCH_NAME, { exact: true }).first().waitFor();
+    releaseBranch();
+    await page.getByTestId('active-plot-summary').getByText(SUMMARY_B, { exact: false }).waitFor();
+    const alternateRequests = requests.slice(alternateRequestStart).flatMap(({ messages }) => messages);
+    if (!alternateRequests.some(({ content }) => content.includes(EARLY_BRANCH_B)) ||
+        alternateRequests.some(({ content }) => content.includes(EARLY_BRANCH_A) || content.includes(SUMMARY_A))) {
+      throw new Error('Alternate branch catch-up did not use its own early history in isolation');
+    }
+    await page.locator('button:enabled', { hasText: '发送行动' }).waitFor({ timeout: 5000 });
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.getByTestId('story-review').getByText(LONG_BRANCH_NAME, { exact: false }).waitFor();
+    await page.getByTestId('active-plot-summary').getByText(SUMMARY_B, { exact: false }).waitFor();
+    if ((await fork.getAttribute('aria-expanded')) !== 'true') await fork.click();
+    const renamed = page.locator('.story-tree-sibling', { hasText: LONG_BRANCH_NAME });
+    await renamed.getByRole('button', { name: 'AI 提炼梗概' }).click();
+    await renamed.getByText(LONG_BRANCH_GIST, { exact: false }).waitFor();
+
+    await page.getByTestId('open-diagnostics').click();
+    const bundleText = await page.getByTestId('diagnostics-json').textContent();
+    const slot = await page.evaluate(() => localStorage.getItem('lfh.diagnostics.v1') ?? '');
+    const canaries = [
+      LONG_SCRIPT.slice(0, 24), SETUP_REQUEST, OVERSIZED_BEGIN, OVERSIZED_END, LONG_STORY_TITLE, LONG_ATTACHMENT,
+      LONG_RELAY, LONG_KEY, LONG_REASONING, LONG_BRANCH_NAME, LONG_BRANCH_GIST, SUMMARY_A, SUMMARY_B, LONG_REPLY,
+      EARLY_BRANCH_A, EARLY_BRANCH_B,
+    ];
+    assertZeroLeak('long-story diagnostic preview', bundleText, canaries);
+    assertZeroLeak('long-story diagnostic slot', slot, canaries);
+    const bundle = JSON.parse(bundleText);
+    if (bundle.activeStorySkeleton?.setupNodeCount !== 1 ||
+        bundle.activeStorySkeleton?.branchNamesCount !== 1 ||
+        bundle.activeStorySkeleton?.branchGistCount !== 1 ||
+        !/^relay_[0-9a-f]{8}$/.test(bundle.endpointProfile.host)) {
+      throw new Error('Long story diagnostic bundle lost topology counts or relay hash');
+    }
+  } finally {
+    releaseBranch();
+    await ctx.close();
+  }
+}
+
+async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
+  const ctx = await newOfflineContext(browser, port, { acceptDownloads: true, viewport });
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], {
     origin: `http://localhost:${port}`,
   });
@@ -1219,7 +1436,7 @@ async function runDiagnosticsE2E(browser, port, tmpDir) {
       clientWidth: document.documentElement.clientWidth,
     }));
     if (scrollWidth > clientWidth) {
-      throw new Error(`Diagnostics modal overflow on 390px (${scrollWidth} > ${clientWidth})`);
+      throw new Error(`Diagnostics modal overflow on ${viewport.width}px (${scrollWidth} > ${clientWidth})`);
     }
 
     const skeletonToggle = page.getByRole('checkbox', { name: /附带当前故事匿名树骨架/ });
@@ -1314,6 +1531,13 @@ async function runDiagnosticsE2E(browser, port, tmpDir) {
     if (recovered.trigger !== 'settings_manual' || initialCrashCount === 0) {
       throw new Error('Crash record did not survive reload');
     }
+    const [recoveredDownload] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByTestId('diagnostics-preview').getByRole('button', { name: '导出 .json' }).click(),
+    ]);
+    const recoveredExport = fs.readFileSync(await recoveredDownload.path(), 'utf8');
+    assertZeroLeak('recovered crash export', recoveredExport);
+    if (recoveredExport !== recoveredText) throw new Error('Post-reload export differs from preview');
     await page.keyboard.press('Escape');
 
     for (const [index, kind] of ['error', 'rejection'].entries()) {

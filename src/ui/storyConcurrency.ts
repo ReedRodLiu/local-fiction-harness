@@ -1,5 +1,33 @@
 import type { Story } from '../harness/types.ts';
 
+export function mergeBranchRenameResult(
+  latestStory: Story,
+  renamedStory: Story,
+  branchEntryNodeId: string,
+): Story | null {
+  if (
+    latestStory.id !== renamedStory.id ||
+    !latestStory.nodes[branchEntryNodeId] ||
+    !renamedStory.nodes[branchEntryNodeId]
+  ) {
+    return null;
+  }
+
+  const branchNames = { ...(latestStory.branchNames ?? {}) };
+  const renamedName = renamedStory.branchNames?.[branchEntryNodeId];
+  if (renamedName) {
+    branchNames[branchEntryNodeId] = renamedName;
+  } else {
+    delete branchNames[branchEntryNodeId];
+  }
+
+  return {
+    ...latestStory,
+    branchNames: Object.keys(branchNames).length > 0 ? branchNames : undefined,
+    updatedAt: Math.max(latestStory.updatedAt, renamedStory.updatedAt),
+  };
+}
+
 /**
  * Reconciles a background branch summary result against the latest Story state so concurrent
  * lightweight metadata edits (such as branch renames) are preserved while stale summaries

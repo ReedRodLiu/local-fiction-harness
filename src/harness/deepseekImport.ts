@@ -511,9 +511,21 @@ export function scanDeepSeekExportZip(zipBytes: Uint8Array): DeepSeekZipScanResu
   };
 }
 
+interface SetupAttachmentText {
+  requestText: string;
+  texts: string[];
+}
+
+function buildSetupAttachmentScript({ requestText, texts }: SetupAttachmentText): string {
+  const instruction = requestText.trim();
+  const scriptParts = [...new Set(texts)];
+  if (instruction && !scriptParts.includes(instruction)) scriptParts.push(instruction);
+  return scriptParts.join('\n\n').trim();
+}
+
 function detectRawScriptFromActivePath(
   activeNodes: readonly TurnNode[],
-  attachmentTextsByNodeId: ReadonlyMap<string, string[]>,
+  attachmentsByNodeId: ReadonlyMap<string, SetupAttachmentText>,
   overrideRange?: ScriptTurnRange,
 ): { rawScript: string; confidence: 'strong' | 'ambiguous'; setupNodeIds: string[] } {
   const userNodes = activeNodes.filter((n) => n.role === 'user');
@@ -524,10 +536,10 @@ function detectRawScriptFromActivePath(
     const parts: string[] = [];
     const setupNodeIds: string[] = [];
     for (const node of chosen) {
-      const attach = attachmentTextsByNodeId.get(node.id) ?? [];
-      parts.push(...attach);
-      if (node.content.trim()) parts.push(node.content.trim());
-      if (attach.length > 0 || node.content.trim()) {
+      const attachments = attachmentsByNodeId.get(node.id);
+      const text = attachments ? buildSetupAttachmentScript(attachments) : node.content.trim();
+      if (text) {
+        parts.push(text);
         setupNodeIds.push(node.id);
       }
     }
@@ -536,14 +548,15 @@ function detectRawScriptFromActivePath(
 
   const firstUser = userNodes[0];
   if (firstUser) {
-    const firstAttachments = attachmentTextsByNodeId.get(firstUser.id) ?? [];
-    const firstText = firstUser.content.trim();
-    if (firstAttachments.length > 0) {
-      const combined = [...firstAttachments, ...(firstText.length >= 120 ? [firstText] : [])]
-        .join('\n\n')
-        .trim();
-      return { rawScript: combined, confidence: 'strong', setupNodeIds: [firstUser.id] };
+    const firstAttachments = attachmentsByNodeId.get(firstUser.id);
+    if (firstAttachments) {
+      return {
+        rawScript: buildSetupAttachmentScript(firstAttachments),
+        confidence: 'strong',
+        setupNodeIds: [firstUser.id],
+      };
     }
+    const firstText = firstUser.content.trim();
     if (firstText.length >= 180 || countStrongFictionMatches(firstText) >= 2) {
       return { rawScript: firstText, confidence: 'strong', setupNodeIds: [firstUser.id] };
     }
@@ -552,10 +565,10 @@ function detectRawScriptFromActivePath(
   // Turn 1 lacked strong script signals (ambiguous opening, e.g. chitchat before script).
   // Provide best local fallback candidate while keeping confidence='ambiguous' for Level-2 LLM refinement.
   for (const node of userNodes.slice(1, 5)) {
-    const attachments = attachmentTextsByNodeId.get(node.id) ?? [];
-    if (attachments.length > 0) {
+    const attachments = attachmentsByNodeId.get(node.id);
+    if (attachments) {
       return {
-        rawScript: attachments.join('\n\n').trim(),
+        rawScript: buildSetupAttachmentScript(attachments),
         confidence: 'ambiguous',
         setupNodeIds: [node.id],
       };
@@ -603,7 +616,7 @@ function buildStoryFromRawSession(
   const recoveredAttachments: DeepSeekAttachmentResult[] = [];
   const skippedAttachments: DeepSeekAttachmentResult[] = [];
   const seenAttachmentPaths = new Set<string>();
-  const attachmentTextsByNodeId = new Map<string, string[]>();
+  const attachmentsByNodeId = new Map<string, SetupAttachmentText>();
   const nodes: Record<string, TurnNode> = {};
   const rawParentByNodeId = new Map<string, string | null>();
   const emptySnapshot: PlotSummarySnapshot = {
@@ -698,7 +711,7 @@ function buildStoryFromRawSession(
     }
 
     if (rawAttachmentTexts.length > 0) {
-      attachmentTextsByNodeId.set(nodeId, rawAttachmentTexts);
+      attachmentsByNodeId.set(nodeId, { requestText: text, texts: rawAttachmentTexts });
     }
 
     const combinedText = [text, ...inlineAttachmentSections].filter(Boolean).join('\n\n').trim();
@@ -774,7 +787,7 @@ function buildStoryFromRawSession(
   const activeNodes = getActiveBranchNodes(baseStory, activeLeafNodeId);
   const detected = detectRawScriptFromActivePath(
     activeNodes,
-    attachmentTextsByNodeId,
+    attachmentsByNodeId,
     opts.scriptRangeOverride,
   );
 

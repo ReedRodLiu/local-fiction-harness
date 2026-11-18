@@ -12,6 +12,7 @@ import {
   type ActiveReviewState,
 } from './storyTree.ts';
 import {
+  DEFAULT_CONTEXT_BUDGET,
   EMPTY_SUMMARY_SNAPSHOT,
   assembleThreeZoneContext,
   buildFallbackSummary,
@@ -78,6 +79,7 @@ export interface FictionHarness {
   loadActiveStory(): Promise<Story | null>;
   setActiveStory(id: string | null): Promise<Story | null>;
   renameStory(id: string, title: string): Promise<Story | null>;
+  calculateBranchRename(story: Story, branchEntryNodeId: string, name: string): Story;
   renameBranch(story: Story, branchEntryNodeId: string, name: string): Promise<Story>;
   extractBranchGist(
     story: Story,
@@ -86,6 +88,11 @@ export interface FictionHarness {
     signal?: AbortSignalLike,
   ): Promise<Story>;
   ensureActiveBranchSummary(
+    story: Story,
+    config: ModelConfig,
+    signal?: AbortSignalLike,
+  ): Promise<Story>;
+  calculateActiveBranchSummary(
     story: Story,
     config: ModelConfig,
     signal?: AbortSignalLike,
@@ -127,16 +134,21 @@ export interface FictionHarness {
   rewindToNode(story: Story, targetNodeId: string | null): Promise<Story>;
 }
 
-const MAX_SUMMARY_BATCH_NODES = 12;
-const MAX_SUMMARY_BATCH_CHARS = 8000;
-
-function takeSummaryBatch(toSummarize: TurnNode[], filter?: SetupNodeFilter): TurnNode[] {
+function takeSummaryBatch(
+  toSummarize: TurnNode[],
+  maxNodes: number,
+  maxChars: number,
+  filter?: SetupNodeFilter,
+): TurnNode[] {
   let end = 0;
   let batchChars = 0;
   for (const node of toSummarize) {
-    if (end >= MAX_SUMMARY_BATCH_NODES) break;
+    if (end >= maxNodes) break;
     const nodeChars = getEffectiveNodeContent(node, filter).length;
-    if (end > 0 && batchChars + nodeChars > MAX_SUMMARY_BATCH_CHARS) break;
+    if (batchChars + nodeChars > maxChars) {
+      if (end === 0) return [node];
+      break;
+    }
     batchChars += nodeChars;
     end += 1;
   }
@@ -145,6 +157,20 @@ function takeSummaryBatch(toSummarize: TurnNode[], filter?: SetupNodeFilter): Tu
     end -= 1;
   }
   return toSummarize.slice(0, end);
+}
+
+function splitSummaryText(text: string, maxChars: number): string[] {
+  const chunks: string[] = [];
+  let chunk = '';
+  for (const character of text) {
+    if (chunk && chunk.length + character.length > maxChars) {
+      chunks.push(chunk);
+      chunk = '';
+    }
+    chunk += character;
+  }
+  if (chunk) chunks.push(chunk);
+  return chunks;
 }
 
 /**
@@ -179,6 +205,28 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       }
     }
     return story;
+  };
+
+  const calculateBranchRename = (
+    story: Story,
+    branchEntryNodeId: string,
+    name: string,
+  ): Story => {
+    if (!story.nodes[branchEntryNodeId]) {
+      throw new Error(`目标分支节点 ${branchEntryNodeId} 不存在。`);
+    }
+    const trimmed = name.trim();
+    const nextNames = { ...(story.branchNames ?? {}) };
+    if (trimmed) {
+      nextNames[branchEntryNodeId] = trimmed;
+    } else {
+      delete nextNames[branchEntryNodeId];
+    }
+    return {
+      ...story,
+      branchNames: Object.keys(nextNames).length > 0 ? nextNames : undefined,
+      updatedAt: now(),
+    };
   };
 
   const activateLeafNode = async (story: Story, leafId: string | null): Promise<Story> => {
@@ -238,28 +286,76 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       if (toSummarize.length === 0) {
         return currentSnapshot;
       }
-      const batch = takeSummaryBatch(toSummarize, setupFilter);
+      const maxBatchNodes = Math.max(
+        1,
+        Math.floor(
+          deps.contextBudget?.summaryBatchMaxNodes ??
+            DEFAULT_CONTEXT_BUDGET.summaryBatchMaxNodes,
+        ),
+      );
+      const maxBatchChars = Math.max(
+        1,
+        Math.floor(
+          deps.contextBudget?.summaryBatchMaxChars ??
+            DEFAULT_CONTEXT_BUDGET.summaryBatchMaxChars,
+        ),
+      );
+      const batch = takeSummaryBatch(
+        toSummarize,
+        maxBatchNodes,
+        maxBatchChars,
+        setupFilter,
+      );
       if (batch.length === 0) {
         return currentSnapshot;
       }
 
-      let compressed = '';
-      try {
-        const result = await streamText(
-          config,
-          buildSummaryCompressionMessages(currentSnapshot.content, batch, setupFilter),
-          { signal },
-        );
-        compressed = result.content;
-      } catch (err) {
-        if (isAbortError(err)) {
-          throw err;
+      const summarizeBatch = async (
+        previousContent: string,
+        nodes: TurnNode[],
+        filter?: SetupNodeFilter,
+      ): Promise<string> => {
+        let compressed = '';
+        try {
+          const result = await streamText(
+            config,
+            // Message role/content chars are bounded by 2 * maxBatchChars plus
+            // fixed prompt framing and node labels/separators (up to maxBatchNodes).
+            buildSummaryCompressionMessages(previousContent, nodes, filter, maxBatchChars),
+            { signal },
+          );
+          compressed = result.content;
+        } catch (err) {
+          if (isAbortError(err)) {
+            throw err;
+          }
+          compressed = '';
         }
-        compressed = '';
+
+        return compressed.trim() || buildFallbackSummary(previousContent, nodes, filter);
+      };
+
+      const oversizedNode = batch.length === 1 ? batch[0] : undefined;
+      const oversizedContent = oversizedNode
+        ? getEffectiveNodeContent(oversizedNode, setupFilter)
+        : '';
+      if (oversizedNode && oversizedContent.length > maxBatchChars) {
+        let rollingContent = currentSnapshot.content;
+        for (const chunk of splitSummaryText(oversizedContent, maxBatchChars)) {
+          rollingContent = await summarizeBatch(
+            rollingContent,
+            [{ ...oversizedNode, content: chunk }],
+          );
+        }
+        currentSnapshot = {
+          content: rollingContent,
+          coveredUpToNodeId: oversizedNode.id,
+          summarizedTurnCount: currentSnapshot.summarizedTurnCount + 1,
+        };
+        continue;
       }
 
-      const finalContent =
-        compressed.trim() || buildFallbackSummary(currentSnapshot.content, batch, setupFilter);
+      const finalContent = await summarizeBatch(currentSnapshot.content, batch, setupFilter);
       currentSnapshot = {
         content: finalContent,
         coveredUpToNodeId: batch[batch.length - 1].id,
@@ -300,6 +396,40 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         },
       },
       snapshot: caughtUp,
+    };
+  };
+
+  const calculateActiveBranchSummary = async (
+    story: Story,
+    config: ModelConfig,
+    signal?: AbortSignalLike,
+  ): Promise<Story> => {
+    const leafId = story.activeLeafNodeId;
+    if (!leafId) return story;
+    const leaf = story.nodes[leafId];
+    if (!leaf) return story;
+
+    const updatedSnapshot = await summarizeOverflowTurns(
+      story,
+      leafId,
+      leaf.summarySnapshot,
+      config,
+      signal,
+    );
+    if (updatedSnapshot === leaf.summarySnapshot) {
+      return story;
+    }
+
+    return {
+      ...story,
+      nodes: {
+        ...story.nodes,
+        [leafId]: {
+          ...leaf,
+          summarySnapshot: updatedSnapshot,
+        },
+      },
+      updatedAt: now(),
     };
   };
 
@@ -467,23 +597,10 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       return updated;
     },
 
+    calculateBranchRename,
+
     async renameBranch(story: Story, branchEntryNodeId: string, name: string): Promise<Story> {
-      if (!story.nodes[branchEntryNodeId]) {
-        throw new Error(`目标分支节点 ${branchEntryNodeId} 不存在。`);
-      }
-      const trimmed = name.trim();
-      const nextNames = { ...(story.branchNames ?? {}) };
-      if (trimmed) {
-        nextNames[branchEntryNodeId] = trimmed;
-      } else {
-        delete nextNames[branchEntryNodeId];
-      }
-      const updated: Story = {
-        ...story,
-        branchNames: Object.keys(nextNames).length > 0 ? nextNames : undefined,
-        updatedAt: now(),
-      };
-      return persistStory(updated, false);
+      return persistStory(calculateBranchRename(story, branchEntryNodeId, name), false);
     },
 
     async extractBranchGist(
@@ -520,35 +637,16 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       config: ModelConfig,
       signal?: AbortSignalLike,
     ): Promise<Story> {
-      const leafId = story.activeLeafNodeId;
-      if (!leafId) return story;
-      const leaf = story.nodes[leafId];
-      if (!leaf) return story;
+      const summarized = await calculateActiveBranchSummary(story, config, signal);
+      return summarized === story ? story : persistStory(summarized, true);
+    },
 
-      const updatedSnapshot = await summarizeOverflowTurns(
-        story,
-        leafId,
-        leaf.summarySnapshot,
-        config,
-        signal,
-      );
-      if (updatedSnapshot === leaf.summarySnapshot) {
-        return story;
-      }
-
-      const updatedLeaf: TurnNode = {
-        ...leaf,
-        summarySnapshot: updatedSnapshot,
-      };
-      const updatedStory: Story = {
-        ...story,
-        nodes: {
-          ...story.nodes,
-          [leafId]: updatedLeaf,
-        },
-        updatedAt: now(),
-      };
-      return persistStory(updatedStory, true);
+    async calculateActiveBranchSummary(
+      story: Story,
+      config: ModelConfig,
+      signal?: AbortSignalLike,
+    ): Promise<Story> {
+      return calculateActiveBranchSummary(story, config, signal);
     },
 
     getReviewState(story: Story): ActiveReviewState {
