@@ -18,7 +18,6 @@ public class NativeSsePlugin extends Plugin {
     public void startStream(PluginCall call) {
         String requestId = call.getString("requestId");
         String url = call.getString("url");
-        String method = call.getString("method", "POST");
         String body = call.getString("body", "");
         JSObject headersObj = call.getObject("headers");
 
@@ -39,7 +38,7 @@ public class NativeSsePlugin extends Plugin {
             }
         }
 
-        streamClient.startStream(requestId, url, method, headers, body, new SseStreamClient.Listener() {
+        streamClient.startStream(requestId, url, headers, body, new SseStreamClient.Listener() {
             @Override
             public void onChunk(String reqId, byte[] chunk, int length) {
                 JSObject data = new JSObject();

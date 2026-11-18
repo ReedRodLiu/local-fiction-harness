@@ -87,7 +87,6 @@ public class SseStreamClientTest {
                 client.startStream(
                     "r1",
                     url,
-                    "POST",
                     Map.of("Content-Type", "application/json"),
                     "{}",
                     new SseStreamClient.Listener() {
@@ -178,7 +177,6 @@ public class SseStreamClientTest {
                 client.startStream(
                     "r-err",
                     baseUrl + "/err",
-                    "POST",
                     Map.of(),
                     "{}",
                     new SseStreamClient.Listener() {
@@ -205,7 +203,6 @@ public class SseStreamClientTest {
                 client.startStream(
                     "r-abort",
                     baseUrl + "/slow",
-                    "POST",
                     Map.of(),
                     "{}",
                     new SseStreamClient.Listener() {

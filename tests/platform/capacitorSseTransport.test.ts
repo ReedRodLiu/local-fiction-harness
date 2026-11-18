@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createAndroidPlatformRuntime } from '../../src/platform/androidRuntime.ts';
 import {
   createCapacitorSseTransport,
   type NativeSseEventMap,
@@ -190,5 +191,88 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
     controller.abort();
     await expect(abortRun).rejects.toMatchObject({ name: 'AbortError' });
     expect(fake.aborted).toContain('req-2');
+  });
+
+  it('aborts cleanly with plain AbortSignalLike (without addEventListener) and wires into Android runtime', async () => {
+    const fake = createFakeNativeSsePlugin();
+    const transport = createCapacitorSseTransport(fake.plugin, () => 'req-plain');
+    const plainSignal = { aborted: false };
+
+    const runtime = createAndroidPlatformRuntime({
+      transport,
+      keyValueStorage: {
+        getItem: () => null,
+        setItem: () => {},
+        removeItem: () => {},
+      },
+      storyStorage: {
+        listStories: async () => [],
+        getStory: async () => null,
+        saveStory: async () => {},
+        deleteStory: async () => {},
+        getActiveStoryId: async () => null,
+        setActiveStoryId: async () => {},
+      },
+    });
+    expect(runtime.transport).toBe(transport);
+
+    const abortRun = (async () => {
+      for await (const _ of runtime.transport.streamChat({
+        baseUrl: 'https://example.invalid/v1',
+        apiKey: 'k',
+        model: 'm',
+        messages: [{ role: 'user', content: 'hi' }],
+        signal: plainSignal,
+      })) {
+        // no-op
+      }
+    })();
+
+    await vi.waitFor(() => expect(fake.started).toHaveLength(1));
+    plainSignal.aborted = true;
+    await expect(abortRun).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fake.aborted).toContain('req-plain');
+  });
+
+  it('propagates mid-stream sseError and in-stream SSE JSON error payloads after initial chunks', async () => {
+    const fake = createFakeNativeSsePlugin();
+    let seq = 0;
+    const transport = createCapacitorSseTransport(fake.plugin, () => `req-mid-${++seq}`);
+
+    // 1. Mid-stream native sseError after partial content chunk
+    const midErrDeltas: string[] = [];
+    const midErrRun = (async () => {
+      for await (const delta of transport.streamChat({
+        baseUrl: 'https://example.invalid/v1',
+        apiKey: 'k',
+        model: 'm',
+        messages: [{ role: 'user', content: 'hi' }],
+      })) {
+        if (delta.contentDelta) midErrDeltas.push(delta.contentDelta);
+      }
+    })();
+
+    await vi.waitFor(() => expect(fake.started).toHaveLength(1));
+    fake.emitChunk('req-mid-1', new TextEncoder().encode('data: {"choices":[{"delta":{"content":"半句"}}]}\n\n'));
+    await vi.waitFor(() => expect(midErrDeltas).toEqual(['半句']));
+    fake.emitError('req-mid-1', 'Socket reset mid-stream');
+    await expect(midErrRun).rejects.toThrow(/Socket reset mid-stream/);
+
+    // 2. In-stream SSE error JSON payload
+    const sseErrRun = (async () => {
+      for await (const _ of transport.streamChat({
+        baseUrl: 'https://example.invalid/v1',
+        apiKey: 'k',
+        model: 'm',
+        messages: [{ role: 'user', content: 'hi' }],
+      })) {
+        // no-op
+      }
+    })();
+
+    await vi.waitFor(() => expect(fake.started).toHaveLength(2));
+    fake.emitChunk('req-mid-2', new TextEncoder().encode('data: {"error":{"message":"Upstream overloaded"}}\n\n'));
+    fake.emitComplete('req-mid-2');
+    await expect(sseErrRun).rejects.toThrow(/Upstream overloaded/);
   });
 });

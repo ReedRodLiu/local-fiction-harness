@@ -1,7 +1,8 @@
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import {
+  buildOpenAiChatRequest,
+  createDefaultId,
   parseOpenAiSseStream,
-  resolveChatCompletionsUrl,
   type AbortSignalLike,
   type LlmStreamDelta,
   type LlmStreamRequest,
@@ -22,7 +23,6 @@ export interface NativeSsePluginLike {
   startStream(options: {
     requestId: string;
     url: string;
-    method: string;
     headers: Record<string, string>;
     body: string;
   }): Promise<void>;
@@ -32,25 +32,24 @@ export interface NativeSsePluginLike {
 const NativeSse = registerPlugin<NativeSsePluginLike>('NativeSse');
 
 function decodeBase64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
+  try {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch (err) {
+    throw new Error(
+      `无法解码原生 SSE 分块数据: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
-  return bytes;
 }
 
 function createAbortError(message = '操作已中止。'): Error {
   const err = new Error(message);
   err.name = 'AbortError';
   return err;
-}
-
-function createDefaultRequestId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return `sse-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 interface AbortEventTargetLike {
@@ -64,7 +63,7 @@ interface AbortEventTargetLike {
  */
 export function createCapacitorSseTransport(
   plugin: NativeSsePluginLike = NativeSse,
-  createRequestId: () => string = createDefaultRequestId,
+  createRequestId: () => string = createDefaultId,
 ): LlmTransport {
   return {
     async *streamChat(req: LlmStreamRequest): AsyncIterable<LlmStreamDelta> {
@@ -73,14 +72,7 @@ export function createCapacitorSseTransport(
       }
 
       const requestId = createRequestId();
-      const url = resolveChatCompletionsUrl(req.baseUrl);
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
-      };
-      if (req.apiKey.trim()) {
-        headers.Authorization = `Bearer ${req.apiKey.trim()}`;
-      }
+      const { url, headers, body } = buildOpenAiChatRequest(req);
 
       const queue: Uint8Array[] = [];
       let waiter: (() => void) | null = null;
@@ -107,14 +99,21 @@ export function createCapacitorSseTransport(
       };
 
       const signalTarget = req.signal as (AbortSignalLike & AbortEventTargetLike) | undefined;
-      signalTarget?.addEventListener?.('abort', onAbort, { once: true });
+      const hasEventTargetAbort = typeof signalTarget?.addEventListener === 'function';
+      if (hasEventTargetAbort) {
+        signalTarget!.addEventListener!('abort', onAbort, { once: true });
+      }
 
       const handles: PluginListenerHandle[] = [];
       try {
         const [chunkHandle, completeHandle, errorHandle] = await Promise.all([
           plugin.addListener('sseChunk', (ev) => {
             if (ev.requestId !== requestId || streamDone || streamError) return;
-            queue.push(decodeBase64ToBytes(ev.chunkBase64));
+            try {
+              queue.push(decodeBase64ToBytes(ev.chunkBase64));
+            } catch (err) {
+              streamError = err instanceof Error ? err : new Error(String(err));
+            }
             wake();
           }),
           plugin.addListener('sseComplete', (ev) => {
@@ -140,18 +139,14 @@ export function createCapacitorSseTransport(
         await plugin.startStream({
           requestId,
           url,
-          method: 'POST',
           headers,
-          body: JSON.stringify({
-            model: req.model,
-            messages: req.messages,
-            stream: true,
-          }),
+          body,
         });
 
         async function* rawByteChunks(): AsyncIterable<Uint8Array> {
           while (true) {
             if (req.signal?.aborted) {
+              onAbort();
               throw createAbortError();
             }
             if (queue.length > 0) {
@@ -165,14 +160,30 @@ export function createCapacitorSseTransport(
               return;
             }
             await new Promise<void>((resolve) => {
-              waiter = resolve;
+              let pollTimer: ReturnType<typeof setInterval> | undefined;
+              const finishWait = () => {
+                if (pollTimer !== undefined) {
+                  clearInterval(pollTimer);
+                }
+                resolve();
+              };
+              waiter = finishWait;
+              if (req.signal && !hasEventTargetAbort) {
+                pollTimer = setInterval(() => {
+                  if (req.signal?.aborted) {
+                    onAbort();
+                  }
+                }, 20);
+              }
             });
           }
         }
 
         yield* parseOpenAiSseStream(rawByteChunks());
       } finally {
-        signalTarget?.removeEventListener?.('abort', onAbort);
+        if (hasEventTargetAbort) {
+          signalTarget?.removeEventListener?.('abort', onAbort);
+        }
         if (started && !streamDone && !streamError) {
           void plugin.abortStream({ requestId }).catch(() => {});
         }

@@ -15,7 +15,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Pure JVM chunked HTTP/SSE streaming client without Android Framework dependencies.
+ * Pure JVM chunked HTTP/SSE streaming POST client without Android Framework dependencies.
  * Reads raw bytes incrementally and dispatches chunks immediately without buffering the full body.
  */
 public class SseStreamClient {
@@ -28,9 +28,14 @@ public class SseStreamClient {
     }
 
     private static final class ActiveCall {
+        final Listener listener;
         final AtomicBoolean aborted = new AtomicBoolean(false);
         final AtomicBoolean finished = new AtomicBoolean(false);
         volatile HttpURLConnection connection;
+
+        ActiveCall(Listener listener) {
+            this.listener = listener;
+        }
     }
 
     private static final int CONNECT_TIMEOUT_MS = 30_000;
@@ -44,7 +49,6 @@ public class SseStreamClient {
     public void startStream(
         String requestId,
         String urlString,
-        String method,
         Map<String, String> headers,
         String body,
         Listener listener
@@ -53,14 +57,14 @@ public class SseStreamClient {
             listener.onError("", 0, "requestId 不能为空。", false);
             return;
         }
-        ActiveCall call = new ActiveCall();
+        ActiveCall call = new ActiveCall(listener);
         ActiveCall existing = activeCalls.putIfAbsent(requestId, call);
         if (existing != null) {
             listener.onError(requestId, 0, "重复的流式请求 ID: " + requestId, false);
             return;
         }
 
-        executor.submit(() -> runRequest(requestId, call, urlString, method, headers, body, listener));
+        executor.submit(() -> runRequest(requestId, call, urlString, headers, body));
     }
 
     public boolean abortStream(String requestId) {
@@ -69,9 +73,10 @@ public class SseStreamClient {
             return false;
         }
         boolean wasAlreadyAborted = call.aborted.getAndSet(true);
+        emitAbort(requestId, call, call.listener);
         HttpURLConnection conn = call.connection;
         if (conn != null) {
-            conn.disconnect();
+            executor.submit(conn::disconnect);
         }
         return !wasAlreadyAborted;
     }
@@ -87,11 +92,10 @@ public class SseStreamClient {
         String requestId,
         ActiveCall call,
         String urlString,
-        String method,
         Map<String, String> headers,
-        String body,
-        Listener listener
+        String body
     ) {
+        Listener listener = call.listener;
         HttpURLConnection conn = null;
         try {
             URI uri = URI.create(urlString);
@@ -104,11 +108,12 @@ public class SseStreamClient {
             call.connection = conn;
 
             if (call.aborted.get()) {
+                conn.disconnect();
                 emitAbort(requestId, call, listener);
                 return;
             }
 
-            conn.setRequestMethod(method == null || method.isEmpty() ? "POST" : method);
+            conn.setRequestMethod("POST");
             conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(READ_TIMEOUT_MS);
             conn.setUseCaches(false);

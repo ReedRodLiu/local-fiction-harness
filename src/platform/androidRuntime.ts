@@ -8,7 +8,7 @@ export interface AndroidRuntimeOptions extends WebRuntimeOptions {
 
 /**
  * Creates the Android PlatformRuntime adapter using the native chunked SSE bridge for LlmTransport.
- * Native SecretStore, app-private StoryStorage, and BackupExporter are wired in Slice D.
+ * Native SecretStore, app-private StoryStorage, and BackupExporter (plus platform: 'android') are wired in Slice D.
  */
 export function createAndroidPlatformRuntime(
   options: AndroidRuntimeOptions = {},
@@ -16,7 +16,6 @@ export function createAndroidPlatformRuntime(
   const webFallback = createWebPlatformRuntime({ ...options, isDev: false });
   return {
     ...webFallback,
-    platform: 'android',
     transport: options.transport ?? createCapacitorSseTransport(),
   };
 }

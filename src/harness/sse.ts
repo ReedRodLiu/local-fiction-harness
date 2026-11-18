@@ -190,6 +190,30 @@ export function resolveChatCompletionsUrl(baseUrl: string): string {
   return `${cleaned}/chat/completions`;
 }
 
+export function buildOpenAiChatRequest(req: LlmStreamRequest): {
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+} {
+  const url = resolveChatCompletionsUrl(req.baseUrl);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+  };
+  if (req.apiKey.trim()) {
+    headers.Authorization = `Bearer ${req.apiKey.trim()}`;
+  }
+  return {
+    url,
+    headers,
+    body: JSON.stringify({
+      model: req.model,
+      messages: req.messages,
+      stream: true,
+    }),
+  };
+}
+
 /**
  * Creates an OpenAI-compatible streaming transport backed by an injected Fetch-like client.
  */
@@ -204,23 +228,12 @@ export function createOpenAiTransport(fetchImpl?: FetchLike): LlmTransport {
 
   return {
     async *streamChat(req: LlmStreamRequest): AsyncIterable<LlmStreamDelta> {
-      const url = resolveChatCompletionsUrl(req.baseUrl);
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
-      };
-      if (req.apiKey.trim()) {
-        headers.Authorization = `Bearer ${req.apiKey.trim()}`;
-      }
+      const { url, headers, body } = buildOpenAiChatRequest(req);
 
       const response = await fetcher(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          model: req.model,
-          messages: req.messages,
-          stream: true,
-        }),
+        body,
         signal: req.signal,
       });
 
