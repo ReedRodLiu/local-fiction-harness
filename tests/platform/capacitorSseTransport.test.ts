@@ -200,11 +200,6 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
 
     const runtime = createAndroidPlatformRuntime({
       transport,
-      keyValueStorage: {
-        getItem: () => null,
-        setItem: () => {},
-        removeItem: () => {},
-      },
       storyStorage: {
         listStories: async () => [],
         getStory: async () => null,
