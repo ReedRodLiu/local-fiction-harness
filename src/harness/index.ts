@@ -2,6 +2,7 @@ export * from './types.ts';
 export * from './id.ts';
 export * from './sse.ts';
 export * from './keyConfig.ts';
+export * from './keyValidation.ts';
 export * from './scriptParser.ts';
 export * from './blueprint.ts';
 export * from './storyStorage.ts';

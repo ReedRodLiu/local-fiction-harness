@@ -11,6 +11,8 @@ import {
   importDeepSeekSessions,
   importStoryBackup,
   isAbortError,
+  maskApiKey,
+  normalizeOfficialModelConfig,
   type DeepSeekImportBatchResult,
   type ModelConfig,
   type PlatformRuntime,
@@ -29,6 +31,7 @@ import {
   type DevTestConfigResponse,
 } from '../platform/runtime.ts';
 import { ContextOverview } from './ContextOverview.tsx';
+import { DeepSeekSetupWizard } from './DeepSeekSetupWizard.tsx';
 import { ImportPanel, type ImportMode } from './ImportPanel.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
@@ -65,13 +68,10 @@ function mergeLoadedConfig(
       };
     }
   }
-  if (!isWebDev && !/^https?:\/\//i.test(loaded.baseUrl.trim())) {
-    return {
-      initialConfig: { ...loaded, baseUrl: DEFAULT_MODEL_CONFIG.baseUrl },
-      initialUseDevEnvKey: false,
-    };
-  }
-  return { initialConfig: loaded, initialUseDevEnvKey: false };
+  return {
+    initialConfig: normalizeOfficialModelConfig(loaded),
+    initialUseDevEnvKey: false,
+  };
 }
 
 export interface AppProps {
@@ -108,20 +108,17 @@ export function App({ runtime }: AppProps) {
   const [useDevEnvKey, setUseDevEnvKey] = useState(() =>
     Boolean(import.meta.env.DEV && readDevSessionProxy(isWebDev)?.hasEnvKey),
   );
-  const [showKey, setShowKey] = useState(false);
   const [devTestInfo, setDevTestInfo] = useState<DevTestConfigResponse | null>(null);
   const [stories, setStories] = useState<Story[]>([]);
   const [story, setStory] = useState<Story>(() => harness.createStory({ title: '新故事' }));
   const [showImport, setShowImport] = useState(false);
   const [importMode, setImportMode] = useState<ImportMode>('deepseek');
   const [importResetKey, setImportResetKey] = useState(0);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [pendingByok, setPendingByok] = useState<{
     label: string;
     resume: (resolvedConfig: ModelConfig) => void;
   } | null>(null);
-  const [byokKeyDraft, setByokKeyDraft] = useState('');
-  const [byokBaseUrlDraft, setByokBaseUrlDraft] = useState(DEFAULT_MODEL_CONFIG.baseUrl);
-  const [byokModelDraft, setByokModelDraft] = useState(DEFAULT_MODEL_CONFIG.model);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
@@ -388,10 +385,18 @@ export function App({ runtime }: AppProps) {
     label: string,
     resume: (resolvedConfig: ModelConfig) => void,
   ) => {
-    setByokKeyDraft(config.apiKey);
-    setByokBaseUrlDraft(config.baseUrl);
-    setByokModelDraft(config.model);
     setPendingByok({ label, resume });
+    setWizardOpen(true);
+  };
+
+  const openSetupWizard = () => {
+    setPendingByok(null);
+    setWizardOpen(true);
+  };
+
+  const handleClearSavedKey = () => {
+    const cleared = normalizeOfficialModelConfig({ ...config, apiKey: '' });
+    updateConfig(cleared, false);
   };
 
   const openImportView = (mode: ImportMode) => {
@@ -728,7 +733,7 @@ export function App({ runtime }: AppProps) {
       <aside className="sidebar">
         <div>
           <h1 className="app-title">本地优先 AI 文游</h1>
-          <p className="app-subtitle">纯客户端 Harness · BYOK 本地原型</p>
+          <p className="app-subtitle">本地优先 · 连接 DeepSeek 官方</p>
         </div>
 
         <div className="btn-group">
@@ -765,83 +770,55 @@ export function App({ runtime }: AppProps) {
           onImportBackupFile={(file) => void handleImportBackupFile(file)}
         />
 
-        <div className="notice-box" role="note">
-          <strong>安全提示：</strong>
-          {runtime.platform === 'android'
-            ? 'API Key 将保存在 Android 原生加密存储，故事与节点存档保存在应用私有目录；如需临时使用可勾选「仅当前会话内存保存」，切换时立即清除已存密钥。'
-            : (
-                <>
-                  浏览器 <code>localStorage</code> 与 IndexedDB 并非系统级安全密钥存储；公共或共享设备请勾选「仅当前会话内存保存」，并在用完后关闭页面或清除密钥。
-                </>
-              )}
-        </div>
-
-        <form className="config-form" onSubmit={(e) => e.preventDefault()} aria-label="模型配置">
-          <div className="field">
-            <label htmlFor="cfg-base-url">模型接口 Base URL</label>
-            <input
-              id="cfg-base-url"
-              name="baseUrl"
-              type="text"
-              value={config.baseUrl}
-              autoCorrect="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              onChange={(e) => updateConfig({ ...config, baseUrl: e.target.value }, false)}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="cfg-model">模型名称</label>
-            <input
-              id="cfg-model"
-              name="model"
-              type="text"
-              value={config.model}
-              autoCorrect="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              onChange={(e) => updateConfig({ ...config, model: e.target.value })}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="cfg-api-key">API Key（BYOK）</label>
-            <div className="key-input-row">
-              <input
-                id="cfg-api-key"
-                name="apiKey"
-                type={showKey ? 'text' : 'password'}
-                value={config.apiKey}
-                disabled={useDevEnvKey}
-                placeholder={
-                  useDevEnvKey ? '当前使用开发代理内置测试 Key' : 'sk-...（本地无鉴权端点可留空）'
-                }
-                autoComplete="off"
-                onChange={(e) => updateConfig({ ...config, apiKey: e.target.value }, false)}
-              />
+        <section className="connected-key-card" data-testid="deepseek-connection-card" aria-label="DeepSeek 连接状态">
+          {hasCredentials ? (
+            <>
+              <div className="connected-key-header">
+                <strong>已连接 DeepSeek 官方（DeepSeek-Flash）</strong>
+                <span className="badge" data-testid="connected-key-mask">
+                  {useDevEnvKey ? '开发代理' : maskApiKey(config.apiKey) || '本地已连接'}
+                </span>
+              </div>
+              <p className="wizard-privacy-note">
+                密钥仅保存在你的手机本地，不会上传到任何第三方服务器。
+              </p>
+              <div className="btn-group">
+                <button
+                  type="button"
+                  className="btn"
+                  data-testid="change-key-btn"
+                  onClick={openSetupWizard}
+                >
+                  更换 Key
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  data-testid="clear-key-btn"
+                  onClick={handleClearSavedKey}
+                >
+                  清除已保存的key
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="connected-key-header">
+                <strong>未连接 DeepSeek 官方</strong>
+                <span className="badge">DeepSeek-Flash</span>
+              </div>
+              <p className="wizard-privacy-note">
+                密钥仅保存在你的手机本地，不会上传到任何第三方服务器。
+              </p>
               <button
                 type="button"
-                className="btn"
-                aria-pressed={showKey}
-                onClick={() => setShowKey((prev) => !prev)}
+                className="btn btn-primary"
+                data-testid="open-setup-wizard-btn"
+                onClick={openSetupWizard}
               >
-                {showKey ? '隐藏' : '显示'}
+                连接 DeepSeek 钥匙
               </button>
-            </div>
-          </div>
-
-          {runtime.supportsMemoryOnlySession && (
-            <div className="checkbox-row">
-              <input
-                id="cfg-memory-only"
-                name="memoryOnly"
-                type="checkbox"
-                checked={config.memoryOnly}
-                onChange={(e) => updateConfig({ ...config, memoryOnly: e.target.checked })}
-              />
-              <label htmlFor="cfg-memory-only">仅当前会话内存保存 API Key（刷新即清除）</label>
-            </div>
+            </>
           )}
 
           {devTestInfo?.available && (
@@ -849,14 +826,14 @@ export function App({ runtime }: AppProps) {
               使用本地 .env.local 测试代理
             </button>
           )}
-        </form>
+        </section>
       </aside>
 
       <main className="main-stage">
         <header className="stage-header">
           <h2>{story.title}</h2>
           <span className="status-text">
-            {config.memoryOnly ? '密钥：仅内存' : '密钥：本地持久化'}
+            {hasCredentials ? 'DeepSeek-Flash · 已连接' : 'DeepSeek-Flash · 未连接'}
           </span>
         </header>
 
@@ -866,83 +843,30 @@ export function App({ runtime }: AppProps) {
           </div>
         )}
 
-        {pendingByok && (
-          <section
-            className="blueprint-editor"
-            data-testid="byok-inline-prompt"
-            aria-label="就地配置模型 API Key"
-          >
-            <div className="panel-header">
-              <h4>就地配置模型密钥（BYOK）</h4>
-              <span className="badge">触发动作：{pendingByok.label}</span>
-            </div>
-            <p className="status-text" style={{ margin: 0 }}>
-              本地导入与历史浏览无需密钥；继续由模型生成内容需要你自己的 API Key。填写后立即自动继续。
-            </p>
-            <div className="field">
-              <label htmlFor="byok-base-url">模型接口 Base URL</label>
-              <input
-                id="byok-base-url"
-                type="text"
-                value={byokBaseUrlDraft}
-                onChange={(e) => setByokBaseUrlDraft(e.target.value)}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="byok-model">模型名称</label>
-              <input
-                id="byok-model"
-                type="text"
-                value={byokModelDraft}
-                onChange={(e) => setByokModelDraft(e.target.value)}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="byok-api-key">API Key</label>
-              <input
-                id="byok-api-key"
-                type="password"
-                placeholder="sk-..."
-                value={byokKeyDraft}
-                onChange={(e) => setByokKeyDraft(e.target.value)}
-              />
-            </div>
-            <div className="btn-group">
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={!byokKeyDraft.trim()}
-                onClick={() => {
-                  const nextCfg: ModelConfig = {
-                    ...config,
-                    baseUrl: byokBaseUrlDraft.trim() || config.baseUrl,
-                    model: byokModelDraft.trim() || config.model,
-                    apiKey: byokKeyDraft.trim(),
-                  };
-                  const resume = pendingByok.resume;
-                  setPendingByok(null);
-                  updateConfig(nextCfg, false);
-                  resume(nextCfg);
-                }}
-              >
-                保存配置并立即继续
-              </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  const resume = pendingByok.resume;
-                  setPendingByok(null);
-                  resume(config);
-                }}
-              >
-                无鉴权端点直接尝试
-              </button>
-              <button type="button" className="btn" onClick={() => setPendingByok(null)}>
-                取消
-              </button>
-            </div>
-          </section>
+        {wizardOpen && (
+          <DeepSeekSetupWizard
+            initialKey={config.apiKey}
+            pendingLabel={pendingByok?.label ?? null}
+            verifyUrlBase={
+              isDevProxyBaseUrl(config.baseUrl) ? config.baseUrl : DEFAULT_MODEL_CONFIG.baseUrl
+            }
+            onComplete={(verifiedKey) => {
+              const nextCfg: ModelConfig = isDevProxyBaseUrl(config.baseUrl)
+                ? { ...config, apiKey: verifiedKey, memoryOnly: false }
+                : normalizeOfficialModelConfig({ ...config, apiKey: verifiedKey });
+              const resume = pendingByok?.resume;
+              setPendingByok(null);
+              setWizardOpen(false);
+              updateConfig(nextCfg, false);
+              if (resume) {
+                resume(nextCfg);
+              }
+            }}
+            onCancel={() => {
+              setPendingByok(null);
+              setWizardOpen(false);
+            }}
+          />
         )}
 
         {showImport ? (

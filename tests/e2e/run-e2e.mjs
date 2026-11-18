@@ -244,6 +244,31 @@ async function main() {
     let boundaryCallCount = 0;
     let lastTurnSystemText = '';
 
+    await page.route('https://api.deepseek.com/models', async (route) => {
+      const auth = route.request().headers().authorization || '';
+      if (auth === 'Bearer sk-e2e-401') {
+        await route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { message: 'Invalid API key' } }),
+        });
+        return;
+      }
+      if (auth === 'Bearer sk-e2e-netfail') {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { message: 'Service Unavailable' } }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: [{ id: 'deepseek-flash' }] }),
+      });
+    });
+
     await page.route('**/chat/completions', async (route) => {
       const reqBody = JSON.parse(route.request().postData() || '{}');
       const sys = reqBody.messages?.[0]?.content || '';
@@ -482,17 +507,33 @@ async function main() {
       throw new Error('Expected 2 independent DeepSeek stories persisted in IndexedDB');
     }
 
-    // Trigger next turn without API key -> inline BYOK prompt opens -> fill key -> saves & continues streaming
+    // Trigger next turn without API key -> guided setup wizard opens -> test 401 block & valid save & auto-continue
     await page.fill('#turn-input', '推开练歌房钢琴盖');
     await page.click('button:has-text("发送行动")');
-    await page.waitForSelector('[data-testid="byok-inline-prompt"]');
+    await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
+    const wizardText = await page.locator('[data-testid="deepseek-setup-wizard"]').textContent();
+    if (!wizardText?.includes('新注册用户通常有免费额度')) {
+      throw new Error(`Expected free-quota hint in wizard, got: ${wizardText}`);
+    }
+    // 401 invalid key must block saving and not show fallback save button
+    await page.fill('#byok-api-key', 'sk-e2e-401');
+    await page.click('[data-testid="wizard-verify-save-btn"]');
+    await page.waitForSelector('[data-testid="wizard-error"]');
+    if ((await page.locator('[data-testid="wizard-fallback-save-btn"]').count()) !== 0) {
+      throw new Error('Expected 401 invalid_key not to allow fallback save');
+    }
+    // Valid key verifies and resumes streaming automatically
     await page.fill('#byok-api-key', 'sk-e2e-inline');
-    await page.click('button:has-text("保存配置并立即继续")');
+    await page.click('[data-testid="wizard-verify-save-btn"]');
     await page.waitForSelector('.turn-card.assistant:has-text("回执：推开练歌房钢琴盖")');
+    const maskText = await page.locator('[data-testid="connected-key-mask"]').textContent();
+    if (!maskText?.includes('••••line')) {
+      throw new Error(`Expected masked key tail in connected card, got: ${maskText}`);
+    }
 
-    // 0a. Keyless ambiguous + over-window import -> pending_key -> complete summary + blueprint after inline key
-    await page.fill('#cfg-api-key', '');
-    await page.waitForTimeout(50);
+    // 0a. Keyless ambiguous + over-window import -> pending_key -> complete summary + blueprint after wizard
+    await page.click('[data-testid="clear-key-btn"]');
+    await page.waitForSelector('[data-testid="open-setup-wizard-btn"]');
     const ambigZipPath = path.join(tmpDir, 'deepseek-ambiguous-long.zip');
     fs.writeFileSync(ambigZipPath, buildAmbiguousOverWindowZipE2E());
     await page.click('button:has-text("从 DeepSeek 继续")');
@@ -517,9 +558,9 @@ async function main() {
     await page.click('button:has-text("继续这条故事")');
     await page.waitForSelector('.turn-card.assistant:has-text("门后传来脚步声")');
     await page.click('button:has-text("补算剧情摘要")');
-    await page.waitForSelector('[data-testid="byok-inline-prompt"]');
+    await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
     await page.fill('#byok-api-key', 'sk-e2e-inline');
-    await page.click('button:has-text("保存配置并立即继续")');
+    await page.click('[data-testid="wizard-verify-save-btn"]');
     await page.waitForSelector('[data-testid="active-plot-summary"]:has-text("【激活线压缩摘要】")');
     await page.locator('details summary:has-text("故事蓝图与原始剧本锚定")').click();
     await page.click('button:has-text("补拆蓝图")');
@@ -573,14 +614,23 @@ async function main() {
       await page.waitForTimeout(50);
     }
 
-    // 1. Security notice + memory-only key toggle
-    const notice = await page.locator('.notice-box').textContent();
-    if (!notice?.includes('localStorage')) throw new Error('Security notice missing');
-    await page.fill('#cfg-api-key', 'sk-e2e-dummy');
-    await page.click('#cfg-memory-only');
-    if ((await page.evaluate(() => localStorage.getItem('lfh.model_config.api_key'))) !== null) {
-      throw new Error('Expected localStorage apiKey purged on memoryOnly');
+    // 1. Privacy note + clear key + network-error fallback save via wizard
+    const cardText = await page.locator('[data-testid="deepseek-connection-card"]').textContent();
+    if (!cardText?.includes('不会上传到任何第三方服务器')) {
+      throw new Error(`Plain-language privacy note missing: ${cardText}`);
     }
+    await page.click('[data-testid="clear-key-btn"]');
+    await page.waitForSelector('[data-testid="open-setup-wizard-btn"]');
+    if ((await page.evaluate(() => localStorage.getItem('lfh.model_config.api_key'))) !== null) {
+      throw new Error('Expected localStorage apiKey purged on clear-key-btn');
+    }
+    await page.click('[data-testid="open-setup-wizard-btn"]');
+    await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
+    await page.fill('#byok-api-key', 'sk-e2e-netfail');
+    await page.click('[data-testid="wizard-verify-save-btn"]');
+    await page.waitForSelector('[data-testid="wizard-fallback-save-btn"]');
+    await page.click('[data-testid="wizard-fallback-save-btn"]');
+    await page.waitForSelector('[data-testid="connected-key-mask"]');
 
     // 2. Import synthetic .docx fixture -> extract & tweak blueprint -> confirm story
     const docxPath = path.join(tmpDir, 'fixture.docx');
@@ -662,9 +712,7 @@ async function main() {
 
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForSelector('.story-item.active');
-    if ((await page.inputValue('#cfg-api-key')) !== '') {
-      throw new Error('Expected memoryOnly apiKey cleared on reload');
-    }
+    await page.waitForSelector('[data-testid="connected-key-mask"]');
     const sumAfterReload = await page.locator('[data-testid="active-plot-summary"]').textContent();
     const pagerAfterReload = await page.locator('.turn-card.user').nth(1).locator('.branch-pager').textContent();
     if (!sumAfterReload?.includes('【分支A摘要】含黑市线索') || !pagerAfterReload?.includes('1 / 2')) {
@@ -707,8 +755,7 @@ async function main() {
       throw new Error('Expected .reasoning-content hidden after collapsing');
     }
 
-    // 9. regenerateNode & rewindToNode UI actions (re-supply key cleared by memoryOnly reload)
-    await page.fill('#cfg-api-key', 'sk-e2e-dummy');
+    // 9. regenerateNode & rewindToNode UI actions
     const lastAssistant = page.locator('.turn-card.assistant').last();
     await lastAssistant.locator('button:has-text("重新生成分支")').click();
     await page.waitForSelector('.turn-card.assistant:has-text("回执#2：A. 继续训练声乐")');
@@ -750,7 +797,6 @@ async function main() {
     });
 
     failNextBlueprintWith401 = true;
-    await page.fill('#cfg-api-key', 'sk-e2e-invalid');
     await page.click('button:has-text("拆解故事蓝图")');
     await page.waitForSelector('.import-panel .error-banner');
     const bpError = await page.locator('.import-panel .error-banner').textContent();
@@ -925,6 +971,31 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
       });
     });
 
+    await page.route('https://api.deepseek.com/models', async (route) => {
+      const auth = route.request().headers().authorization || '';
+      if (auth === 'Bearer sk-e2e-401') {
+        await route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { message: 'Invalid API key' } }),
+        });
+        return;
+      }
+      if (auth === 'Bearer sk-e2e-netfail') {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { message: 'Service Unavailable' } }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: [{ id: 'deepseek-flash' }] }),
+      });
+    });
+
     await page.route('**/chat/completions', async (route) => {
       const reqBody = JSON.parse(route.request().postData() || '{}');
       const sys = reqBody.messages?.[0]?.content || '';
@@ -1044,9 +1115,9 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
 
     await page.fill('#turn-input', '追查西塔温室');
     await page.click('button:has-text("发送行动")');
-    await page.waitForSelector('[data-testid="byok-inline-prompt"]');
+    await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
     await page.fill('#byok-api-key', 'sk-spec18-mobile');
-    await page.click('button:has-text("保存配置并立即继续")');
+    await page.click('[data-testid="wizard-verify-save-btn"]');
     await page.waitForSelector('.turn-card.assistant:has-text("窄屏续写：追查西塔温室")');
 
     const promptForB = capturedTurns[capturedTurns.length - 1] ?? '';

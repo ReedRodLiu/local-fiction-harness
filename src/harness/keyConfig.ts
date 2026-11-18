@@ -10,10 +10,23 @@ const CONFIG_API_KEY = 'lfh.model_config.api_key';
 
 export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   baseUrl: 'https://api.deepseek.com',
-  model: 'deepseek-chat',
+  model: 'deepseek-flash',
   apiKey: '',
   memoryOnly: false,
 };
+
+/**
+ * Forces non-dev-proxy model configurations to the official DeepSeek endpoint and
+ * deepseek-flash model, migrating legacy cached values (e.g. deepseek-chat).
+ */
+export function normalizeOfficialModelConfig(config: ModelConfig): ModelConfig {
+  return {
+    ...config,
+    baseUrl: DEFAULT_MODEL_CONFIG.baseUrl,
+    model: DEFAULT_MODEL_CONFIG.model,
+    memoryOnly: false,
+  };
+}
 
 export interface ModelConfigStore {
   load(): ModelConfig;
