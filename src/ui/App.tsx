@@ -8,8 +8,10 @@ import {
   getActiveBranchNodes,
   getActiveSummarySnapshot,
   getSiblingBranchInfo,
+  importDeepSeekSessions,
   importStoryBackup,
   isAbortError,
+  type DeepSeekImportBatchResult,
   type ModelConfig,
   type PlatformRuntime,
   type Story,
@@ -26,7 +28,7 @@ import {
   type DevTestConfigResponse,
 } from '../platform/runtime.ts';
 import { ContextOverview } from './ContextOverview.tsx';
-import { ImportPanel } from './ImportPanel.tsx';
+import { ImportPanel, type ImportMode } from './ImportPanel.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
 import { StoryReview } from './StoryReview.tsx';
@@ -107,6 +109,14 @@ export function App({ runtime }: AppProps) {
   const [stories, setStories] = useState<Story[]>([]);
   const [story, setStory] = useState<Story>(() => harness.createStory({ title: '新故事' }));
   const [showImport, setShowImport] = useState(false);
+  const [importMode, setImportMode] = useState<ImportMode>('deepseek');
+  const [pendingByok, setPendingByok] = useState<{
+    label: string;
+    resume: (resolvedConfig: ModelConfig) => void;
+  } | null>(null);
+  const [byokKeyDraft, setByokKeyDraft] = useState('');
+  const [byokBaseUrlDraft, setByokBaseUrlDraft] = useState(DEFAULT_MODEL_CONFIG.baseUrl);
+  const [byokModelDraft, setByokModelDraft] = useState(DEFAULT_MODEL_CONFIG.model);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
@@ -367,30 +377,80 @@ export function App({ runtime }: AppProps) {
     }
   };
 
-  const sendAction = async (userPrompt: string, restoreOnError = false) => {
+  const hasCredentials = hasModelCredentials(config, useDevEnvKey);
+
+  const openByokPrompt = (
+    label: string,
+    resume: (resolvedConfig: ModelConfig) => void,
+  ) => {
+    setByokKeyDraft(config.apiKey);
+    setByokBaseUrlDraft(config.baseUrl);
+    setByokModelDraft(config.model);
+    setPendingByok({ label, resume });
+  };
+
+  const openImportView = (mode: ImportMode) => {
+    abortActiveStream(true);
+    setImportMode(mode);
+    setShowImport(true);
+  };
+
+  const sendAction = async (
+    userPrompt: string,
+    restoreOnError = false,
+    overrideConfig?: ModelConfig,
+  ) => {
     const trimmed = userPrompt.trim();
     if (!trimmed || abortRef.current || isStreaming || isSummarizing) return;
+    const activeCfg = overrideConfig ?? config;
+    if (!overrideConfig && !hasCredentials) {
+      openByokPrompt('发送下一轮行动并继续故事', (resolved) => {
+        void sendAction(trimmed, restoreOnError, resolved);
+      });
+      return;
+    }
     if (restoreOnError) {
       setInput('');
     }
     await runStreamingExecution(
-      (callbacks) => harness.runTurn(story, trimmed, config, callbacks),
+      (callbacks) => harness.runTurn(story, trimmed, activeCfg, callbacks),
       restoreOnError ? () => setInput(trimmed) : undefined,
     );
   };
 
-  const handleEditAndBranch = async (targetUserNodeId: string, newContent: string) => {
+  const handleEditAndBranch = async (
+    targetUserNodeId: string,
+    newContent: string,
+    overrideConfig?: ModelConfig,
+  ) => {
     const trimmed = newContent.trim();
     if (!trimmed || isSummarizing) return;
+    const activeCfg = overrideConfig ?? config;
+    if (!overrideConfig && !hasCredentials) {
+      openByokPrompt('编辑行动并生成新分支', (resolved) => {
+        void handleEditAndBranch(targetUserNodeId, trimmed, resolved);
+      });
+      return;
+    }
     await runStreamingExecution((callbacks) =>
-      harness.editAndBranch(story, targetUserNodeId, trimmed, config, callbacks),
+      harness.editAndBranch(story, targetUserNodeId, trimmed, activeCfg, callbacks),
     );
   };
 
-  const handleRegenerateNode = async (targetAssistantNodeId: string) => {
+  const handleRegenerateNode = async (
+    targetAssistantNodeId: string,
+    overrideConfig?: ModelConfig,
+  ) => {
     if (isSummarizing) return;
+    const activeCfg = overrideConfig ?? config;
+    if (!overrideConfig && !hasCredentials) {
+      openByokPrompt('重新生成分支回复', (resolved) => {
+        void handleRegenerateNode(targetAssistantNodeId, resolved);
+      });
+      return;
+    }
     await runStreamingExecution((callbacks) =>
-      harness.regenerateNode(story, targetAssistantNodeId, config, callbacks),
+      harness.regenerateNode(story, targetAssistantNodeId, activeCfg, callbacks),
     );
   };
 
@@ -432,25 +492,34 @@ export function App({ runtime }: AppProps) {
     );
   };
 
-  const handleExtractBranchGist = async (branchEntryNodeId: string) => {
-    if (!hasModelCredentials(config, useDevEnvKey)) {
-      setErrorMsg('请先在左侧配置模型 API Key，再使用「AI 提炼梗概」。');
+  const handleExtractBranchGist = async (
+    branchEntryNodeId: string,
+    overrideConfig?: ModelConfig,
+  ) => {
+    const activeCfg = overrideConfig ?? config;
+    if (!overrideConfig && !hasCredentials) {
+      openByokPrompt('AI 提炼分支梗概', (resolved) => {
+        void handleExtractBranchGist(branchEntryNodeId, resolved);
+      });
       return;
     }
     await runStoryTransition(
-      () => harness.extractBranchGist(story, branchEntryNodeId, config),
+      () => harness.extractBranchGist(story, branchEntryNodeId, activeCfg),
       '提炼分支梗概失败。',
       { trackSummarizing: true },
     );
   };
 
-  const handleComputeActiveSummary = async () => {
-    if (!hasModelCredentials(config, useDevEnvKey)) {
-      setErrorMsg('请先在左侧配置模型 API Key，再补算超窗支线的剧情摘要。');
+  const handleComputeActiveSummary = async (overrideConfig?: ModelConfig) => {
+    const activeCfg = overrideConfig ?? config;
+    if (!overrideConfig && !hasCredentials) {
+      openByokPrompt('补算当前支线剧情摘要', (resolved) => {
+        void handleComputeActiveSummary(resolved);
+      });
       return;
     }
     await runStoryTransition(
-      () => harness.ensureActiveBranchSummary(story, config),
+      () => harness.ensureActiveBranchSummary(story, activeCfg),
       '补算剧情摘要失败。',
       { trackSummarizing: true },
     );
@@ -483,6 +552,29 @@ export function App({ runtime }: AppProps) {
         setErrorMsg(toErrorMessage(err, '保存导入故事失败。'));
       }
     }
+  };
+
+  const handleImportDeepSeekBatch = async (
+    zipBytes: Uint8Array,
+    selectedSessionIds: readonly string[],
+    scriptTurnOverrides: Record<string, number>,
+  ): Promise<DeepSeekImportBatchResult> => {
+    abortActiveStream(true);
+    const opSeq = ++storyOpSeqRef.current;
+    setErrorMsg(null);
+    const result = await importDeepSeekSessions(zipBytes, selectedSessionIds, harness, {
+      scriptTurnOverrides,
+    });
+    if (storyOpSeqRef.current === opSeq && result.stories[0]) {
+      setStory(result.stories[0]);
+      await refreshStories();
+    }
+    return result;
+  };
+
+  const handleContinueImportedStory = async (storyId: string) => {
+    await handleSelectStory(storyId);
+    setShowImport(false);
   };
 
   const handleSelectStory = async (id: string) => {
@@ -602,16 +694,29 @@ export function App({ runtime }: AppProps) {
           <p className="app-subtitle">纯客户端 Harness · BYOK 本地原型</p>
         </div>
 
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => {
-            abortActiveStream(true);
-            setShowImport((prev) => !prev);
-          }}
-        >
-          {showImport ? '返回游玩界面' : '导入剧本 / 新建故事'}
-        </button>
+        <div className="btn-group">
+          <button
+            type="button"
+            className="btn btn-primary"
+            style={{ flex: 1 }}
+            onClick={() => openImportView('deepseek')}
+          >
+            从 DeepSeek 继续
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              if (showImport) {
+                setShowImport(false);
+              } else {
+                openImportView('script');
+              }
+            }}
+          >
+            {showImport ? '返回游玩界面' : '导入剧本 / 新建故事'}
+          </button>
+        </div>
 
         <StoryLibrary
           stories={stories}
@@ -724,13 +829,98 @@ export function App({ runtime }: AppProps) {
           </div>
         )}
 
+        {pendingByok && (
+          <section
+            className="blueprint-editor"
+            data-testid="byok-inline-prompt"
+            aria-label="就地配置模型 API Key"
+          >
+            <div className="panel-header">
+              <h4>就地配置模型密钥（BYOK）</h4>
+              <span className="badge">触发动作：{pendingByok.label}</span>
+            </div>
+            <p className="status-text" style={{ margin: 0 }}>
+              本地导入与历史浏览无需密钥；继续由模型生成内容需要你自己的 API Key。填写后立即自动继续。
+            </p>
+            <div className="field">
+              <label htmlFor="byok-base-url">模型接口 Base URL</label>
+              <input
+                id="byok-base-url"
+                type="text"
+                value={byokBaseUrlDraft}
+                onChange={(e) => setByokBaseUrlDraft(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="byok-model">模型名称</label>
+              <input
+                id="byok-model"
+                type="text"
+                value={byokModelDraft}
+                onChange={(e) => setByokModelDraft(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="byok-api-key">API Key</label>
+              <input
+                id="byok-api-key"
+                type="password"
+                placeholder="sk-..."
+                value={byokKeyDraft}
+                onChange={(e) => setByokKeyDraft(e.target.value)}
+              />
+            </div>
+            <div className="btn-group">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!byokKeyDraft.trim()}
+                onClick={() => {
+                  const nextCfg: ModelConfig = {
+                    ...config,
+                    baseUrl: byokBaseUrlDraft.trim() || config.baseUrl,
+                    model: byokModelDraft.trim() || config.model,
+                    apiKey: byokKeyDraft.trim(),
+                  };
+                  const resume = pendingByok.resume;
+                  setPendingByok(null);
+                  updateConfig(nextCfg, false);
+                  resume(nextCfg);
+                }}
+              >
+                保存配置并立即继续
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  const resume = pendingByok.resume;
+                  setPendingByok(null);
+                  resume(config);
+                }}
+              >
+                无鉴权端点直接尝试
+              </button>
+              <button type="button" className="btn" onClick={() => setPendingByok(null)}>
+                取消
+              </button>
+            </div>
+          </section>
+        )}
+
         {showImport ? (
           <ImportPanel
+            initialMode={importMode}
             config={config}
+            transport={runtime.transport}
+            hasCredentials={hasCredentials}
+            onRequireByok={openByokPrompt}
             extractBlueprint={(raw, cfg, title, signal) =>
               harness.extractStoryBlueprint(raw, cfg, title, signal)
             }
             onConfirmStory={handleConfirmImportedStory}
+            onImportDeepSeekBatch={handleImportDeepSeekBatch}
+            onContinueStory={(storyId) => void handleContinueImportedStory(storyId)}
             onCancel={() => setShowImport(false)}
           />
         ) : (
@@ -766,8 +956,26 @@ export function App({ runtime }: AppProps) {
                   <div className="turn-body">
                     {story.blueprint.openingHook
                       ? story.blueprint.openingHook
-                      : '配置好模型接口或点击左侧「导入剧本 / 新建故事」，即可开始流式演绎。'}
+                      : '可从「从 DeepSeek 继续」导入长对话存档，或点击「导入剧本 / 新建故事」载入自由格式剧本后开始演绎。'}
                   </div>
+                  {!story.blueprint.openingHook && (
+                    <div className="btn-group" style={{ marginTop: '0.75rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => openImportView('deepseek')}
+                      >
+                        从 DeepSeek 继续（.zip）
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => openImportView('script')}
+                      >
+                        导入自由剧本
+                      </button>
+                    </div>
+                  )}
                   {story.blueprint.openingHook && (
                     <div className="composer-actions" style={{ marginTop: '0.75rem' }}>
                       <span className="status-text">已保留原始剧本全文锚定</span>

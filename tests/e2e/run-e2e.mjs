@@ -45,6 +45,135 @@ function buildFixtureDocx() {
   return zipSync({ 'word/document.xml': strToU8(xml) });
 }
 
+function buildSyntheticDeepSeekZipE2E() {
+  const docxBytes = buildFixtureDocx();
+  const fictionSession = {
+    id: 'ds-e2e-fiction',
+    title: '合成宫斗测试档',
+    current_message_id: 4,
+    inserted_at: '2026-11-15T10:00:00Z',
+    updated_at: '2026-11-15T10:20:00Z',
+    messages: [
+      {
+        id: 1,
+        parent_id: null,
+        role: 'USER',
+        status: 'FINISHED',
+        inserted_at: '2026-11-15T10:00:00Z',
+        fragments: [
+          {
+            type: 'FILE',
+            files: [
+              {
+                id: 'f1',
+                file_name: '规则附件.docx',
+                file_size: docxBytes.length,
+                export_path: 'chat_sessions/ds-e2e-fiction/规则附件.docx',
+                is_image: false,
+              },
+              {
+                id: 'f2',
+                file_name: '立绘.png',
+                file_size: 256,
+                export_path: 'chat_sessions/ds-e2e-fiction/立绘.png',
+                is_image: true,
+              },
+              {
+                id: 'f3',
+                file_name: '老版本.doc',
+                file_size: 256,
+                export_path: 'chat_sessions/ds-e2e-fiction/老版本.doc',
+                is_image: false,
+              },
+            ],
+          },
+          { type: 'REQUEST', content: '请按附件规则开始演绎第一幕，主角：沈小姐。' },
+        ],
+      },
+      {
+        id: 2,
+        parent_id: 1,
+        role: 'ASSISTANT',
+        status: 'FINISHED',
+        inserted_at: '2026-11-15T10:01:00Z',
+        fragments: [
+          { type: 'TOOL_OPEN', url: 'https://example.invalid', title: 'skip' },
+          { type: 'RESPONSE', content: '第1章 初入星光营\n地点：主大厅\n请选择下一步。' },
+        ],
+      },
+      {
+        id: 3,
+        parent_id: 2,
+        role: 'USER',
+        status: 'FINISHED',
+        inserted_at: '2026-11-15T10:05:00Z',
+        fragments: [{ type: 'REQUEST', content: '前往东侧练歌房' }],
+      },
+      {
+        id: 4,
+        parent_id: 3,
+        role: 'ASSISTANT',
+        status: 'CONTENT_FILTER',
+        inserted_at: '2026-11-15T10:06:00Z',
+        fragments: [
+          { type: 'CONTENT_RISK', content: '平台风控噪音应剥离' },
+          { type: 'RESPONSE', content: '原进度抵达东侧练歌房。' },
+        ],
+      },
+      {
+        id: 5,
+        parent_id: 2,
+        role: 'USER',
+        status: 'FINISHED',
+        inserted_at: '2026-11-15T10:07:00Z',
+        fragments: [{ type: 'REQUEST', content: '前往西侧花园' }],
+      },
+      {
+        id: 6,
+        parent_id: 5,
+        role: 'ASSISTANT',
+        status: 'FINISHED',
+        inserted_at: '2026-11-15T10:08:00Z',
+        fragments: [{ type: 'RESPONSE', content: '旁支到达西侧花园。' }],
+      },
+    ],
+  };
+  const dailySession = {
+    id: 'ds-e2e-null',
+    title: null,
+    current_message_id: 2,
+    inserted_at: '2026-11-14T08:00:00Z',
+    updated_at: '2026-11-14T08:01:00Z',
+    messages: [
+      {
+        id: 1,
+        parent_id: null,
+        role: 'USER',
+        status: 'FINISHED',
+        inserted_at: '2026-11-14T08:00:00Z',
+        fragments: [{ type: 'REQUEST', content: '解释一下 Promise.all 的用法' }],
+      },
+      {
+        id: 2,
+        parent_id: 1,
+        role: 'ASSISTANT',
+        status: 'FINISHED',
+        inserted_at: '2026-11-14T08:01:00Z',
+        fragments: [{ type: 'RESPONSE', content: 'Promise.all 并行等待多个异步任务。' }],
+      },
+    ],
+  };
+
+  return zipSync({
+    'manifest.json': strToU8(JSON.stringify({ export_format_version: 3 })),
+    'chat_sessions/ds-e2e-fiction.json': strToU8(JSON.stringify(fictionSession)),
+    'chat_sessions/ds-e2e-null.json': strToU8(JSON.stringify(dailySession)),
+    'chat_sessions/ds-e2e-fiction/规则附件.docx': docxBytes,
+    'chat_sessions/ds-e2e-fiction/立绘.png': strToU8('fake-png-bytes'),
+    'chat_sessions/ds-e2e-fiction/老版本.doc': strToU8('fake-doc-bytes'),
+  });
+}
+
 async function startViteServer(port) {
   const srv = spawn('npx', ['vite', '--port', String(port), '--strictPort'], {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -175,6 +304,69 @@ async function main() {
     });
 
     await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+
+    // 0. Keyless DeepSeek .zip import -> preview -> batch 1-to-1 import -> Continue This Story -> inline BYOK prompt -> stream
+    const dsZipPath = path.join(tmpDir, 'deepseek-export.zip');
+    fs.writeFileSync(dsZipPath, buildSyntheticDeepSeekZipE2E());
+    await page.click('button:has-text("从 DeepSeek 继续")');
+    await page.waitForSelector('#deepseek-zip-input');
+    await page.setInputFiles('#deepseek-zip-input', dsZipPath);
+    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
+    const previewCardText = await page.locator('[data-testid="deepseek-preview-card"]').textContent();
+    if (
+      !previewCardText?.includes('规则附件.docx') ||
+      !previewCardText?.includes('另存为 .docx') ||
+      !previewCardText?.includes('⑂ 2')
+    ) {
+      throw new Error(`DeepSeek preview missing attachment/branch cues: ${previewCardText}`);
+    }
+
+    // Check 390px narrow mobile viewport on DeepSeek preview panel
+    await page.setViewportSize({ width: 390, height: 844 });
+    const dsOverflow = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    if (dsOverflow.scrollWidth > dsOverflow.clientWidth) {
+      throw new Error(`Horizontal overflow on mobile DeepSeek import (${dsOverflow.scrollWidth} > ${dsOverflow.clientWidth})`);
+    }
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    // Also select the second (null-title) session to verify 1-to-1 batch import without API Key
+    await page.locator('.ds-session-item', { hasText: 'Promise.all' }).locator('input[type="checkbox"]').check();
+    await page.click('[data-testid="ds-confirm-import-btn"]');
+    await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
+    const receiptText = await page.locator('[data-testid="deepseek-import-receipt"]').textContent();
+    if (!receiptText?.includes('新增 2 部独立故事')) {
+      throw new Error(`Expected 2 imported stories in receipt, got: ${receiptText}`);
+    }
+    await page.click('button:has-text("继续这条故事")');
+    await page.waitForSelector('.turn-card.assistant:has-text("原进度抵达东侧练歌房")');
+    const diagText = await page.locator('[data-testid="turn-diagnostics"]').textContent();
+    if (!diagText?.includes('CONTENT_FILTER') || !diagText?.includes('CONTENT_RISK')) {
+      throw new Error(`Expected read-only NodeDiagnostics badge, got: ${diagText}`);
+    }
+
+    // Verify IndexedDB reload keeps DeepSeek stories + diagnostics
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector('.turn-card.assistant:has-text("原进度抵达东侧练歌房")');
+    if ((await page.locator('.story-item').count()) !== 2) {
+      throw new Error('Expected 2 independent DeepSeek stories persisted in IndexedDB');
+    }
+
+    // Trigger next turn without API key -> inline BYOK prompt opens -> fill key -> saves & continues streaming
+    await page.fill('#turn-input', '推开练歌房钢琴盖');
+    await page.click('button:has-text("发送行动")');
+    await page.waitForSelector('[data-testid="byok-inline-prompt"]');
+    await page.fill('#byok-api-key', 'sk-e2e-inline');
+    await page.click('button:has-text("保存配置并立即继续")');
+    await page.waitForSelector('.turn-card.assistant:has-text("回执：推开练歌房钢琴盖")');
+
+    // Clean up DeepSeek stories before running existing script-import workflow assertions
+    while ((await page.locator('button[aria-label^="删除 "]').count()) > 0) {
+      await page.locator('button[aria-label^="删除 "]').first().click();
+      await page.waitForTimeout(50);
+    }
 
     // 1. Security notice + memory-only key toggle
     const notice = await page.locator('.notice-box').textContent();
@@ -310,7 +502,8 @@ async function main() {
       throw new Error('Expected .reasoning-content hidden after collapsing');
     }
 
-    // 9. regenerateNode & rewindToNode UI actions
+    // 9. regenerateNode & rewindToNode UI actions (re-supply key cleared by memoryOnly reload)
+    await page.fill('#cfg-api-key', 'sk-e2e-dummy');
     const lastAssistant = page.locator('.turn-card.assistant').last();
     await lastAssistant.locator('button:has-text("重新生成分支")').click();
     await page.waitForSelector('.turn-card.assistant:has-text("回执#2：A. 继续训练声乐")');
@@ -352,6 +545,7 @@ async function main() {
     });
 
     failNextBlueprintWith401 = true;
+    await page.fill('#cfg-api-key', 'sk-e2e-invalid');
     await page.click('button:has-text("拆解故事蓝图")');
     await page.waitForSelector('.import-panel .error-banner');
     const bpError = await page.locator('.import-panel .error-banner').textContent();

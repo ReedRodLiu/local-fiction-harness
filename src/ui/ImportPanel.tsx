@@ -4,13 +4,22 @@ import {
   createDefaultBlueprint,
   isAbortError,
   parseScriptInput,
+  type DeepSeekImportBatchResult,
+  type LlmTransport,
   type ModelConfig,
   type StoryBlueprint,
 } from '../harness/index.ts';
+import { DeepSeekImportPanel } from './DeepSeekImportPanel.tsx';
 import { splitNonEmptyLines, toErrorMessage } from './textHelpers.ts';
 
+export type ImportMode = 'deepseek' | 'script';
+
 interface ImportPanelProps {
+  initialMode?: ImportMode;
   config: ModelConfig;
+  transport: LlmTransport;
+  hasCredentials: boolean;
+  onRequireByok: (actionLabel: string, resume: (resolvedConfig: ModelConfig) => void) => void;
   extractBlueprint: (
     rawScript: string,
     config: ModelConfig,
@@ -22,6 +31,12 @@ interface ImportPanelProps {
     rawScript: string;
     blueprint: StoryBlueprint;
   }) => Promise<void> | void;
+  onImportDeepSeekBatch: (
+    zipBytes: Uint8Array,
+    selectedSessionIds: readonly string[],
+    scriptTurnOverrides: Record<string, number>,
+  ) => Promise<DeepSeekImportBatchResult>;
+  onContinueStory: (storyId: string) => void;
   onCancel?: () => void;
 }
 
@@ -55,11 +70,18 @@ function toDraft(bp: StoryBlueprint): BlueprintDraft {
 }
 
 export function ImportPanel({
+  initialMode = 'deepseek',
   config,
+  transport,
+  hasCredentials,
+  onRequireByok,
   extractBlueprint,
   onConfirmStory,
+  onImportDeepSeekBatch,
+  onContinueStory,
   onCancel,
 }: ImportPanelProps) {
+  const [importMode, setImportMode] = useState<ImportMode>(initialMode);
   const [rawText, setRawText] = useState('');
   const [suggestedTitle, setSuggestedTitle] = useState('');
   const [sourceInfo, setSourceInfo] = useState('');
@@ -71,6 +93,10 @@ export function ImportPanel({
   const abortRef = useRef<AbortController | null>(null);
   const extractSeqRef = useRef(0);
   const fileSeqRef = useRef(0);
+
+  useEffect(() => {
+    setImportMode(initialMode);
+  }, [initialMode]);
 
   const abortInFlightExtraction = () => {
     extractSeqRef.current += 1;
@@ -192,7 +218,7 @@ export function ImportPanel({
   return (
     <section className="import-panel" aria-label="导入剧本与故事蓝图拆解">
       <div className="panel-header">
-        <h3>导入自由格式剧本</h3>
+        <h3>{importMode === 'deepseek' ? '从 DeepSeek 继续' : '导入自由格式剧本'}</h3>
         {onCancel && (
           <button
             type="button"
@@ -208,11 +234,43 @@ export function ImportPanel({
         )}
       </div>
 
-      {parseError && (
-        <div className="error-banner" role="alert">
-          {parseError}
-        </div>
-      )}
+      <div className="btn-group" role="tablist" aria-label="导入方式">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={importMode === 'deepseek'}
+          className={`btn ${importMode === 'deepseek' ? 'btn-primary' : ''}`}
+          onClick={() => setImportMode('deepseek')}
+        >
+          从 DeepSeek 继续（.zip 导出包）
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={importMode === 'script'}
+          className={`btn ${importMode === 'script' ? 'btn-primary' : ''}`}
+          onClick={() => setImportMode('script')}
+        >
+          导入自由格式剧本（.docx / .md / .txt）
+        </button>
+      </div>
+
+      {importMode === 'deepseek' ? (
+        <DeepSeekImportPanel
+          config={config}
+          transport={transport}
+          hasCredentials={hasCredentials}
+          onRequireByok={onRequireByok}
+          onImportBatch={onImportDeepSeekBatch}
+          onContinueStory={onContinueStory}
+        />
+      ) : (
+        <>
+          {parseError && (
+            <div className="error-banner" role="alert">
+              {parseError}
+            </div>
+          )}
 
       <div
         className={`dropzone ${isDragging ? 'dragging' : ''}`}
@@ -403,7 +461,9 @@ export function ImportPanel({
               确认蓝图并开始故事
             </button>
           </div>
-        </div>
+            </div>
+          )}
+        </>
       )}
     </section>
   );
