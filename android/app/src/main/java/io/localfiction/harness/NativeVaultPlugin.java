@@ -75,7 +75,7 @@ public class NativeVaultPlugin extends Plugin {
     @PluginMethod
     public void saveMeta(PluginCall call) {
         try {
-            JSONObject meta = new JSONObject();
+            JSObject meta = new JSObject();
             meta.put("baseUrl", call.getString("baseUrl", ""));
             meta.put("model", call.getString("model", ""));
             meta.put("memoryOnly", call.getBoolean("memoryOnly", false));
@@ -133,12 +133,6 @@ public class NativeVaultPlugin extends Plugin {
     @PluginMethod
     public void getStory(PluginCall call) {
         String id = call.getString("id");
-        if (id == null || id.isEmpty()) {
-            JSObject result = new JSObject();
-            result.put("story", JSONObject.NULL);
-            call.resolve(result);
-            return;
-        }
         try {
             JSONObject story = storyStore.getStory(id);
             JSObject result = new JSObject();
@@ -200,7 +194,7 @@ public class NativeVaultPlugin extends Plugin {
 
     @PluginMethod
     public void exportJsonFile(PluginCall call) {
-        String fileName = call.getString("fileName", "story-backup.lfh.json");
+        String fileName = call.getString("fileName", AtomicFileHelper.DEFAULT_BACKUP_FILENAME);
         String jsonContent = call.getString("jsonContent");
         if (jsonContent == null) {
             call.reject("jsonContent is required.");
@@ -208,7 +202,7 @@ public class NativeVaultPlugin extends Plugin {
         }
         try {
             Context context = getContext();
-            File outFile = PrivateStoryFileStore.writeExportBackupFile(
+            File outFile = AtomicFileHelper.writeExportBackupFile(
                 context.getCacheDir(),
                 fileName,
                 jsonContent

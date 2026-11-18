@@ -88,5 +88,15 @@ public class KeystoreSecretVaultTest {
         vault.clearApiKey();
         assertEquals("", vault.loadApiKey());
         assertFalse(backing.containsKey(SecretVault.KEY_API_KEY));
+
+        // Saving meta with memoryOnly=true also purges any persisted key defensively
+        vault.saveApiKey("sk-temp-purge");
+        assertEquals("sk-temp-purge", vault.loadApiKey());
+        vault.saveMeta(new JSONObject()
+            .put("baseUrl", "https://api.deepseek.com")
+            .put("model", "deepseek-chat")
+            .put("memoryOnly", true));
+        assertEquals("", vault.loadApiKey());
+        assertFalse(backing.containsKey(SecretVault.KEY_API_KEY));
     }
 }

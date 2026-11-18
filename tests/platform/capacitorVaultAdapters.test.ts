@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Story } from '../../src/harness/index.ts';
+import { createAsyncModelConfigStore, type Story } from '../../src/harness/index.ts';
 import {
   createAndroidBackupExporter,
   createAndroidSecretStore,
@@ -123,6 +123,25 @@ describe('Android NativeVault TS adapters & PlatformRuntime parity', () => {
     await secretStore.clearApiKey();
     expect(fake.getApiKey()).toBe('');
     expect(await secretStore.loadApiKey()).toBe('');
+
+    // End-to-end memoryOnly toggle through AsyncModelConfigStore + Android SecretStore
+    const configStore = createAsyncModelConfigStore(secretStore);
+    await configStore.save({
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+      apiKey: 'sk-vault-persist',
+      memoryOnly: false,
+    });
+    expect(fake.getApiKey()).toBe('sk-vault-persist');
+    await configStore.save({
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+      apiKey: 'sk-vault-persist',
+      memoryOnly: true,
+    });
+    expect(fake.getApiKey()).toBe('');
+    const restarted = createAsyncModelConfigStore(secretStore);
+    expect((await restarted.load()).apiKey).toBe('');
   });
 
   it('serializes StoryStorage concurrent writes in strict FIFO order without losing updates', async () => {

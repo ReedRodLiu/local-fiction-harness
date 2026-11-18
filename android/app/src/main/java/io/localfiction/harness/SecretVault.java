@@ -49,6 +49,9 @@ public class SecretVault {
                 store.remove(KEY_META);
             } else {
                 store.put(KEY_META, meta.toString());
+                if (meta.optBoolean("memoryOnly", false)) {
+                    store.remove(KEY_API_KEY);
+                }
             }
         }
     }

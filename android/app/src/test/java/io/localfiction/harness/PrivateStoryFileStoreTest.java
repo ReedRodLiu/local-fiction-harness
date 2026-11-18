@@ -97,11 +97,14 @@ public class PrivateStoryFileStoreTest {
     @Test
     public void writesSanitizedBackupFileInExportsDir() throws Exception {
         File cacheDir = tempFolder.newFolder("cache");
-        File out = PrivateStoryFileStore.writeExportBackupFile(cacheDir, "../evil/故事:备份.lfh.json", "{\"schemaVersion\":1}");
+        File out = AtomicFileHelper.writeExportBackupFile(cacheDir, "../evil/故事:备份.lfh.json", "{\"schemaVersion\":1}");
         assertTrue(out.exists());
         assertEquals("exports", out.getParentFile().getName());
-        assertTrue(out.getName().endsWith(".json"));
+        assertTrue(out.getName().endsWith(".lfh.json"));
         assertTrue(!out.getName().contains(".."));
         assertEquals("{\"schemaVersion\":1}", new String(Files.readAllBytes(out.toPath()), StandardCharsets.UTF_8));
+
+        File bareOut = AtomicFileHelper.writeExportBackupFile(cacheDir, "bare-story", "{}");
+        assertEquals("bare-story.lfh.json", bareOut.getName());
     }
 }
