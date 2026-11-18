@@ -1,28 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_MODEL_CONFIG,
+  createAsyncModelConfigStore,
   createFictionHarness,
-  createModelConfigStore,
-  createOpenAiTransport,
   exportStoryBackup,
   getActiveBranchNodes,
   getActiveSummarySnapshot,
   getSiblingBranchInfo,
   importStoryBackup,
   isAbortError,
-  type FetchLike,
   type ModelConfig,
+  type PlatformRuntime,
   type Story,
   type StoryBlueprint,
   type TurnCallbacks,
   type TurnExecutionResult,
 } from '../harness/index.ts';
+import {
+  DEV_PROXY_BASE_URL,
+  createPlatformRuntime,
+  isDevProxyBaseUrl,
+} from '../platform/runtime.ts';
 import { ContextOverview } from './ContextOverview.tsx';
 import { ImportPanel } from './ImportPanel.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
 import { TurnCard } from './TurnCard.tsx';
-import { createIndexedDbStoryStorage } from './indexedDbStorage.ts';
 import { toErrorMessage } from './textHelpers.ts';
 
 interface DevTestConfigResponse {
@@ -32,46 +35,51 @@ interface DevTestConfigResponse {
   hasEnvKey: boolean;
 }
 
-const DEV_PROXY_BASE_URL = '/__dev_llm_proxy';
 const DEV_SESSION_PROXY_KEY = 'lfh.dev_proxy_session';
 
-function isDevProxyBaseUrl(url: string): boolean {
-  const trimmed = url.trim();
-  return trimmed === DEV_PROXY_BASE_URL || trimmed.startsWith(`${DEV_PROXY_BASE_URL}/`);
+function readDevSessionProxy(isWebDev: boolean): {
+  baseUrl: string;
+  model?: string;
+  hasEnvKey: boolean;
+} | null {
+  if (!isWebDev) return null;
+  try {
+    const devSession = window.sessionStorage.getItem(DEV_SESSION_PROXY_KEY);
+    if (!devSession) return null;
+    const parsed = JSON.parse(devSession) as {
+      baseUrl?: string;
+      model?: string;
+      hasEnvKey?: boolean;
+    };
+    const sessionBaseUrl = parsed.baseUrl || DEV_PROXY_BASE_URL;
+    if (!isDevProxyBaseUrl(sessionBaseUrl)) return null;
+    return {
+      baseUrl: sessionBaseUrl,
+      model: typeof parsed.model === 'string' && parsed.model ? parsed.model : undefined,
+      hasEnvKey: parsed.hasEnvKey !== false,
+    };
+  } catch {
+    return null;
+  }
 }
 
-function loadInitialConfigState(configStore: ReturnType<typeof createModelConfigStore>): {
-  initialConfig: ModelConfig;
-  initialUseDevEnvKey: boolean;
-} {
-  const loaded = configStore.load();
-  if (import.meta.env.DEV) {
-    const devSession = window.sessionStorage.getItem(DEV_SESSION_PROXY_KEY);
-    if (devSession) {
-      try {
-        const parsed = JSON.parse(devSession) as {
-          baseUrl?: string;
-          model?: string;
-          hasEnvKey?: boolean;
-        };
-        const sessionBaseUrl = parsed.baseUrl || DEV_PROXY_BASE_URL;
-        if (isDevProxyBaseUrl(sessionBaseUrl)) {
-          const useEnvKey = parsed.hasEnvKey !== false;
-          return {
-            initialConfig: {
-              ...loaded,
-              baseUrl: sessionBaseUrl,
-              model: typeof parsed.model === 'string' && parsed.model ? parsed.model : loaded.model,
-              apiKey: useEnvKey ? '' : loaded.apiKey,
-            },
-            initialUseDevEnvKey: useEnvKey,
-          };
-        }
-      } catch {
-        // ignore malformed session state
-      }
-    }
-  } else if (isDevProxyBaseUrl(loaded.baseUrl)) {
+function mergeLoadedConfig(
+  loaded: ModelConfig,
+  isWebDev: boolean,
+): { initialConfig: ModelConfig; initialUseDevEnvKey: boolean } {
+  const devProxy = readDevSessionProxy(isWebDev);
+  if (devProxy) {
+    return {
+      initialConfig: {
+        ...loaded,
+        baseUrl: devProxy.baseUrl,
+        model: devProxy.model ?? loaded.model,
+        apiKey: devProxy.hasEnvKey ? '' : loaded.apiKey,
+      },
+      initialUseDevEnvKey: devProxy.hasEnvKey,
+    };
+  }
+  if (!isWebDev && isDevProxyBaseUrl(loaded.baseUrl)) {
     return {
       initialConfig: { ...loaded, baseUrl: DEFAULT_MODEL_CONFIG.baseUrl },
       initialUseDevEnvKey: false,
@@ -80,33 +88,48 @@ function loadInitialConfigState(configStore: ReturnType<typeof createModelConfig
   return { initialConfig: loaded, initialUseDevEnvKey: false };
 }
 
-export function App() {
-  const configStore = useMemo(() => createModelConfigStore(window.localStorage), []);
-  const storyStorage = useMemo(() => createIndexedDbStoryStorage(), []);
-  const initialProxyState = useMemo(() => loadInitialConfigState(configStore), [configStore]);
-  const useDevEnvKeyRef = useRef(initialProxyState.initialUseDevEnvKey);
+export interface AppProps {
+  runtime?: PlatformRuntime;
+}
 
-  const harness = useMemo(() => {
-    const devAwareFetch: FetchLike = (url, init) => {
-      const headers = { ...init.headers };
-      if (import.meta.env.DEV && useDevEnvKeyRef.current && isDevProxyBaseUrl(url)) {
-        headers['x-use-dev-env-key'] = '1';
-      }
-      return fetch(url, {
-        method: init.method,
-        headers,
-        body: init.body,
-        signal: init.signal as AbortSignal | undefined,
-      });
-    };
-    return createFictionHarness({
-      transport: createOpenAiTransport(devAwareFetch),
-      storage: storyStorage,
-    });
-  }, [storyStorage]);
+export function App({ runtime }: AppProps = {}) {
+  const useDevEnvKeyRef = useRef(false);
+  const activeRuntime = useMemo(
+    () =>
+      runtime ??
+      createPlatformRuntime({
+        devUseEnvKey: () => useDevEnvKeyRef.current,
+      }),
+    [runtime],
+  );
+  const isWebDev = activeRuntime.platform === 'web' && import.meta.env.DEV;
 
-  const [config, setConfig] = useState<ModelConfig>(initialProxyState.initialConfig);
-  const [useDevEnvKey, setUseDevEnvKey] = useState(initialProxyState.initialUseDevEnvKey);
+  const configStore = useMemo(
+    () => createAsyncModelConfigStore(activeRuntime.secretStore),
+    [activeRuntime],
+  );
+  const harness = useMemo(
+    () =>
+      createFictionHarness({
+        transport: activeRuntime.transport,
+        storage: activeRuntime.storyStorage,
+      }),
+    [activeRuntime],
+  );
+
+  const [config, setConfig] = useState<ModelConfig>(() => {
+    const devProxy = readDevSessionProxy(isWebDev);
+    if (devProxy) {
+      useDevEnvKeyRef.current = devProxy.hasEnvKey;
+      return {
+        ...DEFAULT_MODEL_CONFIG,
+        baseUrl: devProxy.baseUrl,
+        model: devProxy.model ?? DEFAULT_MODEL_CONFIG.model,
+      };
+    }
+    return DEFAULT_MODEL_CONFIG;
+  });
+  const [useDevEnvKey, setUseDevEnvKey] = useState(() => useDevEnvKeyRef.current);
   const [showKey, setShowKey] = useState(false);
   const [devTestInfo, setDevTestInfo] = useState<DevTestConfigResponse | null>(null);
   const [stories, setStories] = useState<Story[]>([]);
@@ -121,6 +144,8 @@ export function App() {
   const abortRef = useRef<AbortController | null>(null);
   const streamSeqRef = useRef(0);
   const storyOpSeqRef = useRef(0);
+  const configEditSeqRef = useRef(0);
+  const configSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const suppressedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet());
 
   const abortActiveStream = useCallback((suppressNotice = true) => {
@@ -156,6 +181,28 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
+    const editSeqAtStart = configEditSeqRef.current;
+    (async () => {
+      try {
+        const loaded = await configStore.load();
+        if (cancelled || configEditSeqRef.current !== editSeqAtStart) return;
+        const merged = mergeLoadedConfig(loaded, isWebDev);
+        setConfig(merged.initialConfig);
+        setUseDevEnvKey(merged.initialUseDevEnvKey);
+        useDevEnvKeyRef.current = merged.initialUseDevEnvKey;
+      } catch (err) {
+        if (!cancelled && configEditSeqRef.current === editSeqAtStart) {
+          setErrorMsg(toErrorMessage(err, '读取模型配置失败。'));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [configStore, isWebDev]);
+
+  useEffect(() => {
+    let cancelled = false;
     const loadSeq = storyOpSeqRef.current;
     (async () => {
       try {
@@ -180,7 +227,7 @@ export function App() {
   }, [harness]);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) {
+    if (!isWebDev) {
       return;
     }
     let cancelled = false;
@@ -197,15 +244,24 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isWebDev]);
+
+  const enqueueConfigSave = (toSave: ModelConfig) => {
+    configSaveQueueRef.current = configSaveQueueRef.current
+      .then(() => configStore.save(toSave))
+      .catch((err) => {
+        setErrorMsg(toErrorMessage(err, '保存模型配置失败。'));
+      });
+  };
 
   const updateConfig = (next: ModelConfig, nextUseDevEnvKey = useDevEnvKey) => {
+    configEditSeqRef.current += 1;
     const effectiveUseDevEnvKey =
-      import.meta.env.DEV && nextUseDevEnvKey && isDevProxyBaseUrl(next.baseUrl);
+      isWebDev && nextUseDevEnvKey && isDevProxyBaseUrl(next.baseUrl);
     setConfig(next);
     setUseDevEnvKey(effectiveUseDevEnvKey);
     useDevEnvKeyRef.current = effectiveUseDevEnvKey;
-    if (import.meta.env.DEV) {
+    if (isWebDev) {
       if (effectiveUseDevEnvKey) {
         window.sessionStorage.setItem(
           DEV_SESSION_PROXY_KEY,
@@ -215,33 +271,40 @@ export function App() {
             hasEnvKey: true,
           }),
         );
-        const persisted = configStore.load();
-        configStore.save({
-          ...next,
-          baseUrl: isDevProxyBaseUrl(persisted.baseUrl)
-            ? DEFAULT_MODEL_CONFIG.baseUrl
-            : persisted.baseUrl,
-        });
+        const saveSeq = configEditSeqRef.current;
+        configSaveQueueRef.current = configSaveQueueRef.current
+          .then(async () => {
+            if (configEditSeqRef.current !== saveSeq) return;
+            const persisted = await configStore.load();
+            await configStore.save({
+              ...next,
+              baseUrl: isDevProxyBaseUrl(persisted.baseUrl)
+                ? DEFAULT_MODEL_CONFIG.baseUrl
+                : persisted.baseUrl,
+            });
+          })
+          .catch((err) => {
+            setErrorMsg(toErrorMessage(err, '保存模型配置失败。'));
+          });
         return;
       }
       window.sessionStorage.removeItem(DEV_SESSION_PROXY_KEY);
     }
-    configStore.save(next);
+    enqueueConfigSave(next);
   };
 
   const applyDevTestConfig = () => {
-    if (!devTestInfo) return;
+    if (!devTestInfo || !isWebDev) return;
+    configEditSeqRef.current += 1;
     const devModel = devTestInfo.model || config.model;
-    if (import.meta.env.DEV) {
-      window.sessionStorage.setItem(
-        DEV_SESSION_PROXY_KEY,
-        JSON.stringify({
-          baseUrl: devTestInfo.proxyBaseUrl,
-          model: devModel,
-          hasEnvKey: devTestInfo.hasEnvKey,
-        }),
-      );
-    }
+    window.sessionStorage.setItem(
+      DEV_SESSION_PROXY_KEY,
+      JSON.stringify({
+        baseUrl: devTestInfo.proxyBaseUrl,
+        model: devModel,
+        hasEnvKey: devTestInfo.hasEnvKey,
+      }),
+    );
     setConfig({
       baseUrl: devTestInfo.proxyBaseUrl,
       model: devModel,
@@ -467,15 +530,15 @@ export function App() {
     }
   };
 
-  const handleExportBackup = () => {
-    const json = exportStoryBackup(story);
-    const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${story.title.replace(/[\\/:*?"<>|]+/g, '_') || 'story'}.lfh.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleExportBackup = async () => {
+    setErrorMsg(null);
+    try {
+      const json = exportStoryBackup(story);
+      const fileName = `${story.title.replace(/[\\/:*?"<>|]+/g, '_') || 'story'}.lfh.json`;
+      await activeRuntime.backupExporter.exportJsonFile(fileName, json);
+    } catch (err) {
+      setErrorMsg(toErrorMessage(err, '导出 JSON 备份失败。'));
+    }
   };
 
   const handleImportBackupFile = async (file: File) => {
@@ -529,13 +592,19 @@ export function App() {
           onSelectStory={(id) => void handleSelectStory(id)}
           onRenameStory={(id, title) => void handleRenameStory(id, title)}
           onDeleteStory={(id) => void handleDeleteStory(id)}
-          onExportBackup={handleExportBackup}
+          onExportBackup={() => void handleExportBackup()}
           onImportBackupFile={(file) => void handleImportBackupFile(file)}
         />
 
         <div className="notice-box" role="note">
           <strong>安全提示：</strong>
-          浏览器 <code>localStorage</code> 与 IndexedDB 并非系统级安全密钥存储；公共或共享设备请勾选「仅当前会话内存保存」，并在用完后关闭页面或清除密钥。
+          {activeRuntime.platform === 'android'
+            ? 'API Key 将保存在 Android 原生加密存储，故事与节点存档保存在应用私有目录；如需临时使用可勾选「仅当前会话内存保存」，切换时立即清除已存密钥。'
+            : (
+                <>
+                  浏览器 <code>localStorage</code> 与 IndexedDB 并非系统级安全密钥存储；公共或共享设备请勾选「仅当前会话内存保存」，并在用完后关闭页面或清除密钥。
+                </>
+              )}
         </div>
 
         <form className="config-form" onSubmit={(e) => e.preventDefault()} aria-label="模型配置">
@@ -593,16 +662,18 @@ export function App() {
             </div>
           </div>
 
-          <div className="checkbox-row">
-            <input
-              id="cfg-memory-only"
-              name="memoryOnly"
-              type="checkbox"
-              checked={config.memoryOnly}
-              onChange={(e) => updateConfig({ ...config, memoryOnly: e.target.checked })}
-            />
-            <label htmlFor="cfg-memory-only">仅当前会话内存保存 API Key（刷新即清除）</label>
-          </div>
+          {activeRuntime.supportsMemoryOnlySession && (
+            <div className="checkbox-row">
+              <input
+                id="cfg-memory-only"
+                name="memoryOnly"
+                type="checkbox"
+                checked={config.memoryOnly}
+                onChange={(e) => updateConfig({ ...config, memoryOnly: e.target.checked })}
+              />
+              <label htmlFor="cfg-memory-only">仅当前会话内存保存 API Key（刷新即清除）</label>
+            </div>
+          )}
 
           {devTestInfo?.available && (
             <button type="button" className="btn" onClick={applyDevTestConfig}>

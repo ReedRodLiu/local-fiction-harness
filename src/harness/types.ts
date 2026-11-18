@@ -91,6 +91,29 @@ export interface ModelConfig {
   memoryOnly: boolean;
 }
 
+export type ModelConfigMeta = Omit<ModelConfig, 'apiKey'>;
+
+export interface SecretStore {
+  loadMeta(): Promise<ModelConfigMeta | null>;
+  saveMeta(meta: ModelConfigMeta): Promise<void>;
+  loadApiKey(): Promise<string>;
+  saveApiKey(apiKey: string): Promise<void>;
+  clearApiKey(): Promise<void>;
+}
+
+export interface BackupExporter {
+  exportJsonFile(fileName: string, jsonContent: string): Promise<void>;
+}
+
+export interface PlatformRuntime {
+  platform: 'web' | 'android';
+  transport: LlmTransport;
+  storyStorage: StoryStorage;
+  secretStore: SecretStore;
+  backupExporter: BackupExporter;
+  supportsMemoryOnlySession: boolean;
+}
+
 export interface TurnCallbacks {
   onReasoningDelta?: (delta: string) => void;
   onContentDelta?: (delta: string) => void;
