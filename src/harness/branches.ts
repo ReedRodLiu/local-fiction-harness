@@ -98,8 +98,64 @@ export function getSiblingBranchInfo(story: Story, targetNodeId: string): Siblin
   };
 }
 
+export function buildSubtreeMaxCreatedAt(
+  story: Story,
+  childrenByParent: Map<string, TurnNode[]>,
+): Map<string, number> {
+  const maxMap = new Map<string, number>();
+  const visiting = new Set<string>();
+
+  const compute = (nodeId: string): number => {
+    const cached = maxMap.get(nodeId);
+    if (cached !== undefined) return cached;
+    if (visiting.has(nodeId)) return story.nodes[nodeId]?.createdAt ?? 0;
+    visiting.add(nodeId);
+    let maxVal = story.nodes[nodeId]?.createdAt ?? 0;
+    for (const child of childrenByParent.get(nodeId) ?? []) {
+      const childMax = compute(child.id);
+      if (childMax > maxVal) maxVal = childMax;
+    }
+    visiting.delete(nodeId);
+    maxMap.set(nodeId, maxVal);
+    return maxVal;
+  };
+
+  for (const id of Object.keys(story.nodes)) {
+    compute(id);
+  }
+  return maxMap;
+}
+
+export function pickLatestChild(
+  children: readonly TurnNode[],
+  subtreeMaxMap: ReadonlyMap<string, number>,
+  preferredIds?: ReadonlySet<string>,
+): TurnNode | undefined {
+  if (children.length === 0) return undefined;
+  if (preferredIds) {
+    const preferred = children.find((c) => preferredIds.has(c.id));
+    if (preferred) return preferred;
+  }
+  let best = children[0];
+  let bestMax = subtreeMaxMap.get(best.id) ?? best.createdAt;
+  for (let i = 1; i < children.length; i++) {
+    const candidate = children[i];
+    const candMax = subtreeMaxMap.get(candidate.id) ?? candidate.createdAt;
+    if (
+      candMax > bestMax ||
+      (candMax === bestMax &&
+        (candidate.createdAt > best.createdAt ||
+          (candidate.createdAt === best.createdAt && candidate.id.localeCompare(best.id) > 0)))
+    ) {
+      best = candidate;
+      bestMax = candMax;
+    }
+  }
+  return best;
+}
+
 /**
- * Walks down from targetNodeId along the latest child chain to locate its branch leaf node.
+ * Walks down from targetNodeId along the most recently active subtree chain to locate its branch leaf node.
  */
 export function findLeafForBranchNode(
   story: Story,
@@ -110,6 +166,7 @@ export function findLeafForBranchNode(
     return null;
   }
 
+  const subtreeMaxMap = buildSubtreeMaxCreatedAt(story, childrenByParent);
   let cursor = targetNodeId;
   const visited = new Set<string>([cursor]);
 
@@ -118,7 +175,7 @@ export function findLeafForBranchNode(
     if (!children || children.length === 0) {
       return cursor;
     }
-    const next = children[children.length - 1];
+    const next = pickLatestChild(children, subtreeMaxMap);
     if (!next || visited.has(next.id)) {
       return cursor;
     }

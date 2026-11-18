@@ -1,7 +1,9 @@
 import {
   buildChildrenByParent,
+  buildSubtreeMaxCreatedAt,
   countNodesToRoot,
   getRootNodes,
+  pickLatestChild,
   toCompactPreview,
 } from './branches.ts';
 import {
@@ -258,6 +260,7 @@ function collectBranchLine(
   story: Story,
   entryNodeId: string,
   childrenByParent: Map<string, TurnNode[]>,
+  subtreeMaxMap: ReadonlyMap<string, number>,
   activePathIds: ReadonlySet<string>,
 ): TurnNode[] {
   const branchNodes: TurnNode[] = [];
@@ -271,8 +274,9 @@ function collectBranchLine(
     branchNodes.push(node);
     const children = childrenByParent.get(cursor);
     if (!children || children.length === 0) break;
-    const activeChild = children.find((c) => activePathIds.has(c.id));
-    cursor = (activeChild ?? children[children.length - 1]).id;
+    const next = pickLatestChild(children, subtreeMaxMap, activePathIds);
+    if (!next) break;
+    cursor = next.id;
   }
 
   return branchNodes;
@@ -286,12 +290,19 @@ export function getForkSiblingBranches(
   parentNodeId: string | null,
 ): ForkSiblingBranch[] {
   const childrenByParent = buildChildrenByParent(story);
+  const subtreeMaxMap = buildSubtreeMaxCreatedAt(story, childrenByParent);
   const siblings =
     parentNodeId === null ? getRootNodes(story) : (childrenByParent.get(parentNodeId) ?? []);
   const activePathIds = new Set(getActiveBranchNodes(story, story.activeLeafNodeId).map((n) => n.id));
 
   return siblings.map((entryNode, index) => {
-    const branchLine = collectBranchLine(story, entryNode.id, childrenByParent, activePathIds);
+    const branchLine = collectBranchLine(
+      story,
+      entryNode.id,
+      childrenByParent,
+      subtreeMaxMap,
+      activePathIds,
+    );
     const leaf = branchLine[branchLine.length - 1] ?? entryNode;
     const totalNodes = countNodesToRoot(story, leaf.id);
 
@@ -330,8 +341,15 @@ export function buildBranchGistMessages(
   branchEntryNodeId: string,
 ): LlmMessage[] {
   const childrenByParent = buildChildrenByParent(story);
+  const subtreeMaxMap = buildSubtreeMaxCreatedAt(story, childrenByParent);
   const activePathIds = new Set(getActiveBranchNodes(story, story.activeLeafNodeId).map((n) => n.id));
-  const branchLine = collectBranchLine(story, branchEntryNodeId, childrenByParent, activePathIds);
+  const branchLine = collectBranchLine(
+    story,
+    branchEntryNodeId,
+    childrenByParent,
+    subtreeMaxMap,
+    activePathIds,
+  );
   const transcript = branchLine
     .slice(0, 12)
     .map((n) => `[${n.role === 'user' ? '玩家' : '叙事'}]: ${toCompactPreview(n.content, 160)}`)

@@ -804,11 +804,271 @@ async function main() {
     await page.waitForSelector('.import-panel');
     await checkNoHorizontalOverflow('mobile import view');
 
+    await runComprehensiveSpec18MobileE2E(browser, port, tmpDir);
+
     console.log('ALL_E2E_CHECKS_PASSED');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     await browser.close();
     srv.kill('SIGTERM');
+  }
+}
+
+function buildComprehensiveSpec18ZipE2E() {
+  const docxBytes = buildFixtureDocx();
+  const sciSession = {
+    id: 'spec18-sci',
+    title: '量子退相干数值研究',
+    current_message_id: 2,
+    inserted_at: '2026-11-10T08:00:00Z',
+    updated_at: '2026-11-10T08:02:00Z',
+    messages: [
+      { id: 1, parent_id: null, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-10T08:00:00Z', fragments: [{ type: 'REQUEST', content: 'SELECT * FROM runs;' }] },
+      { id: 2, parent_id: 1, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-10T08:02:00Z', fragments: [{ type: 'RESPONSE', content: '可以使用主方程估算。' }] },
+    ],
+  };
+  const nullSession = {
+    id: 'spec18-null',
+    title: null,
+    current_message_id: 2,
+    inserted_at: '2026-11-11T08:00:00Z',
+    updated_at: '2026-11-11T08:01:00Z',
+    messages: [
+      { id: 1, parent_id: null, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-11T08:00:00Z', fragments: [{ type: 'REQUEST', content: '周末高铁时刻查询' }] },
+      { id: 2, parent_id: 1, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-11T08:01:00Z', fragments: [{ type: 'RESPONSE', content: '周六早九点有车次。' }] },
+    ],
+  };
+  const fictionSession = {
+    id: 'spec18-two-fork',
+    title: '庄园双线E2E总验',
+    current_message_id: 10,
+    inserted_at: '2026-11-12T10:00:00Z',
+    updated_at: '2026-11-12T12:00:00Z',
+    messages: [
+      {
+        id: 1,
+        parent_id: null,
+        role: 'USER',
+        status: 'FINISHED',
+        inserted_at: '2026-11-12T10:00:00Z',
+        fragments: [
+          {
+            type: 'FILE',
+            files: [
+              { id: 'd1', file_name: '庄园规则.docx', file_size: docxBytes.length, export_path: 'chat_sessions/spec18-two-fork/庄园规则.docx', is_image: false },
+              { id: 'p1', file_name: '封面.png', file_size: 128, export_path: 'chat_sessions/spec18-two-fork/封面.png', is_image: true },
+              { id: 'doc1', file_name: '旧设.doc', file_size: 128, export_path: 'chat_sessions/spec18-two-fork/旧设.doc', is_image: false },
+            ],
+          },
+          { type: 'REQUEST', content: '按附件规则开局。' },
+        ],
+      },
+      { id: 2, parent_id: 1, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:01:00Z', fragments: [{ type: 'RESPONSE', content: '第1章 雨夜大宅\n地点：门厅' }] },
+      { id: 3, parent_id: 2, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:02:00Z', fragments: [{ type: 'REQUEST', content: '查看大宅地图' }] },
+      { id: 4, parent_id: 3, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:03:00Z', fragments: [{ type: 'RESPONSE', content: '大宅分为东楼与西塔。' }] },
+      // Fork 1 at id=4 -> Branch A (5..10, > 8 nodes!) & Branch B (11..16, > 8 nodes!)
+      { id: 5, parent_id: 4, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:04:00Z', fragments: [{ type: 'REQUEST', content: '走东楼触发事件X_银钥匙' }] },
+      {
+        id: 6,
+        parent_id: 5,
+        role: 'ASSISTANT',
+        status: 'CONTENT_FILTER',
+        inserted_at: '2026-11-12T10:05:00Z',
+        fragments: [
+          { type: 'CONTENT_RISK', content: '风控噪声' },
+          { type: 'RESPONSE', content: '事件X_银钥匙已获取。' },
+        ],
+      },
+      { id: 7, parent_id: 6, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:06:00Z', fragments: [{ type: 'REQUEST', content: '检视银钥匙' }] },
+      // Fork 2 at id=7
+      { id: 8, parent_id: 7, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:07:00Z', fragments: [{ type: 'RESPONSE', content: '银钥匙指向东楼密室。' }] },
+      { id: 17, parent_id: 7, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:07:30Z', fragments: [{ type: 'RESPONSE', content: '银钥匙备选细节。' }] },
+      { id: 9, parent_id: 8, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:08:00Z', fragments: [{ type: 'REQUEST', content: '进入东楼密室' }] },
+      { id: 10, parent_id: 9, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:09:00Z', fragments: [{ type: 'RESPONSE', content: '抵达东楼密室终点。' }] },
+      // Branch B (mutually exclusive Event Y)
+      { id: 11, parent_id: 4, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:10:00Z', fragments: [{ type: 'REQUEST', content: '走西塔触发事件Y_西塔毒药' }] },
+      { id: 12, parent_id: 11, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:11:00Z', fragments: [{ type: 'RESPONSE', content: '事件Y_西塔毒药已发现。' }] },
+      { id: 13, parent_id: 12, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:12:00Z', fragments: [{ type: 'REQUEST', content: '封存毒药样本' }] },
+      { id: 14, parent_id: 13, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:13:00Z', fragments: [{ type: 'RESPONSE', content: '发现毒药来源指向温室。' }] },
+      { id: 15, parent_id: 14, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:14:00Z', fragments: [{ type: 'REQUEST', content: '清点西塔笔记' }] },
+      { id: 16, parent_id: 15, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:15:00Z', fragments: [{ type: 'RESPONSE', content: '抵达西塔终点。' }] },
+    ],
+  };
+  return zipSync({
+    'manifest.json': strToU8(JSON.stringify({ export_format_version: 3 })),
+    'chat_sessions/spec18-sci.json': strToU8(JSON.stringify(sciSession)),
+    'chat_sessions/spec18-null.json': strToU8(JSON.stringify(nullSession)),
+    'chat_sessions/spec18-two-fork.json': strToU8(JSON.stringify(fictionSession)),
+    'chat_sessions/spec18-two-fork/庄园规则.docx': docxBytes,
+    'chat_sessions/spec18-two-fork/封面.png': strToU8('png'),
+    'chat_sessions/spec18-two-fork/旧设.doc': strToU8('doc'),
+  });
+}
+
+async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
+  const mobileCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await mobileCtx.newPage();
+  const capturedTurns = [];
+
+  try {
+    await page.route('https://cdn.deepseek.example/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: '<!DOCTYPE html><html><body>请登录</body></html>',
+      });
+    });
+
+    await page.route('**/chat/completions', async (route) => {
+      const reqBody = JSON.parse(route.request().postData() || '{}');
+      const sys = reqBody.messages?.[0]?.content || '';
+      const allText = (reqBody.messages || []).map((m) => m.content).join('\n');
+
+      if (sys.includes('剧情摘要压缩')) {
+        const summary = allText.includes('事件Y_西塔毒药')
+          ? '【西塔线摘要】已发现事件Y_西塔毒药。'
+          : allText.includes('事件X_银钥匙')
+            ? '【东楼线摘要】已取得事件X_银钥匙。'
+            : '【开局摘要】查看大宅地图。';
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: sseResponse([{ choices: [{ delta: { content: summary }, finish_reason: 'stop' }] }]),
+        });
+        return;
+      }
+
+      if (sys.includes('严格只输出一个 JSON 对象')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: sseResponse([
+            {
+              choices: [
+                {
+                  delta: {
+                    content: JSON.stringify({
+                      title: '庄园双线E2E总验',
+                      worldRules: ['每轮输出状态栏'],
+                      protagonist: '调查员',
+                      npcs: [],
+                      taboos: [],
+                      openingHook: '雨夜大宅',
+                    }),
+                  },
+                  finish_reason: 'stop',
+                },
+              ],
+            },
+          ]),
+        });
+        return;
+      }
+
+      capturedTurns.push(allText);
+      const lastMsg = reqBody.messages?.[reqBody.messages.length - 1]?.content || '';
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: sseResponse([{ choices: [{ delta: { content: `窄屏续写：${lastMsg}` }, finish_reason: 'stop' }] }]),
+      });
+    });
+
+    await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+
+    const assertNoOverflow = async (label) => {
+      const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+      }));
+      if (scrollWidth > clientWidth) {
+        throw new Error(`390px overflow on ${label} (${scrollWidth} > ${clientWidth})`);
+      }
+    };
+
+    // 1. Link error fallback -> upload comprehensive zip -> search & preview -> keyless import -> Continue This Story
+    await page.click('button:has-text("从 DeepSeek 继续")');
+    await page.click('button[role="tab"]:has-text("粘贴导出 .zip 下载链接")');
+    await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/login.zip');
+    await page.click('button:has-text("拉取并预览")');
+    await page.waitForSelector('[data-testid="deepseek-import-panel"] .error-banner:has-text("HTML")');
+    await page.click('button:has-text("改用本地 .zip 文件导入")');
+
+    const zipPath = path.join(tmpDir, 'spec18-comprehensive.zip');
+    fs.writeFileSync(zipPath, buildComprehensiveSpec18ZipE2E());
+    await page.setInputFiles('#deepseek-zip-input', zipPath);
+    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
+    await page.fill('input[aria-label="搜索 DeepSeek 会话"]', '庄园');
+    const previewText = await page.locator('[data-testid="deepseek-preview-card"]').textContent();
+    if (!previewText?.includes('2 处') || !previewText?.includes('庄园规则.docx') || !previewText?.includes('另存为 .docx')) {
+      throw new Error(`Unexpected comprehensive preview: ${previewText}`);
+    }
+    await assertNoOverflow('spec18 mobile preview');
+
+    await page.click('[data-testid="ds-confirm-import-btn"]');
+    await page.waitForSelector('[data-testid="deepseek-import-receipt"]:has-text("待配置密钥后补充")');
+    await page.click('button:has-text("继续这条故事")');
+    await page.waitForSelector('.turn-card.assistant:has-text("抵达东楼密室终点")');
+    await page.waitForSelector('[data-testid="turn-diagnostics"]:has-text("CONTENT_FILTER")');
+    await assertNoOverflow('spec18 mobile main play');
+
+    // 2. Expand Fork 1 -> rename both branches -> switch to Branch B -> inline BYOK -> continue Branch B
+    const fork1Btn = page.locator('[data-testid^="story-tree-fork-"]').first();
+    await fork1Btn.click();
+    await page.waitForSelector('.story-tree-siblings');
+
+    const branchASibling = page.locator('.story-tree-sibling', { hasText: '东楼' }).first();
+    await branchASibling.locator('button:has-text("重命名")').click();
+    await branchASibling.locator('input[aria-label="分支名称"]').fill('银钥东楼线');
+    await branchASibling.locator('button:has-text("保存名称")').click();
+
+    const branchBSibling = page.locator('.story-tree-sibling', { hasText: '西塔' }).first();
+    await branchBSibling.locator('button:has-text("重命名")').click();
+    await branchBSibling.locator('input[aria-label="分支名称"]').fill('毒药西塔线');
+    await branchBSibling.locator('button:has-text("保存名称")').click();
+
+    await branchBSibling.locator('button:has-text("切换至此分支")').click();
+    await page.waitForSelector('.turn-card.assistant:has-text("抵达西塔终点")');
+
+    await page.fill('#turn-input', '追查西塔温室');
+    await page.click('button:has-text("发送行动")');
+    await page.waitForSelector('[data-testid="byok-inline-prompt"]');
+    await page.fill('#byok-api-key', 'sk-spec18-mobile');
+    await page.click('button:has-text("保存配置并立即继续")');
+    await page.waitForSelector('.turn-card.assistant:has-text("窄屏续写：追查西塔温室")');
+
+    const promptForB = capturedTurns[capturedTurns.length - 1] ?? '';
+    if (!promptForB.includes('事件Y_西塔毒药') || promptForB.includes('事件X_银钥匙') || promptForB.includes('CONTENT_FILTER')) {
+      throw new Error(`Branch B prompt contaminated: ${promptForB}`);
+    }
+
+    // 3. Switch back to Branch A -> lazy summary + continue Branch A -> verify zero Event Y leak
+    const fork1AfterB = page.locator('[data-testid^="story-tree-fork-"]').first();
+    if ((await fork1AfterB.getAttribute('aria-expanded')) !== 'true') {
+      await fork1AfterB.click();
+    }
+    await page.locator('.story-tree-sibling', { hasText: '银钥东楼线' }).locator('button:has-text("切换至此分支")').click();
+    await page.waitForSelector('.turn-card.assistant:has-text("抵达东楼密室终点")');
+    await page.waitForSelector('[data-testid="active-plot-summary"]:has-text("【开局摘要】")');
+
+    await page.fill('#turn-input', '打开东楼密室');
+    await page.click('button:has-text("发送行动")');
+    await page.waitForSelector('.turn-card.assistant:has-text("窄屏续写：打开东楼密室")');
+
+    const promptForA = capturedTurns[capturedTurns.length - 1] ?? '';
+    if (!promptForA.includes('事件X_银钥匙') || promptForA.includes('事件Y_西塔毒药')) {
+      throw new Error(`Branch A prompt contaminated: ${promptForA}`);
+    }
+
+    // 4. Reload browser -> verify IndexedDB restores branch names, active branch A, diagnostics, and zero 390px overflow
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector('.turn-card.assistant:has-text("窄屏续写：打开东楼密室")');
+    await page.waitForSelector('[data-testid="story-review"]:has-text("银钥东楼线")');
+    await page.locator('[data-testid^="story-tree-fork-"]').first().click();
+    await page.waitForSelector('.story-tree-siblings:has-text("毒药西塔线")');
+    await assertNoOverflow('spec18 mobile post-reload');
+  } finally {
+    await mobileCtx.close();
   }
 }
 
