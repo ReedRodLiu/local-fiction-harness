@@ -105,14 +105,39 @@ export function buildSystemAnchorPrompt(story: Story): string {
   return sections.join('\n\n');
 }
 
-function sumNodeChars(nodes: readonly TurnNode[]): number {
-  return nodes.reduce((sum, n) => sum + n.content.length, 0);
+export const SETUP_NODE_PLACEHOLDER =
+  '（开局设定与剧本附件已完整锚定于系统提示词原始剧本区，此处略去重复全文）';
+
+export interface SetupNodeFilter {
+  readonly setupNodeIds?: ReadonlySet<string>;
+  readonly hasRawScript: boolean;
+}
+
+export function getSetupNodeFilter(
+  story: Pick<Story, 'rawScript' | 'setupNodeIds'>,
+): SetupNodeFilter {
+  return {
+    hasRawScript: Boolean(story.rawScript.trim()),
+    setupNodeIds: story.setupNodeIds?.length ? new Set(story.setupNodeIds) : undefined,
+  };
+}
+
+export function getEffectiveNodeContent(node: TurnNode, filter?: SetupNodeFilter): string {
+  if (filter?.hasRawScript && filter.setupNodeIds?.has(node.id)) {
+    return SETUP_NODE_PLACEHOLDER;
+  }
+  return node.content;
+}
+
+function sumNodeChars(nodes: readonly TurnNode[], filter?: SetupNodeFilter): number {
+  return nodes.reduce((sum, n) => sum + getEffectiveNodeContent(n, filter).length, 0);
 }
 
 export function trimRecentWindow(
   nodes: TurnNode[],
   budget: ContextBudgetConfig = DEFAULT_CONTEXT_BUDGET,
   pendingUserChars = 0,
+  filter?: SetupNodeFilter,
 ): TurnNode[] {
   if (nodes.length === 0) return [];
   const maxNodes = Math.max(MIN_RECENT_NODES_PER_TURN, budget.recentMaxNodes);
@@ -122,7 +147,7 @@ export function trimRecentWindow(
     windowed.shift();
   }
 
-  let totalChars = sumNodeChars(windowed) + pendingUserChars;
+  let totalChars = sumNodeChars(windowed, filter) + pendingUserChars;
   while (windowed.length > MIN_RECENT_NODES_PER_TURN && totalChars > budget.recentMaxChars) {
     const dropCount =
       windowed[0]?.role === 'user' && windowed[1]?.role === 'assistant' ? 2 : 1;
@@ -131,7 +156,7 @@ export function trimRecentWindow(
     }
     for (let i = 0; i < dropCount; i++) {
       const removed = windowed.shift()!;
-      totalChars -= removed.content.length;
+      totalChars -= getEffectiveNodeContent(removed, filter).length;
     }
   }
   return windowed;
@@ -149,11 +174,12 @@ export function assembleThreeZoneContext(
 ): ThreeZoneContextResult {
   const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...budgetOverrides };
   const anchorText = buildSystemAnchorPrompt(story);
+  const setupFilter = getSetupNodeFilter(story);
   const snapshot = getActiveSummarySnapshot(story, targetParentId);
   const branchNodes = getActiveBranchNodes(story, targetParentId);
   const uncovered = getUncoveredNodes(branchNodes, snapshot.coveredUpToNodeId);
   const trimmedInput = userInput?.trim() ?? '';
-  const recentNodes = trimRecentWindow(uncovered, budget, trimmedInput.length);
+  const recentNodes = trimRecentWindow(uncovered, budget, trimmedInput.length, setupFilter);
 
   const messages: LlmMessage[] = [{ role: 'system', content: anchorText }];
   let summaryChars = 0;
@@ -166,10 +192,11 @@ export function assembleThreeZoneContext(
 
   let recentChars = 0;
   for (const node of recentNodes) {
-    recentChars += node.content.length;
+    const content = getEffectiveNodeContent(node, setupFilter);
+    recentChars += content.length;
     messages.push({
       role: node.role,
-      content: node.content,
+      content,
     });
   }
 
@@ -198,10 +225,11 @@ export function assembleThreeZoneContext(
 export function selectNodesToSummarize(
   uncoveredNodes: TurnNode[],
   budgetOverrides?: Partial<ContextBudgetConfig>,
+  filter?: SetupNodeFilter,
 ): TurnNode[] {
   const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...budgetOverrides };
   const maxNodes = Math.max(MIN_RECENT_NODES_PER_TURN, budget.recentMaxNodes);
-  const totalChars = sumNodeChars(uncoveredNodes);
+  const totalChars = sumNodeChars(uncoveredNodes, filter);
 
   if (uncoveredNodes.length <= maxNodes && totalChars <= budget.recentMaxChars) {
     return [];
@@ -214,9 +242,9 @@ export function selectNodesToSummarize(
   }
 
   let cutCount = Math.min(maxCutEnd, Math.max(MIN_RECENT_NODES_PER_TURN, uncoveredNodes.length - maxNodes));
-  let remainingChars = sumNodeChars(uncoveredNodes.slice(cutCount));
+  let remainingChars = sumNodeChars(uncoveredNodes.slice(cutCount), filter);
   while (cutCount < maxCutEnd && remainingChars > budget.recentMaxChars) {
-    remainingChars -= uncoveredNodes[cutCount].content.length;
+    remainingChars -= getEffectiveNodeContent(uncoveredNodes[cutCount], filter).length;
     cutCount += 1;
   }
 
@@ -230,9 +258,13 @@ export function selectNodesToSummarize(
 export function buildSummaryCompressionMessages(
   previousSummary: string,
   nodesToFold: TurnNode[],
+  filter?: SetupNodeFilter,
 ): LlmMessage[] {
   const turnsText = nodesToFold
-    .map((n) => `[${n.role === 'user' ? '玩家' : '叙事'}]: ${n.content}`)
+    .map(
+      (n) =>
+        `[${n.role === 'user' ? '玩家' : '叙事'}]: ${getEffectiveNodeContent(n, filter)}`,
+    )
     .join('\n\n');
 
   return [
@@ -253,12 +285,17 @@ export function buildSummaryCompressionMessages(
   ];
 }
 
-export function buildFallbackSummary(previousSummary: string, nodesToFold: TurnNode[]): string {
+export function buildFallbackSummary(
+  previousSummary: string,
+  nodesToFold: TurnNode[],
+  filter?: SetupNodeFilter,
+): string {
   const digest = nodesToFold
     .map((n) => {
       const prefix = n.role === 'user' ? '玩家' : '叙事';
-      const snippet = n.content.replace(/\s+/g, ' ').trim().slice(0, 80);
-      return `- ${prefix}：${snippet}${n.content.length > 80 ? '…' : ''}`;
+      const effective = getEffectiveNodeContent(n, filter);
+      const snippet = effective.replace(/\s+/g, ' ').trim().slice(0, 80);
+      return `- ${prefix}：${snippet}${effective.length > 80 ? '…' : ''}`;
     })
     .join('\n');
   return previousSummary.trim() ? `${previousSummary.trim()}\n${digest}` : digest;

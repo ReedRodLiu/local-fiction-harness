@@ -17,9 +17,12 @@ import {
   buildFallbackSummary,
   buildSummaryCompressionMessages,
   getActiveBranchNodes,
+  getEffectiveNodeContent,
+  getSetupNodeFilter,
   getUncoveredNodes,
   selectNodesToSummarize,
   type ContextBudgetConfig,
+  type SetupNodeFilter,
   type ThreeZoneContextResult,
 } from './context.ts';
 import type {
@@ -123,6 +126,26 @@ export interface FictionHarness {
   rewindToNode(story: Story, targetNodeId: string | null): Promise<Story>;
 }
 
+const MAX_SUMMARY_BATCH_NODES = 12;
+const MAX_SUMMARY_BATCH_CHARS = 8000;
+
+function takeSummaryBatch(toSummarize: TurnNode[], filter?: SetupNodeFilter): TurnNode[] {
+  let end = 0;
+  let batchChars = 0;
+  for (const node of toSummarize) {
+    if (end >= MAX_SUMMARY_BATCH_NODES) break;
+    const nodeChars = getEffectiveNodeContent(node, filter).length;
+    if (end > 0 && batchChars + nodeChars > MAX_SUMMARY_BATCH_CHARS) break;
+    batchChars += nodeChars;
+    end += 1;
+  }
+  if (end === 0) return [];
+  if (end < toSummarize.length && end > 1 && toSummarize[end - 1]?.role === 'user') {
+    end -= 1;
+  }
+  return toSummarize.slice(0, end);
+}
+
 /**
  * Pure TypeScript Fiction Harness core engine with zero DOM or Node runtime dependencies.
  */
@@ -197,39 +220,84 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
 
   const summarizeOverflowTurns = async (
     story: Story,
+    targetLeafId: string | null,
     parentSnapshot: PlotSummarySnapshot,
     config: ModelConfig,
     signal?: AbortSignalLike,
   ): Promise<PlotSummarySnapshot> => {
-    const branchNodes = getActiveBranchNodes(story, story.activeLeafNodeId);
-    const uncovered = getUncoveredNodes(branchNodes, parentSnapshot.coveredUpToNodeId);
-    const toSummarize = selectNodesToSummarize(uncovered, deps.contextBudget);
+    if (!targetLeafId) return parentSnapshot;
+    const branchNodes = getActiveBranchNodes(story, targetLeafId);
+    const setupFilter = getSetupNodeFilter(story);
+    let currentSnapshot = parentSnapshot;
 
-    if (toSummarize.length === 0) {
-      return parentSnapshot;
-    }
-
-    let compressed = '';
-    try {
-      const result = await streamText(
-        config,
-        buildSummaryCompressionMessages(parentSnapshot.content, toSummarize),
-        { signal },
-      );
-      compressed = result.content;
-    } catch (err) {
-      if (isAbortError(err)) {
-        throw err;
+    while (true) {
+      const uncovered = getUncoveredNodes(branchNodes, currentSnapshot.coveredUpToNodeId);
+      const toSummarize = selectNodesToSummarize(uncovered, deps.contextBudget, setupFilter);
+      if (toSummarize.length === 0) {
+        return currentSnapshot;
       }
-      compressed = '';
-    }
+      const batch = takeSummaryBatch(toSummarize, setupFilter);
+      if (batch.length === 0) {
+        return currentSnapshot;
+      }
 
-    const finalContent =
-      compressed.trim() || buildFallbackSummary(parentSnapshot.content, toSummarize);
+      let compressed = '';
+      try {
+        const result = await streamText(
+          config,
+          buildSummaryCompressionMessages(currentSnapshot.content, batch, setupFilter),
+          { signal },
+        );
+        compressed = result.content;
+      } catch (err) {
+        if (isAbortError(err)) {
+          throw err;
+        }
+        compressed = '';
+      }
+
+      const finalContent =
+        compressed.trim() || buildFallbackSummary(currentSnapshot.content, batch, setupFilter);
+      currentSnapshot = {
+        content: finalContent,
+        coveredUpToNodeId: batch[batch.length - 1].id,
+        summarizedTurnCount: currentSnapshot.summarizedTurnCount + batch.length,
+      };
+    }
+  };
+
+  const catchUpParentSummary = async (
+    story: Story,
+    parentId: string | null,
+    config: ModelConfig,
+    signal?: AbortSignalLike,
+  ): Promise<{ story: Story; snapshot: PlotSummarySnapshot }> => {
+    if (!parentId || !story.nodes[parentId]) {
+      return { story, snapshot: EMPTY_SUMMARY_SNAPSHOT };
+    }
+    const parentNode = story.nodes[parentId];
+    const caughtUp = await summarizeOverflowTurns(
+      story,
+      parentId,
+      parentNode.summarySnapshot,
+      config,
+      signal,
+    );
+    if (caughtUp === parentNode.summarySnapshot) {
+      return { story, snapshot: caughtUp };
+    }
     return {
-      content: finalContent,
-      coveredUpToNodeId: toSummarize[toSummarize.length - 1].id,
-      summarizedTurnCount: parentSnapshot.summarizedTurnCount + toSummarize.length,
+      story: {
+        ...story,
+        nodes: {
+          ...story.nodes,
+          [parentId]: {
+            ...parentNode,
+            summarySnapshot: caughtUp,
+          },
+        },
+      },
+      snapshot: caughtUp,
     };
   };
 
@@ -269,6 +337,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
 
     const updatedSnapshot = await summarizeOverflowTurns(
       provisionalStory,
+      provisionalStory.activeLeafNodeId,
       opts.baseSnapshot,
       opts.config,
       opts.signal,
@@ -307,13 +376,15 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     config: ModelConfig,
     callbacks?: TurnCallbacks,
   ): Promise<TurnExecutionResult> => {
-    const parentSnapshot =
-      parentId && story.nodes[parentId]
-        ? story.nodes[parentId].summarySnapshot
-        : EMPTY_SUMMARY_SNAPSHOT;
+    const { story: workingStory, snapshot: parentSnapshot } = await catchUpParentSummary(
+      story,
+      parentId,
+      config,
+      callbacks?.signal,
+    );
 
     const { messages } = assembleThreeZoneContext(
-      story,
+      workingStory,
       parentId,
       trimmedInput,
       deps.contextBudget,
@@ -331,13 +402,14 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     };
 
     return finalizeAssistantReply({
-      baseStory: story,
+      baseStory: workingStory,
       userNode,
       baseSnapshot: parentSnapshot,
       content,
       reasoningContent,
       extraNodes: { [userNode.id]: userNode },
-      rootNodeIds: parentId === null ? [...story.rootNodeIds, userNode.id] : story.rootNodeIds,
+      rootNodeIds:
+        parentId === null ? [...workingStory.rootNodeIds, userNode.id] : workingStory.rootNodeIds,
       config,
       signal: callbacks?.signal,
     });
@@ -453,6 +525,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
 
       const updatedSnapshot = await summarizeOverflowTurns(
         story,
+        leafId,
         leaf.summarySnapshot,
         config,
         signal,
@@ -569,8 +642,19 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         throw new Error('AI 节点缺少关联的玩家输入父节点。');
       }
 
-      const { messages } = assembleThreeZoneContext(
+      const { story: workingStory, snapshot: parentSnapshot } = await catchUpParentSummary(
         story,
+        userNode.parentId,
+        config,
+        callbacks?.signal,
+      );
+      const effectiveUserNode =
+        parentSnapshot === userNode.summarySnapshot
+          ? userNode
+          : { ...userNode, summarySnapshot: parentSnapshot };
+
+      const { messages } = assembleThreeZoneContext(
+        workingStory,
         userNode.parentId,
         userNode.content,
         deps.contextBudget,
@@ -578,13 +662,14 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       const { content, reasoningContent } = await streamText(config, messages, callbacks);
 
       return finalizeAssistantReply({
-        baseStory: story,
-        userNode,
-        baseSnapshot: userNode.summarySnapshot,
+        baseStory: workingStory,
+        userNode: effectiveUserNode,
+        baseSnapshot: parentSnapshot,
         content,
         reasoningContent,
-        extraNodes: {},
-        rootNodeIds: story.rootNodeIds,
+        extraNodes:
+          effectiveUserNode === userNode ? {} : { [effectiveUserNode.id]: effectiveUserNode },
+        rootNodeIds: workingStory.rootNodeIds,
         config,
         signal: callbacks?.signal,
       });

@@ -270,6 +270,24 @@ export function importStoryBackup(
     rawStory.branchSummaries,
     'story.branchSummaries',
   );
+  let setupNodeIds: string[] | undefined;
+  if (rawStory.setupNodeIds !== undefined) {
+    const rawSetupIds = assertStringArray(rawStory.setupNodeIds, 'story.setupNodeIds');
+    const deduped: string[] = [];
+    const seen = new Set<string>();
+    for (const id of rawSetupIds) {
+      if (!nodes[id]) {
+        throw new Error(`备份文件 setupNodeIds 包含不存在的节点 ${id}。`);
+      }
+      if (!seen.has(id)) {
+        seen.add(id);
+        deduped.push(id);
+      }
+    }
+    if (deduped.length > 0) {
+      setupNodeIds = deduped;
+    }
+  }
 
   const existingSet = new Set(existingStoryIds);
   const hasCollision = existingSet.has(rawStory.id);
@@ -282,6 +300,7 @@ export function importStoryBackup(
     nodes,
     rootNodeIds,
     activeLeafNodeId: rawStory.activeLeafNodeId,
+    ...(setupNodeIds ? { setupNodeIds } : {}),
     ...(branchNames ? { branchNames } : {}),
     ...(branchSummaries ? { branchSummaries } : {}),
     createdAt: rawStory.createdAt,

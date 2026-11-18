@@ -40,6 +40,7 @@ export interface Story {
   nodes: Record<string, TurnNode>;
   rootNodeIds: string[];
   activeLeafNodeId: string | null;
+  setupNodeIds?: string[];
   branchNames?: Record<string, string>;
   branchSummaries?: Record<string, string>;
   createdAt: number;

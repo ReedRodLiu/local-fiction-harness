@@ -29,6 +29,7 @@ import {
   type DevTestConfigResponse,
 } from '../platform/runtime.ts';
 import { ContextOverview } from './ContextOverview.tsx';
+import { mergeBranchSummaryResult } from './storyConcurrency.ts';
 import { ImportPanel, type ImportMode } from './ImportPanel.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
@@ -132,6 +133,9 @@ export function App({ runtime }: AppProps) {
   const abortRef = useRef<AbortController | null>(null);
   const streamSeqRef = useRef(0);
   const storyOpSeqRef = useRef(0);
+  const summarySeqRef = useRef(0);
+  const storyRef = useRef<Story | null>(story);
+  storyRef.current = story;
   const configEditSeqRef = useRef(0);
   const configSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const suppressedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet());
@@ -156,6 +160,20 @@ export function App({ runtime }: AppProps) {
     setStories(list);
     return list;
   }, [harness]);
+
+  const commitStoryState = useCallback(
+    async (nextStory: Story) => {
+      storyRef.current = nextStory;
+      setStory(nextStory);
+      await refreshStories();
+    },
+    [refreshStories],
+  );
+
+  const invalidateSummaryTask = useCallback(() => {
+    summarySeqRef.current += 1;
+    setIsSummarizing(false);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -354,21 +372,23 @@ export function App({ runtime }: AppProps) {
   const runStoryTransition = async (
     transition: () => Promise<Story>,
     fallbackError: string,
-    opts?: { blockBusy?: boolean; trackSummarizing?: boolean },
+    opts?: { blockBusy?: boolean; trackSummarizing?: boolean; preserveSummaryTask?: boolean },
   ): Promise<Story | null> => {
     if (opts?.blockBusy !== false && (abortRef.current || isStreaming || isSummarizing)) {
       return null;
     }
     const opSeq = ++storyOpSeqRef.current;
+    const summarySeq = opts?.preserveSummaryTask ? summarySeqRef.current : ++summarySeqRef.current;
     setErrorMsg(null);
     if (opts?.trackSummarizing) {
       setIsSummarizing(true);
+    } else if (!opts?.preserveSummaryTask) {
+      setIsSummarizing(false);
     }
     try {
       const updated = await transition();
       if (storyOpSeqRef.current !== opSeq) return null;
-      setStory(updated);
-      await refreshStories();
+      await commitStoryState(updated);
       return updated;
     } catch (err) {
       if (storyOpSeqRef.current === opSeq) {
@@ -376,7 +396,7 @@ export function App({ runtime }: AppProps) {
       }
       return null;
     } finally {
-      if (opts?.trackSummarizing && storyOpSeqRef.current === opSeq) {
+      if (opts?.trackSummarizing && summarySeqRef.current === summarySeq) {
         setIsSummarizing(false);
       }
     }
@@ -470,41 +490,65 @@ export function App({ runtime }: AppProps) {
     );
   };
 
+  const runBackgroundSummary = async (
+    targetStory: Story,
+    targetLeafId: string,
+    activeCfg: ModelConfig,
+    fallbackError: string,
+  ) => {
+    const summarySeq = ++summarySeqRef.current;
+    setIsSummarizing(true);
+    try {
+      const summarized = await harness.ensureActiveBranchSummary(targetStory, activeCfg);
+      if (summarySeqRef.current !== summarySeq) return;
+      const latest = storyRef.current;
+      const merged = latest
+        ? mergeBranchSummaryResult(latest, summarized, targetLeafId)
+        : null;
+      if (merged) {
+        // Update React state synchronously before awaiting storage so concurrent metadata edits aren't overwritten
+        storyRef.current = merged;
+        setStory(merged);
+        await harness.saveStory(merged);
+        await refreshStories();
+      }
+    } catch (err) {
+      if (summarySeqRef.current === summarySeq) {
+        setErrorMsg(toErrorMessage(err, fallbackError));
+      }
+    } finally {
+      if (summarySeqRef.current === summarySeq) {
+        setIsSummarizing(false);
+      }
+    }
+  };
+
   const handleSwitchBranch = async (targetNodeId: string) => {
     const switched = await runStoryTransition(
-      () => harness.switchBranch(story, targetNodeId),
+      () => harness.switchBranch(storyRef.current!, targetNodeId),
       '切换分支失败。',
     );
+    const targetLeafId = switched?.activeLeafNodeId ?? null;
     if (
       switched &&
+      targetLeafId &&
       computeActiveReviewState(switched).needsSummaryCompression &&
       hasModelCredentials(config, useDevEnvKey)
     ) {
-      const summarySeq = storyOpSeqRef.current;
-      setIsSummarizing(true);
-      try {
-        const summarized = await harness.ensureActiveBranchSummary(switched, config);
-        if (storyOpSeqRef.current === summarySeq) {
-          setStory(summarized);
-          await refreshStories();
-        }
-      } catch (err) {
-        if (storyOpSeqRef.current === summarySeq) {
-          setErrorMsg(toErrorMessage(err, '补算支线剧情摘要失败，可稍后重试。'));
-        }
-      } finally {
-        if (storyOpSeqRef.current === summarySeq) {
-          setIsSummarizing(false);
-        }
-      }
+      await runBackgroundSummary(
+        switched,
+        targetLeafId,
+        config,
+        '补算支线剧情摘要失败，可稍后重试。',
+      );
     }
   };
 
   const handleRenameBranch = async (branchEntryNodeId: string, name: string) => {
     await runStoryTransition(
-      () => harness.renameBranch(story, branchEntryNodeId, name),
+      () => harness.renameBranch(storyRef.current!, branchEntryNodeId, name),
       '重命名分支失败。',
-      { blockBusy: false },
+      { blockBusy: false, preserveSummaryTask: true },
     );
   };
 
@@ -529,11 +573,11 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '补算当前支线剧情摘要',
       (activeCfg) => {
-        void runStoryTransition(
-          () => harness.ensureActiveBranchSummary(story, activeCfg),
-          '补算剧情摘要失败。',
-          { trackSummarizing: true },
-        );
+        const current = storyRef.current;
+        const targetLeafId = current?.activeLeafNodeId ?? null;
+        if (!current || !targetLeafId) return;
+        setErrorMsg(null);
+        void runBackgroundSummary(current, targetLeafId, activeCfg, '补算剧情摘要失败。');
       },
       overrideConfig,
     );
@@ -575,13 +619,13 @@ export function App({ runtime }: AppProps) {
     blueprint: StoryBlueprint;
   }) => {
     abortActiveStream(true);
+    invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
     setErrorMsg(null);
     try {
       const created = await harness.createAndSaveStory(imported);
       if (storyOpSeqRef.current !== opSeq) return;
-      setStory(created);
-      await refreshStories();
+      await commitStoryState(created);
       setShowImport(false);
     } catch (err) {
       if (storyOpSeqRef.current === opSeq) {
@@ -596,6 +640,7 @@ export function App({ runtime }: AppProps) {
     scriptRangeOverrides: Record<string, ScriptTurnRange>,
   ): Promise<DeepSeekImportBatchResult> => {
     abortActiveStream(true);
+    invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
     setErrorMsg(null);
     const result = await importDeepSeekSessions(zipBytes, selectedSessionIds, harness, {
@@ -603,8 +648,7 @@ export function App({ runtime }: AppProps) {
       modelConfig: hasCredentials ? config : undefined,
     });
     if (storyOpSeqRef.current === opSeq && result.stories[0]) {
-      setStory(result.stories[0]);
-      await refreshStories();
+      await commitStoryState(result.stories[0]);
     }
     return result;
   };
@@ -616,12 +660,14 @@ export function App({ runtime }: AppProps) {
 
   const handleSelectStory = async (id: string) => {
     abortActiveStream(true);
+    invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
     setErrorMsg(null);
     try {
       const switched = await harness.setActiveStory(id);
       if (storyOpSeqRef.current !== opSeq) return;
       if (switched) {
+        storyRef.current = switched;
         setStory(switched);
         setShowImport(false);
       }
@@ -647,6 +693,7 @@ export function App({ runtime }: AppProps) {
 
   const handleDeleteStory = async (id: string) => {
     abortActiveStream(true);
+    invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
     const deletedActiveStory = story.id === id;
     setErrorMsg(null);
@@ -699,6 +746,7 @@ export function App({ runtime }: AppProps) {
 
   const handleImportBackupFile = async (file: File) => {
     abortActiveStream(true);
+    invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
     setErrorMsg(null);
     try {
@@ -713,8 +761,7 @@ export function App({ runtime }: AppProps) {
       await harness.saveStory(restored);
       await harness.setActiveStory(restored.id);
       if (storyOpSeqRef.current !== opSeq) return;
-      setStory(restored);
-      await refreshStories();
+      await commitStoryState(restored);
       setShowImport(false);
     } catch (err) {
       if (storyOpSeqRef.current === opSeq) {

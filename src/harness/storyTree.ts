@@ -10,6 +10,7 @@ import {
   DEFAULT_CONTEXT_BUDGET,
   getActiveBranchNodes,
   getActiveSummarySnapshot,
+  getSetupNodeFilter,
   getUncoveredNodes,
   selectNodesToSummarize,
   trimRecentWindow,
@@ -374,8 +375,10 @@ export function computeActiveReviewState(
   const activeNodes = getActiveBranchNodes(story, story.activeLeafNodeId);
   const summarySnapshot = getActiveSummarySnapshot(story, story.activeLeafNodeId);
   const uncovered = getUncoveredNodes(activeNodes, summarySnapshot.coveredUpToNodeId);
-  const recentNodes = trimRecentWindow(uncovered, budget, 0);
-  const needsSummaryCompression = selectNodesToSummarize(uncovered, budget).length > 0;
+  const setupFilter = getSetupNodeFilter(story);
+  const recentNodes = trimRecentWindow(uncovered, budget, 0, setupFilter);
+  const needsSummaryCompression =
+    selectNodesToSummarize(uncovered, budget, setupFilter).length > 0;
 
   let coveredTurnRange: TurnRange | null = null;
   if (summarySnapshot.coveredUpToNodeId) {

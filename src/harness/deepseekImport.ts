@@ -445,19 +445,23 @@ function detectRawScriptFromActivePath(
   activeNodes: readonly TurnNode[],
   attachmentTextsByNodeId: ReadonlyMap<string, string[]>,
   overrideRange?: ScriptTurnRange,
-): { rawScript: string; confidence: 'strong' | 'ambiguous' } {
+): { rawScript: string; confidence: 'strong' | 'ambiguous'; setupNodeIds: string[] } {
   const userNodes = activeNodes.filter((n) => n.role === 'user');
   if (overrideRange && overrideRange.endTurn >= 1) {
     const startIdx = Math.max(0, (overrideRange.startTurn ?? 1) - 1);
     const endIdx = Math.max(startIdx + 1, overrideRange.endTurn);
     const chosen = userNodes.slice(startIdx, endIdx);
     const parts: string[] = [];
+    const setupNodeIds: string[] = [];
     for (const node of chosen) {
       const attach = attachmentTextsByNodeId.get(node.id) ?? [];
       parts.push(...attach);
       if (node.content.trim()) parts.push(node.content.trim());
+      if (attach.length > 0 || node.content.trim()) {
+        setupNodeIds.push(node.id);
+      }
     }
-    return { rawScript: parts.join('\n\n').trim(), confidence: 'strong' };
+    return { rawScript: parts.join('\n\n').trim(), confidence: 'strong', setupNodeIds };
   }
 
   const firstUser = userNodes[0];
@@ -468,10 +472,10 @@ function detectRawScriptFromActivePath(
       const combined = [...firstAttachments, ...(firstText.length >= 120 ? [firstText] : [])]
         .join('\n\n')
         .trim();
-      return { rawScript: combined, confidence: 'strong' };
+      return { rawScript: combined, confidence: 'strong', setupNodeIds: [firstUser.id] };
     }
     if (firstText.length >= 180 || countStrongFictionMatches(firstText) >= 2) {
-      return { rawScript: firstText, confidence: 'strong' };
+      return { rawScript: firstText, confidence: 'strong', setupNodeIds: [firstUser.id] };
     }
   }
 
@@ -480,15 +484,24 @@ function detectRawScriptFromActivePath(
   for (const node of userNodes.slice(1, 5)) {
     const attachments = attachmentTextsByNodeId.get(node.id) ?? [];
     if (attachments.length > 0) {
-      return { rawScript: attachments.join('\n\n').trim(), confidence: 'ambiguous' };
+      return {
+        rawScript: attachments.join('\n\n').trim(),
+        confidence: 'ambiguous',
+        setupNodeIds: [node.id],
+      };
     }
     const text = node.content.trim();
     if (text.length >= 120 || countStrongFictionMatches(text) >= 2) {
-      return { rawScript: text, confidence: 'ambiguous' };
+      return { rawScript: text, confidence: 'ambiguous', setupNodeIds: [node.id] };
     }
   }
 
-  return { rawScript: firstUser?.content.trim() ?? '', confidence: 'ambiguous' };
+  const fallbackText = firstUser?.content.trim() ?? '';
+  return {
+    rawScript: fallbackText,
+    confidence: 'ambiguous',
+    setupNodeIds: firstUser && fallbackText ? [firstUser.id] : [],
+  };
 }
 
 function buildStoryFromRawSession(
@@ -698,6 +711,7 @@ function buildStoryFromRawSession(
   const story: Story = {
     ...baseStory,
     rawScript: detected.rawScript,
+    ...(detected.setupNodeIds.length > 0 ? { setupNodeIds: detected.setupNodeIds } : {}),
     blueprint: {
       ...baseStory.blueprint,
       openingHook: firstAssistant ? toSnippet(firstAssistant.content, 120) : '',
@@ -950,7 +964,13 @@ export async function importDeepSeekSessions(
           options.signal,
         );
         if (!boundary.usedFallback && boundary.rawScript.trim()) {
-          workingStory = { ...workingStory, rawScript: boundary.rawScript };
+          workingStory = {
+            ...workingStory,
+            rawScript: boundary.rawScript,
+            ...(boundary.scriptMessageIds.length > 0
+              ? { setupNodeIds: boundary.scriptMessageIds }
+              : {}),
+          };
         }
         if (boundary.firstPlayMessageId && workingStory.nodes[boundary.firstPlayMessageId]) {
           locatedOpeningHook = toSnippet(
