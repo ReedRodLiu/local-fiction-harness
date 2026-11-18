@@ -6,7 +6,7 @@ status: accepted
 
 ## Decision
 
-导入 DeepSeek 网页端统一导出压缩包（`export_format_version: 3`）时，采用两阶段按需解压与单会话独立映射策略：第一阶段仅读取 `manifest.json` 与 `chat_sessions/*.json` 元数据，经纯本地启发式预筛置顶疑似文游会话（辅以可选的模型二次筛选）供玩家多选；第二阶段将每条勾选的外部会话 1 对 1 转化为独立的 `Story`（含完整 `TurnNode` 分支树与只读 `Node Diagnostics`），仅按需从压缩包抽取所引用的 `.docx` / `.md` / `.txt` 文本附件（忽略图片、PDF 并明确提示，旧版二进制 `.doc` 提示玩家另存为 `.docx`），过滤 `CONTENT_RISK` / `TOOL_*` 平台噪音，并以「本地强信号直判 + 模糊开局前几轮轻量 LLM 定位」自动锁定 `Raw Script`、拆解 `Story Blueprint`，仅对当前激活路径（`current_message_id`）即时补算 `Plot Summary`。
+导入 DeepSeek 网页端统一导出压缩包（`export_format_version: 3`，支持本地选择 `.zip` 文件或粘贴由客户端直接拉取的 HTTPS 导出 `.zip` 下载链接，校验大小上限与 `PK` 魔数，若遇登录态或浏览器 CORS 限制则引导改用本地文件）时，采用两阶段按需解压与单会话独立映射策略：第一阶段仅读取 `manifest.json` 与 `chat_sessions/*.json` 元数据，经纯本地启发式预筛置顶疑似文游会话（辅以可选的模型二次筛选）供玩家多选；第二阶段将每条勾选的外部会话 1 对 1 转化为独立的 `Story`（含完整 `TurnNode` 分支树与只读 `Node Diagnostics`），仅按需从压缩包抽取所引用的 `.docx` / `.md` / `.txt` 文本附件（忽略图片、PDF 并明确提示，旧版二进制 `.doc` 提示玩家另存为 `.docx`），过滤 `CONTENT_RISK` / `TOOL_*` 平台噪音，并以「本地强信号直判 + 模糊开局前几轮轻量 LLM 定位」自动锁定 `Raw Script`、拆解 `Story Blueprint`（未配置 API Key 时允许先完成本地导入并延后模型步骤），仅对当前激活路径（`current_message_id`）即时补算 `Plot Summary`。
 
 ## Considered Options
 
