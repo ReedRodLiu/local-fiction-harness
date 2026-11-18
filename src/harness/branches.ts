@@ -126,7 +126,7 @@ export function buildSubtreeMaxCreatedAt(
   return maxMap;
 }
 
-export function pickLatestChild(
+export function pickActiveOrLatestChild(
   children: readonly TurnNode[],
   subtreeMaxMap: ReadonlyMap<string, number>,
   preferredIds?: ReadonlySet<string>,
@@ -175,7 +175,7 @@ export function findLeafForBranchNode(
     if (!children || children.length === 0) {
       return cursor;
     }
-    const next = pickLatestChild(children, subtreeMaxMap);
+    const next = pickActiveOrLatestChild(children, subtreeMaxMap);
     if (!next || visited.has(next.id)) {
       return cursor;
     }

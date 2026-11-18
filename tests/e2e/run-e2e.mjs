@@ -841,7 +841,7 @@ function buildComprehensiveSpec18ZipE2E() {
   const fictionSession = {
     id: 'spec18-two-fork',
     title: '庄园双线E2E总验',
-    current_message_id: 10,
+    current_message_id: 21,
     inserted_at: '2026-11-12T10:00:00Z',
     updated_at: '2026-11-12T12:00:00Z',
     messages: [
@@ -866,7 +866,7 @@ function buildComprehensiveSpec18ZipE2E() {
       { id: 2, parent_id: 1, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:01:00Z', fragments: [{ type: 'RESPONSE', content: '第1章 雨夜大宅\n地点：门厅' }] },
       { id: 3, parent_id: 2, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:02:00Z', fragments: [{ type: 'REQUEST', content: '查看大宅地图' }] },
       { id: 4, parent_id: 3, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:03:00Z', fragments: [{ type: 'RESPONSE', content: '大宅分为东楼与西塔。' }] },
-      // Fork 1 at id=4 -> Branch A (5..10, > 8 nodes!) & Branch B (11..16, > 8 nodes!)
+      // Fork 1 at id=4 -> Branch A (12 post-fork nodes -> Event X folded into summary!) & Branch B (12 post-fork nodes -> Event Y folded!)
       { id: 5, parent_id: 4, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:04:00Z', fragments: [{ type: 'REQUEST', content: '走东楼触发事件X_银钥匙' }] },
       {
         id: 6,
@@ -884,14 +884,20 @@ function buildComprehensiveSpec18ZipE2E() {
       { id: 8, parent_id: 7, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:07:00Z', fragments: [{ type: 'RESPONSE', content: '银钥匙指向东楼密室。' }] },
       { id: 17, parent_id: 7, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:07:30Z', fragments: [{ type: 'RESPONSE', content: '银钥匙备选细节。' }] },
       { id: 9, parent_id: 8, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:08:00Z', fragments: [{ type: 'REQUEST', content: '进入东楼密室' }] },
-      { id: 10, parent_id: 9, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:09:00Z', fragments: [{ type: 'RESPONSE', content: '抵达东楼密室终点。' }] },
-      // Branch B (mutually exclusive Event Y)
+      { id: 10, parent_id: 9, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:09:00Z', fragments: [{ type: 'RESPONSE', content: '东楼走廊尽头出现暗门。' }] },
+      { id: 18, parent_id: 10, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:09:10Z', fragments: [{ type: 'REQUEST', content: '推开东楼暗门' }] },
+      { id: 19, parent_id: 18, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:09:20Z', fragments: [{ type: 'RESPONSE', content: '暗门后是密室石阶。' }] },
+      { id: 20, parent_id: 19, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:09:30Z', fragments: [{ type: 'REQUEST', content: '走下密室石阶' }] },
+      { id: 21, parent_id: 20, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:09:40Z', fragments: [{ type: 'RESPONSE', content: '抵达东楼密室终点。' }] },
+      // Branch B (mutually exclusive Event Y, 12 post-fork nodes)
       { id: 11, parent_id: 4, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:10:00Z', fragments: [{ type: 'REQUEST', content: '走西塔触发事件Y_西塔毒药' }] },
       { id: 12, parent_id: 11, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:11:00Z', fragments: [{ type: 'RESPONSE', content: '事件Y_西塔毒药已发现。' }] },
       { id: 13, parent_id: 12, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:12:00Z', fragments: [{ type: 'REQUEST', content: '封存毒药样本' }] },
       { id: 14, parent_id: 13, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:13:00Z', fragments: [{ type: 'RESPONSE', content: '发现毒药来源指向温室。' }] },
       { id: 15, parent_id: 14, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:14:00Z', fragments: [{ type: 'REQUEST', content: '清点西塔笔记' }] },
-      { id: 16, parent_id: 15, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:15:00Z', fragments: [{ type: 'RESPONSE', content: '抵达西塔终点。' }] },
+      { id: 16, parent_id: 15, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:15:00Z', fragments: [{ type: 'RESPONSE', content: '笔记记录了温室配比。' }] },
+      { id: 22, parent_id: 16, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-12T10:15:10Z', fragments: [{ type: 'REQUEST', content: '收好西塔实验记录' }] },
+      { id: 23, parent_id: 22, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-12T10:15:20Z', fragments: [{ type: 'RESPONSE', content: '抵达西塔终点。' }] },
     ],
   };
   return zipSync({
@@ -1000,7 +1006,13 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     await page.waitForSelector('[data-testid="deepseek-preview-card"]');
     await page.fill('input[aria-label="搜索 DeepSeek 会话"]', '庄园');
     const previewText = await page.locator('[data-testid="deepseek-preview-card"]').textContent();
-    if (!previewText?.includes('2 处') || !previewText?.includes('庄园规则.docx') || !previewText?.includes('另存为 .docx')) {
+    if (
+      !previewText?.includes('2 处') ||
+      !previewText?.includes('庄园规则.docx') ||
+      !previewText?.includes('封面.png') ||
+      !previewText?.includes('另存为 .docx') ||
+      !previewText?.includes('只读平台诊断标记')
+    ) {
       throw new Error(`Unexpected comprehensive preview: ${previewText}`);
     }
     await assertNoOverflow('spec18 mobile preview');
@@ -1041,15 +1053,23 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     if (!promptForB.includes('事件Y_西塔毒药') || promptForB.includes('事件X_银钥匙') || promptForB.includes('CONTENT_FILTER')) {
       throw new Error(`Branch B prompt contaminated: ${promptForB}`);
     }
+    const reviewB = await page.locator('[data-testid="active-plot-summary"]').textContent();
+    if (!reviewB?.includes('事件Y_西塔毒药') || reviewB.includes('事件X_银钥匙')) {
+      throw new Error(`StoryReview on Branch B not isolated: ${reviewB}`);
+    }
 
-    // 3. Switch back to Branch A -> lazy summary + continue Branch A -> verify zero Event Y leak
+    // 3. Switch back to Branch A -> lazy summary + continue Branch A -> verify StoryReview & prompt zero Event Y leak
     const fork1AfterB = page.locator('[data-testid^="story-tree-fork-"]').first();
     if ((await fork1AfterB.getAttribute('aria-expanded')) !== 'true') {
       await fork1AfterB.click();
     }
     await page.locator('.story-tree-sibling', { hasText: '银钥东楼线' }).locator('button:has-text("切换至此分支")').click();
     await page.waitForSelector('.turn-card.assistant:has-text("抵达东楼密室终点")');
-    await page.waitForSelector('[data-testid="active-plot-summary"]:has-text("【开局摘要】")');
+    await page.waitForSelector('[data-testid="active-plot-summary"]:has-text("事件X_银钥匙")');
+    const reviewA = await page.locator('[data-testid="active-plot-summary"]').textContent();
+    if (!reviewA?.includes('事件X_银钥匙') || reviewA.includes('事件Y_西塔毒药')) {
+      throw new Error(`StoryReview on Branch A not isolated: ${reviewA}`);
+    }
 
     await page.fill('#turn-input', '打开东楼密室');
     await page.click('button:has-text("发送行动")');
@@ -1060,10 +1080,12 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
       throw new Error(`Branch A prompt contaminated: ${promptForA}`);
     }
 
-    // 4. Reload browser -> verify IndexedDB restores branch names, active branch A, diagnostics, and zero 390px overflow
+    // 4. Reload browser -> verify IndexedDB restores branch names, active branch A, StoryReview, diagnostics, and zero 390px overflow
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForSelector('.turn-card.assistant:has-text("窄屏续写：打开东楼密室")');
     await page.waitForSelector('[data-testid="story-review"]:has-text("银钥东楼线")');
+    await page.waitForSelector('[data-testid="active-plot-summary"]:has-text("事件X_银钥匙")');
+    await page.waitForSelector('[data-testid="turn-diagnostics"]:has-text("CONTENT_FILTER")');
     await page.locator('[data-testid^="story-tree-fork-"]').first().click();
     await page.waitForSelector('.story-tree-siblings:has-text("毒药西塔线")');
     await assertNoOverflow('spec18 mobile post-reload');

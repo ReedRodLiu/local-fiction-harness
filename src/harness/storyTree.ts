@@ -3,7 +3,7 @@ import {
   buildSubtreeMaxCreatedAt,
   countNodesToRoot,
   getRootNodes,
-  pickLatestChild,
+  pickActiveOrLatestChild,
   toCompactPreview,
 } from './branches.ts';
 import {
@@ -259,10 +259,16 @@ export function extractBranchLocalCues(nodes: readonly TurnNode[]): string[] {
 function collectBranchLine(
   story: Story,
   entryNodeId: string,
-  childrenByParent: Map<string, TurnNode[]>,
-  subtreeMaxMap: ReadonlyMap<string, number>,
-  activePathIds: ReadonlySet<string>,
+  ctx?: {
+    childrenByParent: Map<string, TurnNode[]>;
+    subtreeMaxMap: ReadonlyMap<string, number>;
+    activePathIds: ReadonlySet<string>;
+  },
 ): TurnNode[] {
+  const childrenByParent = ctx?.childrenByParent ?? buildChildrenByParent(story);
+  const subtreeMaxMap = ctx?.subtreeMaxMap ?? buildSubtreeMaxCreatedAt(story, childrenByParent);
+  const activePathIds =
+    ctx?.activePathIds ?? new Set(getActiveBranchNodes(story, story.activeLeafNodeId).map((n) => n.id));
   const branchNodes: TurnNode[] = [];
   const visited = new Set<string>();
   let cursor: string | null = entryNodeId;
@@ -274,7 +280,7 @@ function collectBranchLine(
     branchNodes.push(node);
     const children = childrenByParent.get(cursor);
     if (!children || children.length === 0) break;
-    const next = pickLatestChild(children, subtreeMaxMap, activePathIds);
+    const next = pickActiveOrLatestChild(children, subtreeMaxMap, activePathIds);
     if (!next) break;
     cursor = next.id;
   }
@@ -296,13 +302,11 @@ export function getForkSiblingBranches(
   const activePathIds = new Set(getActiveBranchNodes(story, story.activeLeafNodeId).map((n) => n.id));
 
   return siblings.map((entryNode, index) => {
-    const branchLine = collectBranchLine(
-      story,
-      entryNode.id,
+    const branchLine = collectBranchLine(story, entryNode.id, {
       childrenByParent,
       subtreeMaxMap,
       activePathIds,
-    );
+    });
     const leaf = branchLine[branchLine.length - 1] ?? entryNode;
     const totalNodes = countNodesToRoot(story, leaf.id);
 
@@ -340,16 +344,7 @@ export function buildBranchGistMessages(
   story: Story,
   branchEntryNodeId: string,
 ): LlmMessage[] {
-  const childrenByParent = buildChildrenByParent(story);
-  const subtreeMaxMap = buildSubtreeMaxCreatedAt(story, childrenByParent);
-  const activePathIds = new Set(getActiveBranchNodes(story, story.activeLeafNodeId).map((n) => n.id));
-  const branchLine = collectBranchLine(
-    story,
-    branchEntryNodeId,
-    childrenByParent,
-    subtreeMaxMap,
-    activePathIds,
-  );
+  const branchLine = collectBranchLine(story, branchEntryNodeId);
   const transcript = branchLine
     .slice(0, 12)
     .map((n) => `[${n.role === 'user' ? '玩家' : '叙事'}]: ${toCompactPreview(n.content, 160)}`)
