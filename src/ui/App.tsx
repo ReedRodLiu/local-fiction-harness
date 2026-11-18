@@ -111,6 +111,7 @@ export function App({ runtime }: AppProps) {
   const [story, setStory] = useState<Story>(() => harness.createStory({ title: '新故事' }));
   const [showImport, setShowImport] = useState(false);
   const [importMode, setImportMode] = useState<ImportMode>('deepseek');
+  const [importResetKey, setImportResetKey] = useState(0);
   const [pendingByok, setPendingByok] = useState<{
     label: string;
     resume: (resolvedConfig: ModelConfig) => void;
@@ -393,6 +394,7 @@ export function App({ runtime }: AppProps) {
   const openImportView = (mode: ImportMode) => {
     abortActiveStream(true);
     setImportMode(mode);
+    setImportResetKey((k) => k + 1);
     setShowImport(true);
   };
 
@@ -943,6 +945,7 @@ export function App({ runtime }: AppProps) {
         {showImport ? (
           <ImportPanel
             initialMode={importMode}
+            resetKey={importResetKey}
             config={config}
             transport={runtime.transport}
             hasCredentials={hasCredentials}

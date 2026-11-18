@@ -17,6 +17,7 @@ export type ImportMode = 'deepseek' | 'script';
 
 interface ImportPanelProps {
   initialMode?: ImportMode;
+  resetKey?: number;
   config: ModelConfig;
   transport: LlmTransport;
   hasCredentials: boolean;
@@ -72,6 +73,7 @@ function toDraft(bp: StoryBlueprint): BlueprintDraft {
 
 export function ImportPanel({
   initialMode = 'deepseek',
+  resetKey = 0,
   config,
   transport,
   hasCredentials,
@@ -281,6 +283,7 @@ export function ImportPanel({
 
       {importMode === 'deepseek' ? (
         <DeepSeekImportPanel
+          key={resetKey}
           config={config}
           transport={transport}
           hasCredentials={hasCredentials}

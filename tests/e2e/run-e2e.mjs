@@ -241,11 +241,25 @@ async function main() {
     const replyCounts = new Map();
     let failNextBlueprintWith401 = false;
     let delayNextTurnMs = 0;
+    let boundaryCallCount = 0;
+    let lastTurnSystemText = '';
 
     await page.route('**/chat/completions', async (route) => {
       const reqBody = JSON.parse(route.request().postData() || '{}');
       const sys = reqBody.messages?.[0]?.content || '';
       const lastMsg = reqBody.messages?.[reqBody.messages.length - 1]?.content || '';
+
+      if (
+        !sys.includes('严格只输出一个 JSON 对象') &&
+        !sys.includes('剧情摘要压缩') &&
+        !sys.includes('剧本边界定位') &&
+        !sys.includes('分支梗概助手')
+      ) {
+        lastTurnSystemText = (reqBody.messages || [])
+          .filter((m) => m.role === 'system')
+          .map((m) => m.content)
+          .join('\n');
+      }
 
       if (delayNextTurnMs > 0 && !sys.includes('严格只输出一个 JSON 对象') && !sys.includes('剧情摘要压缩')) {
         const waitMs = delayNextTurnMs;
@@ -290,6 +304,7 @@ async function main() {
       }
 
       if (sys.includes('剧本边界定位')) {
+        boundaryCallCount += 1;
         const items = JSON.parse(lastMsg || '[]');
         const scriptNode = items.find((i) => String(i.snippet || '').includes('E2E模糊剧本'));
         const playNode = items.find((i) => String(i.snippet || '').includes('第一幕开始'));
@@ -420,15 +435,62 @@ async function main() {
     await page.click('button:has-text("保存配置并立即继续")');
     await page.waitForSelector('.turn-card.assistant:has-text("回执：推开练歌房钢琴盖")');
 
-    // 0b. Keyed import of ambiguous + over-window DeepSeek zip -> boundary locator + active-path compression + blueprint
+    // 0a. Keyless ambiguous + over-window import -> pending_key -> complete summary + blueprint after inline key
+    await page.fill('#cfg-api-key', '');
+    await page.waitForTimeout(50);
     const ambigZipPath = path.join(tmpDir, 'deepseek-ambiguous-long.zip');
     fs.writeFileSync(ambigZipPath, buildAmbiguousOverWindowZipE2E());
     await page.click('button:has-text("从 DeepSeek 继续")');
     await page.waitForSelector('#deepseek-zip-input');
     await page.setInputFiles('#deepseek-zip-input', ambigZipPath);
     await page.waitForSelector('[data-testid="deepseek-preview-card"]');
+    // Exercise collapsed manual script range override in preview and then clear back to auto
+    await page.locator('details summary:has-text("手动调整原始剧本起点")').click();
+    await page.fill('#ds-script-start', '3');
+    await page.fill('#ds-script-end', '3');
+    const overridePreviewText = await page.locator('[data-testid="deepseek-preview-card"]').textContent();
+    if (!overridePreviewText?.includes('已自动锁定剧本')) {
+      throw new Error(`Expected manual override to lock script, got: ${overridePreviewText}`);
+    }
+    await page.fill('#ds-script-start', '');
     await page.click('[data-testid="ds-confirm-import-btn"]');
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
+    const keylessAmbigReceipt = await page.locator('[data-testid="deepseek-import-receipt"]').textContent();
+    if (!keylessAmbigReceipt?.includes('待配置密钥后补充')) {
+      throw new Error(`Expected pending_key badge in receipt, got: ${keylessAmbigReceipt}`);
+    }
+    await page.click('button:has-text("继续这条故事")');
+    await page.waitForSelector('.turn-card.assistant:has-text("门后传来脚步声")');
+    await page.click('button:has-text("补算剧情摘要")');
+    await page.waitForSelector('[data-testid="byok-inline-prompt"]');
+    await page.fill('#byok-api-key', 'sk-e2e-inline');
+    await page.click('button:has-text("保存配置并立即继续")');
+    await page.waitForSelector('[data-testid="active-plot-summary"]:has-text("【激活线压缩摘要】")');
+    await page.locator('details summary:has-text("故事蓝图与原始剧本锚定")').click();
+    await page.click('button:has-text("补拆蓝图")');
+    await page.waitForSelector('button:has-text("补拆蓝图")', { state: 'detached' });
+
+    // 0b. Keyed imports: strong turn-1 skips boundary locator; ambiguous runs boundary locator once + compresses + carries both on continuation
+    boundaryCallCount = 0;
+    await page.click('button:has-text("从 DeepSeek 继续")');
+    await page.waitForSelector('#deepseek-zip-input');
+    await page.setInputFiles('#deepseek-zip-input', dsZipPath);
+    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
+    await page.click('[data-testid="ds-confirm-import-btn"]');
+    await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
+    if (boundaryCallCount !== 0) {
+      throw new Error(`Expected 0 boundary LLM calls for strong turn-1 script, got ${boundaryCallCount}`);
+    }
+
+    await page.click('button:has-text("从 DeepSeek 继续")');
+    await page.waitForSelector('#deepseek-zip-input');
+    await page.setInputFiles('#deepseek-zip-input', ambigZipPath);
+    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
+    await page.click('[data-testid="ds-confirm-import-btn"]');
+    await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
+    if (boundaryCallCount !== 1) {
+      throw new Error(`Expected 1 boundary LLM call for ambiguous opening, got ${boundaryCallCount}`);
+    }
     const ambigReceipt = await page.locator('[data-testid="deepseek-import-receipt"]').textContent();
     if (!ambigReceipt?.includes('已压缩激活线摘要')) {
       throw new Error(`Expected compressed summary status in receipt, got: ${ambigReceipt}`);
@@ -438,6 +500,16 @@ async function main() {
     const ambigSummary = await page.locator('[data-testid="active-plot-summary"]').textContent();
     if (!ambigSummary?.includes('【激活线压缩摘要】')) {
       throw new Error(`Expected compressed active summary in StoryReview, got: ${ambigSummary}`);
+    }
+    await page.fill('#turn-input', '推开船长室门');
+    await page.click('button:has-text("发送行动")');
+    await page.waitForSelector('.turn-card.assistant:has-text("回执：推开船长室门")');
+    if (
+      !lastTurnSystemText.includes('【E2E模糊剧本】') ||
+      !lastTurnSystemText.includes('【激活线压缩摘要】') ||
+      lastTurnSystemText.includes('你好呀')
+    ) {
+      throw new Error(`Continuation system prompt missing refined anchor or summary: ${lastTurnSystemText}`);
     }
 
     // Clean up DeepSeek stories before running existing script-import workflow assertions

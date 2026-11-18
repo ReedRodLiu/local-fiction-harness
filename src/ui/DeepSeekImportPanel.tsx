@@ -153,6 +153,24 @@ export function DeepSeekImportPanel({
     }
   };
 
+  const updateScriptRange = (sessionId: string, edge: 'start' | 'end', rawValue: string) => {
+    const val = Number(rawValue);
+    setScriptRangeOverrides((prev) => {
+      const next = { ...prev };
+      if (!Number.isFinite(val) || val < 1) {
+        delete next[sessionId];
+        return next;
+      }
+      const n = Math.floor(val);
+      const current = prev[sessionId];
+      next[sessionId] =
+        edge === 'start'
+          ? { startTurn: n, endTurn: Math.max(n, current?.endTurn ?? n) }
+          : { startTurn: Math.min(n, current?.startTurn ?? 1), endTurn: n };
+      return next;
+    });
+  };
+
   if (receipt) {
     const primaryStory = receipt.stories[0];
     return (
@@ -201,13 +219,28 @@ export function DeepSeekImportPanel({
         {primaryStory && (
           <div className="composer-actions">
             <span className="status-text">已自动定位至原对话最新激活节点（current_message_id）</span>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => onContinueStory(primaryStory.id)}
-            >
-              继续这条故事
-            </button>
+            <div className="btn-group">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setReceipt(null);
+                  setZipBytes(null);
+                  setScanResult(null);
+                  setSelectedIds([]);
+                  setPreviewSessionId(null);
+                }}
+              >
+                继续导入其他 .zip
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => onContinueStory(primaryStory.id)}
+              >
+                继续这条故事
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -411,23 +444,7 @@ export function DeepSeekImportPanel({
                       max={Math.max(1, preview.turnCount)}
                       value={scriptRangeOverrides[preview.sessionId]?.startTurn ?? ''}
                       placeholder="默认自动"
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        setScriptRangeOverrides((prev) => {
-                          const next = { ...prev };
-                          if (Number.isFinite(val) && val >= 1) {
-                            const startTurn = Math.floor(val);
-                            const endTurn = Math.max(
-                              startTurn,
-                              prev[preview.sessionId]?.endTurn ?? startTurn,
-                            );
-                            next[preview.sessionId] = { startTurn, endTurn };
-                          } else {
-                            delete next[preview.sessionId];
-                          }
-                          return next;
-                        });
-                      }}
+                      onChange={(e) => updateScriptRange(preview.sessionId, 'start', e.target.value)}
                     />
                   </div>
                   <div className="field" style={{ flex: 1 }}>
@@ -439,23 +456,7 @@ export function DeepSeekImportPanel({
                       max={Math.max(1, preview.turnCount)}
                       value={scriptRangeOverrides[preview.sessionId]?.endTurn ?? ''}
                       placeholder="默认自动"
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        setScriptRangeOverrides((prev) => {
-                          const next = { ...prev };
-                          if (Number.isFinite(val) && val >= 1) {
-                            const endTurn = Math.floor(val);
-                            const startTurn = Math.min(
-                              endTurn,
-                              prev[preview.sessionId]?.startTurn ?? 1,
-                            );
-                            next[preview.sessionId] = { startTurn, endTurn };
-                          } else {
-                            delete next[preview.sessionId];
-                          }
-                          return next;
-                        });
-                      }}
+                      onChange={(e) => updateScriptRange(preview.sessionId, 'end', e.target.value)}
                     />
                   </div>
                 </div>

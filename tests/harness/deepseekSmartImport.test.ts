@@ -343,6 +343,20 @@ describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path s
           };
           return;
         }
+        if (sys.includes('严格只输出一个 JSON 对象')) {
+          yield {
+            contentDelta: JSON.stringify({
+              title: '雾隐山庄补拆',
+              worldRules: ['规则补全'],
+              protagonist: '顾长风',
+              npcs: [],
+              taboos: [],
+              openingHook: '山庄雨夜',
+            }),
+            finishReason: 'stop',
+          };
+          return;
+        }
         yield { contentDelta: '补算后摘要', finishReason: 'stop' };
       },
     };
@@ -358,12 +372,15 @@ describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path s
     expect(keylessResult.summaryStatuses[story.id]).toBe('pending_key');
     expect(story.blueprint.extractionStatus).toBe('partial_fallback');
 
-    // Later after configuring key, lazy summary completion works cleanly
-    const completed = await harness.ensureActiveBranchSummary(story, testConfig);
+    // Later after configuring key, both blueprint extraction and lazy summary completion succeed
+    const bp = await harness.extractStoryBlueprint(story.rawScript, testConfig, story.title);
+    expect(bp.extractionStatus).toBe('complete');
+    const withBp = await harness.updateStoryBlueprint(story, bp);
+    const completed = await harness.ensureActiveBranchSummary(withBp, testConfig);
     expect(getActiveSummarySnapshot(completed).content).toBe('补算后摘要');
 
     // Direct call to locateDeepSeekScriptBoundary handles empty/invalid fallback gracefully
-    const fallbackBoundary = await locateDeepSeekScriptBoundary(story, transport, testConfig);
+    const fallbackBoundary = await locateDeepSeekScriptBoundary(completed, transport, testConfig);
     expect(fallbackBoundary.usedFallback).toBe(true);
   });
 });

@@ -119,7 +119,6 @@ export interface DeepSeekImportBatchResult {
 export interface DeepSeekPreviewOptions {
   createId?: () => string;
   now?: () => number;
-  scriptTurnOverrides?: Record<string, number>;
   scriptRangeOverrides?: Record<string, ScriptTurnRange>;
 }
 
@@ -498,7 +497,6 @@ function buildStoryFromRawSession(
   opts: {
     createId: () => string;
     now: () => number;
-    scriptTurnOverride?: number;
     scriptRangeOverride?: ScriptTurnRange;
   },
 ): DeepSeekSessionPreview {
@@ -690,15 +688,10 @@ function buildStoryFromRawSession(
   };
 
   const activeNodes = getActiveBranchNodes(baseStory, activeLeafNodeId);
-  const resolvedRange: ScriptTurnRange | undefined =
-    opts.scriptRangeOverride ??
-    (opts.scriptTurnOverride !== undefined && opts.scriptTurnOverride > 0
-      ? { startTurn: 1, endTurn: opts.scriptTurnOverride }
-      : undefined);
   const detected = detectRawScriptFromActivePath(
     activeNodes,
     attachmentTextsByNodeId,
-    resolvedRange,
+    opts.scriptRangeOverride,
   );
 
   const firstAssistant = activeNodes.find((n) => n.role === 'assistant');
@@ -801,10 +794,39 @@ export function previewDeepSeekSessions(
     buildStoryFromRawSession(raw, extractedFiles, {
       createId,
       now,
-      scriptTurnOverride: options.scriptTurnOverrides?.[raw.id],
       scriptRangeOverride: options.scriptRangeOverrides?.[raw.id],
     }),
   );
+}
+
+async function streamJsonObject(
+  transport: LlmTransport,
+  config: ModelConfig,
+  messages: Array<{ role: 'system' | 'user'; content: string }>,
+  signal?: AbortSignalLike,
+): Promise<Record<string, unknown> | null> {
+  let rawResponse = '';
+  for await (const delta of transport.streamChat({
+    baseUrl: config.baseUrl,
+    apiKey: config.apiKey,
+    model: config.model,
+    signal,
+    messages,
+  })) {
+    if (delta.contentDelta) {
+      rawResponse += delta.contentDelta;
+    }
+  }
+  const jsonMatch = /\{[\s\S]*\}/.exec(rawResponse);
+  if (!jsonMatch) return null;
+  try {
+    const parsed = JSON.parse(jsonMatch[0]) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -817,16 +839,16 @@ export async function locateDeepSeekScriptBoundary(
   config: ModelConfig,
   signal?: AbortSignalLike,
 ): Promise<ScriptBoundaryResult> {
+  const fallbackResult = (firstPlayMessageId: string | null = null): ScriptBoundaryResult => ({
+    rawScript: story.rawScript,
+    scriptMessageIds: [],
+    firstPlayMessageId,
+    usedFallback: true,
+  });
+
   const activeNodes = getActiveBranchNodes(story, story.activeLeafNodeId);
   const earlyNodes = activeNodes.slice(0, 8);
-  if (earlyNodes.length === 0) {
-    return {
-      rawScript: story.rawScript,
-      scriptMessageIds: [],
-      firstPlayMessageId: null,
-      usedFallback: true,
-    };
-  }
+  if (earlyNodes.length === 0) return fallbackResult();
 
   const compactPreview = earlyNodes.map((n, index) => ({
     index: index + 1,
@@ -835,14 +857,12 @@ export async function locateDeepSeekScriptBoundary(
     snippet: toSnippet(n.content, 240),
   }));
 
-  let rawResponse = '';
+  let parsed: Record<string, unknown> | null = null;
   try {
-    for await (const delta of transport.streamChat({
-      baseUrl: config.baseUrl,
-      apiKey: config.apiKey,
-      model: config.model,
-      signal,
-      messages: [
+    parsed = await streamJsonObject(
+      transport,
+      config,
+      [
         {
           role: 'system',
           content:
@@ -853,76 +873,42 @@ export async function locateDeepSeekScriptBoundary(
           content: JSON.stringify(compactPreview),
         },
       ],
-    })) {
-      if (delta.contentDelta) {
-        rawResponse += delta.contentDelta;
-      }
-    }
+      signal,
+    );
   } catch (err) {
     if (isAbortError(err)) throw err;
-    return {
-      rawScript: story.rawScript,
-      scriptMessageIds: [],
-      firstPlayMessageId: null,
-      usedFallback: true,
-    };
+    return fallbackResult();
   }
 
-  const jsonMatch = /\{[\s\S]*\}/.exec(rawResponse);
-  if (!jsonMatch) {
-    return {
-      rawScript: story.rawScript,
-      scriptMessageIds: [],
-      firstPlayMessageId: null,
-      usedFallback: true,
-    };
+  if (!parsed) return fallbackResult();
+
+  const validIds = new Set(earlyNodes.map((n) => n.id));
+  const scriptMessageIds = Array.isArray(parsed.scriptMessageIds)
+    ? parsed.scriptMessageIds.filter(
+        (id): id is string => typeof id === 'string' && validIds.has(id),
+      )
+    : [];
+  const firstPlayMessageId =
+    typeof parsed.firstPlayMessageId === 'string' && validIds.has(parsed.firstPlayMessageId)
+      ? parsed.firstPlayMessageId
+      : null;
+
+  if (scriptMessageIds.length === 0) {
+    return fallbackResult(firstPlayMessageId);
   }
 
-  try {
-    const parsed = JSON.parse(jsonMatch[0]) as {
-      scriptMessageIds?: unknown;
-      firstPlayMessageId?: unknown;
-    };
-    const validIds = new Set(earlyNodes.map((n) => n.id));
-    const scriptMessageIds = Array.isArray(parsed.scriptMessageIds)
-      ? parsed.scriptMessageIds.filter(
-          (id): id is string => typeof id === 'string' && validIds.has(id),
-        )
-      : [];
-    const firstPlayMessageId =
-      typeof parsed.firstPlayMessageId === 'string' && validIds.has(parsed.firstPlayMessageId)
-        ? parsed.firstPlayMessageId
-        : null;
+  const rawScript = scriptMessageIds
+    .map((id) => story.nodes[id]?.content.trim() ?? '')
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
 
-    if (scriptMessageIds.length === 0) {
-      return {
-        rawScript: story.rawScript,
-        scriptMessageIds: [],
-        firstPlayMessageId,
-        usedFallback: true,
-      };
-    }
-
-    const rawScript = scriptMessageIds
-      .map((id) => story.nodes[id]?.content.trim() ?? '')
-      .filter(Boolean)
-      .join('\n\n')
-      .trim();
-
-    return {
-      rawScript: rawScript || story.rawScript,
-      scriptMessageIds,
-      firstPlayMessageId,
-      usedFallback: false,
-    };
-  } catch {
-    return {
-      rawScript: story.rawScript,
-      scriptMessageIds: [],
-      firstPlayMessageId: null,
-      usedFallback: true,
-    };
-  }
+  return {
+    rawScript: rawScript || story.rawScript,
+    scriptMessageIds,
+    firstPlayMessageId,
+    usedFallback: false,
+  };
 }
 
 /**
@@ -952,11 +938,10 @@ export async function importDeepSeekSessions(
 
   for (const preview of previews) {
     let workingStory = preview.story;
-    const hasManualOverride =
-      Boolean(options.scriptRangeOverrides?.[preview.sessionId]) ||
-      Boolean(options.scriptTurnOverrides?.[preview.sessionId]);
+    const hasManualOverride = Boolean(options.scriptRangeOverrides?.[preview.sessionId]);
 
     if (modelConfig) {
+      let locatedOpeningHook: string | null = null;
       if (preview.scriptConfidence === 'ambiguous' && !hasManualOverride) {
         const boundary = await locateDeepSeekScriptBoundary(
           workingStory,
@@ -966,6 +951,19 @@ export async function importDeepSeekSessions(
         );
         if (!boundary.usedFallback && boundary.rawScript.trim()) {
           workingStory = { ...workingStory, rawScript: boundary.rawScript };
+        }
+        if (boundary.firstPlayMessageId && workingStory.nodes[boundary.firstPlayMessageId]) {
+          locatedOpeningHook = toSnippet(
+            workingStory.nodes[boundary.firstPlayMessageId].content,
+            120,
+          );
+          workingStory = {
+            ...workingStory,
+            blueprint: {
+              ...workingStory.blueprint,
+              openingHook: locatedOpeningHook,
+            },
+          };
         }
       }
 
@@ -977,7 +975,13 @@ export async function importDeepSeekSessions(
             workingStory.title,
             options.signal,
           );
-          workingStory = { ...workingStory, blueprint };
+          workingStory = {
+            ...workingStory,
+            blueprint:
+              locatedOpeningHook && !blueprint.openingHook.trim()
+                ? { ...blueprint, openingHook: locatedOpeningHook }
+                : blueprint,
+          };
         } catch (err) {
           if (isAbortError(err)) throw err;
           // Keep partial_fallback blueprint cleanly without blocking import
@@ -1029,13 +1033,10 @@ export async function assistFilterDeepSeekSessions(
     files: s.attachments.map((a) => a.fileName),
   }));
 
-  let rawResponse = '';
-  for await (const delta of transport.streamChat({
-    baseUrl: config.baseUrl,
-    apiKey: config.apiKey,
-    model: config.model,
-    signal,
-    messages: [
+  const parsed = await streamJsonObject(
+    transport,
+    config,
+    [
       {
         role: 'system',
         content:
@@ -1046,22 +1047,12 @@ export async function assistFilterDeepSeekSessions(
         content: JSON.stringify(compactList),
       },
     ],
-  })) {
-    if (delta.contentDelta) {
-      rawResponse += delta.contentDelta;
-    }
-  }
+    signal,
+  );
 
-  const jsonMatch = /\{[\s\S]*\}/.exec(rawResponse);
-  if (!jsonMatch) return [];
-  try {
-    const parsed = JSON.parse(jsonMatch[0]) as { fictionSessionIds?: unknown };
-    if (!Array.isArray(parsed.fictionSessionIds)) return [];
-    const validIds = new Set(sessions.map((s) => s.sessionId));
-    return parsed.fictionSessionIds.filter(
-      (id): id is string => typeof id === 'string' && validIds.has(id),
-    );
-  } catch {
-    return [];
-  }
+  if (!parsed || !Array.isArray(parsed.fictionSessionIds)) return [];
+  const validIds = new Set(sessions.map((s) => s.sessionId));
+  return parsed.fictionSessionIds.filter(
+    (id): id is string => typeof id === 'string' && validIds.has(id),
+  );
 }
