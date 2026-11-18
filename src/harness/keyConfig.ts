@@ -36,12 +36,7 @@ function parseMetaJson(rawMeta: string | null): Partial<ModelConfigMeta> {
   }
 }
 
-function resolveModelConfig(
-  meta: Partial<ModelConfigMeta> | null | undefined,
-  persistedKey: string,
-  memoryApiKey: string,
-): ModelConfig {
-  const memoryOnly = Boolean(meta?.memoryOnly);
+function normalizeMeta(meta: Partial<ModelConfigMeta> | null | undefined): ModelConfigMeta {
   return {
     baseUrl:
       typeof meta?.baseUrl === 'string' && meta.baseUrl
@@ -49,8 +44,19 @@ function resolveModelConfig(
         : DEFAULT_MODEL_CONFIG.baseUrl,
     model:
       typeof meta?.model === 'string' && meta.model ? meta.model : DEFAULT_MODEL_CONFIG.model,
-    memoryOnly,
-    apiKey: memoryOnly ? memoryApiKey : persistedKey,
+    memoryOnly: Boolean(meta?.memoryOnly),
+  };
+}
+
+function resolveModelConfig(
+  meta: Partial<ModelConfigMeta> | null | undefined,
+  persistedKey: string,
+  memoryApiKey: string,
+): ModelConfig {
+  const normalized = normalizeMeta(meta);
+  return {
+    ...normalized,
+    apiKey: normalized.memoryOnly ? memoryApiKey : persistedKey,
   };
 }
 
@@ -70,18 +76,7 @@ export function createKeyValueSecretStore(persistentStorage: KeyValueStorage): S
     async loadMeta(): Promise<ModelConfigMeta | null> {
       const rawMeta = persistentStorage.getItem(CONFIG_META_KEY);
       if (!rawMeta) return null;
-      const parsed = parseMetaJson(rawMeta);
-      return {
-        baseUrl:
-          typeof parsed.baseUrl === 'string' && parsed.baseUrl
-            ? parsed.baseUrl
-            : DEFAULT_MODEL_CONFIG.baseUrl,
-        model:
-          typeof parsed.model === 'string' && parsed.model
-            ? parsed.model
-            : DEFAULT_MODEL_CONFIG.model,
-        memoryOnly: Boolean(parsed.memoryOnly),
-      };
+      return normalizeMeta(parseMetaJson(rawMeta));
     },
     async saveMeta(meta: ModelConfigMeta): Promise<void> {
       persistentStorage.setItem(CONFIG_META_KEY, JSON.stringify(meta));

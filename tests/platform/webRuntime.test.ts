@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
-import { createWebPlatformRuntime, detectRuntimePlatform } from '../../src/platform/runtime.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createPlatformRuntime,
+  createWebPlatformRuntime,
+  detectRuntimePlatform,
+} from '../../src/platform/runtime.ts';
 import type { KeyValueStorage, StoryStorage } from '../../src/harness/index.ts';
 
 function createMemoryStorage(): KeyValueStorage {
@@ -25,6 +29,26 @@ function createNoopStoryStorage(): StoryStorage {
     setActiveStoryId: async () => {},
   };
 }
+
+const originalWindow = (globalThis as { window?: unknown }).window;
+const originalDocument = (globalThis as { document?: unknown }).document;
+const originalCreateObjectURL = URL.createObjectURL;
+const originalRevokeObjectURL = URL.revokeObjectURL;
+
+afterEach(() => {
+  if (originalWindow === undefined) {
+    delete (globalThis as { window?: unknown }).window;
+  } else {
+    (globalThis as { window?: unknown }).window = originalWindow;
+  }
+  if (originalDocument === undefined) {
+    delete (globalThis as { document?: unknown }).document;
+  } else {
+    (globalThis as { document?: unknown }).document = originalDocument;
+  }
+  URL.createObjectURL = originalCreateObjectURL;
+  URL.revokeObjectURL = originalRevokeObjectURL;
+});
 
 describe('PlatformRuntime detection & Web adapter', () => {
   it('detects android only when Capacitor reports native android, otherwise web', () => {
@@ -89,5 +113,26 @@ describe('PlatformRuntime detection & Web adapter', () => {
 
     await runtime.backupExporter.exportJsonFile('test.lfh.json', '{"schemaVersion":1}');
     expect(exported).toEqual([{ fileName: 'test.lfh.json', jsonContent: '{"schemaVersion":1}' }]);
+  });
+
+  it('exercises createPlatformRuntime() and default DOM Blob BackupExporter', async () => {
+    const kv = createMemoryStorage();
+    const clickSpy = vi.fn();
+    const anchor = { href: '', download: '', click: clickSpy };
+    (globalThis as { window: unknown }).window = { localStorage: kv, indexedDB: undefined };
+    (globalThis as { document: unknown }).document = {
+      createElement: vi.fn(() => anchor),
+    };
+    URL.createObjectURL = vi.fn(() => 'blob:test-backup');
+    URL.revokeObjectURL = vi.fn();
+
+    const runtime = createPlatformRuntime({ fetchImpl: vi.fn() });
+    expect(runtime.platform).toBe('web');
+
+    await runtime.backupExporter.exportJsonFile('story.lfh.json', '{"schemaVersion":1}');
+    expect(anchor.href).toBe('blob:test-backup');
+    expect(anchor.download).toBe('story.lfh.json');
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test-backup');
   });
 });

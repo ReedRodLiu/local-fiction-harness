@@ -8,13 +8,7 @@ import {
   type StoryStorage,
 } from '../harness/index.ts';
 import { createIndexedDbStoryStorage } from '../ui/indexedDbStorage.ts';
-
-export const DEV_PROXY_BASE_URL = '/__dev_llm_proxy';
-
-export function isDevProxyBaseUrl(url: string): boolean {
-  const trimmed = url.trim();
-  return trimmed === DEV_PROXY_BASE_URL || trimmed.startsWith(`${DEV_PROXY_BASE_URL}/`);
-}
+import { isDevProxyBaseUrl, readDevSessionProxy } from './devProxy.ts';
 
 export interface WebRuntimeOptions {
   keyValueStorage?: KeyValueStorage;
@@ -58,7 +52,11 @@ export function createWebPlatformRuntime(options: WebRuntimeOptions = {}): Platf
 
   const devAwareFetch: FetchLike = (url, init) => {
     const headers = { ...init.headers };
-    if (isDev && options.devUseEnvKey?.() && isDevProxyBaseUrl(url)) {
+    const shouldAttachDevKey =
+      isDev &&
+      isDevProxyBaseUrl(url) &&
+      (options.devUseEnvKey ? options.devUseEnvKey() : Boolean(readDevSessionProxy(true)?.hasEnvKey));
+    if (shouldAttachDevKey) {
       headers['x-use-dev-env-key'] = '1';
     }
     return baseFetch(url, { ...init, headers });
