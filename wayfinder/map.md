@@ -12,7 +12,7 @@ status: active
 
 ## Notes
 
-- 已调整的产品路线和边界见[项目方案](../docs/project-plan.md)；核心领域词汇见[术语表](../GLOSSARY.md)；架构决策见 `docs/adr/0001`–`0007`。
+- 已调整的产品路线和边界见[项目方案](../docs/project-plan.md)；核心领域词汇见[术语表](../GLOSSARY.md)；架构决策见 `docs/adr/0001`–`0008`。
 - 彻底放弃 DSH（DeepSeek Harness）运行底座及微信小程序载体；核心文游 Harness 保持纯客户端逻辑与本地存储，不依赖桌面客户端、项目方业务服务器或云端模型代理。
 - 坚持单仓共享 `src/harness/` 与 `src/ui/` 同步产出 Web 与 Android APK；未实测的体积、性能、内存与兼容性指标不写作既定指标。
 - 开发机构建可使用前端工具链，但不得将 Node.js、Ubuntu/PRoot 或任意 Shell 能力打包分发给终端用户。
@@ -22,8 +22,10 @@ status: active
 - 已决定彻底放弃 DSH 底座，转向自研轻量文游 Harness 与本地存储（见 `docs/adr/0001`–`0003`）。
 - [POC-01 (#2)](https://github.com/ReedRodLiu/local-fiction-harness/issues/2)：已验证并关闭。完成纯 TS 核心 + 本地网页闭环与双轴加固（`7c79ef8`）。
 - [POC-02 (#3)](https://github.com/ReedRodLiu/local-fiction-harness/issues/3)：已验证并关闭（`docs/adr/0004`–`0005`、`d3f4bc0`）。通过 Capacitor + `PlatformRuntime` 实现单仓 Web 与 Android APK（4.14 MB）同步交付，并在真机（Android 16）实测通过。
+- [DeepSeek 导出包迁移与聚焦主干剧情树（#18）](https://github.com/ReedRodLiu/local-fiction-harness/issues/18)：`#19`–`#23` 全部子票据已完成实现、双轴审查与双端离线校验（`npm run verify:all` 通过，Debug APK 4.15 MB），待真机插线终验后关闭。
 - **DeepSeek 导出包按需导入与迁移（`docs/adr/0006`）**：支持 `export_format_version: 3` ZIP 两阶段按需解压，本地启发式预筛置顶 + 复选框多选（可选模型二次筛选），每条选中外部会话 1 对 1 转化为独立 `Story`，按需抽取所引 `.docx`/`.md`/`.txt` 附件（忽略图片/PDF，旧 `.doc` 提示另存为 `.docx`），清洗平台噪音并保留只读 `Node Diagnostics`，用「本地强信号直判 + 模糊开局轻量 LLM 定位」自动识别 `Raw Script`，仅对当前激活线即时补算 `Plot Summary`（历史分支惰性压缩）。
 - **聚焦主干的竖向剧情树（`docs/adr/0007`）**：重构分支交互为竖向轨道**剧情树（Story Tree）**，默认展示起点至当前激活分支路径（自动折叠连续无分叉轮次，在历史分叉路口显示 `⑂ N` 徽标），点开路口再按需展示本地规则抽取的进展线索及可选 AI 梗概，统一服务日常游玩与 DeepSeek 导入。
+- **零正文本地脱敏诊断导出与 Harness 上下文可靠性加固（`docs/adr/0008`）**：引入近 30 分钟本地防崩溃循环日志缓冲、设置导出与全局崩溃弹窗，预览确认后本地导出不含正文/密钥的**脱敏诊断包**（可选去正文树骨架、官方白名单域名与中转域名短哈希，预留未来只写 HTTP 上报接缝）；同步修补生成前分段补算摘要、`Setup Node` 去重防双倍注入及摘要/重命名并发锁死。
 
 ## Not yet specified
 
