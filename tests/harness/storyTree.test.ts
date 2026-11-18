@@ -337,6 +337,7 @@ describe('Slice 1 (#19): Focused vertical Story Tree, lazy branch cues, Story Re
     expect(turnAPrompt).not.toContain('秘密推理A');
 
     // 2. Switch to Branch B without config -> 0 LLM calls, Story Review flags pending compression
+    //    and reports recent window matching trimmed LLM context (2 nodes, not all 6 uncovered nodes)
     const prevCaptureLen = captured.length;
     const switchedBNoKey = await harness.switchBranch(turnA.story, 'u2B');
     expect(captured.length).toBe(prevCaptureLen);
@@ -344,6 +345,8 @@ describe('Slice 1 (#19): Focused vertical Story Tree, lazy branch cues, Story Re
     const reviewPending = computeActiveReviewState(switchedBNoKey, { recentMaxNodes: 2, recentMaxChars: 4000 });
     expect(reviewPending.needsSummaryCompression).toBe(true);
     expect(reviewPending.totalTurns).toBe(3);
+    expect(reviewPending.recentNodeCount).toBe(2);
+    expect(reviewPending.recentTurnRange).toEqual({ startTurn: 3, endTurn: 3 });
 
     // 3. Lazy summary compression on Branch B freezes Plot Summary onto a3B and isolates Event X out
     const summarizedB = await harness.ensureActiveBranchSummary(switchedBNoKey, testConfig);

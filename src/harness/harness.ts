@@ -63,12 +63,6 @@ function throwIfAborted(signal?: AbortSignalLike): void {
   }
 }
 
-export interface SwitchBranchOptions {
-  config?: ModelConfig;
-  summarizeIfNeeded?: boolean;
-  signal?: AbortSignalLike;
-}
-
 export interface FictionHarness {
   createStory(input: CreateStoryInput): Story;
   createAndSaveStory(input: CreateStoryInput): Promise<Story>;
@@ -121,11 +115,7 @@ export interface FictionHarness {
     config: ModelConfig,
     callbacks?: TurnCallbacks,
   ): Promise<TurnExecutionResult>;
-  switchBranch(
-    story: Story,
-    targetNodeId: string,
-    options?: SwitchBranchOptions,
-  ): Promise<Story>;
+  switchBranch(story: Story, targetNodeId: string): Promise<Story>;
   rewindToNode(story: Story, targetNodeId: string | null): Promise<Story>;
 }
 
@@ -591,20 +581,12 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       });
     },
 
-    async switchBranch(
-      story: Story,
-      targetNodeId: string,
-      options?: SwitchBranchOptions,
-    ): Promise<Story> {
+    async switchBranch(story: Story, targetNodeId: string): Promise<Story> {
       const leafId = findLeafForBranchNode(story, targetNodeId);
       if (!leafId) {
         throw new Error(`目标分支节点 ${targetNodeId} 不存在。`);
       }
-      const switched = await activateLeafNode(story, leafId);
-      if (options?.summarizeIfNeeded && options.config) {
-        return this.ensureActiveBranchSummary(switched, options.config, options.signal);
-      }
-      return switched;
+      return activateLeafNode(story, leafId);
     },
 
     async rewindToNode(story: Story, targetNodeId: string | null): Promise<Story> {

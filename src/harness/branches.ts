@@ -15,6 +15,26 @@ export interface BranchLeafSummary {
   isActive: boolean;
 }
 
+export function toCompactPreview(text: string, maxLen = 44): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '（空内容）';
+  return normalized.length > maxLen ? `${normalized.slice(0, maxLen)}…` : normalized;
+}
+
+export function countNodesToRoot(story: Story, nodeId: string): number {
+  let depth = 0;
+  let cursor: string | null = nodeId;
+  const seen = new Set<string>();
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const node: TurnNode | undefined = story.nodes[cursor];
+    if (!node) break;
+    depth += 1;
+    cursor = node.parentId;
+  }
+  return depth;
+}
+
 export function sortNodesChronologically(nodes: TurnNode[]): TurnNode[] {
   return [...nodes].sort((a, b) =>
     a.createdAt !== b.createdAt ? a.createdAt - b.createdAt : a.id.localeCompare(b.id),
@@ -122,23 +142,12 @@ export function getBranchTreeSummary(story: Story): BranchLeafSummary[] {
   const summaries: BranchLeafSummary[] = [];
 
   for (const leaf of sortNodesChronologically(leaves)) {
-    let depth = 0;
-    let cursor: string | null = leaf.id;
-    const seen = new Set<string>();
-    while (cursor && !seen.has(cursor)) {
-      seen.add(cursor);
-      const node: TurnNode | undefined = story.nodes[cursor];
-      if (!node) break;
-      depth += 1;
-      cursor = node.parentId;
-    }
-
-    const normalized = leaf.content.replace(/\s+/g, ' ').trim();
-    const snippet = normalized.slice(0, 44);
+    const depth = countNodesToRoot(story, leaf.id);
+    const snippet = toCompactPreview(leaf.content, 44);
     summaries.push({
       leafId: leaf.id,
       turnCount: Math.ceil(depth / 2),
-      preview: normalized.length > 44 ? `${snippet}…` : snippet,
+      preview: snippet === '（空内容）' ? '' : snippet,
       isActive: leaf.id === story.activeLeafNodeId,
     });
   }

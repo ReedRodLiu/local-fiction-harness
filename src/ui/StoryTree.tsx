@@ -9,7 +9,6 @@ import {
 
 export interface StoryTreeProps {
   story: Story;
-  mode?: 'play' | 'preview';
   isBusy?: boolean;
   onSwitchBranch?: (targetNodeId: string) => void;
   onRenameBranch?: (branchEntryNodeId: string, name: string) => Promise<void> | void;
@@ -36,7 +35,6 @@ export function formatDiagnosticTags(
 
 export function StoryTree({
   story,
-  mode = 'play',
   isBusy = false,
   onSwitchBranch,
   onRenameBranch,
@@ -116,18 +114,16 @@ export function StoryTree({
                       className={`story-tree-span ${item.isActiveEnd ? 'active-end' : ''}`}
                       data-testid="story-tree-span"
                     >
-                      <div className="story-tree-row-top">
-                        <span className="badge">{turnLabel}</span>
-                        <span className="status-text">
-                          {item.isActiveEnd ? '当前激活终点' : `折叠 ${item.turnCount} 轮`}
+                      <span className="badge">{turnLabel}</span>
+                      <span className="status-text">
+                        {item.isActiveEnd ? '当前激活终点' : `折叠 ${item.turnCount} 轮`}
+                      </span>
+                      {item.diagnosticsCount > 0 && (
+                        <span className="badge badge-warn">
+                          含 {item.diagnosticsCount} 条诊断标记
                         </span>
-                        {item.diagnosticsCount > 0 && (
-                          <span className="badge badge-warn">
-                            含 {item.diagnosticsCount} 条诊断标记
-                          </span>
-                        )}
-                      </div>
-                      <div className="story-tree-preview">{item.preview}</div>
+                      )}
+                      <span className="story-tree-preview-inline">{item.preview}</span>
                     </li>
                   );
                 }
@@ -237,10 +233,10 @@ export function StoryTree({
                                       disabled={isBusy}
                                       onClick={() => onSwitchBranch(branch.entryNodeId)}
                                     >
-                                      {mode === 'preview' ? '查看此分支' : '切换至此分支'}
+                                      切换至此分支
                                     </button>
                                   )}
-                                  {mode === 'play' && onRenameBranch && (
+                                  {onRenameBranch && (
                                     <button
                                       type="button"
                                       className="btn btn-sm"
@@ -250,7 +246,7 @@ export function StoryTree({
                                       重命名
                                     </button>
                                   )}
-                                  {mode === 'play' && onExtractBranchGist && (
+                                  {onExtractBranchGist && (
                                     <button
                                       type="button"
                                       className="btn btn-sm"

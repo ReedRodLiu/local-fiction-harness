@@ -1,9 +1,16 @@
-import { buildChildrenByParent, getRootNodes } from './branches.ts';
 import {
+  buildChildrenByParent,
+  countNodesToRoot,
+  getRootNodes,
+  toCompactPreview,
+} from './branches.ts';
+import {
+  DEFAULT_CONTEXT_BUDGET,
   getActiveBranchNodes,
   getActiveSummarySnapshot,
   getUncoveredNodes,
   selectNodesToSummarize,
+  trimRecentWindow,
   type ContextBudgetConfig,
 } from './context.ts';
 import type {
@@ -76,12 +83,6 @@ export interface ActiveReviewState {
   recentNodeCount: number;
   recentTurnRange: TurnRange | null;
   needsSummaryCompression: boolean;
-}
-
-function toCompactPreview(text: string, maxLen = 44): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  if (!normalized) return '（空内容）';
-  return normalized.length > maxLen ? `${normalized.slice(0, maxLen)}…` : normalized;
 }
 
 function countDiagnostics(nodes: readonly TurnNode[]): number {
@@ -277,20 +278,6 @@ function collectBranchLine(
   return branchNodes;
 }
 
-function countDepthToRoot(story: Story, nodeId: string): number {
-  let depth = 0;
-  let cursor: string | null = nodeId;
-  const visited = new Set<string>();
-  while (cursor && !visited.has(cursor)) {
-    visited.add(cursor);
-    const node: TurnNode | undefined = story.nodes[cursor];
-    if (!node) break;
-    depth += 1;
-    cursor = node.parentId;
-  }
-  return depth;
-}
-
 /**
  * Lazily expands a fork point into its sibling branches with zero-cost local cues and diagnostics.
  */
@@ -306,7 +293,7 @@ export function getForkSiblingBranches(
   return siblings.map((entryNode, index) => {
     const branchLine = collectBranchLine(story, entryNode.id, childrenByParent, activePathIds);
     const leaf = branchLine[branchLine.length - 1] ?? entryNode;
-    const totalNodes = countDepthToRoot(story, leaf.id);
+    const totalNodes = countNodesToRoot(story, leaf.id);
 
     const diagnosticsSet = new Set<NodeDiagnosticStatus>();
     let hasContentRisk = false;
@@ -370,14 +357,14 @@ export function computeActiveReviewState(
   story: Story,
   budgetOverrides?: Partial<ContextBudgetConfig>,
 ): ActiveReviewState {
+  const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...budgetOverrides };
   const activeNodes = getActiveBranchNodes(story, story.activeLeafNodeId);
   const summarySnapshot = getActiveSummarySnapshot(story, story.activeLeafNodeId);
   const uncovered = getUncoveredNodes(activeNodes, summarySnapshot.coveredUpToNodeId);
-  const needsSummaryCompression = selectNodesToSummarize(uncovered, budgetOverrides).length > 0;
+  const recentNodes = trimRecentWindow(uncovered, budget, 0);
+  const needsSummaryCompression = selectNodesToSummarize(uncovered, budget).length > 0;
 
   let coveredTurnRange: TurnRange | null = null;
-  let recentStartIndex = 0;
-
   if (summarySnapshot.coveredUpToNodeId) {
     const idx = activeNodes.findIndex((n) => n.id === summarySnapshot.coveredUpToNodeId);
     if (idx >= 0) {
@@ -385,17 +372,20 @@ export function computeActiveReviewState(
         startTurn: 1,
         endTurn: Math.floor(idx / 2) + 1,
       };
-      recentStartIndex = idx + 1;
     }
   }
 
-  const recentTurnRange: TurnRange | null =
-    recentStartIndex < activeNodes.length
-      ? {
-          startTurn: Math.floor(recentStartIndex / 2) + 1,
-          endTurn: Math.floor((activeNodes.length - 1) / 2) + 1,
-        }
-      : null;
+  let recentTurnRange: TurnRange | null = null;
+  if (recentNodes.length > 0) {
+    const firstRecentIdx = activeNodes.findIndex((n) => n.id === recentNodes[0].id);
+    const lastRecentIdx = activeNodes.findIndex((n) => n.id === recentNodes[recentNodes.length - 1].id);
+    if (firstRecentIdx >= 0 && lastRecentIdx >= firstRecentIdx) {
+      recentTurnRange = {
+        startTurn: Math.floor(firstRecentIdx / 2) + 1,
+        endTurn: Math.floor(lastRecentIdx / 2) + 1,
+      };
+    }
+  }
 
   let activeBranchLabel = '当前主干路线';
   for (let i = activeNodes.length - 1; i >= 0; i--) {
@@ -412,7 +402,7 @@ export function computeActiveReviewState(
     totalNodes: activeNodes.length,
     summarySnapshot,
     coveredTurnRange,
-    recentNodeCount: uncovered.length,
+    recentNodeCount: recentNodes.length,
     recentTurnRange,
     needsSummaryCompression,
   };

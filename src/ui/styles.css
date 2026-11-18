@@ -601,11 +601,23 @@ summary:focus-visible {
   background: var(--bg-page);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding: 0.45rem 0.65rem;
+  padding: 0.42rem 0.65rem;
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
   min-width: 0;
+}
+
+.story-tree-preview-inline {
+  flex: 1 1 160px;
+  min-width: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .story-tree-span.active-end {

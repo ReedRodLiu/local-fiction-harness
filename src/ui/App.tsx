@@ -336,24 +336,40 @@ export function App({ runtime }: AppProps) {
     }
   };
 
-  const applyStoryTransition = async (transition: () => Promise<Story>) => {
-    if (abortRef.current || isStreaming) return;
-    const opSeq = storyOpSeqRef.current;
+  const runStoryTransition = async (
+    transition: () => Promise<Story>,
+    fallbackError: string,
+    opts?: { blockBusy?: boolean; trackSummarizing?: boolean },
+  ): Promise<Story | null> => {
+    if (opts?.blockBusy !== false && (abortRef.current || isStreaming || isSummarizing)) {
+      return null;
+    }
+    const opSeq = ++storyOpSeqRef.current;
+    setErrorMsg(null);
+    if (opts?.trackSummarizing) {
+      setIsSummarizing(true);
+    }
     try {
       const updated = await transition();
-      if (storyOpSeqRef.current !== opSeq) return;
+      if (storyOpSeqRef.current !== opSeq) return null;
       setStory(updated);
       await refreshStories();
+      return updated;
     } catch (err) {
       if (storyOpSeqRef.current === opSeq) {
-        setErrorMsg(toErrorMessage(err, '切换分支失败。'));
+        setErrorMsg(toErrorMessage(err, fallbackError));
+      }
+      return null;
+    } finally {
+      if (opts?.trackSummarizing && storyOpSeqRef.current === opSeq) {
+        setIsSummarizing(false);
       }
     }
   };
 
   const sendAction = async (userPrompt: string, restoreOnError = false) => {
     const trimmed = userPrompt.trim();
-    if (!trimmed || abortRef.current || isStreaming) return;
+    if (!trimmed || abortRef.current || isStreaming || isSummarizing) return;
     if (restoreOnError) {
       setInput('');
     }
@@ -365,118 +381,83 @@ export function App({ runtime }: AppProps) {
 
   const handleEditAndBranch = async (targetUserNodeId: string, newContent: string) => {
     const trimmed = newContent.trim();
-    if (!trimmed) return;
+    if (!trimmed || isSummarizing) return;
     await runStreamingExecution((callbacks) =>
       harness.editAndBranch(story, targetUserNodeId, trimmed, config, callbacks),
     );
   };
 
   const handleRegenerateNode = async (targetAssistantNodeId: string) => {
+    if (isSummarizing) return;
     await runStreamingExecution((callbacks) =>
       harness.regenerateNode(story, targetAssistantNodeId, config, callbacks),
     );
   };
 
   const handleSwitchBranch = async (targetNodeId: string) => {
-    if (abortRef.current || isStreaming) return;
-    const opSeq = storyOpSeqRef.current;
-    setErrorMsg(null);
-    try {
-      const switched = await harness.switchBranch(story, targetNodeId);
-      if (storyOpSeqRef.current !== opSeq) return;
-      setStory(switched);
-      await refreshStories();
-
-      if (
-        computeActiveReviewState(switched).needsSummaryCompression &&
-        hasModelCredentials(config, useDevEnvKey)
-      ) {
-        setIsSummarizing(true);
-        try {
-          const summarized = await harness.ensureActiveBranchSummary(switched, config);
-          if (storyOpSeqRef.current === opSeq) {
-            setStory(summarized);
-            await refreshStories();
-          }
-        } catch (err) {
-          if (storyOpSeqRef.current === opSeq) {
-            setErrorMsg(toErrorMessage(err, '补算支线剧情摘要失败，可稍后重试。'));
-          }
-        } finally {
-          if (storyOpSeqRef.current === opSeq) {
-            setIsSummarizing(false);
-          }
+    const switched = await runStoryTransition(
+      () => harness.switchBranch(story, targetNodeId),
+      '切换分支失败。',
+    );
+    if (
+      switched &&
+      computeActiveReviewState(switched).needsSummaryCompression &&
+      hasModelCredentials(config, useDevEnvKey)
+    ) {
+      const summarySeq = storyOpSeqRef.current;
+      setIsSummarizing(true);
+      try {
+        const summarized = await harness.ensureActiveBranchSummary(switched, config);
+        if (storyOpSeqRef.current === summarySeq) {
+          setStory(summarized);
+          await refreshStories();
         }
-      }
-    } catch (err) {
-      if (storyOpSeqRef.current === opSeq) {
-        setErrorMsg(toErrorMessage(err, '切换分支失败。'));
+      } catch (err) {
+        if (storyOpSeqRef.current === summarySeq) {
+          setErrorMsg(toErrorMessage(err, '补算支线剧情摘要失败，可稍后重试。'));
+        }
+      } finally {
+        if (storyOpSeqRef.current === summarySeq) {
+          setIsSummarizing(false);
+        }
       }
     }
   };
 
   const handleRenameBranch = async (branchEntryNodeId: string, name: string) => {
-    const opSeq = storyOpSeqRef.current;
-    setErrorMsg(null);
-    try {
-      const updated = await harness.renameBranch(story, branchEntryNodeId, name);
-      if (storyOpSeqRef.current !== opSeq) return;
-      setStory(updated);
-      await refreshStories();
-    } catch (err) {
-      if (storyOpSeqRef.current === opSeq) {
-        setErrorMsg(toErrorMessage(err, '重命名分支失败。'));
-      }
-    }
+    await runStoryTransition(
+      () => harness.renameBranch(story, branchEntryNodeId, name),
+      '重命名分支失败。',
+      { blockBusy: false },
+    );
   };
 
   const handleExtractBranchGist = async (branchEntryNodeId: string) => {
-    if (abortRef.current || isStreaming) return;
     if (!hasModelCredentials(config, useDevEnvKey)) {
       setErrorMsg('请先在左侧配置模型 API Key，再使用「AI 提炼梗概」。');
       return;
     }
-    const opSeq = storyOpSeqRef.current;
-    setErrorMsg(null);
-    try {
-      const updated = await harness.extractBranchGist(story, branchEntryNodeId, config);
-      if (storyOpSeqRef.current !== opSeq) return;
-      setStory(updated);
-      await refreshStories();
-    } catch (err) {
-      if (storyOpSeqRef.current === opSeq) {
-        setErrorMsg(toErrorMessage(err, '提炼分支梗概失败。'));
-      }
-    }
+    await runStoryTransition(
+      () => harness.extractBranchGist(story, branchEntryNodeId, config),
+      '提炼分支梗概失败。',
+      { trackSummarizing: true },
+    );
   };
 
   const handleComputeActiveSummary = async () => {
-    if (abortRef.current || isStreaming || isSummarizing) return;
     if (!hasModelCredentials(config, useDevEnvKey)) {
       setErrorMsg('请先在左侧配置模型 API Key，再补算超窗支线的剧情摘要。');
       return;
     }
-    const opSeq = storyOpSeqRef.current;
-    setErrorMsg(null);
-    setIsSummarizing(true);
-    try {
-      const updated = await harness.ensureActiveBranchSummary(story, config);
-      if (storyOpSeqRef.current !== opSeq) return;
-      setStory(updated);
-      await refreshStories();
-    } catch (err) {
-      if (storyOpSeqRef.current === opSeq) {
-        setErrorMsg(toErrorMessage(err, '补算剧情摘要失败。'));
-      }
-    } finally {
-      if (storyOpSeqRef.current === opSeq) {
-        setIsSummarizing(false);
-      }
-    }
+    await runStoryTransition(
+      () => harness.ensureActiveBranchSummary(story, config),
+      '补算剧情摘要失败。',
+      { trackSummarizing: true },
+    );
   };
 
   const handleRewindToNode = (targetNodeId: string) =>
-    applyStoryTransition(() => harness.rewindToNode(story, targetNodeId));
+    runStoryTransition(() => harness.rewindToNode(story, targetNodeId), '回溯节点失败。');
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -764,7 +745,6 @@ export function App({ runtime }: AppProps) {
 
             <StoryTree
               story={story}
-              mode="play"
               isBusy={isStreaming || isSummarizing}
               onSwitchBranch={(id) => void handleSwitchBranch(id)}
               onRenameBranch={handleRenameBranch}
@@ -812,7 +792,7 @@ export function App({ runtime }: AppProps) {
                   key={node.id}
                   node={node}
                   isActiveLeaf={node.id === story.activeLeafNodeId}
-                  isStreaming={isStreaming}
+                  isStreaming={isStreaming || isSummarizing}
                   siblings={getSiblingBranchInfo(story, node.id)}
                   onSelectChoice={(choiceText) => void sendAction(choiceText)}
                   onSwitchBranch={(targetId) => void handleSwitchBranch(targetId)}
@@ -877,7 +857,7 @@ export function App({ runtime }: AppProps) {
                       key="send-action-btn"
                       type="submit"
                       className="btn btn-primary"
-                      disabled={!input.trim()}
+                      disabled={!input.trim() || isSummarizing}
                     >
                       发送行动
                     </button>

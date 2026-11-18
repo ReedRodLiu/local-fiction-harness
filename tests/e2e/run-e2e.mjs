@@ -130,6 +130,15 @@ async function main() {
         return;
       }
 
+      if (sys.includes('分支梗概助手')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: sseResponse([{ choices: [{ delta: { content: 'AI提炼：改道休息线稳妥推进。' }, finish_reason: 'stop' }] }]),
+        });
+        return;
+      }
+
       if (sys.includes('剧情摘要压缩')) {
         const sumText = lastMsg.includes('黑市线索')
           ? '【分支A摘要】含黑市线索'
@@ -227,7 +236,11 @@ async function main() {
       throw new Error(`Branch A leaked into Branch B summary: ${sumB}`);
     }
 
-    // 5b. Story Tree: verify fork badge ⑂ 2, expand fork, rename Branch B, switch back to Branch A via Story Tree
+    // 5b. Story Tree: verify linear span folding, fork badge ⑂ 2, expand fork, rename Branch B, AI gist, switch back to Branch A
+    const spanText = await page.locator('[data-testid="story-tree-span"]').first().textContent();
+    if (!spanText?.includes('第 1–2 轮') && !spanText?.includes('第 1')) {
+      throw new Error(`Expected folded span in Story Tree, got: ${spanText}`);
+    }
     const forkBtn = page.locator('[data-testid^="story-tree-fork-"]').first();
     const forkBtnText = await forkBtn.textContent();
     if (!forkBtnText?.includes('⑂ 2')) {
@@ -240,6 +253,10 @@ async function main() {
     await siblingB.locator('input[aria-label="分支名称"]').fill('休息支线');
     await siblingB.locator('button:has-text("保存名称")').click();
     await page.waitForSelector('[data-testid="story-review"]:has-text("休息支线")');
+
+    // On-demand AI gist on active sibling branch
+    await siblingB.locator('button:has-text("AI 提炼梗概")').click();
+    await page.waitForSelector('.story-tree-gist:has-text("AI提炼：改道休息线稳妥推进")');
 
     // Switch back to Branch A via Story Tree sibling button
     const nonActiveSibling = page.locator('.story-tree-sibling:not(.active)').first();

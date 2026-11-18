@@ -109,10 +109,10 @@ function sumNodeChars(nodes: readonly TurnNode[]): number {
   return nodes.reduce((sum, n) => sum + n.content.length, 0);
 }
 
-function trimRecentWindow(
+export function trimRecentWindow(
   nodes: TurnNode[],
-  budget: ContextBudgetConfig,
-  pendingUserChars: number,
+  budget: ContextBudgetConfig = DEFAULT_CONTEXT_BUDGET,
+  pendingUserChars = 0,
 ): TurnNode[] {
   if (nodes.length === 0) return [];
   const maxNodes = Math.max(MIN_RECENT_NODES_PER_TURN, budget.recentMaxNodes);
