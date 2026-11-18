@@ -73,7 +73,7 @@ public class BinaryDownloadClientTest {
 
         try (ServerSocket server = new ServerSocket(0, 10, InetAddress.getByName("127.0.0.1"))) {
             Thread serverThread = new Thread(() -> {
-                for (int i = 0; i < 6; i++) {
+                for (int i = 0; i < 8; i++) {
                     try (Socket conn = server.accept()) {
                         String path = readHttpPath(conn);
                         OutputStream os = conn.getOutputStream();
@@ -112,6 +112,23 @@ public class BinaryDownloadClientTest {
                                 + "Connection: close\r\n\r\n"
                             ).getBytes(StandardCharsets.US_ASCII));
                             os.write(validZip);
+                            os.flush();
+                        } else if ("/stream-toobig.zip".equals(path)) {
+                            // No Content-Length header: enforces streaming totalRead > maxBytes
+                            os.write((
+                                "HTTP/1.1 200 OK\r\n"
+                                + "Content-Type: application/zip\r\n"
+                                + "Connection: close\r\n\r\n"
+                            ).getBytes(StandardCharsets.US_ASCII));
+                            os.write(validZip);
+                            os.write(new byte[200]);
+                            os.flush();
+                        } else if ("/unauthorized".equals(path)) {
+                            os.write((
+                                "HTTP/1.1 401 Unauthorized\r\n"
+                                + "Content-Length: 0\r\n"
+                                + "Connection: close\r\n\r\n"
+                            ).getBytes(StandardCharsets.US_ASCII));
                             os.flush();
                         } else if ("/forbidden".equals(path)) {
                             os.write((
@@ -208,7 +225,48 @@ public class BinaryDownloadClientTest {
                 assertTrue(bigLatch.await(5, TimeUnit.SECONDS));
                 assertTrue(bigErr.get().contains("上限"));
 
-                // 4. HTTP 403 error
+                // 3b. Streaming body without Content-Length exceeding maxBytes
+                CountDownLatch streamBigLatch = new CountDownLatch(1);
+                AtomicReference<String> streamBigErr = new AtomicReference<>("");
+                client.startDownload("d-stream-big", baseUrl + "/stream-toobig.zip", 100, new BinaryDownloadClient.Listener() {
+                    @Override
+                    public void onChunk(String requestId, byte[] chunk, int length) {}
+
+                    @Override
+                    public void onComplete(String requestId, String contentType) {
+                        streamBigLatch.countDown();
+                    }
+
+                    @Override
+                    public void onError(String requestId, int status, String message, boolean aborted) {
+                        streamBigErr.set(message);
+                        streamBigLatch.countDown();
+                    }
+                });
+                assertTrue(streamBigLatch.await(5, TimeUnit.SECONDS));
+                assertTrue(streamBigErr.get().contains("上限"));
+
+                // 4. HTTP 401 and 403 errors
+                CountDownLatch unauthLatch = new CountDownLatch(1);
+                AtomicInteger unauthStatus = new AtomicInteger();
+                client.startDownload("d-401", baseUrl + "/unauthorized", 1024, new BinaryDownloadClient.Listener() {
+                    @Override
+                    public void onChunk(String requestId, byte[] chunk, int length) {}
+
+                    @Override
+                    public void onComplete(String requestId, String contentType) {
+                        unauthLatch.countDown();
+                    }
+
+                    @Override
+                    public void onError(String requestId, int status, String message, boolean aborted) {
+                        unauthStatus.set(status);
+                        unauthLatch.countDown();
+                    }
+                });
+                assertTrue(unauthLatch.await(5, TimeUnit.SECONDS));
+                assertEquals(401, unauthStatus.get());
+
                 CountDownLatch errLatch = new CountDownLatch(1);
                 AtomicInteger errStatus = new AtomicInteger();
                 client.startDownload("d-403", baseUrl + "/forbidden", 1024, new BinaryDownloadClient.Listener() {

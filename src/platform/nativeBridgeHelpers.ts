@@ -29,18 +29,24 @@ export function decodeBase64ToBytes(base64: string, label = '原生分块数据'
 export function bindAbortSignal(
   signal: AbortSignalLike | undefined,
   onAbort: () => void,
-): { hasEventTargetAbort: boolean; unbind: () => void } {
-  const signalTarget = signal as (AbortSignalLike & AbortEventTargetLike) | undefined;
-  const hasEventTargetAbort = typeof signalTarget?.addEventListener === 'function';
-  if (hasEventTargetAbort) {
-    signalTarget!.addEventListener!('abort', onAbort, { once: true });
+): () => void {
+  if (!signal) {
+    return () => {};
   }
-  return {
-    hasEventTargetAbort,
-    unbind: () => {
-      if (hasEventTargetAbort) {
-        signalTarget?.removeEventListener?.('abort', onAbort);
-      }
-    },
+  const signalTarget = signal as AbortSignalLike & AbortEventTargetLike;
+  if (typeof signalTarget.addEventListener === 'function') {
+    signalTarget.addEventListener('abort', onAbort, { once: true });
+    return () => {
+      signalTarget.removeEventListener?.('abort', onAbort);
+    };
+  }
+  const pollTimer = setInterval(() => {
+    if (signal.aborted) {
+      clearInterval(pollTimer);
+      onAbort();
+    }
+  }, 20);
+  return () => {
+    clearInterval(pollTimer);
   };
 }

@@ -76,7 +76,7 @@ export function createCapacitorSseTransport(
         }
       };
 
-      const { hasEventTargetAbort, unbind } = bindAbortSignal(req.signal, onAbort);
+      const unbind = bindAbortSignal(req.signal, onAbort);
 
       const handles: PluginListenerHandle[] = [];
       try {
@@ -134,21 +134,7 @@ export function createCapacitorSseTransport(
               return;
             }
             await new Promise<void>((resolve) => {
-              let pollTimer: ReturnType<typeof setInterval> | undefined;
-              const finishWait = () => {
-                if (pollTimer !== undefined) {
-                  clearInterval(pollTimer);
-                }
-                resolve();
-              };
-              waiter = finishWait;
-              if (req.signal && !hasEventTargetAbort) {
-                pollTimer = setInterval(() => {
-                  if (req.signal?.aborted) {
-                    onAbort();
-                  }
-                }, 20);
-              }
+              waiter = resolve;
             });
           }
         }

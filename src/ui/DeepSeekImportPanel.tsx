@@ -278,10 +278,7 @@ export function DeepSeekImportPanel({
                 className="btn"
                 onClick={() => {
                   setReceipt(null);
-                  setZipBytes(null);
-                  setScanResult(null);
-                  setSelectedIds([]);
-                  setPreviewSessionId(null);
+                  resetLoadedZip();
                 }}
               >
                 继续导入其他 .zip
@@ -332,7 +329,10 @@ export function DeepSeekImportPanel({
           role="tab"
           aria-selected={sourceMode === 'file'}
           className={`btn btn-sm ${sourceMode === 'file' ? 'btn-primary' : ''}`}
-          onClick={() => setSourceMode('file')}
+          onClick={() => {
+            urlAbortRef.current?.abort();
+            setSourceMode('file');
+          }}
         >
           选择本地 .zip 文件
         </button>

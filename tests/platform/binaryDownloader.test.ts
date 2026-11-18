@@ -65,17 +65,28 @@ describe('Slice 4 (#22): BinaryDownloader contracts (Web + Android Capacitor)', 
       createWebBinaryDownloader(htmlFetch).downloadZipBytes('https://cdn.example/export.zip', 1024 * 1024),
     ).rejects.toThrow(/HTML|登录/);
 
-    // 3. HTTP 403 -> clear Chinese guidance to download locally
-    const forbiddenFetch: BinaryFetchLike = async () => ({
-      ok: false,
-      status: 403,
-      statusText: 'Forbidden',
-      headers: { get: () => 'text/plain' },
-      body: null,
-      arrayBuffer: async () => new ArrayBuffer(0),
-    });
+    // 3. HTTP 401 and 403 -> clear Chinese guidance to download locally
+    const makeStatusFetch =
+      (status: number, statusText: string): BinaryFetchLike =>
+      async () => ({
+        ok: false,
+        status,
+        statusText,
+        headers: { get: () => 'text/plain' },
+        body: null,
+        arrayBuffer: async () => new ArrayBuffer(0),
+      });
     await expect(
-      createWebBinaryDownloader(forbiddenFetch).downloadZipBytes('https://cdn.example/export.zip', 1024 * 1024),
+      createWebBinaryDownloader(makeStatusFetch(401, 'Unauthorized')).downloadZipBytes(
+        'https://cdn.example/export.zip',
+        1024 * 1024,
+      ),
+    ).rejects.toThrow(/401|本地/);
+    await expect(
+      createWebBinaryDownloader(makeStatusFetch(403, 'Forbidden')).downloadZipBytes(
+        'https://cdn.example/export.zip',
+        1024 * 1024,
+      ),
     ).rejects.toThrow(/403|本地/);
 
     // 4. CORS TypeError -> clear Chinese guidance
@@ -86,7 +97,7 @@ describe('Slice 4 (#22): BinaryDownloader contracts (Web + Android Capacitor)', 
       createWebBinaryDownloader(corsFetch).downloadZipBytes('https://cdn.example/export.zip', 1024 * 1024),
     ).rejects.toThrow(/CORS|本地/);
 
-    // 5. AbortSignal cancellation
+    // 5. Pre-aborted and mid-stream AbortSignal cancellation
     const controller = new AbortController();
     controller.abort();
     await expect(
@@ -94,6 +105,27 @@ describe('Slice 4 (#22): BinaryDownloader contracts (Web + Android Capacitor)', 
         'https://cdn.example/export.zip',
         1024 * 1024,
         controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    const midController = new AbortController();
+    const midAbortFetch: BinaryFetchLike = async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: { get: () => 'application/zip' },
+      body: (async function* () {
+        yield new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
+        midController.abort();
+        yield new Uint8Array([1, 2, 3]);
+      })(),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    });
+    await expect(
+      createWebBinaryDownloader(midAbortFetch).downloadZipBytes(
+        'https://cdn.example/export.zip',
+        1024 * 1024,
+        midController.signal,
       ),
     ).rejects.toMatchObject({ name: 'AbortError' });
 

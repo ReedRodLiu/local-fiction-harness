@@ -423,8 +423,15 @@ async function main() {
     if (!urlPreviewText?.includes('合成宫斗测试档')) {
       throw new Error(`Expected fetched ZIP preview, got: ${urlPreviewText}`);
     }
-    // Switch back to local file tab to also verify local file upload flow below
-    await page.click('button[role="tab"]:has-text("选择本地 .zip 文件")');
+    // Complete story import directly from URL-fetched session list, verify active progress, then clean up
+    await page.click('[data-testid="ds-confirm-import-btn"]');
+    await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
+    await page.click('button:has-text("继续这条故事")');
+    await page.waitForSelector('.turn-card.assistant:has-text("原进度抵达东侧练歌房")');
+    while ((await page.locator('button[aria-label^="删除 "]').count()) > 0) {
+      await page.locator('button[aria-label^="删除 "]').first().click();
+      await page.waitForTimeout(50);
+    }
 
     // 0. Keyless DeepSeek .zip import -> preview -> batch 1-to-1 import -> Continue This Story -> inline BYOK prompt -> stream
     const dsZipPath = path.join(tmpDir, 'deepseek-export.zip');

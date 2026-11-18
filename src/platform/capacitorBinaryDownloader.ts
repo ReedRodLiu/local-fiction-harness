@@ -58,14 +58,9 @@ export function createCapacitorBinaryDownloader(
 
       return new Promise<BinaryDownloadResult>((resolve, reject) => {
         const handles: PluginListenerHandle[] = [];
-        let pollTimer: ReturnType<typeof setInterval> | undefined;
         let unbindAbort: (() => void) | undefined;
 
         const cleanup = () => {
-          if (pollTimer !== undefined) {
-            clearInterval(pollTimer);
-            pollTimer = undefined;
-          }
           unbindAbort?.();
           void Promise.allSettled(handles.map((h) => h.remove()));
         };
@@ -103,15 +98,7 @@ export function createCapacitorBinaryDownloader(
           finishWithError(createAbortError('已取消拉取导出压缩包。'));
         };
 
-        const abortBinding = bindAbortSignal(signal, triggerAbort);
-        unbindAbort = abortBinding.unbind;
-        if (signal && !abortBinding.hasEventTargetAbort) {
-          pollTimer = setInterval(() => {
-            if (signal.aborted) {
-              triggerAbort();
-            }
-          }, 20);
-        }
+        unbindAbort = bindAbortSignal(signal, triggerAbort);
 
         void Promise.all([
           plugin.addListener('binaryChunk', (ev) => {
