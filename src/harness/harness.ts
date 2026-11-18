@@ -7,6 +7,9 @@ import {
 } from './blueprint.ts';
 import { findLeafForBranchNode } from './branches.ts';
 import {
+  buildBranchGistMessages,
+} from './storyTree.ts';
+import {
   EMPTY_SUMMARY_SNAPSHOT,
   assembleThreeZoneContext,
   buildFallbackSummary,
@@ -60,6 +63,12 @@ function throwIfAborted(signal?: AbortSignalLike): void {
   }
 }
 
+export interface SwitchBranchOptions {
+  config?: ModelConfig;
+  summarizeIfNeeded?: boolean;
+  signal?: AbortSignalLike;
+}
+
 export interface FictionHarness {
   createStory(input: CreateStoryInput): Story;
   createAndSaveStory(input: CreateStoryInput): Promise<Story>;
@@ -68,6 +77,18 @@ export interface FictionHarness {
   loadActiveStory(): Promise<Story | null>;
   setActiveStory(id: string | null): Promise<Story | null>;
   renameStory(id: string, title: string): Promise<Story | null>;
+  renameBranch(story: Story, branchEntryNodeId: string, name: string): Promise<Story>;
+  extractBranchGist(
+    story: Story,
+    branchEntryNodeId: string,
+    config: ModelConfig,
+    signal?: AbortSignalLike,
+  ): Promise<Story>;
+  ensureActiveBranchSummary(
+    story: Story,
+    config: ModelConfig,
+    signal?: AbortSignalLike,
+  ): Promise<Story>;
   updateStoryBlueprint(story: Story, blueprint: StoryBlueprint): Promise<Story>;
   deleteStory(id: string): Promise<void>;
   assembleContext(
@@ -100,7 +121,11 @@ export interface FictionHarness {
     config: ModelConfig,
     callbacks?: TurnCallbacks,
   ): Promise<TurnExecutionResult>;
-  switchBranch(story: Story, targetNodeId: string): Promise<Story>;
+  switchBranch(
+    story: Story,
+    targetNodeId: string,
+    options?: SwitchBranchOptions,
+  ): Promise<Story>;
   rewindToNode(story: Story, targetNodeId: string | null): Promise<Story>;
 }
 
@@ -373,6 +398,89 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       return updated;
     },
 
+    async renameBranch(story: Story, branchEntryNodeId: string, name: string): Promise<Story> {
+      if (!story.nodes[branchEntryNodeId]) {
+        throw new Error(`目标分支节点 ${branchEntryNodeId} 不存在。`);
+      }
+      const trimmed = name.trim();
+      const nextNames = { ...(story.branchNames ?? {}) };
+      if (trimmed) {
+        nextNames[branchEntryNodeId] = trimmed;
+      } else {
+        delete nextNames[branchEntryNodeId];
+      }
+      const updated: Story = {
+        ...story,
+        branchNames: Object.keys(nextNames).length > 0 ? nextNames : undefined,
+        updatedAt: now(),
+      };
+      return persistStory(updated, false);
+    },
+
+    async extractBranchGist(
+      story: Story,
+      branchEntryNodeId: string,
+      config: ModelConfig,
+      signal?: AbortSignalLike,
+    ): Promise<Story> {
+      if (!story.nodes[branchEntryNodeId]) {
+        throw new Error(`目标分支节点 ${branchEntryNodeId} 不存在。`);
+      }
+      const { content } = await streamText(
+        config,
+        buildBranchGistMessages(story, branchEntryNodeId),
+        { signal },
+      );
+      const gist = content.replace(/\s+/g, ' ').trim();
+      if (!gist) {
+        return story;
+      }
+      const updated: Story = {
+        ...story,
+        branchSummaries: {
+          ...(story.branchSummaries ?? {}),
+          [branchEntryNodeId]: gist,
+        },
+        updatedAt: now(),
+      };
+      return persistStory(updated, false);
+    },
+
+    async ensureActiveBranchSummary(
+      story: Story,
+      config: ModelConfig,
+      signal?: AbortSignalLike,
+    ): Promise<Story> {
+      const leafId = story.activeLeafNodeId;
+      if (!leafId) return story;
+      const leaf = story.nodes[leafId];
+      if (!leaf) return story;
+
+      const updatedSnapshot = await summarizeOverflowTurns(
+        story,
+        leaf.summarySnapshot,
+        config,
+        signal,
+      );
+      if (updatedSnapshot === leaf.summarySnapshot) {
+        return story;
+      }
+
+      const updatedLeaf: TurnNode = {
+        ...leaf,
+        summarySnapshot: updatedSnapshot,
+      };
+      const updatedStory: Story = {
+        ...story,
+        nodes: {
+          ...story.nodes,
+          [leafId]: updatedLeaf,
+        },
+        updatedAt: now(),
+      };
+      return persistStory(updatedStory, true);
+    },
+
     async updateStoryBlueprint(story: Story, blueprint: StoryBlueprint): Promise<Story> {
       const trimmedTitle = blueprint.title.trim() || story.title;
       const updated: Story = {
@@ -483,12 +591,20 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       });
     },
 
-    async switchBranch(story: Story, targetNodeId: string): Promise<Story> {
+    async switchBranch(
+      story: Story,
+      targetNodeId: string,
+      options?: SwitchBranchOptions,
+    ): Promise<Story> {
       const leafId = findLeafForBranchNode(story, targetNodeId);
       if (!leafId) {
         throw new Error(`目标分支节点 ${targetNodeId} 不存在。`);
       }
-      return activateLeafNode(story, leafId);
+      const switched = await activateLeafNode(story, leafId);
+      if (options?.summarizeIfNeeded && options.config) {
+        return this.ensureActiveBranchSummary(switched, options.config, options.signal);
+      }
+      return switched;
     },
 
     async rewindToNode(story: Story, targetNodeId: string | null): Promise<Story> {

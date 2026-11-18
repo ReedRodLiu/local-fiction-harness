@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import {
-  getBranchTreeSummary,
   type PlotSummarySnapshot,
   type Story,
   type StoryBlueprint,
@@ -14,7 +13,6 @@ interface ContextOverviewProps {
   metrics: ThreeZoneMetrics;
   isStreaming: boolean;
   onSaveBlueprintTweak: (updatedBlueprint: StoryBlueprint) => Promise<boolean | void>;
-  onSwitchBranch: (targetNodeId: string) => void;
 }
 
 export function ContextOverview({
@@ -23,7 +21,6 @@ export function ContextOverview({
   metrics,
   isStreaming,
   onSaveBlueprintTweak,
-  onSwitchBranch,
 }: ContextOverviewProps) {
   const [editingBlueprint, setEditingBlueprint] = useState(false);
   const [protagonistDraft, setProtagonistDraft] = useState('');
@@ -58,7 +55,6 @@ export function ContextOverview({
 
   const hasBlueprintOrScript =
     Boolean(story.rawScript) || story.blueprint.worldRules.length > 0;
-  const branchLeaves = getBranchTreeSummary(story);
 
   return (
     <div className="overview-stack">
@@ -162,8 +158,8 @@ export function ContextOverview({
 
       <details className="reasoning-details" data-testid="context-overview">
         <summary>
-          三区上下文与剧情摘要（估算 {metrics.totalEstimatedTokens} tokens · 已压缩{' '}
-          {summarySnapshot.summarizedTurnCount} 条历史 · {branchLeaves.length} 条分支）
+          三区上下文详情（估算 {metrics.totalEstimatedTokens} tokens · 已压缩{' '}
+          {summarySnapshot.summarizedTurnCount} 条历史）
         </summary>
         <div className="blueprint-summary">
           <p>
@@ -171,30 +167,6 @@ export function ContextOverview({
             固定锚定 {metrics.anchorChars} 字 / 滚动摘要 {metrics.summaryChars} 字 / 近期窗口{' '}
             {metrics.recentNodeCount} 条（{metrics.recentChars} 字）
           </p>
-          <p data-testid="active-plot-summary">
-            <strong>当前剧情摘要：</strong>
-            {summarySnapshot.content || '尚未触发压缩（近期窗口内保留完整对话）'}
-          </p>
-          {(branchLeaves.length > 1 ||
-            (branchLeaves.length === 1 && !branchLeaves[0].isActive)) && (
-            <div className="branch-tree-list" aria-label="平行分支树概览">
-              <strong>平行分支概览：</strong>
-              <ul>
-                {branchLeaves.map((branch, idx) => (
-                  <li key={branch.leafId}>
-                    <button
-                      type="button"
-                      className={`btn btn-sm ${branch.isActive ? 'btn-primary' : ''}`}
-                      disabled={isStreaming}
-                      onClick={() => onSwitchBranch(branch.leafId)}
-                    >
-                      分支 {idx + 1}（{branch.turnCount} 轮）：{branch.preview}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </div>
       </details>
     </div>

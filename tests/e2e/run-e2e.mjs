@@ -206,14 +206,17 @@ async function main() {
     await page.click('button.choice-btn:has-text("A. 继续训练声乐")');
     await page.waitForSelector('.turn-card.assistant:has-text("回执：A. 继续训练声乐")');
 
-    // 4. Verify Plot Summary updated & Branch A active
-    await page.click('[data-testid="context-overview"] summary');
+    // 4. Verify explicit Story Review (visible without opening <details>) & Branch A active
+    const reviewVisible = await page.locator('[data-testid="story-review"]').isVisible();
+    if (!reviewVisible) {
+      throw new Error('Expected Story Review panel to be explicitly visible');
+    }
     const sumA = await page.locator('[data-testid="active-plot-summary"]').textContent();
     if (!sumA?.includes('【分支A摘要】含黑市线索')) {
       throw new Error(`Expected Branch A summary, got: ${sumA}`);
     }
 
-    // 5. Rewind & edit Turn 2 user node to fork Branch B -> verify Plot Summary rolled back
+    // 5. Rewind & edit Turn 2 user node to fork Branch B -> verify Plot Summary rolled back & Story Tree fork appears
     const turn2Card = page.locator('.turn-card.user').nth(1);
     await turn2Card.locator('button:has-text("撤回并编辑重发")').click();
     await turn2Card.locator('textarea').fill('第二轮改道休息');
@@ -224,8 +227,23 @@ async function main() {
       throw new Error(`Branch A leaked into Branch B summary: ${sumB}`);
     }
 
-    // 6. Switch back to Branch A, reload browser -> IndexedDB restores branch tree & summary
-    await page.locator('.turn-card.user').nth(1).locator('button[aria-label="上一分支"]').click();
+    // 5b. Story Tree: verify fork badge ⑂ 2, expand fork, rename Branch B, switch back to Branch A via Story Tree
+    const forkBtn = page.locator('[data-testid^="story-tree-fork-"]').first();
+    const forkBtnText = await forkBtn.textContent();
+    if (!forkBtnText?.includes('⑂ 2')) {
+      throw new Error(`Expected fork badge ⑂ 2 in Story Tree, got: ${forkBtnText}`);
+    }
+    await forkBtn.click();
+    await page.waitForSelector('.story-tree-siblings');
+    const siblingB = page.locator('.story-tree-sibling.active');
+    await siblingB.locator('button:has-text("重命名")').click();
+    await siblingB.locator('input[aria-label="分支名称"]').fill('休息支线');
+    await siblingB.locator('button:has-text("保存名称")').click();
+    await page.waitForSelector('[data-testid="story-review"]:has-text("休息支线")');
+
+    // Switch back to Branch A via Story Tree sibling button
+    const nonActiveSibling = page.locator('.story-tree-sibling:not(.active)').first();
+    await nonActiveSibling.locator('button:has-text("切换至此分支")').click();
     await page.waitForSelector('.turn-card.assistant:has-text("回执：A. 继续训练声乐")');
 
     await page.reload({ waitUntil: 'networkidle' });
@@ -233,12 +251,14 @@ async function main() {
     if ((await page.inputValue('#cfg-api-key')) !== '') {
       throw new Error('Expected memoryOnly apiKey cleared on reload');
     }
-    await page.click('[data-testid="context-overview"] summary');
     const sumAfterReload = await page.locator('[data-testid="active-plot-summary"]').textContent();
     const pagerAfterReload = await page.locator('.turn-card.user').nth(1).locator('.branch-pager').textContent();
     if (!sumAfterReload?.includes('【分支A摘要】含黑市线索') || !pagerAfterReload?.includes('1 / 2')) {
       throw new Error('IndexedDB reload did not restore branch tree & summary');
     }
+    // Verify renamed Branch B survived reload in Story Tree
+    await page.locator('[data-testid^="story-tree-fork-"]').first().click();
+    await page.waitForSelector('.story-tree-siblings:has-text("休息支线")');
 
     // 7. Export JSON backup -> delete story -> re-import JSON backup
     const [download] = await Promise.all([
@@ -345,7 +365,9 @@ async function main() {
       throw new Error('Expected aborted turn not to commit any turn card');
     }
 
-    // 11. Mobile narrow viewport check (390x844, no horizontal overflow)
+    // 11. Mobile narrow viewport check (390x844, no horizontal overflow) on multi-branch story
+    await page.locator('.story-select-btn', { hasText: 'E2E训练营故事' }).click();
+    await page.waitForSelector('[data-testid^="story-tree-fork-"]');
     await page.setViewportSize({ width: 390, height: 844 });
     const checkNoHorizontalOverflow = async (label) => {
       const { scrollWidth, clientWidth } = await page.evaluate(() => ({
@@ -356,7 +378,12 @@ async function main() {
         throw new Error(`Horizontal overflow on ${label} (${scrollWidth} > ${clientWidth})`);
       }
     };
+    await page.locator('[data-testid="story-review"]').scrollIntoViewIfNeeded();
     await checkNoHorizontalOverflow('mobile main view');
+    const treeForkMobile = page.locator('[data-testid^="story-tree-fork-"]').first();
+    await treeForkMobile.click();
+    await page.waitForSelector('.story-tree-siblings');
+    await checkNoHorizontalOverflow('mobile story tree expanded');
     await page.click('button:has-text("导入剧本 / 新建故事")');
     await page.waitForSelector('.import-panel');
     await checkNoHorizontalOverflow('mobile import view');

@@ -15,9 +15,32 @@ export interface BranchLeafSummary {
   isActive: boolean;
 }
 
-function sortNodesChronologically(nodes: TurnNode[]): TurnNode[] {
+export function sortNodesChronologically(nodes: TurnNode[]): TurnNode[] {
   return [...nodes].sort((a, b) =>
     a.createdAt !== b.createdAt ? a.createdAt - b.createdAt : a.id.localeCompare(b.id),
+  );
+}
+
+export function buildChildrenByParent(story: Story): Map<string, TurnNode[]> {
+  const childrenByParent = new Map<string, TurnNode[]>();
+  for (const node of Object.values(story.nodes)) {
+    if (node.parentId) {
+      const list = childrenByParent.get(node.parentId) ?? [];
+      list.push(node);
+      childrenByParent.set(node.parentId, list);
+    }
+  }
+  for (const [parentId, list] of childrenByParent.entries()) {
+    childrenByParent.set(parentId, sortNodesChronologically(list));
+  }
+  return childrenByParent;
+}
+
+export function getRootNodes(story: Story): TurnNode[] {
+  return sortNodesChronologically(
+    story.rootNodeIds
+      .map((id) => story.nodes[id])
+      .filter((n): n is TurnNode => Boolean(n)),
   );
 }
 
@@ -38,9 +61,7 @@ export function getSiblingBranchInfo(story: Story, targetNodeId: string): Siblin
 
   const rawSiblings =
     target.parentId === null
-      ? story.rootNodeIds
-          .map((id) => story.nodes[id])
-          .filter((n): n is TurnNode => Boolean(n))
+      ? getRootNodes(story)
       : Object.values(story.nodes).filter((n) => n.parentId === target.parentId);
 
   const siblings = sortNodesChronologically(rawSiblings);
@@ -60,18 +81,13 @@ export function getSiblingBranchInfo(story: Story, targetNodeId: string): Siblin
 /**
  * Walks down from targetNodeId along the latest child chain to locate its branch leaf node.
  */
-export function findLeafForBranchNode(story: Story, targetNodeId: string): string | null {
+export function findLeafForBranchNode(
+  story: Story,
+  targetNodeId: string,
+  childrenByParent: Map<string, TurnNode[]> = buildChildrenByParent(story),
+): string | null {
   if (!story.nodes[targetNodeId]) {
     return null;
-  }
-
-  const childrenByParent = new Map<string, TurnNode[]>();
-  for (const node of Object.values(story.nodes)) {
-    if (node.parentId) {
-      const list = childrenByParent.get(node.parentId) ?? [];
-      list.push(node);
-      childrenByParent.set(node.parentId, list);
-    }
   }
 
   let cursor = targetNodeId;
@@ -82,8 +98,7 @@ export function findLeafForBranchNode(story: Story, targetNodeId: string): strin
     if (!children || children.length === 0) {
       return cursor;
     }
-    const sorted = sortNodesChronologically(children);
-    const next = sorted[sorted.length - 1];
+    const next = children[children.length - 1];
     if (!next || visited.has(next.id)) {
       return cursor;
     }

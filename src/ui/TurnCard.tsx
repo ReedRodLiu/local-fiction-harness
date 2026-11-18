@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { SiblingBranchInfo, TurnNode } from '../harness/index.ts';
 import { MessageContent } from './MessageContent.tsx';
+import { formatDiagnosticTags } from './StoryTree.tsx';
 
 interface TurnCardProps {
   node: TurnNode;
@@ -30,6 +31,10 @@ export function TurnCard({
 
   const hasSiblings = siblings.total > 1;
   const { prevSiblingId, nextSiblingId } = siblings;
+  const diagnosticTags = formatDiagnosticTags(
+    node.diagnostics?.sourceStatus ? [node.diagnostics.sourceStatus] : [],
+    Boolean(node.diagnostics?.contentRisk),
+  );
 
   return (
     <article className={`turn-card ${node.role}`} data-node-id={node.id}>
@@ -98,6 +103,12 @@ export function TurnCard({
           )}
         </div>
       </div>
+
+      {diagnosticTags.length > 0 && (
+        <div className="turn-diagnostics" data-testid="turn-diagnostics" role="note">
+          只读来源诊断（不进入模型上下文）：{diagnosticTags.join(' · ')}
+        </div>
+      )}
 
       {node.reasoningContent && (
         <details className="reasoning-details">

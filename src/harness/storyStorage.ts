@@ -1,5 +1,7 @@
 import { createDefaultId } from './id.ts';
 import type {
+  NodeDiagnosticStatus,
+  NodeDiagnostics,
   PlotSummarySnapshot,
   Story,
   StoryBackupEnvelope,
@@ -117,6 +119,54 @@ function validateSummarySnapshot(raw: unknown, nodeId: string): PlotSummarySnaps
   };
 }
 
+const VALID_DIAGNOSTIC_STATUSES = new Set<NodeDiagnosticStatus>([
+  'CONTENT_FILTER',
+  'TIMEOUT',
+  'INCOMPLETE',
+]);
+
+function validateDiagnostics(raw: unknown, nodeId: string): NodeDiagnostics | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    throw new Error(`备份文件节点 ${nodeId} 的 diagnostics 格式无效。`);
+  }
+  const sourceStatus = raw.sourceStatus;
+  if (
+    sourceStatus !== undefined &&
+    (typeof sourceStatus !== 'string' ||
+      !VALID_DIAGNOSTIC_STATUSES.has(sourceStatus as NodeDiagnosticStatus))
+  ) {
+    throw new Error(`备份文件节点 ${nodeId} 的 diagnostics.sourceStatus 无效。`);
+  }
+  if (raw.contentRisk !== undefined && typeof raw.contentRisk !== 'boolean') {
+    throw new Error(`备份文件节点 ${nodeId} 的 diagnostics.contentRisk 必须为布尔值。`);
+  }
+  const result: { sourceStatus?: NodeDiagnosticStatus; contentRisk?: boolean } = {};
+  if (sourceStatus !== undefined) result.sourceStatus = sourceStatus as NodeDiagnosticStatus;
+  if (raw.contentRisk !== undefined) result.contentRisk = raw.contentRisk;
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function validateOptionalStringMap(
+  raw: unknown,
+  fieldName: string,
+): Record<string, string> | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    throw new Error(`备份文件字段 ${fieldName} 必须为键值对象。`);
+  }
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v !== 'string') {
+      throw new Error(`备份文件字段 ${fieldName}.${k} 必须为字符串。`);
+    }
+    if (v.trim()) {
+      out[k] = v;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function validateNodes(raw: unknown): Record<string, TurnNode> {
   if (!isRecord(raw)) {
     throw new Error('备份文件缺少有效的节点树记录。');
@@ -134,12 +184,14 @@ function validateNodes(raw: unknown): Record<string, TurnNode> {
     ) {
       throw new Error(`备份文件中的节点 ${id} 格式无效。`);
     }
+    const diagnostics = validateDiagnostics(entry.diagnostics, id);
     nodes[id] = {
       id: entry.id,
       parentId: entry.parentId,
       role: entry.role,
       content: entry.content,
       ...(entry.reasoningContent !== undefined ? { reasoningContent: entry.reasoningContent } : {}),
+      ...(diagnostics ? { diagnostics } : {}),
       createdAt: entry.createdAt,
       summarySnapshot: validateSummarySnapshot(entry.summarySnapshot, id),
     };
@@ -213,6 +265,12 @@ export function importStoryBackup(
     throw new Error(`备份文件 activeLeafNodeId ${rawStory.activeLeafNodeId} 不存在。`);
   }
 
+  const branchNames = validateOptionalStringMap(rawStory.branchNames, 'story.branchNames');
+  const branchSummaries = validateOptionalStringMap(
+    rawStory.branchSummaries,
+    'story.branchSummaries',
+  );
+
   const existingSet = new Set(existingStoryIds);
   const hasCollision = existingSet.has(rawStory.id);
 
@@ -224,6 +282,8 @@ export function importStoryBackup(
     nodes,
     rootNodeIds,
     activeLeafNodeId: rawStory.activeLeafNodeId,
+    ...(branchNames ? { branchNames } : {}),
+    ...(branchSummaries ? { branchSummaries } : {}),
     createdAt: rawStory.createdAt,
     updatedAt: hasCollision ? now() : rawStory.updatedAt,
   };

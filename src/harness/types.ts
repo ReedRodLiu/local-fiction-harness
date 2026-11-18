@@ -14,12 +14,20 @@ export interface PlotSummarySnapshot {
   summarizedTurnCount: number;
 }
 
+export type NodeDiagnosticStatus = 'CONTENT_FILTER' | 'TIMEOUT' | 'INCOMPLETE';
+
+export interface NodeDiagnostics {
+  readonly sourceStatus?: NodeDiagnosticStatus;
+  readonly contentRisk?: boolean;
+}
+
 export interface TurnNode {
   id: string;
   parentId: string | null;
   role: 'user' | 'assistant';
   content: string;
   reasoningContent?: string;
+  diagnostics?: NodeDiagnostics;
   createdAt: number;
   summarySnapshot: PlotSummarySnapshot;
 }
@@ -32,6 +40,8 @@ export interface Story {
   nodes: Record<string, TurnNode>;
   rootNodeIds: string[];
   activeLeafNodeId: string | null;
+  branchNames?: Record<string, string>;
+  branchSummaries?: Record<string, string>;
   createdAt: number;
   updatedAt: number;
 }

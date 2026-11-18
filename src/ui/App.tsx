@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_MODEL_CONFIG,
+  computeActiveReviewState,
   createAsyncModelConfigStore,
   createFictionHarness,
   exportStoryBackup,
@@ -28,8 +29,17 @@ import { ContextOverview } from './ContextOverview.tsx';
 import { ImportPanel } from './ImportPanel.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
+import { StoryReview } from './StoryReview.tsx';
+import { StoryTree } from './StoryTree.tsx';
 import { TurnCard } from './TurnCard.tsx';
 import { toErrorMessage } from './textHelpers.ts';
+
+function hasModelCredentials(config: ModelConfig, useDevEnvKey: boolean): boolean {
+  if (config.apiKey.trim() || useDevEnvKey || isDevProxyBaseUrl(config.baseUrl)) {
+    return true;
+  }
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(config.baseUrl.trim());
+}
 
 function mergeLoadedConfig(
   loaded: ModelConfig,
@@ -99,6 +109,7 @@ export function App({ runtime }: AppProps) {
   const [showImport, setShowImport] = useState(false);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamContent, setStreamContent] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -366,8 +377,103 @@ export function App({ runtime }: AppProps) {
     );
   };
 
-  const handleSwitchBranch = (targetNodeId: string) =>
-    applyStoryTransition(() => harness.switchBranch(story, targetNodeId));
+  const handleSwitchBranch = async (targetNodeId: string) => {
+    if (abortRef.current || isStreaming) return;
+    const opSeq = storyOpSeqRef.current;
+    setErrorMsg(null);
+    try {
+      const switched = await harness.switchBranch(story, targetNodeId);
+      if (storyOpSeqRef.current !== opSeq) return;
+      setStory(switched);
+      await refreshStories();
+
+      if (
+        computeActiveReviewState(switched).needsSummaryCompression &&
+        hasModelCredentials(config, useDevEnvKey)
+      ) {
+        setIsSummarizing(true);
+        try {
+          const summarized = await harness.ensureActiveBranchSummary(switched, config);
+          if (storyOpSeqRef.current === opSeq) {
+            setStory(summarized);
+            await refreshStories();
+          }
+        } catch (err) {
+          if (storyOpSeqRef.current === opSeq) {
+            setErrorMsg(toErrorMessage(err, '补算支线剧情摘要失败，可稍后重试。'));
+          }
+        } finally {
+          if (storyOpSeqRef.current === opSeq) {
+            setIsSummarizing(false);
+          }
+        }
+      }
+    } catch (err) {
+      if (storyOpSeqRef.current === opSeq) {
+        setErrorMsg(toErrorMessage(err, '切换分支失败。'));
+      }
+    }
+  };
+
+  const handleRenameBranch = async (branchEntryNodeId: string, name: string) => {
+    const opSeq = storyOpSeqRef.current;
+    setErrorMsg(null);
+    try {
+      const updated = await harness.renameBranch(story, branchEntryNodeId, name);
+      if (storyOpSeqRef.current !== opSeq) return;
+      setStory(updated);
+      await refreshStories();
+    } catch (err) {
+      if (storyOpSeqRef.current === opSeq) {
+        setErrorMsg(toErrorMessage(err, '重命名分支失败。'));
+      }
+    }
+  };
+
+  const handleExtractBranchGist = async (branchEntryNodeId: string) => {
+    if (abortRef.current || isStreaming) return;
+    if (!hasModelCredentials(config, useDevEnvKey)) {
+      setErrorMsg('请先在左侧配置模型 API Key，再使用「AI 提炼梗概」。');
+      return;
+    }
+    const opSeq = storyOpSeqRef.current;
+    setErrorMsg(null);
+    try {
+      const updated = await harness.extractBranchGist(story, branchEntryNodeId, config);
+      if (storyOpSeqRef.current !== opSeq) return;
+      setStory(updated);
+      await refreshStories();
+    } catch (err) {
+      if (storyOpSeqRef.current === opSeq) {
+        setErrorMsg(toErrorMessage(err, '提炼分支梗概失败。'));
+      }
+    }
+  };
+
+  const handleComputeActiveSummary = async () => {
+    if (abortRef.current || isStreaming || isSummarizing) return;
+    if (!hasModelCredentials(config, useDevEnvKey)) {
+      setErrorMsg('请先在左侧配置模型 API Key，再补算超窗支线的剧情摘要。');
+      return;
+    }
+    const opSeq = storyOpSeqRef.current;
+    setErrorMsg(null);
+    setIsSummarizing(true);
+    try {
+      const updated = await harness.ensureActiveBranchSummary(story, config);
+      if (storyOpSeqRef.current !== opSeq) return;
+      setStory(updated);
+      await refreshStories();
+    } catch (err) {
+      if (storyOpSeqRef.current === opSeq) {
+        setErrorMsg(toErrorMessage(err, '补算剧情摘要失败。'));
+      }
+    } finally {
+      if (storyOpSeqRef.current === opSeq) {
+        setIsSummarizing(false);
+      }
+    }
+  };
 
   const handleRewindToNode = (targetNodeId: string) =>
     applyStoryTransition(() => harness.rewindToNode(story, targetNodeId));
@@ -648,13 +754,29 @@ export function App({ runtime }: AppProps) {
           />
         ) : (
           <>
+            <StoryReview
+              story={story}
+              metrics={contextPreview.metrics}
+              isBusy={isStreaming}
+              isSummarizing={isSummarizing}
+              onComputeSummary={() => void handleComputeActiveSummary()}
+            />
+
+            <StoryTree
+              story={story}
+              mode="play"
+              isBusy={isStreaming || isSummarizing}
+              onSwitchBranch={(id) => void handleSwitchBranch(id)}
+              onRenameBranch={handleRenameBranch}
+              onExtractBranchGist={handleExtractBranchGist}
+            />
+
             <ContextOverview
               story={story}
               summarySnapshot={activeSummary}
               metrics={contextPreview.metrics}
               isStreaming={isStreaming}
               onSaveBlueprintTweak={handleSaveBlueprintTweak}
-              onSwitchBranch={(id) => void handleSwitchBranch(id)}
             />
 
             <section className="timeline" aria-label="故事对话记录">

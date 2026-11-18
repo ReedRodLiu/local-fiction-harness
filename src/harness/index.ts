@@ -8,4 +8,5 @@ export * from './storyStorage.ts';
 export * from './context.ts';
 export * from './messageFormat.ts';
 export * from './branches.ts';
+export * from './storyTree.ts';
 export * from './harness.ts';
