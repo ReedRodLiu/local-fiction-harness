@@ -127,9 +127,24 @@ const MEDIA_ATTACHMENT_EXTS = new Set([
 ]);
 
 const STRONG_FICTION_REGEX =
-  /规则|设定|世界观|主角|角色|好感度|属性|状态栏|禁忌|开局|第一幕|第[一二三四五六七八九十0-9]+[章幕回节]|玩家|剧情|人物档案|扮演/;
+  /规则|设定|世界观|主角|角色|好感度|属性|状态栏|禁忌|开局|第一幕|第[一二三四五六七八九十0-9]+[章幕回节]|玩家|剧情|人物档案|扮演/g;
 const TECH_NOISE_REGEX =
   /\b(?:import|export|function|const|tsconfig|traceback|SELECT\s+\*|kubectl|docker|git\s+|npm\s+run)\b/i;
+
+function countStrongFictionMatches(text: string): number {
+  return text.match(STRONG_FICTION_REGEX)?.length ?? 0;
+}
+
+function resolveSessionTitle(rawTitle: unknown, firstUserSnippet: string): {
+  title: string;
+  hasNullTitle: boolean;
+} {
+  const trimmed = typeof rawTitle === 'string' ? rawTitle.trim() : '';
+  return {
+    title: trimmed || firstUserSnippet || DEFAULT_STORY_TITLE,
+    hasNullTitle: !trimmed,
+  };
+}
 
 function normalizeZipPath(p: string): string {
   return p.replace(/^\.\/+/, '').replace(/^\/+/, '');
@@ -251,9 +266,9 @@ function scoreSessionAsFiction(
   }
   const sampleText = sampleParts.join('\n');
 
-  const matches = sampleText.match(new RegExp(STRONG_FICTION_REGEX.source, 'g'));
-  if (matches) {
-    score += Math.min(5, matches.length);
+  const matchCount = countStrongFictionMatches(sampleText);
+  if (matchCount > 0) {
+    score += Math.min(5, matchCount);
   }
   if (/```[\s\S]*```/.test(sampleText) && /好感|体力|声望|银两|属性|状态/.test(sampleText)) {
     score += 2;
@@ -261,7 +276,7 @@ function scoreSessionAsFiction(
   if (/^[AB12][.、):]/m.test(sampleText)) {
     score += 1;
   }
-  if (TECH_NOISE_REGEX.test(sampleText) && (!matches || matches.length < 2)) {
+  if (TECH_NOISE_REGEX.test(sampleText) && matchCount < 2) {
     score -= 3;
   }
   return score;
@@ -365,9 +380,7 @@ export function scanDeepSeekExportZip(zipBytes: Uint8Array): DeepSeekZipScanResu
       }
     }
 
-    const rawTitle = typeof raw.title === 'string' ? raw.title.trim() : '';
-    const hasNullTitle = !rawTitle;
-    const title = rawTitle || firstUserSnippet || DEFAULT_STORY_TITLE;
+    const { title, hasNullTitle } = resolveSessionTitle(raw.title, firstUserSnippet);
     const forkCount = countForkPoints(messages);
     const fictionScore = scoreSessionAsFiction(title, messages, attachments, forkCount);
 
@@ -442,8 +455,7 @@ function detectRawScriptFromActivePath(
 
   for (let i = 0; i < earlyUsers.length; i++) {
     const content = earlyUsers[i].content.trim();
-    const keywordMatches = content.match(new RegExp(STRONG_FICTION_REGEX.source, 'g')) ?? [];
-    if (content.length >= 180 || keywordMatches.length >= 2) {
+    if (content.length >= 180 || countStrongFictionMatches(content) >= 2) {
       const combined = earlyUsers
         .slice(0, i + 1)
         .map((n) => n.content.trim())
@@ -467,7 +479,6 @@ function buildStoryFromRawSession(
   },
 ): DeepSeekSessionPreview {
   const messages = getSessionMessages(raw);
-  const rawTitle = typeof raw.title === 'string' ? raw.title.trim() : '';
   const createdAt = parseTimestamp(raw.inserted_at, opts.now());
   const updatedAt = parseTimestamp(raw.updated_at, createdAt);
 
@@ -489,6 +500,7 @@ function buildStoryFromRawSession(
   const seenAttachmentPaths = new Set<string>();
   const attachmentTextsByNodeId = new Map<string, string[]>();
   const nodes: Record<string, TurnNode> = {};
+  const rawParentByNodeId = new Map<string, string | null>();
   const emptySnapshot: PlotSummarySnapshot = {
     content: '',
     coveredUpToNodeId: null,
@@ -535,7 +547,7 @@ function buildStoryFromRawSession(
       const fileName = f.file_name?.trim() || '未命名附件';
       const exportPath = resolveAttachmentPath(raw.id, f);
       const kind = classifyAttachment(fileName, f.is_image);
-      const recordSeen = !seenAttachmentPaths.has(exportPath);
+      const isFirstSeen = !seenAttachmentPaths.has(exportPath);
       seenAttachmentPaths.add(exportPath);
 
       if (kind === 'text') {
@@ -545,7 +557,7 @@ function buildStoryFromRawSession(
             const parsed = parseScriptInput({ kind: 'file', fileName, bytes });
             rawAttachmentTexts.push(parsed.rawScript);
             inlineAttachmentSections.push(`【附件：${fileName}】\n${parsed.rawScript}`);
-            if (recordSeen) {
+            if (isFirstSeen) {
               recoveredAttachments.push({ fileName, exportPath, kind });
             }
             continue;
@@ -553,7 +565,7 @@ function buildStoryFromRawSession(
             // Fall through to skipped if corrupt text file
           }
         }
-        if (recordSeen) {
+        if (isFirstSeen) {
           skippedAttachments.push({
             fileName,
             exportPath,
@@ -562,7 +574,7 @@ function buildStoryFromRawSession(
           });
         }
       } else if (kind === 'legacy_doc') {
-        if (recordSeen) {
+        if (isFirstSeen) {
           skippedAttachments.push({
             fileName,
             exportPath,
@@ -570,7 +582,7 @@ function buildStoryFromRawSession(
             hint: '旧版二进制 .doc 暂不支持前端直读，请先在 Word/WPS 中另存为 .docx 后再导入。',
           });
         }
-      } else if (recordSeen) {
+      } else if (isFirstSeen) {
         skippedAttachments.push({
           fileName,
           exportPath,
@@ -595,17 +607,28 @@ function buildStoryFromRawSession(
     }
 
     const finalContent = combinedText || '（原平台回复在此中断，未返回正文）';
-    const parentId = resolveValidParentId(msg.parent_id);
+    rawParentByNodeId.set(
+      nodeId,
+      msg.parent_id !== null && msg.parent_id !== undefined ? String(msg.parent_id) : null,
+    );
 
     nodes[nodeId] = {
       id: nodeId,
-      parentId,
+      parentId: null,
       role,
       content: finalContent,
       ...(reasoning ? { reasoningContent: reasoning } : {}),
       ...(diagnostics ? { diagnostics } : {}),
       createdAt: parseTimestamp(msg.inserted_at, createdAt),
       summarySnapshot: emptySnapshot,
+    };
+  }
+
+  // Resolve parentId after all nodes are populated so identical/out-of-order timestamps never skip parents
+  for (const [nodeId, rawParentId] of rawParentByNodeId.entries()) {
+    nodes[nodeId] = {
+      ...nodes[nodeId],
+      parentId: resolveValidParentId(rawParentId),
     };
   }
 
@@ -629,7 +652,7 @@ function buildStoryFromRawSession(
     activeLeafNodeId = allNodes.length > 0 ? allNodes[allNodes.length - 1].id : null;
   }
 
-  const title = rawTitle || firstUserSnippet || DEFAULT_STORY_TITLE;
+  const { title } = resolveSessionTitle(raw.title, firstUserSnippet);
   const baseStory: Story = {
     id: opts.createId(),
     title,

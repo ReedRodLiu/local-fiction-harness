@@ -395,62 +395,72 @@ export function App({ runtime }: AppProps) {
     setShowImport(true);
   };
 
-  const sendAction = async (
+  const withCredentials = (
+    label: string,
+    action: (resolvedConfig: ModelConfig) => void,
+    overrideConfig?: ModelConfig,
+  ) => {
+    const activeCfg = overrideConfig ?? config;
+    if (!overrideConfig && !hasCredentials) {
+      openByokPrompt(label, (resolved) => action(resolved));
+      return;
+    }
+    action(activeCfg);
+  };
+
+  const sendAction = (
     userPrompt: string,
     restoreOnError = false,
     overrideConfig?: ModelConfig,
   ) => {
     const trimmed = userPrompt.trim();
     if (!trimmed || abortRef.current || isStreaming || isSummarizing) return;
-    const activeCfg = overrideConfig ?? config;
-    if (!overrideConfig && !hasCredentials) {
-      openByokPrompt('发送下一轮行动并继续故事', (resolved) => {
-        void sendAction(trimmed, restoreOnError, resolved);
-      });
-      return;
-    }
-    if (restoreOnError) {
-      setInput('');
-    }
-    await runStreamingExecution(
-      (callbacks) => harness.runTurn(story, trimmed, activeCfg, callbacks),
-      restoreOnError ? () => setInput(trimmed) : undefined,
+    withCredentials(
+      '发送下一轮行动并继续故事',
+      (activeCfg) => {
+        if (restoreOnError) {
+          setInput('');
+        }
+        void runStreamingExecution(
+          (callbacks) => harness.runTurn(story, trimmed, activeCfg, callbacks),
+          restoreOnError ? () => setInput(trimmed) : undefined,
+        );
+      },
+      overrideConfig,
     );
   };
 
-  const handleEditAndBranch = async (
+  const handleEditAndBranch = (
     targetUserNodeId: string,
     newContent: string,
     overrideConfig?: ModelConfig,
   ) => {
     const trimmed = newContent.trim();
     if (!trimmed || isSummarizing) return;
-    const activeCfg = overrideConfig ?? config;
-    if (!overrideConfig && !hasCredentials) {
-      openByokPrompt('编辑行动并生成新分支', (resolved) => {
-        void handleEditAndBranch(targetUserNodeId, trimmed, resolved);
-      });
-      return;
-    }
-    await runStreamingExecution((callbacks) =>
-      harness.editAndBranch(story, targetUserNodeId, trimmed, activeCfg, callbacks),
+    withCredentials(
+      '编辑行动并生成新分支',
+      (activeCfg) => {
+        void runStreamingExecution((callbacks) =>
+          harness.editAndBranch(story, targetUserNodeId, trimmed, activeCfg, callbacks),
+        );
+      },
+      overrideConfig,
     );
   };
 
-  const handleRegenerateNode = async (
+  const handleRegenerateNode = (
     targetAssistantNodeId: string,
     overrideConfig?: ModelConfig,
   ) => {
     if (isSummarizing) return;
-    const activeCfg = overrideConfig ?? config;
-    if (!overrideConfig && !hasCredentials) {
-      openByokPrompt('重新生成分支回复', (resolved) => {
-        void handleRegenerateNode(targetAssistantNodeId, resolved);
-      });
-      return;
-    }
-    await runStreamingExecution((callbacks) =>
-      harness.regenerateNode(story, targetAssistantNodeId, activeCfg, callbacks),
+    withCredentials(
+      '重新生成分支回复',
+      (activeCfg) => {
+        void runStreamingExecution((callbacks) =>
+          harness.regenerateNode(story, targetAssistantNodeId, activeCfg, callbacks),
+        );
+      },
+      overrideConfig,
     );
   };
 
@@ -492,36 +502,56 @@ export function App({ runtime }: AppProps) {
     );
   };
 
-  const handleExtractBranchGist = async (
+  const handleExtractBranchGist = (
     branchEntryNodeId: string,
     overrideConfig?: ModelConfig,
   ) => {
-    const activeCfg = overrideConfig ?? config;
-    if (!overrideConfig && !hasCredentials) {
-      openByokPrompt('AI 提炼分支梗概', (resolved) => {
-        void handleExtractBranchGist(branchEntryNodeId, resolved);
-      });
-      return;
-    }
-    await runStoryTransition(
-      () => harness.extractBranchGist(story, branchEntryNodeId, activeCfg),
-      '提炼分支梗概失败。',
-      { trackSummarizing: true },
+    withCredentials(
+      'AI 提炼分支梗概',
+      (activeCfg) => {
+        void runStoryTransition(
+          () => harness.extractBranchGist(story, branchEntryNodeId, activeCfg),
+          '提炼分支梗概失败。',
+          { trackSummarizing: true },
+        );
+      },
+      overrideConfig,
     );
   };
 
-  const handleComputeActiveSummary = async (overrideConfig?: ModelConfig) => {
-    const activeCfg = overrideConfig ?? config;
-    if (!overrideConfig && !hasCredentials) {
-      openByokPrompt('补算当前支线剧情摘要', (resolved) => {
-        void handleComputeActiveSummary(resolved);
-      });
-      return;
-    }
-    await runStoryTransition(
-      () => harness.ensureActiveBranchSummary(story, activeCfg),
-      '补算剧情摘要失败。',
-      { trackSummarizing: true },
+  const handleComputeActiveSummary = (overrideConfig?: ModelConfig) => {
+    withCredentials(
+      '补算当前支线剧情摘要',
+      (activeCfg) => {
+        void runStoryTransition(
+          () => harness.ensureActiveBranchSummary(story, activeCfg),
+          '补算剧情摘要失败。',
+          { trackSummarizing: true },
+        );
+      },
+      overrideConfig,
+    );
+  };
+
+  const handleReextractBlueprint = (overrideConfig?: ModelConfig) => {
+    if (!story.rawScript.trim()) return;
+    withCredentials(
+      '补拆故事蓝图',
+      (activeCfg) => {
+        void runStoryTransition(
+          async () => {
+            const extracted = await harness.extractStoryBlueprint(
+              story.rawScript,
+              activeCfg,
+              story.title,
+            );
+            return harness.updateStoryBlueprint(story, extracted);
+          },
+          '补拆故事蓝图失败。',
+          { trackSummarizing: true },
+        );
+      },
+      overrideConfig,
     );
   };
 
@@ -946,7 +976,9 @@ export function App({ runtime }: AppProps) {
               summarySnapshot={activeSummary}
               metrics={contextPreview.metrics}
               isStreaming={isStreaming}
+              isReextracting={isSummarizing}
               onSaveBlueprintTweak={handleSaveBlueprintTweak}
+              onReextractBlueprint={() => handleReextractBlueprint()}
             />
 
             <section className="timeline" aria-label="故事对话记录">

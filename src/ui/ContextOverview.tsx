@@ -12,7 +12,9 @@ interface ContextOverviewProps {
   summarySnapshot: PlotSummarySnapshot;
   metrics: ThreeZoneMetrics;
   isStreaming: boolean;
+  isReextracting?: boolean;
   onSaveBlueprintTweak: (updatedBlueprint: StoryBlueprint) => Promise<boolean | void>;
+  onReextractBlueprint?: () => void;
 }
 
 export function ContextOverview({
@@ -20,7 +22,9 @@ export function ContextOverview({
   summarySnapshot,
   metrics,
   isStreaming,
+  isReextracting = false,
   onSaveBlueprintTweak,
+  onReextractBlueprint,
 }: ContextOverviewProps) {
   const [editingBlueprint, setEditingBlueprint] = useState(false);
   const [protagonistDraft, setProtagonistDraft] = useState('');
@@ -139,17 +143,31 @@ export function ContextOverview({
                       .join('、')}
                   </p>
                 )}
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={() => {
-                    setProtagonistDraft(story.blueprint.protagonist);
-                    setTaboosDraft(story.blueprint.taboos.join('\n'));
-                    setEditingBlueprint(true);
-                  }}
-                >
-                  微调蓝图
-                </button>
+                <div className="btn-group">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => {
+                      setProtagonistDraft(story.blueprint.protagonist);
+                      setTaboosDraft(story.blueprint.taboos.join('\n'));
+                      setEditingBlueprint(true);
+                    }}
+                  >
+                    微调蓝图
+                  </button>
+                  {story.rawScript.trim() &&
+                    story.blueprint.extractionStatus === 'partial_fallback' &&
+                    onReextractBlueprint && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-primary"
+                        disabled={isStreaming || isReextracting}
+                        onClick={onReextractBlueprint}
+                      >
+                        {isReextracting ? '补拆蓝图中…' : '补拆蓝图'}
+                      </button>
+                    )}
+                </div>
               </>
             )}
           </div>

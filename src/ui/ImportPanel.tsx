@@ -148,7 +148,7 @@ export function ImportPanel({
     return { rawScript: parsed.rawScript, fallbackTitle };
   };
 
-  const handleExtract = async () => {
+  const runExtractWithConfig = async (activeCfg: ModelConfig) => {
     if (isExtracting) return;
     setParseError(null);
     let controller: AbortController | null = null;
@@ -159,7 +159,12 @@ export function ImportPanel({
       controller = new AbortController();
       abortRef.current = controller;
 
-      const extracted = await extractBlueprint(rawScript, config, fallbackTitle, controller.signal);
+      const extracted = await extractBlueprint(
+        rawScript,
+        activeCfg,
+        fallbackTitle,
+        controller.signal,
+      );
       if (extractSeqRef.current !== seq || controller.signal.aborted) {
         return;
       }
@@ -179,6 +184,24 @@ export function ImportPanel({
         setIsExtracting(false);
       }
     }
+  };
+
+  const handleExtract = () => {
+    if (isExtracting) return;
+    setParseError(null);
+    try {
+      preparePasteScript();
+    } catch (err) {
+      setParseError(toErrorMessage(err, '剧本文本不能为空。'));
+      return;
+    }
+    if (!hasCredentials) {
+      onRequireByok('拆解故事蓝图', (resolved) => {
+        void runExtractWithConfig(resolved);
+      });
+      return;
+    }
+    void runExtractWithConfig(config);
   };
 
   const handleSkipToManual = () => {

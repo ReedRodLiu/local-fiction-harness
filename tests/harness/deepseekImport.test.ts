@@ -381,4 +381,47 @@ describe('Slice 2 (#20): DeepSeek v3 two-stage .zip scan, sanitization, Node Dia
     });
     expect(matchedIds).toEqual(['sess-fiction-1']);
   });
+
+  it('resolves parent-child branch topology even when sibling/child messages share identical timestamps', () => {
+    const ts = '2026-11-15T10:00:00Z';
+    const zipBytes = zipSync({
+      'manifest.json': strToU8(JSON.stringify({ export_format_version: 3 })),
+      'chat_sessions/same-ts.json': strToU8(
+        JSON.stringify({
+          id: 'same-ts',
+          title: '同时间戳乱序测试',
+          current_message_id: 2,
+          inserted_at: ts,
+          updated_at: ts,
+          messages: [
+            // Child placed before parent in array with identical inserted_at
+            {
+              id: 2,
+              parent_id: 1,
+              role: 'ASSISTANT',
+              status: 'FINISHED',
+              inserted_at: ts,
+              fragments: [{ type: 'RESPONSE', content: '回复节点' }],
+            },
+            {
+              id: 1,
+              parent_id: null,
+              role: 'USER',
+              status: 'FINISHED',
+              inserted_at: ts,
+              fragments: [{ type: 'REQUEST', content: '开局设定：规则一，主角林清。' }],
+            },
+          ],
+        }),
+      ),
+    });
+
+    const previews = previewDeepSeekSessions(zipBytes, ['same-ts']);
+    expect(previews).toHaveLength(1);
+    const story = previews[0].story;
+    expect(story.rootNodeIds).toHaveLength(1);
+    const leaf = story.nodes[story.activeLeafNodeId!];
+    expect(leaf.content).toBe('回复节点');
+    expect(leaf.parentId).toBe(story.rootNodeIds[0]);
+  });
 });

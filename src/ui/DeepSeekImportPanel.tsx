@@ -84,12 +84,7 @@ export function DeepSeekImportPanel({
     });
   }, [scanResult, searchQuery, onlyLikelyFiction, aiMatchedIds]);
 
-  const activePreviewId = useMemo(() => {
-    if (previewSessionId && selectedIds.includes(previewSessionId)) {
-      return previewSessionId;
-    }
-    return selectedIds[0] ?? previewSessionId;
-  }, [previewSessionId, selectedIds]);
+  const activePreviewId = previewSessionId ?? selectedIds[0] ?? null;
 
   const preview = useMemo(() => {
     if (!zipBytes || !activePreviewId) return null;
@@ -282,6 +277,21 @@ export function DeepSeekImportPanel({
                 }
               >
                 全选当前筛选
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => {
+                  const selectedSet = new Set(selectedIds);
+                  const visibleIds = new Set(filteredSessions.map((s) => s.sessionId));
+                  const next = [
+                    ...selectedIds.filter((id) => !visibleIds.has(id)),
+                    ...filteredSessions.map((s) => s.sessionId).filter((id) => !selectedSet.has(id)),
+                  ];
+                  setSelectedIds(next);
+                }}
+              >
+                反选
               </button>
               <button
                 type="button"
