@@ -1,17 +1,24 @@
 import { useMemo, useState } from 'react';
 import {
   assistFilterDeepSeekSessions,
-  computeActiveReviewState,
   previewDeepSeekSessions,
   scanDeepSeekExportZip,
   type DeepSeekImportBatchResult,
   type DeepSeekSessionIndexItem,
   type DeepSeekZipScanResult,
+  type ImportSummaryStatus,
   type LlmTransport,
   type ModelConfig,
+  type ScriptTurnRange,
 } from '../harness/index.ts';
 import { StoryTree } from './StoryTree.tsx';
 import { toErrorMessage } from './textHelpers.ts';
+
+const SUMMARY_STATUS_LABELS: Record<ImportSummaryStatus, string> = {
+  compressed: '已压缩激活线摘要',
+  within_window: '无需压缩（近期窗口内）',
+  pending_key: '待配置密钥后补充',
+};
 
 interface DeepSeekImportPanelProps {
   config: ModelConfig;
@@ -21,7 +28,7 @@ interface DeepSeekImportPanelProps {
   onImportBatch: (
     zipBytes: Uint8Array,
     selectedSessionIds: readonly string[],
-    scriptTurnOverrides: Record<string, number>,
+    scriptRangeOverrides: Record<string, ScriptTurnRange>,
   ) => Promise<DeepSeekImportBatchResult>;
   onContinueStory: (storyId: string) => void;
 }
@@ -42,7 +49,9 @@ export function DeepSeekImportPanel({
   const [onlyLikelyFiction, setOnlyLikelyFiction] = useState(false);
   const [aiMatchedIds, setAiMatchedIds] = useState<Set<string> | null>(null);
   const [isAiFiltering, setIsAiFiltering] = useState(false);
-  const [scriptTurnOverrides, setScriptTurnOverrides] = useState<Record<string, number>>({});
+  const [scriptRangeOverrides, setScriptRangeOverrides] = useState<Record<string, ScriptTurnRange>>(
+    {},
+  );
   const [isImporting, setIsImporting] = useState(false);
   const [receipt, setReceipt] = useState<DeepSeekImportBatchResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -56,7 +65,7 @@ export function DeepSeekImportPanel({
       setZipBytes(buf);
       setScanResult(scanned);
       setAiMatchedIds(null);
-      setScriptTurnOverrides({});
+      setScriptRangeOverrides({});
       const firstLikely = scanned.sessions.find((s) => s.isLikelyFiction) ?? scanned.sessions[0];
       setSelectedIds(firstLikely ? [firstLikely.sessionId] : []);
       setPreviewSessionId(firstLikely?.sessionId ?? null);
@@ -89,11 +98,11 @@ export function DeepSeekImportPanel({
   const preview = useMemo(() => {
     if (!zipBytes || !activePreviewId) return null;
     try {
-      return previewDeepSeekSessions(zipBytes, [activePreviewId], { scriptTurnOverrides })[0] ?? null;
+      return previewDeepSeekSessions(zipBytes, [activePreviewId], { scriptRangeOverrides })[0] ?? null;
     } catch {
       return null;
     }
-  }, [zipBytes, activePreviewId, scriptTurnOverrides]);
+  }, [zipBytes, activePreviewId, scriptRangeOverrides]);
 
   const toggleSelect = (sessionId: string) => {
     setSelectedIds((prev) => {
@@ -135,7 +144,7 @@ export function DeepSeekImportPanel({
     setErrorMsg(null);
     setIsImporting(true);
     try {
-      const result = await onImportBatch(zipBytes, selectedIds, scriptTurnOverrides);
+      const result = await onImportBatch(zipBytes, selectedIds, scriptRangeOverrides);
       setReceipt(result);
     } catch (err) {
       setErrorMsg(toErrorMessage(err, '导入所选故事失败。'));
@@ -155,16 +164,15 @@ export function DeepSeekImportPanel({
         <ul className="ds-receipt-list">
           {receipt.previews.map((item, idx) => {
             const savedStory = receipt.stories[idx] ?? item.story;
-            const review = computeActiveReviewState(savedStory);
-            const summaryLabel = review.needsSummaryCompression
-              ? '超窗摘要待配置密钥后按需补算'
-              : '近期窗口内无需压缩';
+            const status = receipt.summaryStatuses[savedStory.id] ?? 'within_window';
+            const summaryLabel = SUMMARY_STATUS_LABELS[status];
             return (
               <li key={savedStory.id} className="ds-receipt-item">
                 <div className="story-tree-row-top">
                   <strong>{savedStory.title}</strong>
+                  <span className="badge">{summaryLabel}</span>
                   <span className="status-text">
-                    {item.turnCount} 轮 · {item.forkCount} 处分叉 · {summaryLabel}
+                    {item.turnCount} 轮 · {item.forkCount} 处分叉
                   </span>
                 </div>
                 {item.recoveredAttachments.length > 0 && (
@@ -393,28 +401,63 @@ export function DeepSeekImportPanel({
 
               <details className="reasoning-details">
                 <summary>手动调整原始剧本起点（可选，默认自动识别）</summary>
-                <div className="field" style={{ marginTop: '0.4rem' }}>
-                  <label htmlFor="ds-script-cutoff">将激活路径前 N 次玩家发言合并为原始剧本</label>
-                  <input
-                    id="ds-script-cutoff"
-                    type="number"
-                    min={1}
-                    max={Math.max(1, preview.turnCount)}
-                    value={scriptTurnOverrides[preview.sessionId] ?? ''}
-                    placeholder="留空则使用自动识别结果"
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      setScriptTurnOverrides((prev) => {
-                        const next = { ...prev };
-                        if (Number.isFinite(val) && val >= 1) {
-                          next[preview.sessionId] = Math.floor(val);
-                        } else {
-                          delete next[preview.sessionId];
-                        }
-                        return next;
-                      });
-                    }}
-                  />
+                <div className="ds-toolbar" style={{ marginTop: '0.4rem' }}>
+                  <div className="field" style={{ flex: 1 }}>
+                    <label htmlFor="ds-script-start">起始玩家轮次</label>
+                    <input
+                      id="ds-script-start"
+                      type="number"
+                      min={1}
+                      max={Math.max(1, preview.turnCount)}
+                      value={scriptRangeOverrides[preview.sessionId]?.startTurn ?? ''}
+                      placeholder="默认自动"
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setScriptRangeOverrides((prev) => {
+                          const next = { ...prev };
+                          if (Number.isFinite(val) && val >= 1) {
+                            const startTurn = Math.floor(val);
+                            const endTurn = Math.max(
+                              startTurn,
+                              prev[preview.sessionId]?.endTurn ?? startTurn,
+                            );
+                            next[preview.sessionId] = { startTurn, endTurn };
+                          } else {
+                            delete next[preview.sessionId];
+                          }
+                          return next;
+                        });
+                      }}
+                    />
+                  </div>
+                  <div className="field" style={{ flex: 1 }}>
+                    <label htmlFor="ds-script-end">结束玩家轮次</label>
+                    <input
+                      id="ds-script-end"
+                      type="number"
+                      min={1}
+                      max={Math.max(1, preview.turnCount)}
+                      value={scriptRangeOverrides[preview.sessionId]?.endTurn ?? ''}
+                      placeholder="默认自动"
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setScriptRangeOverrides((prev) => {
+                          const next = { ...prev };
+                          if (Number.isFinite(val) && val >= 1) {
+                            const endTurn = Math.floor(val);
+                            const startTurn = Math.min(
+                              endTurn,
+                              prev[preview.sessionId]?.startTurn ?? 1,
+                            );
+                            next[preview.sessionId] = { startTurn, endTurn };
+                          } else {
+                            delete next[preview.sessionId];
+                          }
+                          return next;
+                        });
+                      }}
+                    />
+                  </div>
                 </div>
               </details>
 

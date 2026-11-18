@@ -2,7 +2,7 @@ import { unzipSync } from 'fflate';
 import { createDefaultBlueprint } from './blueprint.ts';
 import { getActiveBranchNodes } from './context.ts';
 import { decodeUtf8WithGbFallback } from './encoding.ts';
-import type { FictionHarness } from './harness.ts';
+import { isAbortError, type FictionHarness } from './harness.ts';
 import { createDefaultId } from './id.ts';
 import { DEFAULT_STORY_TITLE, parseScriptInput } from './scriptParser.ts';
 import type {
@@ -103,15 +103,37 @@ export interface DeepSeekSessionPreview {
   diagnosticCount: number;
 }
 
+export interface ScriptTurnRange {
+  startTurn: number;
+  endTurn: number;
+}
+
+export type ImportSummaryStatus = 'compressed' | 'within_window' | 'pending_key';
+
 export interface DeepSeekImportBatchResult {
   stories: Story[];
   previews: DeepSeekSessionPreview[];
+  summaryStatuses: Record<string, ImportSummaryStatus>;
 }
 
 export interface DeepSeekPreviewOptions {
   createId?: () => string;
   now?: () => number;
   scriptTurnOverrides?: Record<string, number>;
+  scriptRangeOverrides?: Record<string, ScriptTurnRange>;
+}
+
+export interface DeepSeekImportOptions extends DeepSeekPreviewOptions {
+  modelConfig?: ModelConfig;
+  transport?: LlmTransport;
+  signal?: AbortSignalLike;
+}
+
+export interface ScriptBoundaryResult {
+  rawScript: string;
+  scriptMessageIds: string[];
+  firstPlayMessageId: string | null;
+  usedFallback: boolean;
 }
 
 const TEXT_ATTACHMENT_EXTS = new Set(['.docx', '.md', '.txt']);
@@ -423,11 +445,13 @@ export function scanDeepSeekExportZip(zipBytes: Uint8Array): DeepSeekZipScanResu
 function detectRawScriptFromActivePath(
   activeNodes: readonly TurnNode[],
   attachmentTextsByNodeId: ReadonlyMap<string, string[]>,
-  overrideTurnCount?: number,
+  overrideRange?: ScriptTurnRange,
 ): { rawScript: string; confidence: 'strong' | 'ambiguous' } {
   const userNodes = activeNodes.filter((n) => n.role === 'user');
-  if (overrideTurnCount !== undefined && overrideTurnCount > 0) {
-    const chosen = userNodes.slice(0, overrideTurnCount);
+  if (overrideRange && overrideRange.endTurn >= 1) {
+    const startIdx = Math.max(0, (overrideRange.startTurn ?? 1) - 1);
+    const endIdx = Math.max(startIdx + 1, overrideRange.endTurn);
+    const chosen = userNodes.slice(startIdx, endIdx);
     const parts: string[] = [];
     for (const node of chosen) {
       const attach = attachmentTextsByNodeId.get(node.id) ?? [];
@@ -437,36 +461,35 @@ function detectRawScriptFromActivePath(
     return { rawScript: parts.join('\n\n').trim(), confidence: 'strong' };
   }
 
-  const earlyUsers = userNodes.slice(0, 3);
-  const attachmentParts: string[] = [];
-  for (const node of earlyUsers) {
-    const texts = attachmentTextsByNodeId.get(node.id);
-    if (texts && texts.length > 0) {
-      attachmentParts.push(...texts);
-    }
-  }
-  if (attachmentParts.length > 0) {
-    const firstUserText = earlyUsers[0]?.content.trim() ?? '';
-    const combined = [...attachmentParts, ...(firstUserText.length >= 120 ? [firstUserText] : [])]
-      .join('\n\n')
-      .trim();
-    return { rawScript: combined, confidence: 'strong' };
-  }
-
-  for (let i = 0; i < earlyUsers.length; i++) {
-    const content = earlyUsers[i].content.trim();
-    if (content.length >= 180 || countStrongFictionMatches(content) >= 2) {
-      const combined = earlyUsers
-        .slice(0, i + 1)
-        .map((n) => n.content.trim())
-        .filter(Boolean)
-        .join('\n\n');
+  const firstUser = userNodes[0];
+  if (firstUser) {
+    const firstAttachments = attachmentTextsByNodeId.get(firstUser.id) ?? [];
+    const firstText = firstUser.content.trim();
+    if (firstAttachments.length > 0) {
+      const combined = [...firstAttachments, ...(firstText.length >= 120 ? [firstText] : [])]
+        .join('\n\n')
+        .trim();
       return { rawScript: combined, confidence: 'strong' };
     }
+    if (firstText.length >= 180 || countStrongFictionMatches(firstText) >= 2) {
+      return { rawScript: firstText, confidence: 'strong' };
+    }
   }
 
-  const fallback = userNodes[0]?.content.trim() ?? '';
-  return { rawScript: fallback, confidence: 'ambiguous' };
+  // Turn 1 lacked strong script signals (ambiguous opening, e.g. chitchat before script).
+  // Provide best local fallback candidate while keeping confidence='ambiguous' for Level-2 LLM refinement.
+  for (const node of userNodes.slice(1, 5)) {
+    const attachments = attachmentTextsByNodeId.get(node.id) ?? [];
+    if (attachments.length > 0) {
+      return { rawScript: attachments.join('\n\n').trim(), confidence: 'ambiguous' };
+    }
+    const text = node.content.trim();
+    if (text.length >= 120 || countStrongFictionMatches(text) >= 2) {
+      return { rawScript: text, confidence: 'ambiguous' };
+    }
+  }
+
+  return { rawScript: firstUser?.content.trim() ?? '', confidence: 'ambiguous' };
 }
 
 function buildStoryFromRawSession(
@@ -476,6 +499,7 @@ function buildStoryFromRawSession(
     createId: () => string;
     now: () => number;
     scriptTurnOverride?: number;
+    scriptRangeOverride?: ScriptTurnRange;
   },
 ): DeepSeekSessionPreview {
   const messages = getSessionMessages(raw);
@@ -666,10 +690,15 @@ function buildStoryFromRawSession(
   };
 
   const activeNodes = getActiveBranchNodes(baseStory, activeLeafNodeId);
+  const resolvedRange: ScriptTurnRange | undefined =
+    opts.scriptRangeOverride ??
+    (opts.scriptTurnOverride !== undefined && opts.scriptTurnOverride > 0
+      ? { startTurn: 1, endTurn: opts.scriptTurnOverride }
+      : undefined);
   const detected = detectRawScriptFromActivePath(
     activeNodes,
     attachmentTextsByNodeId,
-    opts.scriptTurnOverride,
+    resolvedRange,
   );
 
   const firstAssistant = activeNodes.find((n) => n.role === 'assistant');
@@ -773,29 +802,212 @@ export function previewDeepSeekSessions(
       createId,
       now,
       scriptTurnOverride: options.scriptTurnOverrides?.[raw.id],
+      scriptRangeOverride: options.scriptRangeOverrides?.[raw.id],
     }),
   );
 }
 
 /**
- * Persists each selected DeepSeek session 1-to-1 as an independent Story without requiring an API key.
+ * Level 2 boundary locator for ambiguous openings (e.g. chitchat turns before pasting the script).
+ * Sends only compact snippets of the first few active-path turns to identify scriptMessageIds.
+ */
+export async function locateDeepSeekScriptBoundary(
+  story: Story,
+  transport: LlmTransport,
+  config: ModelConfig,
+  signal?: AbortSignalLike,
+): Promise<ScriptBoundaryResult> {
+  const activeNodes = getActiveBranchNodes(story, story.activeLeafNodeId);
+  const earlyNodes = activeNodes.slice(0, 8);
+  if (earlyNodes.length === 0) {
+    return {
+      rawScript: story.rawScript,
+      scriptMessageIds: [],
+      firstPlayMessageId: null,
+      usedFallback: true,
+    };
+  }
+
+  const compactPreview = earlyNodes.map((n, index) => ({
+    index: index + 1,
+    nodeId: n.id,
+    role: n.role,
+    snippet: toSnippet(n.content, 240),
+  }));
+
+  let rawResponse = '';
+  try {
+    for await (const delta of transport.streamChat({
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      model: config.model,
+      signal,
+      messages: [
+        {
+          role: 'system',
+          content:
+            '你是互动叙事剧本边界定位助手（剧本边界定位）。给定对话前几轮的精简摘要，请识别哪几条节点属于“原始剧本/规则设定”（排除开头闲聊），以及哪条是“第一轮正式游玩起点”。严格只输出 JSON：{"scriptMessageIds":["..."],"firstPlayMessageId":"...|null"}。',
+        },
+        {
+          role: 'user',
+          content: JSON.stringify(compactPreview),
+        },
+      ],
+    })) {
+      if (delta.contentDelta) {
+        rawResponse += delta.contentDelta;
+      }
+    }
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    return {
+      rawScript: story.rawScript,
+      scriptMessageIds: [],
+      firstPlayMessageId: null,
+      usedFallback: true,
+    };
+  }
+
+  const jsonMatch = /\{[\s\S]*\}/.exec(rawResponse);
+  if (!jsonMatch) {
+    return {
+      rawScript: story.rawScript,
+      scriptMessageIds: [],
+      firstPlayMessageId: null,
+      usedFallback: true,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      scriptMessageIds?: unknown;
+      firstPlayMessageId?: unknown;
+    };
+    const validIds = new Set(earlyNodes.map((n) => n.id));
+    const scriptMessageIds = Array.isArray(parsed.scriptMessageIds)
+      ? parsed.scriptMessageIds.filter(
+          (id): id is string => typeof id === 'string' && validIds.has(id),
+        )
+      : [];
+    const firstPlayMessageId =
+      typeof parsed.firstPlayMessageId === 'string' && validIds.has(parsed.firstPlayMessageId)
+        ? parsed.firstPlayMessageId
+        : null;
+
+    if (scriptMessageIds.length === 0) {
+      return {
+        rawScript: story.rawScript,
+        scriptMessageIds: [],
+        firstPlayMessageId,
+        usedFallback: true,
+      };
+    }
+
+    const rawScript = scriptMessageIds
+      .map((id) => story.nodes[id]?.content.trim() ?? '')
+      .filter(Boolean)
+      .join('\n\n')
+      .trim();
+
+    return {
+      rawScript: rawScript || story.rawScript,
+      scriptMessageIds,
+      firstPlayMessageId,
+      usedFallback: false,
+    };
+  } catch {
+    return {
+      rawScript: story.rawScript,
+      scriptMessageIds: [],
+      firstPlayMessageId: null,
+      usedFallback: true,
+    };
+  }
+}
+
+/**
+ * Persists each selected DeepSeek session 1-to-1 as an independent Story.
+ * When modelConfig is provided, runs Level-2 boundary detection (only for ambiguous openings),
+ * extracts Story Blueprint, and compresses over-window Plot Summary for the active branch only.
  */
 export async function importDeepSeekSessions(
   zipBytes: Uint8Array,
   selectedSessionIds: readonly string[],
-  harness: Pick<FictionHarness, 'saveStory' | 'setActiveStory'>,
-  options: DeepSeekPreviewOptions = {},
+  harness: Pick<
+    FictionHarness,
+    | 'saveStory'
+    | 'setActiveStory'
+    | 'extractStoryBlueprint'
+    | 'ensureActiveBranchSummary'
+    | 'getReviewState'
+    | 'transport'
+  >,
+  options: DeepSeekImportOptions = {},
 ): Promise<DeepSeekImportBatchResult> {
   const previews = previewDeepSeekSessions(zipBytes, selectedSessionIds, options);
   const stories: Story[] = [];
+  const summaryStatuses: Record<string, ImportSummaryStatus> = {};
+  const modelConfig = options.modelConfig;
+  const transport = options.transport ?? harness.transport;
+
   for (const preview of previews) {
-    const saved = await harness.saveStory(preview.story);
+    let workingStory = preview.story;
+    const hasManualOverride =
+      Boolean(options.scriptRangeOverrides?.[preview.sessionId]) ||
+      Boolean(options.scriptTurnOverrides?.[preview.sessionId]);
+
+    if (modelConfig) {
+      if (preview.scriptConfidence === 'ambiguous' && !hasManualOverride) {
+        const boundary = await locateDeepSeekScriptBoundary(
+          workingStory,
+          transport,
+          modelConfig,
+          options.signal,
+        );
+        if (!boundary.usedFallback && boundary.rawScript.trim()) {
+          workingStory = { ...workingStory, rawScript: boundary.rawScript };
+        }
+      }
+
+      if (workingStory.rawScript.trim()) {
+        try {
+          const blueprint = await harness.extractStoryBlueprint(
+            workingStory.rawScript,
+            modelConfig,
+            workingStory.title,
+            options.signal,
+          );
+          workingStory = { ...workingStory, blueprint };
+        } catch (err) {
+          if (isAbortError(err)) throw err;
+          // Keep partial_fallback blueprint cleanly without blocking import
+        }
+      }
+
+      if (harness.getReviewState(workingStory).needsSummaryCompression) {
+        workingStory = await harness.ensureActiveBranchSummary(
+          workingStory,
+          modelConfig,
+          options.signal,
+        );
+        summaryStatuses[workingStory.id] = 'compressed';
+      } else {
+        summaryStatuses[workingStory.id] = 'within_window';
+      }
+    } else {
+      summaryStatuses[workingStory.id] = harness.getReviewState(workingStory).needsSummaryCompression
+        ? 'pending_key'
+        : 'within_window';
+    }
+
+    const saved = await harness.saveStory(workingStory);
     stories.push(saved);
   }
+
   if (stories.length > 0) {
     await harness.setActiveStory(stories[0].id);
   }
-  return { stories, previews };
+  return { stories, previews, summaryStatuses };
 }
 
 /**

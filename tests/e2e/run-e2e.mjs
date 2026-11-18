@@ -174,6 +174,36 @@ function buildSyntheticDeepSeekZipE2E() {
   });
 }
 
+function buildAmbiguousOverWindowZipE2E() {
+  const messages = [
+    { id: 1, parent_id: null, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-16T08:00:00Z', fragments: [{ type: 'REQUEST', content: '你好呀' }] },
+    { id: 2, parent_id: 1, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-16T08:01:00Z', fragments: [{ type: 'RESPONSE', content: '你好，请发剧本。' }] },
+    { id: 3, parent_id: 2, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-16T08:02:00Z', fragments: [{ type: 'REQUEST', content: '我准备好了' }] },
+    { id: 4, parent_id: 3, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-16T08:03:00Z', fragments: [{ type: 'RESPONSE', content: '请贴出设定。' }] },
+    { id: 5, parent_id: 4, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-16T08:04:00Z', fragments: [{ type: 'REQUEST', content: '【E2E模糊剧本】主角：陆行舟。规则：每轮输出状态栏。' }] },
+    { id: 6, parent_id: 5, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-16T08:05:00Z', fragments: [{ type: 'RESPONSE', content: '第一幕开始。' }] },
+    { id: 7, parent_id: 6, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-16T08:06:00Z', fragments: [{ type: 'REQUEST', content: '走向码头' }] },
+    { id: 8, parent_id: 7, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-16T08:07:00Z', fragments: [{ type: 'RESPONSE', content: '码头停着货船。' }] },
+    { id: 9, parent_id: 8, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-16T08:08:00Z', fragments: [{ type: 'REQUEST', content: '登上货船甲板' }] },
+    { id: 10, parent_id: 9, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-16T08:09:00Z', fragments: [{ type: 'RESPONSE', content: '船长室灯还亮着。' }] },
+    { id: 11, parent_id: 10, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-16T08:10:00Z', fragments: [{ type: 'REQUEST', content: '敲响船长室门' }] },
+    { id: 12, parent_id: 11, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-16T08:11:00Z', fragments: [{ type: 'RESPONSE', content: '门后传来脚步声。' }] },
+  ];
+  return zipSync({
+    'manifest.json': strToU8(JSON.stringify({ export_format_version: 3 })),
+    'chat_sessions/ds-e2e-ambig.json': strToU8(
+      JSON.stringify({
+        id: 'ds-e2e-ambig',
+        title: '模糊开局超窗长档',
+        current_message_id: 12,
+        inserted_at: '2026-11-16T08:00:00Z',
+        updated_at: '2026-11-16T08:11:00Z',
+        messages,
+      }),
+    ),
+  });
+}
+
 async function startViteServer(port) {
   const srv = spawn('npx', ['vite', '--port', String(port), '--strictPort'], {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -259,6 +289,32 @@ async function main() {
         return;
       }
 
+      if (sys.includes('剧本边界定位')) {
+        const items = JSON.parse(lastMsg || '[]');
+        const scriptNode = items.find((i) => String(i.snippet || '').includes('E2E模糊剧本'));
+        const playNode = items.find((i) => String(i.snippet || '').includes('第一幕开始'));
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: sseResponse([
+            {
+              choices: [
+                {
+                  delta: {
+                    content: JSON.stringify({
+                      scriptMessageIds: scriptNode ? [scriptNode.nodeId] : [],
+                      firstPlayMessageId: playNode?.nodeId ?? null,
+                    }),
+                  },
+                  finish_reason: 'stop',
+                },
+              ],
+            },
+          ]),
+        });
+        return;
+      }
+
       if (sys.includes('分支梗概助手')) {
         await route.fulfill({
           status: 200,
@@ -271,7 +327,9 @@ async function main() {
       if (sys.includes('剧情摘要压缩')) {
         const sumText = lastMsg.includes('黑市线索')
           ? '【分支A摘要】含黑市线索'
-          : '【通用摘要】初入训练营';
+          : lastMsg.includes('E2E模糊剧本') || lastMsg.includes('请贴出设定') || lastMsg.includes('码头')
+            ? '【激活线压缩摘要】主角登上货船甲板。'
+            : '【通用摘要】初入训练营';
         await route.fulfill({
           status: 200,
           contentType: 'text/event-stream',
@@ -361,6 +419,26 @@ async function main() {
     await page.fill('#byok-api-key', 'sk-e2e-inline');
     await page.click('button:has-text("保存配置并立即继续")');
     await page.waitForSelector('.turn-card.assistant:has-text("回执：推开练歌房钢琴盖")');
+
+    // 0b. Keyed import of ambiguous + over-window DeepSeek zip -> boundary locator + active-path compression + blueprint
+    const ambigZipPath = path.join(tmpDir, 'deepseek-ambiguous-long.zip');
+    fs.writeFileSync(ambigZipPath, buildAmbiguousOverWindowZipE2E());
+    await page.click('button:has-text("从 DeepSeek 继续")');
+    await page.waitForSelector('#deepseek-zip-input');
+    await page.setInputFiles('#deepseek-zip-input', ambigZipPath);
+    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
+    await page.click('[data-testid="ds-confirm-import-btn"]');
+    await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
+    const ambigReceipt = await page.locator('[data-testid="deepseek-import-receipt"]').textContent();
+    if (!ambigReceipt?.includes('已压缩激活线摘要')) {
+      throw new Error(`Expected compressed summary status in receipt, got: ${ambigReceipt}`);
+    }
+    await page.click('button:has-text("继续这条故事")');
+    await page.waitForSelector('.turn-card.assistant:has-text("门后传来脚步声")');
+    const ambigSummary = await page.locator('[data-testid="active-plot-summary"]').textContent();
+    if (!ambigSummary?.includes('【激活线压缩摘要】')) {
+      throw new Error(`Expected compressed active summary in StoryReview, got: ${ambigSummary}`);
+    }
 
     // Clean up DeepSeek stories before running existing script-import workflow assertions
     while ((await page.locator('button[aria-label^="删除 "]').count()) > 0) {

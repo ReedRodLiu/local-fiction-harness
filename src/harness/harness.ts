@@ -8,6 +8,8 @@ import {
 import { findLeafForBranchNode } from './branches.ts';
 import {
   buildBranchGistMessages,
+  computeActiveReviewState,
+  type ActiveReviewState,
 } from './storyTree.ts';
 import {
   EMPTY_SUMMARY_SNAPSHOT,
@@ -64,6 +66,7 @@ function throwIfAborted(signal?: AbortSignalLike): void {
 }
 
 export interface FictionHarness {
+  readonly transport: LlmTransport;
   createStory(input: CreateStoryInput): Story;
   createAndSaveStory(input: CreateStoryInput): Promise<Story>;
   saveStory(story: Story): Promise<Story>;
@@ -83,6 +86,7 @@ export interface FictionHarness {
     config: ModelConfig,
     signal?: AbortSignalLike,
   ): Promise<Story>;
+  getReviewState(story: Story): ActiveReviewState;
   updateStoryBlueprint(story: Story, blueprint: StoryBlueprint): Promise<Story>;
   deleteStory(id: string): Promise<void>;
   assembleContext(
@@ -340,6 +344,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
   };
 
   return {
+    transport: deps.transport,
     createStory: createStoryRecord,
 
     async createAndSaveStory(input: CreateStoryInput): Promise<Story> {
@@ -469,6 +474,10 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         updatedAt: now(),
       };
       return persistStory(updatedStory, true);
+    },
+
+    getReviewState(story: Story): ActiveReviewState {
+      return computeActiveReviewState(story, deps.contextBudget);
     },
 
     async updateStoryBlueprint(story: Story, blueprint: StoryBlueprint): Promise<Story> {

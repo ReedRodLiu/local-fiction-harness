@@ -14,6 +14,7 @@ import {
   type DeepSeekImportBatchResult,
   type ModelConfig,
   type PlatformRuntime,
+  type ScriptTurnRange,
   type Story,
   type StoryBlueprint,
   type TurnCallbacks,
@@ -587,13 +588,14 @@ export function App({ runtime }: AppProps) {
   const handleImportDeepSeekBatch = async (
     zipBytes: Uint8Array,
     selectedSessionIds: readonly string[],
-    scriptTurnOverrides: Record<string, number>,
+    scriptRangeOverrides: Record<string, ScriptTurnRange>,
   ): Promise<DeepSeekImportBatchResult> => {
     abortActiveStream(true);
     const opSeq = ++storyOpSeqRef.current;
     setErrorMsg(null);
     const result = await importDeepSeekSessions(zipBytes, selectedSessionIds, harness, {
-      scriptTurnOverrides,
+      scriptRangeOverrides,
+      modelConfig: hasCredentials ? config : undefined,
     });
     if (storyOpSeqRef.current === opSeq && result.stories[0]) {
       setStory(result.stories[0]);

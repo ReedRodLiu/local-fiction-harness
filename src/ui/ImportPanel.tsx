@@ -7,6 +7,7 @@ import {
   type DeepSeekImportBatchResult,
   type LlmTransport,
   type ModelConfig,
+  type ScriptTurnRange,
   type StoryBlueprint,
 } from '../harness/index.ts';
 import { DeepSeekImportPanel } from './DeepSeekImportPanel.tsx';
@@ -34,7 +35,7 @@ interface ImportPanelProps {
   onImportDeepSeekBatch: (
     zipBytes: Uint8Array,
     selectedSessionIds: readonly string[],
-    scriptTurnOverrides: Record<string, number>,
+    scriptRangeOverrides: Record<string, ScriptTurnRange>,
   ) => Promise<DeepSeekImportBatchResult>;
   onContinueStory: (storyId: string) => void;
   onCancel?: () => void;
