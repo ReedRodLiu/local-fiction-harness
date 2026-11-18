@@ -38,7 +38,7 @@ function createDomBackupExporter(): BackupExporter {
  * localStorage-backed SecretStore, IndexedDB StoryStorage, and Blob download BackupExporter.
  */
 export function createWebPlatformRuntime(options: WebRuntimeOptions = {}): PlatformRuntime {
-  const isDev = options.isDev ?? Boolean(import.meta.env?.DEV);
+  const isDev = import.meta.env.DEV && (options.isDev ?? true);
   const kvStorage = options.keyValueStorage ?? window.localStorage;
   const baseFetch: FetchLike =
     options.fetchImpl ??

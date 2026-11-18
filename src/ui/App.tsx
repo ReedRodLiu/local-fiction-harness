@@ -35,19 +35,21 @@ function mergeLoadedConfig(
   loaded: ModelConfig,
   isWebDev: boolean,
 ): { initialConfig: ModelConfig; initialUseDevEnvKey: boolean } {
-  const devProxy = readDevSessionProxy(isWebDev);
-  if (devProxy) {
-    return {
-      initialConfig: {
-        ...loaded,
-        baseUrl: devProxy.baseUrl,
-        model: devProxy.model ?? loaded.model,
-        apiKey: devProxy.hasEnvKey ? '' : loaded.apiKey,
-      },
-      initialUseDevEnvKey: devProxy.hasEnvKey,
-    };
+  if (import.meta.env.DEV && isWebDev) {
+    const devProxy = readDevSessionProxy(true);
+    if (devProxy) {
+      return {
+        initialConfig: {
+          ...loaded,
+          baseUrl: devProxy.baseUrl,
+          model: devProxy.model ?? loaded.model,
+          apiKey: devProxy.hasEnvKey ? '' : loaded.apiKey,
+        },
+        initialUseDevEnvKey: devProxy.hasEnvKey,
+      };
+    }
   }
-  if (!isWebDev && isDevProxyBaseUrl(loaded.baseUrl)) {
+  if (!isWebDev && !/^https?:\/\//i.test(loaded.baseUrl.trim())) {
     return {
       initialConfig: { ...loaded, baseUrl: DEFAULT_MODEL_CONFIG.baseUrl },
       initialUseDevEnvKey: false,
@@ -77,7 +79,7 @@ export function App({ runtime }: AppProps) {
   );
 
   const [config, setConfig] = useState<ModelConfig>(() => {
-    const devProxy = readDevSessionProxy(isWebDev);
+    const devProxy = import.meta.env.DEV ? readDevSessionProxy(isWebDev) : null;
     if (devProxy) {
       return {
         ...DEFAULT_MODEL_CONFIG,
@@ -88,7 +90,7 @@ export function App({ runtime }: AppProps) {
     return DEFAULT_MODEL_CONFIG;
   });
   const [useDevEnvKey, setUseDevEnvKey] = useState(() =>
-    Boolean(readDevSessionProxy(isWebDev)?.hasEnvKey),
+    Boolean(import.meta.env.DEV && readDevSessionProxy(isWebDev)?.hasEnvKey),
   );
   const [showKey, setShowKey] = useState(false);
   const [devTestInfo, setDevTestInfo] = useState<DevTestConfigResponse | null>(null);
@@ -182,7 +184,7 @@ export function App({ runtime }: AppProps) {
   }, [harness]);
 
   useEffect(() => {
-    if (!isWebDev) {
+    if (!import.meta.env.DEV || !isWebDev) {
       return;
     }
     let cancelled = false;
@@ -207,10 +209,10 @@ export function App({ runtime }: AppProps) {
   const updateConfig = (next: ModelConfig, nextUseDevEnvKey = useDevEnvKey) => {
     configEditSeqRef.current += 1;
     const effectiveUseDevEnvKey =
-      isWebDev && nextUseDevEnvKey && isDevProxyBaseUrl(next.baseUrl);
+      import.meta.env.DEV && isWebDev && nextUseDevEnvKey && isDevProxyBaseUrl(next.baseUrl);
     setConfig(next);
     setUseDevEnvKey(effectiveUseDevEnvKey);
-    if (isWebDev) {
+    if (import.meta.env.DEV && isWebDev) {
       if (effectiveUseDevEnvKey) {
         writeDevSessionProxy({
           baseUrl: next.baseUrl,
@@ -236,7 +238,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const applyDevTestConfig = () => {
-    if (!devTestInfo || !isWebDev) return;
+    if (!import.meta.env.DEV || !devTestInfo || !isWebDev) return;
     configEditSeqRef.current += 1;
     const devModel = devTestInfo.model || config.model;
     writeDevSessionProxy({
