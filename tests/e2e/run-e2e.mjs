@@ -805,7 +805,7 @@ async function main() {
     await checkNoHorizontalOverflow('mobile import view');
 
     await runComprehensiveSpec18MobileE2E(browser, port, tmpDir);
-    await runSpec26DiagnosticsE2E(browser, port, tmpDir);
+    await runDiagnosticsE2E(browser, port, tmpDir);
 
     console.log('ALL_E2E_CHECKS_PASSED');
   } finally {
@@ -1095,7 +1095,7 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
   }
 }
 
-const SPEC26_CANARIES = [
+const DIAGNOSTICS_CANARIES = [
   'sk-e2e-canary-9988776655443322',
   'my-private-relay.example.com',
   '绝密玩家行动_CANARY',
@@ -1110,17 +1110,21 @@ const SPEC26_CANARIES = [
   'SYNTHETIC_SUMMARY_TEXT',
   'SYNTHETIC_BRANCH_NAME',
   'SYNTHETIC_INVALID_ARCHIVE.zip',
+  'SYNTHETIC_RENDER_BODY',
+  'SYNTHETIC_GLOBAL_ERROR_BODY',
+  'SYNTHETIC_REJECTION_BODY',
+  'SYNTHETIC_BROKEN_DIAGNOSTIC_CONTEXT',
 ];
 
 function assertZeroLeak(label, text) {
-  for (const canary of SPEC26_CANARIES) {
+  for (const canary of DIAGNOSTICS_CANARIES) {
     if (text.includes(canary)) {
-      throw new Error(`Spec26 privacy leak in ${label}: found canary ${canary}`);
+      throw new Error(`Diagnostic privacy leak in ${label}: found canary ${canary}`);
     }
   }
 }
 
-async function runSpec26DiagnosticsE2E(browser, port, tmpDir) {
+async function runDiagnosticsE2E(browser, port, tmpDir) {
   const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 390, height: 844 } });
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], {
     origin: `http://localhost:${port}`,
@@ -1133,7 +1137,7 @@ async function runSpec26DiagnosticsE2E(browser, port, tmpDir) {
         contentType: 'application/json',
         body: JSON.stringify({
           error: {
-            message: `401 Bearer SYNTHETIC_BEARER_VALUE https://my-private-relay.example.com/v1?token=SYNTHETIC_QUERY_VALUE ${SPEC26_CANARIES.join(' ')}`,
+            message: `401 Bearer SYNTHETIC_BEARER_VALUE https://my-private-relay.example.com/v1?token=SYNTHETIC_QUERY_VALUE ${DIAGNOSTICS_CANARIES.join(' ')}`,
           },
         }),
       });
@@ -1175,7 +1179,7 @@ async function runSpec26DiagnosticsE2E(browser, port, tmpDir) {
     await page.click('button:has-text("发送行动")');
     await page.waitForSelector('.error-banner');
 
-    await page.click('[data-testid="open-diagnostics"]');
+    await page.getByRole('button', { name: '打包排障日志' }).click({ timeout: 5000 });
     await page.waitForSelector('[data-testid="diagnostics-preview"]');
     const previewText = await page.locator('[data-testid="diagnostics-json"]').textContent();
     assertZeroLeak('preview', previewText ?? '');
@@ -1187,7 +1191,12 @@ async function runSpec26DiagnosticsE2E(browser, port, tmpDir) {
         throw new Error(`Preview missing ${needle}`);
       }
     }
-    const { events, importRadars } = JSON.parse(previewText);
+    const { events, importRadars, activeStorySkeleton, trigger } = JSON.parse(previewText);
+    if (trigger !== 'error_banner' || activeStorySkeleton?.sourceKind !== 'deepseek_import' ||
+        !activeStorySkeleton?.nodes?.length ||
+        !activeStorySkeleton.nodes.every((node) => /^n[1-9]\d*$/.test(node.id))) {
+      throw new Error('The error-banner bundle is missing its trigger or the default anonymous tree');
+    }
     const streamError = events.find((event) => event.action === 'stream_error');
     if (!streamError?.sanitizedMessage?.includes('HTTP 401') ||
         !streamError?.stackTop?.some((frame) => /^sse\.ts:\d+:\d+$/.test(frame)) ||
@@ -1213,11 +1222,18 @@ async function runSpec26DiagnosticsE2E(browser, port, tmpDir) {
       throw new Error(`Diagnostics modal overflow on 390px (${scrollWidth} > ${clientWidth})`);
     }
 
+    const skeletonToggle = page.getByRole('checkbox', { name: /附带当前故事匿名树骨架/ });
+    await skeletonToggle.uncheck();
+    const withoutSkeleton = await page.getByTestId('diagnostics-json').textContent();
+    if ('activeStorySkeleton' in JSON.parse(withoutSkeleton)) {
+      throw new Error('Unchecking the skeleton retained it in preview');
+    }
+
     await page.click('button:has-text("复制到剪贴板")');
     await page.waitForSelector('[data-testid="diagnostics-preview"] [role="status"]:has-text("已复制")');
     const clip = await page.evaluate(() => navigator.clipboard.readText());
     assertZeroLeak('clipboard', clip);
-    if (clip !== previewText) throw new Error('Clipboard differs from diagnostic preview');
+    if (clip !== withoutSkeleton) throw new Error('Clipboard differs from diagnostic preview');
 
     const [download] = await Promise.all([
       page.waitForEvent('download'),
@@ -1227,7 +1243,7 @@ async function runSpec26DiagnosticsE2E(browser, port, tmpDir) {
     await download.saveAs(exportedPath);
     const exported = fs.readFileSync(exportedPath, 'utf8');
     assertZeroLeak('export file', exported);
-    if (exported !== previewText) throw new Error('Download differs from diagnostic preview');
+    if (exported !== withoutSkeleton) throw new Error('Download differs from diagnostic preview');
     const parsed = JSON.parse(exported);
     if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.events) || parsed.events.length === 0) {
       throw new Error('Exported diagnostic bundle malformed');
@@ -1246,6 +1262,92 @@ async function runSpec26DiagnosticsE2E(browser, port, tmpDir) {
     }
     const persisted = await page.evaluate(() => localStorage.getItem('lfh.diagnostics.v1') ?? '');
     assertZeroLeak('persisted slot', persisted);
+
+    await page.goto(`http://localhost:${port}/tests/e2e/crash-fixture.html`);
+    await page.getByRole('heading', { name: '合成宫斗测试档' }).waitFor();
+    await page.waitForFunction(() =>
+      document.querySelector('#cfg-base-url')?.value === 'https://my-private-relay.example.com/v1',
+    );
+    await page.getByRole('button', { name: '触发测试渲染崩溃' }).click();
+    const crashText = await page.getByTestId('diagnostics-json').textContent({ timeout: 5000 });
+    const crashBundle = JSON.parse(crashText);
+    assertZeroLeak('crash preview', crashText);
+    if (crashBundle.trigger !== 'crash_boundary' ||
+        crashBundle.endpointProfile.host !== parsed.endpointProfile.host ||
+        !crashBundle.activeStorySkeleton?.nodes?.length ||
+        !crashBundle.events.some((event) => event.category === 'crash') ||
+        !crashBundle.events.some((event) => event.action === 'stream_error')) {
+      throw new Error('Crash preview lost active story, endpoint or recorded events');
+    }
+    if (await page.evaluate(() => navigator.clipboard.readText()) !== clip) {
+      throw new Error('Crash recovery wrote to the clipboard before preview confirmation');
+    }
+    await page.getByTestId('diagnostics-preview').getByRole('button', { name: '重新载入界面' }).waitFor();
+    await page.getByRole('button', { name: '复制到剪贴板' }).click();
+    await page.getByTestId('diagnostics-preview').getByRole('status').waitFor();
+    if (await page.evaluate(() => navigator.clipboard.readText()) !== crashText) {
+      throw new Error('Copied crash log differs from preview');
+    }
+    const crashDownloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: '导出 .json' }).click();
+    const crashDownload = await crashDownloadPromise;
+    const crashExport = fs.readFileSync(await crashDownload.path(), 'utf8');
+    assertZeroLeak('crash download', crashExport);
+    if (crashExport !== crashText) throw new Error('Crash download differs from preview');
+    const crashSlot = await page.evaluate(() => localStorage.getItem('lfh.diagnostics.v1') ?? '');
+    assertZeroLeak('crash slot', crashSlot);
+    if (!JSON.parse(crashSlot).events.some((event) => event.category === 'crash')) {
+      throw new Error('Crash breadcrumb was not written into the persistent slot');
+    }
+
+    await Promise.all([
+      page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
+      page.getByTestId('diagnostics-preview').getByRole('button', { name: '重新载入界面' }).click(),
+    ]);
+    await page.goto(`http://localhost:${port}/`, { waitUntil: 'networkidle' });
+    await page.getByRole('heading', { name: '合成宫斗测试档' }).waitFor();
+    await page.getByTestId('open-diagnostics').click();
+    const recoveredText = await page.getByTestId('diagnostics-json').textContent();
+    assertZeroLeak('recovered crash report', recoveredText);
+    const recovered = JSON.parse(recoveredText);
+    const initialCrashCount = recovered.events.filter((event) => event.category === 'crash').length;
+    if (recovered.trigger !== 'settings_manual' || initialCrashCount === 0) {
+      throw new Error('Crash record did not survive reload');
+    }
+    await page.keyboard.press('Escape');
+
+    for (const [index, kind] of ['error', 'rejection'].entries()) {
+      await page.evaluate((type) => {
+        if (type === 'error') {
+          setTimeout(() => { throw new Error('SYNTHETIC_GLOBAL_ERROR_BODY'); }, 0);
+        } else {
+          void Promise.reject(new Error('SYNTHETIC_REJECTION_BODY'));
+        }
+      }, kind);
+      const text = await page.getByTestId('diagnostics-json').textContent({ timeout: 5000 });
+      assertZeroLeak(`global ${kind} preview`, text);
+      const bundle = JSON.parse(text);
+      const crashCount = bundle.events.filter((event) => event.category === 'crash').length;
+      if (bundle.trigger !== 'crash_boundary' || crashCount <= initialCrashCount + index) {
+        throw new Error(`Global ${kind} did not add a persisted crash record`);
+      }
+      await Promise.all([
+        page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
+        page.getByTestId('diagnostics-preview').getByRole('button', { name: '重新载入界面' }).click(),
+      ]);
+      await page.getByTestId('open-diagnostics').waitFor();
+    }
+
+    await page.goto(`http://localhost:${port}/tests/e2e/crash-fixture.html`);
+    await page.getByRole('heading', { name: '合成宫斗测试档' }).waitFor();
+    await page.getByRole('button', { name: '触发损坏诊断上下文的崩溃' }).click();
+    const fallbackText = await page.getByTestId('diagnostics-json').textContent({ timeout: 5000 });
+    assertZeroLeak('crash preview with unavailable story context', fallbackText);
+    const fallback = JSON.parse(fallbackText);
+    if (fallback.trigger !== 'crash_boundary' ||
+        !fallback.events.some((event) => event.category === 'crash')) {
+      throw new Error('Recovery cannot export recorded crashes when story context is unavailable');
+    }
   } finally {
     await ctx.close();
   }

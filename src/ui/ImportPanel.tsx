@@ -43,6 +43,7 @@ interface ImportPanelProps {
   ) => Promise<DeepSeekImportBatchResult>;
   onContinueStory: (storyId: string) => void;
   diagnostics: DiagnosticCollector;
+  onPackageDiagnostics: () => void;
   onCancel?: () => void;
 }
 
@@ -88,6 +89,7 @@ export function ImportPanel({
   onImportDeepSeekBatch,
   onContinueStory,
   diagnostics,
+  onPackageDiagnostics,
   onCancel,
 }: ImportPanelProps) {
   const [importMode, setImportMode] = useState<ImportMode>(initialMode);
@@ -298,12 +300,21 @@ export function ImportPanel({
           onImportBatch={onImportDeepSeekBatch}
           onContinueStory={onContinueStory}
           diagnostics={diagnostics}
+          onPackageDiagnostics={onPackageDiagnostics}
         />
       ) : (
         <>
           {parseError && (
             <div className="error-banner" role="alert">
               {parseError}
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{ marginLeft: '0.6rem' }}
+                onClick={onPackageDiagnostics}
+              >
+                打包排障日志
+              </button>
             </div>
           )}
 

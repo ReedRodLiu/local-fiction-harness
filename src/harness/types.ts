@@ -18,6 +18,8 @@ export interface PlotSummarySnapshot {
 
 export type NodeDiagnosticStatus = 'CONTENT_FILTER' | 'TIMEOUT' | 'INCOMPLETE';
 
+export type StorySourceKind = 'manual_script' | 'deepseek_import';
+
 export interface NodeDiagnostics {
   readonly sourceStatus?: NodeDiagnosticStatus;
   readonly contentRisk?: boolean;
@@ -37,6 +39,7 @@ export interface TurnNode {
 export interface Story {
   id: string;
   title: string;
+  sourceKind?: StorySourceKind;
   rawScript: string;
   blueprint: StoryBlueprint;
   nodes: Record<string, TurnNode>;

@@ -12,6 +12,7 @@ import {
   importStoryBackup,
   isAbortError,
   type DeepSeekImportBatchResult,
+  type DiagnosticBundleTrigger,
   type ModelConfig,
   type PlatformRuntime,
   type ScriptTurnRange,
@@ -20,6 +21,7 @@ import {
   type TurnCallbacks,
   type TurnExecutionResult,
 } from '../harness/index.ts';
+import { APP_VERSION } from '../appVersion.ts';
 import {
   clearDevSessionProxy,
   fetchDevTestConfig,
@@ -29,6 +31,7 @@ import {
   type DevTestConfigResponse,
 } from '../platform/runtime.ts';
 import { ContextOverview } from './ContextOverview.tsx';
+import { setCrashDiagnosticBundleBuilder } from './crashDiagnosticContext.ts';
 import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
 import { mergeBranchSummaryResult } from './storyConcurrency.ts';
 import { ImportPanel, type ImportMode } from './ImportPanel.tsx';
@@ -131,6 +134,7 @@ export function App({ runtime }: AppProps) {
   const [streamContent, setStreamContent] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [diagnosticTrigger, setDiagnosticTrigger] = useState<DiagnosticBundleTrigger>('settings_manual');
 
   const abortRef = useRef<AbortController | null>(null);
   const streamSeqRef = useRef(0);
@@ -141,6 +145,35 @@ export function App({ runtime }: AppProps) {
   const configEditSeqRef = useRef(0);
   const configSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const suppressedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet());
+
+  const openDiagnostics = (trigger: DiagnosticBundleTrigger = 'error_banner') => {
+    setDiagnosticTrigger(trigger);
+    setShowDiagnostics(true);
+  };
+
+  const buildDiagnosticBundle = useCallback(
+    (trigger: DiagnosticBundleTrigger) =>
+      runtime.diagnostics.buildBundle(
+        {
+          ...config,
+          isDevProxy: import.meta.env.DEV && isDevProxyBaseUrl(config.baseUrl),
+        },
+        {
+          trigger,
+          activeStory: story,
+          appEnv: {
+            appVersion: APP_VERSION,
+            viewport:
+              typeof window === 'undefined'
+                ? 'unknown'
+                : `${window.innerWidth}x${window.innerHeight}`,
+            activeView: showImport ? 'import' : 'story',
+            storyCount: stories.length,
+          },
+        },
+      ),
+    [runtime, config, story, showImport, stories.length],
+  );
 
   const abortActiveStream = useCallback((suppressNotice = true) => {
     const controller = abortRef.current;
@@ -228,6 +261,11 @@ export function App({ runtime }: AppProps) {
       cancelled = true;
     };
   }, [harness]);
+
+  useEffect(() => {
+    // This callback stays in process memory only; the collector projects the Story before serialization.
+    setCrashDiagnosticBundleBuilder(runtime, () => buildDiagnosticBundle('crash_boundary'));
+  }, [runtime, buildDiagnosticBundle]);
 
   useEffect(() => {
     if (!import.meta.env.DEV || !isWebDev) {
@@ -632,7 +670,10 @@ export function App({ runtime }: AppProps) {
     const opSeq = ++storyOpSeqRef.current;
     setErrorMsg(null);
     try {
-      const created = await harness.createAndSaveStory(imported);
+      const created = await harness.createAndSaveStory({
+        ...imported,
+        sourceKind: 'manual_script',
+      });
       if (storyOpSeqRef.current !== opSeq) return;
       await commitStoryState(created);
       setShowImport(false);
@@ -911,7 +952,7 @@ export function App({ runtime }: AppProps) {
           type="button"
           className="btn"
           data-testid="open-diagnostics"
-          onClick={() => setShowDiagnostics(true)}
+          onClick={() => openDiagnostics('settings_manual')}
         >
           导出最近 30 分钟脱敏日志
         </button>
@@ -919,10 +960,7 @@ export function App({ runtime }: AppProps) {
 
       {showDiagnostics && (
         <DiagnosticsPreview
-          buildBundle={() => runtime.diagnostics.buildBundle({
-            ...config,
-            isDevProxy: import.meta.env.DEV && isDevProxyBaseUrl(config.baseUrl),
-          })}
+          buildBundle={() => buildDiagnosticBundle(diagnosticTrigger)}
           onExport={(fileName, json) => runtime.backupExporter.exportJsonFile(fileName, json)}
           onClose={() => setShowDiagnostics(false)}
         />
@@ -939,6 +977,14 @@ export function App({ runtime }: AppProps) {
         {errorMsg && (
           <div className="error-banner" role="alert">
             {errorMsg}
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{ marginLeft: '0.6rem' }}
+              onClick={() => openDiagnostics('error_banner')}
+            >
+              打包排障日志
+            </button>
           </div>
         )}
 
@@ -1036,6 +1082,7 @@ export function App({ runtime }: AppProps) {
             onConfirmStory={handleConfirmImportedStory}
             onImportDeepSeekBatch={handleImportDeepSeekBatch}
             diagnostics={runtime.diagnostics}
+            onPackageDiagnostics={() => openDiagnostics('error_banner')}
             onContinueStory={(storyId) => void handleContinueImportedStory(storyId)}
             onCancel={() => setShowImport(false)}
           />

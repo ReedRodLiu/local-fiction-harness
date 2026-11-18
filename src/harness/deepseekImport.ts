@@ -761,6 +761,7 @@ function buildStoryFromRawSession(
   const baseStory: Story = {
     id: opts.createId(),
     title,
+    sourceKind: 'deepseek_import',
     rawScript: '',
     blueprint: createDefaultBlueprint(title),
     nodes,

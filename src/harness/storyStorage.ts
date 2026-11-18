@@ -252,6 +252,14 @@ export function importStoryBackup(
     throw new Error('备份文件中的故事主体结构不完整。');
   }
 
+  const sourceKind =
+    rawStory.sourceKind === 'manual_script' || rawStory.sourceKind === 'deepseek_import'
+      ? rawStory.sourceKind
+      : undefined;
+  if (rawStory.sourceKind !== undefined && sourceKind === undefined) {
+    throw new Error('备份文件中的故事来源类型无效。');
+  }
+
   const rootNodeIds = assertStringArray(rawStory.rootNodeIds, 'story.rootNodeIds');
   const blueprint = validateBlueprint(rawStory.blueprint);
   const nodes = validateNodes(rawStory.nodes);
@@ -295,6 +303,7 @@ export function importStoryBackup(
   return {
     id: hasCollision ? createId() : rawStory.id,
     title: hasCollision ? `${rawStory.title}（导入副本）` : rawStory.title,
+    ...(sourceKind ? { sourceKind } : {}),
     rawScript: rawStory.rawScript,
     blueprint,
     nodes,

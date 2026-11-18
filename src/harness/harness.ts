@@ -49,6 +49,7 @@ export interface FictionHarnessDeps {
 
 export interface CreateStoryInput {
   title: string;
+  sourceKind?: Story['sourceKind'];
   rawScript?: string;
   blueprint?: StoryBlueprint;
 }
@@ -159,6 +160,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     return {
       id: createId(),
       title,
+      ...(input.sourceKind ? { sourceKind: input.sourceKind } : {}),
       rawScript: input.rawScript ?? '',
       blueprint: input.blueprint ?? createDefaultBlueprint(title),
       nodes: {},

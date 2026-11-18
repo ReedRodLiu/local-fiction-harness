@@ -1,4 +1,5 @@
-import type { KeyValueStorage, LlmTransport, StoryStorage } from './types.ts';
+import type { KeyValueStorage, LlmTransport, Story, StoryStorage } from './types.ts';
+import { buildRedactedStorySkeleton, type RedactedStorySkeleton } from './storySkeleton.ts';
 
 export const DIAGNOSTIC_WINDOW_MS = 30 * 60 * 1000;
 export const MAX_DIAGNOSTIC_EVENTS = 400;
@@ -8,7 +9,7 @@ export const DIAGNOSTIC_STORAGE_KEY = 'lfh.diagnostics.v1';
 const MAX_MESSAGE_CHARS = 320;
 const MAX_STACK_FRAMES = 5;
 const STACK_MODULES = new Set([
-  'App.tsx', 'DeepSeekImportPanel.tsx', 'indexedDbStorage.ts',
+  'App.tsx', 'AppErrorBoundary.tsx', 'DeepSeekImportPanel.tsx', 'indexedDbStorage.ts',
   'diagnostics.ts', 'harness.ts', 'sse.ts', 'deepseekImport.ts', 'binaryDownload.ts',
   'capacitorSseTransport.ts', 'capacitorBinaryDownloader.ts', 'capacitorVaultAdapters.ts',
   'bundle.js',
@@ -56,8 +57,20 @@ const DIAGNOSTIC_ACTIONS = new Set([
   'deepseek_url_error',
   'deepseek_import_error',
   'unhandled_render_crash',
+  'unhandled_window_error',
+  'unhandled_rejection',
   'import_complete',
   'other',
+]);
+const CRASH_DIAGNOSTIC_ACTIONS = new Set([
+  'unhandled_render_crash',
+  'unhandled_window_error',
+  'unhandled_rejection',
+]);
+const DIAGNOSTIC_BUNDLE_TRIGGERS = new Set<DiagnosticBundleTrigger>([
+  'settings_manual',
+  'error_banner',
+  'crash_boundary',
 ]);
 const SAFE_EVENT_METRICS = new Set(['chunks', 'messageCount']);
 const SAFE_FRAGMENT_TYPE_REGEX = /^[A-Z][A-Z0-9_]{0,31}$/;
@@ -127,9 +140,28 @@ export interface DiagnosticBundle {
   generatedAt: string;
   platform: 'web' | 'android';
   windowMinutes: 30;
+  trigger: DiagnosticBundleTrigger;
+  appEnv: DiagnosticAppEnvironment;
   endpointProfile: SanitizedEndpointProfile;
   importRadars: DeepSeekImportRadar[];
   events: Array<Omit<DiagnosticEvent, 'ts'> & { tsOffsetSec: number }>;
+  activeStorySkeleton?: RedactedStorySkeleton;
+}
+
+export type DiagnosticBundleTrigger = 'settings_manual' | 'error_banner' | 'crash_boundary';
+
+export interface DiagnosticAppEnvironment {
+  platform: 'web' | 'android';
+  appVersion: string;
+  viewport: string;
+  activeView: 'story' | 'import' | 'unknown';
+  storyCount: number;
+}
+
+export interface DiagnosticBundleBuildOptions {
+  trigger?: DiagnosticBundleTrigger;
+  appEnv?: Partial<DiagnosticAppEnvironment>;
+  activeStory?: Story;
 }
 
 export interface DiagnosticCollectorOptions {
@@ -150,7 +182,10 @@ export interface DiagnosticCollector {
     meta?: Record<string, DiagnosticMetaValue>;
   }): void;
   recordImportRadar(radar: Omit<DeepSeekImportRadar, 'ts'> & { ts?: number }): void;
-  buildBundle(endpointConfig: EndpointProfileInput): DiagnosticBundle;
+  buildBundle(
+    endpointConfig: EndpointProfileInput,
+    options?: DiagnosticBundleBuildOptions,
+  ): DiagnosticBundle;
   clear(): void;
 }
 
@@ -426,8 +461,15 @@ function normalizeEvent(value: unknown): DiagnosticEvent | null {
     return null;
   }
 
-  const safeAction =
-    typeof action === 'string' && DIAGNOSTIC_ACTIONS.has(action) ? action : 'other';
+  const rawAction = typeof action === 'string' ? action : '';
+  if (
+    (category === 'crash' &&
+      (!CRASH_DIAGNOSTIC_ACTIONS.has(rawAction) || level !== 'error')) ||
+    (category !== 'crash' && CRASH_DIAGNOSTIC_ACTIONS.has(rawAction))
+  ) {
+    return null;
+  }
+  const safeAction = DIAGNOSTIC_ACTIONS.has(rawAction) ? rawAction : 'other';
   const durationMs = normalizeDurationMs(value.durationMs);
   const statusCode = normalizeStatusCode(value.statusCode);
   const stackTop = normalizeStackTop(value.stackTop);
@@ -516,6 +558,32 @@ function normalizeImportRadar(value: unknown): DeepSeekImportRadar | null {
       ambiguous: normalizeCount(scriptCounts.ambiguous),
     },
     status: value.status,
+  };
+}
+
+function normalizeAppEnvironment(
+  value: Partial<DiagnosticAppEnvironment> | undefined,
+  platform: 'web' | 'android',
+): DiagnosticAppEnvironment {
+  const appVersion =
+    typeof value?.appVersion === 'string' &&
+    value.appVersion.length <= 32 &&
+    /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(value.appVersion)
+      ? value.appVersion
+      : 'unknown';
+  const viewport =
+    typeof value?.viewport === 'string' && /^\d{1,5}x\d{1,5}$/.test(value.viewport)
+      ? value.viewport
+      : 'unknown';
+  const activeView =
+    value?.activeView === 'story' || value?.activeView === 'import' ? value.activeView : 'unknown';
+
+  return {
+    platform,
+    appVersion,
+    viewport,
+    activeView,
+    storyCount: normalizeCount(value?.storyCount),
   };
 }
 
@@ -612,15 +680,23 @@ export function createDiagnosticCollector(
       persist();
     },
 
-    buildBundle(endpointConfig): DiagnosticBundle {
+    buildBundle(endpointConfig, bundleOptions = {}): DiagnosticBundle {
       const currentTs = now();
       prune(currentTs);
       persist();
+      const trigger = DIAGNOSTIC_BUNDLE_TRIGGERS.has(bundleOptions.trigger as DiagnosticBundleTrigger)
+        ? bundleOptions.trigger!
+        : 'settings_manual';
+      const activeStorySkeleton = bundleOptions.activeStory
+        ? buildRedactedStorySkeleton(bundleOptions.activeStory)
+        : undefined;
       return {
         schemaVersion: 1,
         generatedAt: new Date(currentTs).toISOString(),
         platform: options.platform,
         windowMinutes: 30,
+        trigger,
+        appEnv: normalizeAppEnvironment(bundleOptions.appEnv, options.platform),
         endpointProfile: sanitizeEndpointProfile(endpointConfig),
         importRadars: radars
           .map(normalizeImportRadar)
@@ -632,6 +708,7 @@ export function createDiagnosticCollector(
             ...event,
             tsOffsetSec: Math.round((ts - currentTs) / 1000),
           })),
+        ...(activeStorySkeleton ? { activeStorySkeleton } : {}),
       };
     },
 

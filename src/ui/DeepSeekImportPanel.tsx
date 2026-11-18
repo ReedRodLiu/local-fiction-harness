@@ -39,6 +39,7 @@ interface DeepSeekImportPanelProps {
   ) => Promise<DeepSeekImportBatchResult>;
   onContinueStory: (storyId: string) => void;
   diagnostics: DiagnosticCollector;
+  onPackageDiagnostics: () => void;
 }
 
 export function DeepSeekImportPanel({
@@ -50,6 +51,7 @@ export function DeepSeekImportPanel({
   onImportBatch,
   onContinueStory,
   diagnostics,
+  onPackageDiagnostics,
 }: DeepSeekImportPanelProps) {
   const [sourceMode, setSourceMode] = useState<'file' | 'url'>('file');
   const [zipUrl, setZipUrl] = useState('');
@@ -387,6 +389,14 @@ export function DeepSeekImportPanel({
               改用本地 .zip 文件导入
             </button>
           )}
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ marginTop: '0.45rem', marginLeft: '0.45rem' }}
+            onClick={onPackageDiagnostics}
+          >
+            打包排障日志
+          </button>
         </div>
       )}
 

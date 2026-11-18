@@ -6,17 +6,28 @@ interface DiagnosticsPreviewProps {
   buildBundle: () => DiagnosticBundle;
   onExport: (fileName: string, jsonContent: string) => Promise<void>;
   onClose: () => void;
+  reassurance?: string;
+  onReload?: () => void;
 }
 
 export function DiagnosticsPreview({
   buildBundle,
   onExport,
   onClose,
+  reassurance,
+  onReload,
 }: DiagnosticsPreviewProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [includeActiveStory, setIncludeActiveStory] = useState(true);
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [jsonText] = useState(() => JSON.stringify(buildBundle(), null, 2));
+  const [bundleSnapshot] = useState(() => buildBundle());
+  const { activeStorySkeleton: _activeStorySkeleton, ...bundleWithoutSkeleton } = bundleSnapshot;
+  const jsonText = JSON.stringify(
+    includeActiveStory ? bundleSnapshot : bundleWithoutSkeleton,
+    null,
+    2,
+  );
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -64,13 +75,42 @@ export function DiagnosticsPreview({
           关闭
         </button>
       </header>
+      {reassurance && (
+        <p className="status-text" style={{ margin: 0 }}>
+          {reassurance}
+        </p>
+      )}
+      <div className="btn-group">
+        {onReload && (
+          <button type="button" className="btn" onClick={onReload}>
+            重新载入界面
+          </button>
+        )}
+        <button type="button" className="btn btn-primary" onClick={() => void handleExport()}>
+          导出 .json
+        </button>
+        <button type="button" className="btn" onClick={() => void handleCopy()}>
+          复制到剪贴板
+        </button>
+      </div>
       <p className="status-text" style={{ margin: 0 }}>
-        以下即为将导出的全部内容，不含剧本、对话正文、推理链、剧情摘要、故事标题、分支名称、附件文件名与
-        API Key。私人中转域名仅以哈希显示。你可以将诊断包保存到本机、通过 Android 系统分享或复制到剪贴板。
+        以下即为将导出的全部内容；故事骨架可选，且只包含匿名结构与计数。
       </p>
       <pre className="diagnostics-json" data-testid="diagnostics-json">
         {jsonText}
       </pre>
+      <div className="checkbox-row">
+        <input
+          id="diagnostics-active-story"
+          type="checkbox"
+          checked={includeActiveStory}
+          onChange={(event) => setIncludeActiveStory(event.target.checked)}
+        />
+        <label htmlFor="diagnostics-active-story">附带当前故事匿名树骨架</label>
+      </div>
+      <p className="status-text" style={{ margin: 0 }}>
+        不含剧本、对话正文、推理链、剧情摘要、故事标题、分支名称、附件文件名与 API Key。私人中转域名仅以哈希显示。你可以将诊断包保存到本机、通过 Android 系统分享或复制到剪贴板。
+      </p>
       {notice && (
         <div className="status-text" role="status">
           {notice}
@@ -81,14 +121,6 @@ export function DiagnosticsPreview({
           {failure}
         </div>
       )}
-      <div className="btn-group">
-        <button type="button" className="btn btn-primary" onClick={() => void handleExport()}>
-          导出 .json
-        </button>
-        <button type="button" className="btn" onClick={() => void handleCopy()}>
-          复制到剪贴板
-        </button>
-      </div>
     </dialog>
   );
 }

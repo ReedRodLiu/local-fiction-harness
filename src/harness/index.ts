@@ -12,4 +12,5 @@ export * from './storyTree.ts';
 export * from './deepseekImport.ts';
 export * from './binaryDownload.ts';
 export * from './diagnostics.ts';
+export * from './storySkeleton.ts';
 export * from './harness.ts';

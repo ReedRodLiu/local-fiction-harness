@@ -266,6 +266,7 @@ describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path s
 
     // 1. Local preview flags ambiguous opening and allows manual range override (e.g. turn 3..3)
     const localPreview = previewDeepSeekSessions(zipBytes, ['sess-ambiguous-long'])[0];
+    expect(localPreview.story.sourceKind).toBe('deepseek_import');
     expect(localPreview.scriptConfidence).toBe('ambiguous');
     const manualPreview = previewDeepSeekSessions(zipBytes, ['sess-ambiguous-long'], {
       scriptRangeOverrides: { 'sess-ambiguous-long': { startTurn: 3, endTurn: 3 } },
@@ -304,6 +305,7 @@ describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path s
     expect(summaryReqs[0].messages[1]?.content).not.toContain('潜入后院马厩');
 
     const importedStory = result.stories[0];
+    expect(importedStory.sourceKind).toBe('deepseek_import');
     expect(importedStory.rawScript).toContain('【雾隐山庄剧本】');
     expect(importedStory.rawScript).not.toContain('在吗？想玩个古风推理文游');
     expect(importedStory.blueprint.extractionStatus).toBe('complete');
