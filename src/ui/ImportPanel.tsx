@@ -28,7 +28,11 @@ interface ImportPanelProps {
   transport: LlmTransport;
   binaryDownloader: BinaryDownloader;
   hasCredentials: boolean;
-  onRequireByok: (actionLabel: string, resume: (resolvedConfig: ModelConfig) => void) => void;
+  onRequireByok: (
+    actionLabel: string,
+    resume: (resolvedConfig: ModelConfig) => void,
+    onCancel?: () => void,
+  ) => void;
   extractBlueprint: (
     rawScript: string,
     config: ModelConfig,

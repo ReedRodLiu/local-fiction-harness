@@ -88,7 +88,11 @@ interface DeepSeekImportPanelProps {
   transport: LlmTransport;
   binaryDownloader: BinaryDownloader;
   hasCredentials: boolean;
-  onRequireByok: (actionLabel: string, resume: (resolvedConfig: ModelConfig) => void) => void;
+  onRequireByok: (
+    actionLabel: string,
+    resume: (resolvedConfig: ModelConfig) => void,
+    onCancel?: () => void,
+  ) => void;
   onImportBatch: (
     zipBytes: Uint8Array,
     selectedSessionIds: readonly string[],
@@ -138,6 +142,13 @@ export function DeepSeekImportPanel({
   const zipReadSeqRef = useRef(0);
   const aiAbortRef = useRef<AbortController | null>(null);
   const aiPreviousFilterRef = useRef<DeepSeekFilterMode | null>(null);
+  const aiByokPreviousFilterRef = useRef<DeepSeekFilterMode | null>(null);
+
+  const focusFilterTab = (mode: DeepSeekFilterMode) => {
+    requestAnimationFrame(() => {
+      document.getElementById(`deepseek-filter-tab-${mode}`)?.focus();
+    });
+  };
 
   useEffect(() => {
     return () => {
@@ -194,6 +205,7 @@ export function DeepSeekImportPanel({
     aiAbortRef.current?.abort();
     aiAbortRef.current = null;
     aiPreviousFilterRef.current = null;
+    aiByokPreviousFilterRef.current = null;
     zipGenerationRef.current += 1;
     setAiMatchedIds(null);
     setIsAiFiltering(false);
@@ -413,9 +425,23 @@ export function DeepSeekImportPanel({
     const zipGeneration = zipGenerationRef.current;
     const sessions = scanResult.sessions;
     if (!hasCredentials) {
-      onRequireByok('AI 辅助筛选 DeepSeek 会话', (cfg) => {
-        void runAiAssistFilter(cfg, zipGeneration, sessions);
-      });
+      const previousMode = filterMode;
+      aiByokPreviousFilterRef.current = previousMode;
+      setFilterMode('ai');
+      onRequireByok(
+        'AI 辅助筛选 DeepSeek 会话',
+        (cfg) => {
+          aiByokPreviousFilterRef.current = null;
+          void runAiAssistFilter(cfg, zipGeneration, sessions);
+          focusFilterTab('ai');
+        },
+        () => {
+          const restoreMode = aiByokPreviousFilterRef.current ?? previousMode;
+          aiByokPreviousFilterRef.current = null;
+          setFilterMode(restoreMode);
+          focusFilterTab(restoreMode);
+        },
+      );
       return;
     }
     void runAiAssistFilter(config, zipGeneration, sessions);

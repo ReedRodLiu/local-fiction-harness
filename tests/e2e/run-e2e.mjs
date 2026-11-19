@@ -921,19 +921,88 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       throw new Error('Session filter tabs did not move back with ArrowLeft.');
     }
 
-    await page.getByRole('tab', { name: '疑似文游' }).click();
-    await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
+    await allFilterTab.focus();
+    await page.keyboard.press('End');
     const aiByokWizard = page.getByTestId('deepseek-setup-wizard');
     await aiByokWizard.waitFor();
+    if (
+      await aiFilterTabAtMobile.getAttribute('aria-selected') !== 'true' ||
+      await aiFilterTabAtMobile.getAttribute('tabindex') !== '0' ||
+      await allFilterTab.getAttribute('tabindex') !== '-1' ||
+      await page.evaluate(() => document.activeElement?.id) !== await aiFilterTabAtMobile.getAttribute('id')
+    ) {
+      throw new Error('Opening AI filter BYOK did not select and focus the AI tab.');
+    }
     await aiByokWizard.getByRole('button', { name: '取消' }).click();
     await aiByokWizard.waitFor({ state: 'detached' });
-    if (await page.getByRole('tab', { name: '疑似文游' }).getAttribute('aria-selected') !== 'true') {
-      throw new Error('Canceling AI filter BYOK changed the current session category.');
+    const allFilterTabId = await allFilterTab.getAttribute('id');
+    await page.waitForFunction(
+      (id) => document.activeElement?.id === id,
+      allFilterTabId,
+    );
+    if (
+      await allFilterTab.getAttribute('aria-selected') !== 'true' ||
+      await allFilterTab.getAttribute('tabindex') !== '0' ||
+      await likelyFilterTab.getAttribute('tabindex') !== '-1' ||
+      await aiFilterTabAtMobile.getAttribute('tabindex') !== '-1' ||
+      await page.evaluate(() => document.activeElement?.id) !== allFilterTabId
+    ) {
+      throw new Error(`Canceling AI filter BYOK did not restore the All tab state and focus: ${JSON.stringify({
+        allSelected: await allFilterTab.getAttribute('aria-selected'),
+        allTabIndex: await allFilterTab.getAttribute('tabindex'),
+        likelyTabIndex: await likelyFilterTab.getAttribute('tabindex'),
+        aiTabIndex: await aiFilterTabAtMobile.getAttribute('tabindex'),
+        activeId: await page.evaluate(() => document.activeElement?.id),
+        allId: allFilterTabId,
+      })}`);
     }
-    if (await page.getByTestId('ds-session-item').count() !== 1) {
-      throw new Error('Canceling AI filter BYOK hid the current session results.');
+    if (await page.getByTestId('ds-session-item').count() !== 2) {
+      throw new Error('Canceling AI filter BYOK hid the All tab session results.');
     }
-    await page.getByRole('tab', { name: '全部', exact: true }).click();
+    await allFilterTab.focus();
+    await page.keyboard.press('ArrowRight');
+    if (
+      await likelyFilterTab.getAttribute('aria-selected') !== 'true' ||
+      await likelyFilterTab.getAttribute('tabindex') !== '0' ||
+      await page.evaluate(() => document.activeElement?.id) !== await likelyFilterTab.getAttribute('id')
+    ) {
+      throw new Error('The Likely tab did not become selected and focused with ArrowRight.');
+    }
+    await page.keyboard.press('ArrowRight');
+    await aiByokWizard.waitFor();
+    if (
+      await aiFilterTabAtMobile.getAttribute('aria-selected') !== 'true' ||
+      await aiFilterTabAtMobile.getAttribute('tabindex') !== '0' ||
+      await likelyFilterTab.getAttribute('tabindex') !== '-1' ||
+      await page.evaluate(() => document.activeElement?.id) !== await aiFilterTabAtMobile.getAttribute('id')
+    ) {
+      throw new Error('Opening AI filter BYOK from the Likely tab did not select and focus the AI tab.');
+    }
+    await aiByokWizard.getByRole('button', { name: '取消' }).click();
+    await aiByokWizard.waitFor({ state: 'detached' });
+    const likelyFilterTabId = await likelyFilterTab.getAttribute('id');
+    await page.waitForFunction(
+      (id) => document.activeElement?.id === id,
+      likelyFilterTabId,
+    );
+    if (
+      await likelyFilterTab.getAttribute('aria-selected') !== 'true' ||
+      await likelyFilterTab.getAttribute('tabindex') !== '0' ||
+      await allFilterTab.getAttribute('tabindex') !== '-1' ||
+      await aiFilterTabAtMobile.getAttribute('tabindex') !== '-1' ||
+      await page.getByTestId('ds-session-item').count() !== 1
+    ) {
+      throw new Error('Canceling AI filter BYOK did not restore the Likely tab state.');
+    }
+    await page.keyboard.press('ArrowLeft');
+    if (
+      await allFilterTab.getAttribute('aria-selected') !== 'true' ||
+      await allFilterTab.getAttribute('tabindex') !== '0' ||
+      await likelyFilterTab.getAttribute('tabindex') !== '-1' ||
+      await page.evaluate(() => document.activeElement?.id) !== await allFilterTab.getAttribute('id')
+    ) {
+      throw new Error('The session filter tabs did not move from Likely to All with ArrowLeft.');
+    }
 
     const firstSession = page.getByTestId('ds-session-item').filter({ hasText: '合成宫斗测试档' });
     await firstSession.getByTestId('ds-session-preview-trigger').click();
@@ -1244,6 +1313,39 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.getByTestId('deepseek-import-receipt').waitFor();
     await page.getByRole('button', { name: '继续这条故事' }).click();
     await page.getByTestId('main-stage').getByText('原进度抵达东侧练歌房').waitFor();
+
+    await openSettings(page);
+    await page.getByTestId('clear-key-btn').click();
+    await page.getByTestId('open-setup-wizard-btn').waitFor();
+    await closeSettings(page);
+    await startDeepSeekImport(page);
+    await page.setInputFiles('#deepseek-zip-input', {
+      name: 'ai-filter-byok-success.zip',
+      mimeType: 'application/zip',
+      buffer: Buffer.from(buildSyntheticDeepSeekZipE2E()),
+    });
+    await page.getByTestId('ds-session-list').waitFor();
+    const successFilterTablist = page.getByRole('tablist', { name: '筛选会话' });
+    const successAllTab = successFilterTablist.getByRole('tab', { name: '全部', exact: true });
+    const successLikelyTab = successFilterTablist.getByRole('tab', { name: '疑似文游' });
+    await successAllTab.focus();
+    await page.keyboard.press('End');
+    await page.getByTestId('deepseek-setup-wizard').waitFor();
+    await completePendingSetup(page, 'sk-e2e-ai-filter-success');
+    await page.waitForFunction(() =>
+      document.querySelector('.ds-filter-tabs [aria-selected="true"]')?.textContent?.trim() === 'AI 辅助筛选' &&
+      document.querySelectorAll('[data-testid="ds-session-item"]').length === 1,
+    );
+    const successAiTab = successFilterTablist.getByRole('tab', { name: 'AI 辅助筛选' });
+    if (
+      await successAiTab.getAttribute('aria-selected') !== 'true' ||
+      await successAiTab.getAttribute('tabindex') !== '0' ||
+      await successAllTab.getAttribute('tabindex') !== '-1' ||
+      await successLikelyTab.getAttribute('tabindex') !== '-1' ||
+      await page.evaluate(() => document.activeElement?.id) !== await successAiTab.getAttribute('id')
+    ) {
+      throw new Error('Completing AI filter BYOK did not keep the AI tab selected and focused.');
+    }
 
     const fixturePath = process.env.LFH_SYNTHETIC_UI_STORY_ZIP;
     if (fixturePath && fs.existsSync(fixturePath)) {
