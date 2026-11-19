@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUp, Square } from 'lucide-react';
 import {
   DEFAULT_MODEL_CONFIG,
   computeActiveReviewState,
@@ -54,6 +55,7 @@ import { TopBar } from './TopBar.tsx';
 import { TurnCard } from './TurnCard.tsx';
 import { toErrorMessage } from './textHelpers.ts';
 import { WelcomeView } from './WelcomeView.tsx';
+import './styles/play-stage.css';
 
 const LIBRARY_COLLAPSED_PREFERENCE = 'lfh.ui.library_collapsed';
 
@@ -154,6 +156,8 @@ export function App({ runtime }: AppProps) {
   const [isBranchSwitchSummarizing, setIsBranchSwitchSummarizing] = useState(false);
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamContent, setStreamContent] = useState('');
+  const [reasoningDurations, setReasoningDurations] = useState<Record<string, number>>({});
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [diagnosticTrigger, setDiagnosticTrigger] = useState<DiagnosticBundleTrigger>('settings_manual');
@@ -165,6 +169,11 @@ export function App({ runtime }: AppProps) {
   const storyCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
   const storyRef = useRef<Story | null>(story);
   storyRef.current = story;
+  const mainStageRef = useRef<HTMLElement | null>(null);
+  const shouldFollowMainStageRef = useRef(true);
+  const userPausedMainStageRef = useRef(false);
+  const userScrollIntentUntilRef = useRef(0);
+  const lastMainStageMetricsRef = useRef({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 });
   const configEditSeqRef = useRef(0);
   const configSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const suppressedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet());
@@ -399,11 +408,112 @@ export function App({ runtime }: AppProps) {
     [harness, story],
   );
 
+  useEffect(() => {
+    const stage = mainStageRef.current;
+    if (!stage || !shouldFollowMainStageRef.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (shouldFollowMainStageRef.current) {
+        stage.scrollTop = stage.scrollHeight;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [story.id, story.activeLeafNodeId, activeNodes.length, isStreaming, streamReasoning, streamContent]);
+
+  useEffect(() => {
+    const keepLatestInView = () => {
+      const stage = mainStageRef.current;
+      if (!stage) return;
+      if (!userPausedMainStageRef.current) {
+        shouldFollowMainStageRef.current = true;
+        setShowScrollToBottom(false);
+        stage.scrollTop = stage.scrollHeight;
+      }
+    };
+    window.addEventListener('resize', keepLatestInView);
+    return () => window.removeEventListener('resize', keepLatestInView);
+  }, []);
+
+  const handleMainStageScroll = () => {
+    const stage = mainStageRef.current;
+    if (!stage) return;
+    const previousMetrics = lastMainStageMetricsRef.current;
+    const layoutChanged =
+      previousMetrics.scrollHeight !== stage.scrollHeight ||
+      previousMetrics.clientHeight !== stage.clientHeight;
+    const scrolledUp = stage.scrollTop < previousMetrics.scrollTop - 1;
+    lastMainStageMetricsRef.current = {
+      scrollTop: stage.scrollTop,
+      scrollHeight: stage.scrollHeight,
+      clientHeight: stage.clientHeight,
+    };
+    const shouldFollow = stage.scrollHeight - stage.scrollTop - stage.clientHeight <= 80;
+    const isManualScrollUp = scrolledUp && Date.now() < userScrollIntentUntilRef.current;
+    if (isManualScrollUp && !shouldFollow) {
+      shouldFollowMainStageRef.current = false;
+      userPausedMainStageRef.current = true;
+      setShowScrollToBottom(true);
+      return;
+    }
+    if (shouldFollow && !(layoutChanged && userPausedMainStageRef.current)) {
+      shouldFollowMainStageRef.current = true;
+      userPausedMainStageRef.current = false;
+      setShowScrollToBottom(false);
+      return;
+    }
+    if (userPausedMainStageRef.current) {
+      shouldFollowMainStageRef.current = false;
+      setShowScrollToBottom(true);
+      return;
+    }
+    if (layoutChanged && !userPausedMainStageRef.current) {
+      shouldFollowMainStageRef.current = true;
+      window.requestAnimationFrame(() => {
+        const currentStage = mainStageRef.current;
+        if (currentStage) currentStage.scrollTop = currentStage.scrollHeight;
+      });
+      return;
+    }
+    if (!isManualScrollUp && !userPausedMainStageRef.current) {
+      shouldFollowMainStageRef.current = true;
+      setShowScrollToBottom(false);
+      if (scrolledUp) {
+        window.requestAnimationFrame(() => {
+          const currentStage = mainStageRef.current;
+          if (currentStage) currentStage.scrollTop = currentStage.scrollHeight;
+        });
+      }
+      return;
+    }
+    shouldFollowMainStageRef.current = false;
+    userPausedMainStageRef.current = true;
+    setShowScrollToBottom(true);
+  };
+
+  const isEditableScrollTarget = (target: EventTarget | null) =>
+    target instanceof Element && Boolean(target.closest('textarea, input, [contenteditable="true"]'));
+
+  const markMainStageScrollIntent = (target: EventTarget | null) => {
+    if (!isEditableScrollTarget(target)) {
+      userScrollIntentUntilRef.current = Date.now() + 600;
+    }
+  };
+
+  const handleScrollToBottom = () => {
+    shouldFollowMainStageRef.current = true;
+    userPausedMainStageRef.current = false;
+    setShowScrollToBottom(false);
+    window.requestAnimationFrame(() => {
+      const stage = mainStageRef.current;
+      if (stage) stage.scrollTop = stage.scrollHeight;
+    });
+  };
+
   const runStreamingExecution = async (
     execute: (callbacks: TurnCallbacks) => Promise<TurnExecutionResult>,
     onErrorRestore?: () => void,
   ) => {
     if (abortRef.current || isStreaming) return;
+    const streamStartedAt = performance.now();
     setErrorMsg(null);
     setIsStreaming(true);
     setStreamReasoning('');
@@ -437,6 +547,10 @@ export function App({ runtime }: AppProps) {
       if (isStale()) {
         return;
       }
+      setReasoningDurations((durations) => ({
+        ...durations,
+        [result.assistantNode.id]: Math.max(1, Math.round((performance.now() - streamStartedAt) / 1000)),
+      }));
       setStory(result.story);
       await refreshStories();
       if (!isStale()) {
@@ -930,6 +1044,17 @@ export function App({ runtime }: AppProps) {
     ? '主线'
     : reviewState.activeBranchLabel;
   const forkCount = projectStoryTreeSpine(story).forkCount;
+  const activeLeafNode = story.activeLeafNodeId ? story.nodes[story.activeLeafNodeId] : undefined;
+  const latestTurnNodeIds = new Set(
+    [
+      activeLeafNode?.id,
+      activeLeafNode?.role === 'assistant' ? activeLeafNode.parentId : null,
+    ].filter((id): id is string => Boolean(id)),
+  );
+  const isCommittedStreamingReply =
+    isStreaming &&
+    activeLeafNode?.role === 'assistant' &&
+    activeLeafNode.content === streamContent;
 
   return (
     <div className="app-root">
@@ -966,8 +1091,22 @@ export function App({ runtime }: AppProps) {
           onExportStoryBackup={(id) => void handleExportBackup(id)}
         />
 
-        <main className="main-stage" data-testid="main-stage">
-          {errorMsg && (
+        <main
+          ref={mainStageRef}
+          className={`main-stage${storyExists && !showSettings && !showImport ? ' is-playing' : ''}`}
+          data-testid="main-stage"
+          onScroll={handleMainStageScroll}
+          onWheelCapture={(event) => {
+            if (event.deltaY < 0) markMainStageScrollIntent(event.target);
+          }}
+          onTouchMoveCapture={(event) => markMainStageScrollIntent(event.target)}
+          onKeyDownCapture={(event) => {
+            if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) {
+              markMainStageScrollIntent(event.target);
+            }
+          }}
+        >
+          {errorMsg && (showSettings || showImport || isWelcome) && (
             <BannerAlert tone="danger" testId="main-error-banner">
               <span>{errorMsg}</span>
               <button
@@ -1042,7 +1181,7 @@ export function App({ runtime }: AppProps) {
                     onReextractBlueprint={() => handleReextractBlueprint()}
                   />
 
-                  <section className="timeline" aria-label="故事对话记录">
+                  <section className="timeline" data-testid="story-timeline" aria-label="故事对话记录">
                     {activeNodes.length === 0 && !isStreaming && (
                       <div className="turn-card empty-story-card">
                         <div className="turn-role">开场引导</div>
@@ -1088,27 +1227,39 @@ export function App({ runtime }: AppProps) {
                       </div>
                     )}
 
-                    {activeNodes.map((node) => (
-                      <TurnCard
-                        key={node.id}
-                        node={node}
-                        isActiveLeaf={node.id === story.activeLeafNodeId}
-                        isStreaming={isStreaming || isSummarizing}
-                        siblings={getSiblingBranchInfo(story, node.id)}
-                        onSelectChoice={(choiceText) => void sendAction(choiceText)}
-                        onSwitchBranch={(targetId) => void handleSwitchBranch(targetId)}
-                        onEditAndBranch={(nodeId, text) => void handleEditAndBranch(nodeId, text)}
-                        onRegenerate={(nodeId) => void handleRegenerateNode(nodeId)}
-                        onRewindToNode={(nodeId) => void handleRewindToNode(nodeId)}
-                      />
-                    ))}
+                    {activeNodes.map((node, index) => {
+                      const parentNode =
+                        node.role === 'assistant' && node.parentId
+                          ? story.nodes[node.parentId]
+                          : undefined;
+                      const editableUserNode = parentNode?.role === 'user' ? parentNode : undefined;
+                      return (
+                        <TurnCard
+                          key={node.id}
+                          node={node}
+                          isActiveLeaf={node.id === story.activeLeafNodeId}
+                          isLatestTurn={latestTurnNodeIds.has(node.id)}
+                          isSetupNode={story.setupNodeIds?.includes(node.id) ?? false}
+                          turnNumber={Math.max(1, Math.ceil((index + 1) / 2))}
+                          reasoningDurationSeconds={reasoningDurations[node.id]}
+                          editableUserNode={editableUserNode}
+                          isStreaming={isStreaming || isSummarizing}
+                          siblings={getSiblingBranchInfo(story, node.id)}
+                          onSelectChoice={(choiceText) => void sendAction(choiceText)}
+                          onSwitchBranch={(targetId) => void handleSwitchBranch(targetId)}
+                          onEditAndBranch={(nodeId, text) => void handleEditAndBranch(nodeId, text)}
+                          onRegenerate={(nodeId) => void handleRegenerateNode(nodeId)}
+                          onRewindToNode={(nodeId) => void handleRewindToNode(nodeId)}
+                        />
+                      );
+                    })}
 
-                    {isStreaming && (
-                      <article className="turn-card assistant" aria-live="polite">
+                    {isStreaming && !isCommittedStreamingReply && (
+                      <article className="turn-card assistant turn-streaming" data-testid="turn-assistant" aria-live="polite">
                         <div className="turn-role">叙事 AI（生成中…）</div>
                         {streamReasoning && (
-                          <details className="reasoning-details" open>
-                            <summary>思考过程（实时流式）</summary>
+                          <details className="reasoning-details" data-testid="reasoning-details" open>
+                            <summary data-testid="reasoning-toggle">✦ 思考中…</summary>
                             <div className="reasoning-content">{streamReasoning}</div>
                           </details>
                         )}
@@ -1120,23 +1271,58 @@ export function App({ runtime }: AppProps) {
                       </article>
                     )}
                   </section>
+
                 </>
               )}
 
-              <form className="composer" onSubmit={handleSubmit}>
-                <label htmlFor="turn-input">输入你的行动或对话</label>
+              <form className="composer" data-testid="stage-composer" onSubmit={handleSubmit}>
+                {errorMsg && !showSettings && !showImport && !isWelcome && (
+                  <BannerAlert tone="danger" testId="main-error-banner">
+                    <span>{errorMsg}</span>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => openDiagnostics('error_banner')}
+                    >
+                      打包排障日志
+                    </button>
+                  </BannerAlert>
+                )}
+                {showScrollToBottom && (
+                  <button
+                    type="button"
+                    className="scroll-to-bottom"
+                    data-testid="scroll-to-bottom"
+                    onClick={handleScrollToBottom}
+                  >
+                    回到底部 ↓
+                  </button>
+                )}
+                <label className="visually-hidden" htmlFor="turn-input">输入你的行动或对话</label>
                 <textarea
                   id="turn-input"
                   name="playerInput"
-                  rows={2}
+                  rows={1}
                   value={input}
                   placeholder={isWelcome
                     ? '导入故事后即可开始行动…'
-                    : '输入你的抉择、对话或行动（Ctrl/Cmd + Enter 发送）…'}
+                    : '输入你的抉择、对话或行动（Enter 发送，Shift+Enter 换行）…'}
                   disabled={isWelcome}
-                  onChange={(event) => setInput(event.target.value)}
+                  onChange={(event) => {
+                    const textarea = event.currentTarget;
+                    setInput(textarea.value);
+                    if (!CSS.supports('field-sizing', 'content')) {
+                      textarea.style.height = 'auto';
+                      textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+                    }
+                  }}
                   onKeyDown={(event) => {
-                    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
+                    if (
+                      event.key === 'Enter' &&
+                      !event.shiftKey &&
+                      !event.nativeEvent.isComposing &&
+                      event.nativeEvent.keyCode !== 229
+                    ) {
                       event.preventDefault();
                       void handleSubmit();
                     }
@@ -1151,7 +1337,7 @@ export function App({ runtime }: AppProps) {
                       <button
                         key="stop-generation-btn"
                         type="button"
-                        className="btn"
+                        className="btn composer-send"
                         aria-label="停止生成"
                         onClick={(event) => {
                           event.preventDefault();
@@ -1159,17 +1345,19 @@ export function App({ runtime }: AppProps) {
                           abortRef.current?.abort();
                         }}
                       >
-                        停止生成
+                        <Square size={17} strokeWidth={1.75} aria-hidden="true" />
+                        <span className="visually-hidden">停止生成</span>
                       </button>
                     ) : (
                       <button
                         key="send-action-btn"
                         type="submit"
-                        className="btn btn-primary"
+                        className="btn btn-primary composer-send"
                         aria-label="发送行动"
                         disabled={!input.trim() || isSummarizing || isWelcome}
                       >
-                        发送行动
+                        <ArrowUp size={19} strokeWidth={1.75} aria-hidden="true" />
+                        <span className="visually-hidden">发送行动</span>
                       </button>
                     )}
                   </div>
