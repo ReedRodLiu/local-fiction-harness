@@ -1264,6 +1264,7 @@ export function App({ runtime }: AppProps) {
               transport={runtime.transport}
               binaryDownloader={runtime.binaryDownloader}
               hasCredentials={hasCredentials}
+              byokOpen={wizardOpen}
               onRequireByok={openByokPrompt}
               extractBlueprint={(raw, cfg, title, signal) =>
                 harness.extractStoryBlueprint(raw, cfg, title, signal)

@@ -28,6 +28,7 @@ interface ImportPanelProps {
   transport: LlmTransport;
   binaryDownloader: BinaryDownloader;
   hasCredentials: boolean;
+  byokOpen: boolean;
   onRequireByok: (
     actionLabel: string,
     resume: (resolvedConfig: ModelConfig) => void,
@@ -81,6 +82,7 @@ export function ImportPanel({
   transport,
   binaryDownloader,
   hasCredentials,
+  byokOpen,
   onRequireByok,
   extractBlueprint,
   onConfirmStory,
@@ -287,6 +289,7 @@ export function ImportPanel({
         transport={transport}
         binaryDownloader={binaryDownloader}
         hasCredentials={hasCredentials}
+        byokOpen={byokOpen}
         onRequireByok={onRequireByok}
         onImportBatch={onImportDeepSeekBatch}
         onContinueStory={onContinueStory}

@@ -294,6 +294,59 @@ async function expectTouchTarget(locator, label) {
   }
 }
 
+async function assertSessionFilterTabState(page, tabId, expectedResultCount, label) {
+  const readState = () => page.evaluate(({ tabId, expectedResultCount }) => {
+    const tablist = document.querySelector('[role="tablist"][aria-label="筛选会话"]');
+    const tabs = tablist ? Array.from(tablist.querySelectorAll('[role="tab"]')) : [];
+    const activeTab = document.getElementById(tabId);
+    const selectedTabs = tabs.filter((tab) => tab.getAttribute('aria-selected') === 'true');
+    const tabIndexes = tabs.map((tab) => ({
+      id: tab.id,
+      tabIndex: tab.getAttribute('tabindex'),
+    }));
+    const resultCount = document.querySelectorAll('[data-testid="ds-session-item"]').length;
+    return {
+      matches:
+        Boolean(activeTab) &&
+        activeTab.getAttribute('aria-selected') === 'true' &&
+        activeTab.getAttribute('tabindex') === '0' &&
+        selectedTabs.length === 1 &&
+        selectedTabs[0] === activeTab &&
+        tabs.every((tab) => tab.getAttribute('tabindex') === (tab === activeTab ? '0' : '-1')) &&
+        document.activeElement === activeTab &&
+        resultCount === expectedResultCount,
+      activeId: document.activeElement?.id ?? null,
+      selectedIds: selectedTabs.map((tab) => tab.id),
+      expectedTabId: tabId,
+      tabIndexes,
+      resultCount,
+      expectedResultCount,
+    };
+  }, { tabId, expectedResultCount });
+
+  await page.waitForFunction(({ tabId, expectedResultCount }) => {
+    const tablist = document.querySelector('[role="tablist"][aria-label="筛选会话"]');
+    const tabs = tablist ? Array.from(tablist.querySelectorAll('[role="tab"]')) : [];
+    const activeTab = document.getElementById(tabId);
+    const selectedTabs = tabs.filter((tab) => tab.getAttribute('aria-selected') === 'true');
+    return (
+      Boolean(activeTab) &&
+      activeTab.getAttribute('aria-selected') === 'true' &&
+      activeTab.getAttribute('tabindex') === '0' &&
+      selectedTabs.length === 1 &&
+      selectedTabs[0] === activeTab &&
+      tabs.every((tab) => tab.getAttribute('tabindex') === (tab === activeTab ? '0' : '-1')) &&
+      document.activeElement === activeTab &&
+      document.querySelectorAll('[data-testid="ds-session-item"]').length === expectedResultCount
+    );
+  }, { tabId, expectedResultCount }, { timeout: 5000 }).catch(() => undefined);
+
+  const state = await readState();
+  if (!state.matches) {
+    throw new Error(`${label}: ${JSON.stringify(state)}`);
+  }
+}
+
 async function assertUploadControlHasVisibleKeyboardFocus(page, backButton, targetTestId, tabCount, label) {
   await backButton.focus();
   for (let i = 0; i < tabCount; i += 1) await page.keyboard.press('Tab');
@@ -936,29 +989,12 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await aiByokWizard.getByRole('button', { name: '取消' }).click();
     await aiByokWizard.waitFor({ state: 'detached' });
     const allFilterTabId = await allFilterTab.getAttribute('id');
-    await page.waitForFunction(
-      (id) => document.activeElement?.id === id,
+    await assertSessionFilterTabState(
+      page,
       allFilterTabId,
+      2,
+      'Canceling AI filter BYOK did not restore the All tab state, results, and focus',
     );
-    if (
-      await allFilterTab.getAttribute('aria-selected') !== 'true' ||
-      await allFilterTab.getAttribute('tabindex') !== '0' ||
-      await likelyFilterTab.getAttribute('tabindex') !== '-1' ||
-      await aiFilterTabAtMobile.getAttribute('tabindex') !== '-1' ||
-      await page.evaluate(() => document.activeElement?.id) !== allFilterTabId
-    ) {
-      throw new Error(`Canceling AI filter BYOK did not restore the All tab state and focus: ${JSON.stringify({
-        allSelected: await allFilterTab.getAttribute('aria-selected'),
-        allTabIndex: await allFilterTab.getAttribute('tabindex'),
-        likelyTabIndex: await likelyFilterTab.getAttribute('tabindex'),
-        aiTabIndex: await aiFilterTabAtMobile.getAttribute('tabindex'),
-        activeId: await page.evaluate(() => document.activeElement?.id),
-        allId: allFilterTabId,
-      })}`);
-    }
-    if (await page.getByTestId('ds-session-item').count() !== 2) {
-      throw new Error('Canceling AI filter BYOK hid the All tab session results.');
-    }
     await allFilterTab.focus();
     await page.keyboard.press('ArrowRight');
     if (
@@ -981,19 +1017,12 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await aiByokWizard.getByRole('button', { name: '取消' }).click();
     await aiByokWizard.waitFor({ state: 'detached' });
     const likelyFilterTabId = await likelyFilterTab.getAttribute('id');
-    await page.waitForFunction(
-      (id) => document.activeElement?.id === id,
+    await assertSessionFilterTabState(
+      page,
       likelyFilterTabId,
+      1,
+      'Canceling AI filter BYOK did not restore the Likely tab state, results, and focus',
     );
-    if (
-      await likelyFilterTab.getAttribute('aria-selected') !== 'true' ||
-      await likelyFilterTab.getAttribute('tabindex') !== '0' ||
-      await allFilterTab.getAttribute('tabindex') !== '-1' ||
-      await aiFilterTabAtMobile.getAttribute('tabindex') !== '-1' ||
-      await page.getByTestId('ds-session-item').count() !== 1
-    ) {
-      throw new Error('Canceling AI filter BYOK did not restore the Likely tab state.');
-    }
     await page.keyboard.press('ArrowLeft');
     if (
       await allFilterTab.getAttribute('aria-selected') !== 'true' ||
@@ -1327,25 +1356,18 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.getByTestId('ds-session-list').waitFor();
     const successFilterTablist = page.getByRole('tablist', { name: '筛选会话' });
     const successAllTab = successFilterTablist.getByRole('tab', { name: '全部', exact: true });
-    const successLikelyTab = successFilterTablist.getByRole('tab', { name: '疑似文游' });
     await successAllTab.focus();
     await page.keyboard.press('End');
     await page.getByTestId('deepseek-setup-wizard').waitFor();
     await completePendingSetup(page, 'sk-e2e-ai-filter-success');
-    await page.waitForFunction(() =>
-      document.querySelector('.ds-filter-tabs [aria-selected="true"]')?.textContent?.trim() === 'AI 辅助筛选' &&
-      document.querySelectorAll('[data-testid="ds-session-item"]').length === 1,
-    );
     const successAiTab = successFilterTablist.getByRole('tab', { name: 'AI 辅助筛选' });
-    if (
-      await successAiTab.getAttribute('aria-selected') !== 'true' ||
-      await successAiTab.getAttribute('tabindex') !== '0' ||
-      await successAllTab.getAttribute('tabindex') !== '-1' ||
-      await successLikelyTab.getAttribute('tabindex') !== '-1' ||
-      await page.evaluate(() => document.activeElement?.id) !== await successAiTab.getAttribute('id')
-    ) {
-      throw new Error('Completing AI filter BYOK did not keep the AI tab selected and focused.');
-    }
+    const successAiTabId = await successAiTab.getAttribute('id');
+    await assertSessionFilterTabState(
+      page,
+      successAiTabId,
+      1,
+      'Completing AI filter BYOK did not keep the AI tab selected, focused, and showing results',
+    );
 
     const fixturePath = process.env.LFH_SYNTHETIC_UI_STORY_ZIP;
     if (fixturePath && fs.existsSync(fixturePath)) {

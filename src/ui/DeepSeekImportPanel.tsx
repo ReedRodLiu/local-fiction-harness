@@ -88,6 +88,7 @@ interface DeepSeekImportPanelProps {
   transport: LlmTransport;
   binaryDownloader: BinaryDownloader;
   hasCredentials: boolean;
+  byokOpen: boolean;
   onRequireByok: (
     actionLabel: string,
     resume: (resolvedConfig: ModelConfig) => void,
@@ -109,6 +110,7 @@ export function DeepSeekImportPanel({
   transport,
   binaryDownloader,
   hasCredentials,
+  byokOpen,
   onRequireByok,
   onImportBatch,
   onContinueStory,
@@ -143,12 +145,7 @@ export function DeepSeekImportPanel({
   const aiAbortRef = useRef<AbortController | null>(null);
   const aiPreviousFilterRef = useRef<DeepSeekFilterMode | null>(null);
   const aiByokPreviousFilterRef = useRef<DeepSeekFilterMode | null>(null);
-
-  const focusFilterTab = (mode: DeepSeekFilterMode) => {
-    requestAnimationFrame(() => {
-      document.getElementById(`deepseek-filter-tab-${mode}`)?.focus();
-    });
-  };
+  const pendingFilterTabFocusRef = useRef<DeepSeekFilterMode | null>(null);
 
   useEffect(() => {
     return () => {
@@ -159,6 +156,24 @@ export function DeepSeekImportPanel({
       urlAbortRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (byokOpen) return;
+    const mode = pendingFilterTabFocusRef.current;
+    if (!mode) return;
+    const tab = document.getElementById(`deepseek-filter-tab-${mode}`);
+    if (
+      !tab ||
+      tab.getAttribute('aria-selected') !== 'true' ||
+      tab.getAttribute('tabindex') !== '0'
+    ) {
+      return;
+    }
+    tab.focus();
+    if (document.activeElement === tab) {
+      pendingFilterTabFocusRef.current = null;
+    }
+  }, [aiMatchedIds, byokOpen, filterMode, isAiFiltering]);
 
   const recordImportRadar = (
     structure: Partial<DeepSeekStructureStats> | undefined,
@@ -427,19 +442,21 @@ export function DeepSeekImportPanel({
     if (!hasCredentials) {
       const previousMode = filterMode;
       aiByokPreviousFilterRef.current = previousMode;
+      pendingFilterTabFocusRef.current = null;
       setFilterMode('ai');
       onRequireByok(
         'AI 辅助筛选 DeepSeek 会话',
         (cfg) => {
           aiByokPreviousFilterRef.current = null;
+          pendingFilterTabFocusRef.current = 'ai';
+          setFilterMode('ai');
           void runAiAssistFilter(cfg, zipGeneration, sessions);
-          focusFilterTab('ai');
         },
         () => {
           const restoreMode = aiByokPreviousFilterRef.current ?? previousMode;
           aiByokPreviousFilterRef.current = null;
+          pendingFilterTabFocusRef.current = restoreMode;
           setFilterMode(restoreMode);
-          focusFilterTab(restoreMode);
         },
       );
       return;
