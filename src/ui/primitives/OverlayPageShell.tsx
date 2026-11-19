@@ -7,6 +7,7 @@ interface OverlayPageShellProps {
   step?: number;
   stepCount?: number;
   footer?: ReactNode;
+  backDisabled?: boolean;
   onBack: () => void;
   children: ReactNode;
 }
@@ -17,6 +18,7 @@ export function OverlayPageShell({
   step,
   stepCount,
   footer,
+  backDisabled = false,
   onBack,
   children,
 }: OverlayPageShellProps) {
@@ -25,7 +27,13 @@ export function OverlayPageShell({
   return (
     <section className="overlay-page-shell" data-testid={testId} data-has-footer={Boolean(footer)}>
       <header className="overlay-page-header">
-        <button type="button" className="icon-button" aria-label="返回" onClick={onBack}>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="返回"
+          disabled={backDisabled}
+          onClick={onBack}
+        >
           <ArrowLeft size={20} strokeWidth={1.75} />
         </button>
         <h1>{title}</h1>

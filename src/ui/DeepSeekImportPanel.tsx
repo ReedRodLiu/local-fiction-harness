@@ -79,6 +79,7 @@ export function DeepSeekImportPanel({
   const [isImporting, setIsImporting] = useState(false);
   const [receipt, setReceipt] = useState<DeepSeekImportBatchResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const zipGenerationRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -127,7 +128,15 @@ export function DeepSeekImportPanel({
     });
   };
 
+  const invalidateAiFilter = () => {
+    zipGenerationRef.current += 1;
+    setAiMatchedIds(null);
+    setIsAiFiltering(false);
+    setFilterMode('all');
+  };
+
   const loadZipBytes = (bytes: Uint8Array, source: 'zip_file' | 'url', startedAt: number) => {
+    invalidateAiFilter();
     const scanned = scanDeepSeekExportZip(bytes);
     if (scanned.sessions.length === 0) {
       recordScanFailure(
@@ -143,7 +152,6 @@ export function DeepSeekImportPanel({
     setLoadedSource(source);
     setZipBytes(bytes);
     setScanResult(scanned);
-    setAiMatchedIds(null);
     setScriptRangeOverrides({});
     const firstLikely = scanned.sessions.find((s) => s.isLikelyFiction) ?? scanned.sessions[0];
     setSelectedIds(firstLikely ? [firstLikely.sessionId] : []);
@@ -151,6 +159,7 @@ export function DeepSeekImportPanel({
   };
 
   const resetLoadedZip = () => {
+    invalidateAiFilter();
     setZipBytes(null);
     setScanResult(null);
     setSelectedIds([]);
@@ -159,6 +168,7 @@ export function DeepSeekImportPanel({
   };
 
   const handleZipFile = async (file: File) => {
+    invalidateAiFilter();
     const startedAt = Date.now();
     setErrorMsg(null);
     setReceipt(null);
@@ -174,6 +184,7 @@ export function DeepSeekImportPanel({
 
   const handleFetchZipUrl = async () => {
     if (isFetchingUrl) return;
+    invalidateAiFilter();
     const startedAt = Date.now();
     setErrorMsg(null);
     setReceipt(null);
@@ -234,31 +245,42 @@ export function DeepSeekImportPanel({
     });
   };
 
-  const runAiAssistFilter = async (cfg: ModelConfig) => {
-    if (!scanResult || isAiFiltering) return;
+  const runAiAssistFilter = async (
+    cfg: ModelConfig,
+    zipGeneration: number,
+    sessions: readonly DeepSeekSessionIndexItem[],
+  ) => {
+    if (zipGeneration !== zipGenerationRef.current || isAiFiltering) return;
     setErrorMsg(null);
     setIsAiFiltering(true);
     try {
-      const ids = await assistFilterDeepSeekSessions(scanResult.sessions, transport, cfg);
+      const ids = await assistFilterDeepSeekSessions(sessions, transport, cfg);
+      if (zipGeneration !== zipGenerationRef.current) return;
       setAiMatchedIds(new Set(ids));
+      setFilterMode('ai');
     } catch (err) {
+      if (zipGeneration !== zipGenerationRef.current) return;
       setErrorMsg(toErrorMessage(err, 'AI 辅助筛选失败，请检查模型配置。'));
     } finally {
-      setIsAiFiltering(false);
+      if (zipGeneration === zipGenerationRef.current) setIsAiFiltering(false);
     }
   };
 
   const handleAiAssistClick = () => {
     if (!scanResult) return;
-    setFilterMode('ai');
-    if (aiMatchedIds) return;
+    if (aiMatchedIds) {
+      setFilterMode('ai');
+      return;
+    }
+    const zipGeneration = zipGenerationRef.current;
+    const sessions = scanResult.sessions;
     if (!hasCredentials) {
       onRequireByok('AI 辅助筛选 DeepSeek 会话', (cfg) => {
-        void runAiAssistFilter(cfg);
+        void runAiAssistFilter(cfg, zipGeneration, sessions);
       });
       return;
     }
-    void runAiAssistFilter(config);
+    void runAiAssistFilter(config, zipGeneration, sessions);
   };
 
   const handleConfirmImport = async () => {
@@ -311,6 +333,7 @@ export function DeepSeekImportPanel({
   const step = receipt ? 3 : scanResult ? 2 : 1;
   const primaryStory = receipt?.stories[0];
   const handleBack = () => {
+    if (isImporting) return;
     if (receipt) {
       setReceipt(null);
       return;
@@ -378,9 +401,14 @@ export function DeepSeekImportPanel({
       </button>
     )
   ) : (
-    <label htmlFor="deepseek-zip-input" className="btn btn-primary import-primary-action import-file-submit">
+    <button
+      type="button"
+      className="btn btn-primary import-primary-action import-file-submit"
+      data-testid="deepseek-footer-zip-picker"
+      onClick={() => zipInputRef.current?.click()}
+    >
       选择本地 .zip 文件
-    </label>
+    </button>
   );
 
   return (
@@ -389,6 +417,7 @@ export function DeepSeekImportPanel({
       testId="deepseek-import-panel"
       step={step}
       stepCount={3}
+      backDisabled={isImporting}
       onBack={handleBack}
       footer={<div className="import-footer-actions">{footer}</div>}
     >
@@ -517,18 +546,24 @@ export function DeepSeekImportPanel({
 
           {sourceMode === 'file' ? (
             <div className="import-file-card ds-file-card">
-              <label htmlFor="deepseek-zip-input" className="import-file-picker">
+              <button
+                type="button"
+                className="import-file-picker"
+                data-testid="deepseek-zip-picker"
+                onClick={() => zipInputRef.current?.click()}
+              >
                 <FileUp size={24} strokeWidth={1.6} aria-hidden="true" />
                 <span className="import-file-title">选择 DeepSeek 数据导出包</span>
                 <span className="import-file-description">从「设置 → 数据管理」导出的 .zip 文件</span>
                 <span className="import-file-action">浏览文件</span>
-              </label>
+              </button>
               <input
                 ref={zipInputRef}
                 id="deepseek-zip-input"
                 name="deepseekZip"
                 className="visually-hidden"
                 type="file"
+                tabIndex={-1}
                 accept=".zip"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
@@ -565,6 +600,11 @@ export function DeepSeekImportPanel({
           </div>
           {scanResult && scanResult.sessions.length > 0 ? (
             <>
+              {isImporting && (
+                <p className="status-text" role="status" data-testid="deepseek-import-busy">
+                  正在导入并保存所选故事，请稍候。完成后会显示导入回执。
+                </p>
+              )}
               <div className="ds-toolbar">
                 <input
                   type="search"

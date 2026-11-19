@@ -257,6 +257,23 @@ async function expectTouchTarget(locator, label) {
   }
 }
 
+async function assertUploadControlHasVisibleKeyboardFocus(page, backButton, targetTestId, tabCount, label) {
+  await backButton.focus();
+  for (let i = 0; i < tabCount; i += 1) await page.keyboard.press('Tab');
+  const focus = await page.evaluate(() => {
+    const active = document.activeElement;
+    const style = active ? getComputedStyle(active) : null;
+    return {
+      testId: active?.getAttribute('data-testid'),
+      outlineStyle: style?.outlineStyle,
+      outlineWidth: style?.outlineWidth,
+    };
+  });
+  if (focus.testId !== targetTestId || focus.outlineStyle === 'none' || focus.outlineWidth === '0px') {
+    throw new Error(`${label} was not a visible keyboard focus stop: ${JSON.stringify(focus)}`);
+  }
+}
+
 async function verifySliceOneViewportMatrix(page) {
   if ((await page.getByTestId('app-topbar').count()) !== 1) {
     throw new Error('Expected the mobile-first top navigation shell.');
@@ -465,6 +482,9 @@ async function runImportWizardE2E(browser, port, tmpDir) {
   try {
     await mockSuccessfulKeyVerification(page);
     let blueprintRequestCount = 0;
+    let nextBlueprintRequestGate = null;
+    let failNextAiRequest = false;
+    let nextAiRequestGate = null;
     await page.route('https://cdn.deepseek.example/export-valid.zip', (route) =>
       route.fulfill({
         status: 200,
@@ -477,6 +497,12 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       const systemPrompt = body.messages?.[0]?.content ?? '';
       if (systemPrompt.includes('严格只输出一个 JSON 对象')) {
         blueprintRequestCount += 1;
+        const gate = nextBlueprintRequestGate;
+        if (gate) {
+          nextBlueprintRequestGate = null;
+          gate.onStarted();
+          await gate.waitForRelease;
+        }
         await route.fulfill({
           status: 200,
           contentType: 'text/event-stream',
@@ -494,14 +520,36 @@ async function runImportWizardE2E(browser, port, tmpDir) {
             }],
           }]),
         });
+        gate?.onFinished();
         return;
       }
-      if (systemPrompt.includes('AI 辅助筛选')) {
+      if (systemPrompt.includes('互动叙事文游识别助手')) {
+        if (failNextAiRequest) {
+          failNextAiRequest = false;
+          await route.fulfill({
+            status: 503,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: { message: 'synthetic AI filter failure' } }),
+          });
+          return;
+        }
+        const gate = nextAiRequestGate;
+        if (gate) {
+          nextAiRequestGate = null;
+          gate.onStarted();
+          await gate.waitForRelease;
+        }
         await route.fulfill({
           status: 200,
           contentType: 'text/event-stream',
-          body: sseResponse([{ choices: [{ delta: { content: 'ds-e2e-fiction' }, finish_reason: 'stop' }] }]),
+          body: sseResponse([{
+            choices: [{
+              delta: { content: JSON.stringify({ fictionSessionIds: ['ds-e2e-fiction'] }) },
+              finish_reason: 'stop',
+            }],
+          }]),
         });
+        gate?.onFinished();
         return;
       }
       await route.fulfill({
@@ -516,14 +564,43 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await startDeepSeekImport(page);
     await page.getByTestId('deepseek-import-panel').waitFor();
     await assertImportThemeMatrix(page, 'deepseek-import-panel', 1, { width: 1280, height: 800 });
+    const deepSeekBackButton = page.getByRole('button', { name: '返回' });
+    await assertUploadControlHasVisibleKeyboardFocus(page, deepSeekBackButton, 'deepseek-zip-picker', 3, 'DeepSeek upload card');
+    await assertUploadControlHasVisibleKeyboardFocus(page, deepSeekBackButton, 'deepseek-footer-zip-picker', 4, 'DeepSeek footer upload action');
     await page.getByTestId('deepseek-source-url').click();
     await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/export-valid.zip');
     await page.getByTestId('deepseek-fetch-zip').click();
     await page.getByTestId('ds-session-list').waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
     await assertImportThemeMatrix(page, 'deepseek-import-panel', 2, { width: 390, height: 844 });
+    const mobileSearchHeight = await page.getByRole('searchbox', { name: '搜索外部会话' }).evaluate((input) =>
+      input.getBoundingClientRect().height,
+    );
+    if (mobileSearchHeight > 52) {
+      throw new Error(`DeepSeek search field is too tall on mobile: ${mobileSearchHeight}px.`);
+    }
     await page.setViewportSize({ width: 1280, height: 800 });
     await assertImportWizardLayout(page, 'deepseek-import-panel', 2, { width: 1280, height: 800 });
+    const desktopSearchHeight = await page.getByRole('searchbox', { name: '搜索外部会话' }).evaluate((input) =>
+      input.getBoundingClientRect().height,
+    );
+    if (desktopSearchHeight > 52) {
+      throw new Error(`DeepSeek search field is too tall on desktop: ${desktopSearchHeight}px.`);
+    }
+
+    await page.getByRole('tab', { name: '疑似文游' }).click();
+    await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
+    const aiByokWizard = page.getByTestId('deepseek-setup-wizard');
+    await aiByokWizard.waitFor();
+    await aiByokWizard.getByRole('button', { name: '取消' }).click();
+    await aiByokWizard.waitFor({ state: 'detached' });
+    if (await page.getByRole('tab', { name: '疑似文游' }).getAttribute('aria-selected') !== 'true') {
+      throw new Error('Canceling AI filter BYOK changed the current session category.');
+    }
+    if (await page.getByTestId('ds-session-item').count() !== 1) {
+      throw new Error('Canceling AI filter BYOK hid the current session results.');
+    }
+    await page.getByRole('tab', { name: '全部', exact: true }).click();
 
     const firstSession = page.getByTestId('ds-session-item').filter({ hasText: '合成宫斗测试档' });
     await firstSession.getByTestId('ds-session-preview-trigger').click();
@@ -554,6 +631,20 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.getByTestId('import-panel').waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
     await assertImportThemeMatrix(page, 'import-panel', 1, { width: 390, height: 844 });
+    await assertUploadControlHasVisibleKeyboardFocus(
+      page,
+      page.getByRole('button', { name: '返回' }),
+      'import-script-picker',
+      1,
+      'Free-script upload card',
+    );
+    const scriptFileTypes = (await page.locator('#import-file').getAttribute('accept'))?.split(',') ?? [];
+    const scriptPickerText = await page.getByTestId('import-script-picker').textContent();
+    if (!scriptFileTypes.includes('.doc') ||
+        !scriptPickerText?.includes('旧版 .doc') ||
+        !scriptPickerText.includes('另存为 .docx')) {
+      throw new Error('The free-script picker does not expose .doc conversion guidance before selection.');
+    }
     await page.setInputFiles('#import-file', {
       name: 'legacy-story.doc',
       mimeType: 'application/msword',
@@ -594,6 +685,92 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.getByRole('button', { name: '确认并开启第一幕' }).click();
     await page.getByTestId('import-panel').waitFor({ state: 'detached' });
     await page.getByTestId('app-topbar').getByRole('heading', { name: '已微调的合成故事', exact: true }).waitFor();
+
+    await startDeepSeekImport(page);
+    await page.setInputFiles('#deepseek-zip-input', {
+      name: 'ai-filter-source.zip',
+      mimeType: 'application/zip',
+      buffer: Buffer.from(buildSyntheticDeepSeekZipE2E()),
+    });
+    await page.getByTestId('ds-session-list').waitFor();
+    await page.getByRole('tab', { name: '疑似文游' }).click();
+    failNextAiRequest = true;
+    await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
+    await page.getByTestId('import-error').waitFor();
+    if (await page.getByRole('tab', { name: '疑似文游' }).getAttribute('aria-selected') !== 'true' ||
+        await page.getByTestId('ds-session-item').count() !== 1) {
+      throw new Error('A failed AI filter changed the current session category or results.');
+    }
+    await page.getByRole('tab', { name: '全部', exact: true }).click();
+
+    let startHeldAiRequest;
+    let releaseHeldAiRequest;
+    let heldAiRequestFinished;
+    let finishHeldAiRequest;
+    const heldAiRequestStarted = new Promise((resolve) => { startHeldAiRequest = resolve; });
+    const heldAiRequestWait = new Promise((resolve) => { releaseHeldAiRequest = resolve; });
+    const heldAiRequestDone = new Promise((resolve) => { finishHeldAiRequest = resolve; });
+    nextAiRequestGate = {
+      onStarted: startHeldAiRequest,
+      waitForRelease: heldAiRequestWait,
+      onFinished: finishHeldAiRequest,
+    };
+    await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
+    await heldAiRequestStarted;
+    await page.getByRole('button', { name: '返回' }).click();
+    await page.waitForFunction(() =>
+      document.querySelector('[data-testid="deepseek-import-panel"] [role="progressbar"]')?.getAttribute('aria-valuenow') === '1',
+    );
+    await page.setInputFiles('#deepseek-zip-input', {
+      name: 'ai-filter-replacement.zip',
+      mimeType: 'application/zip',
+      buffer: Buffer.from(buildAmbiguousOverWindowZipE2E()),
+    });
+    await page.getByTestId('ds-session-list').getByText('模糊开局超窗长档').waitFor();
+    releaseHeldAiRequest();
+    await heldAiRequestDone;
+    await page.waitForFunction(() =>
+      document.querySelector('.ds-filter-tabs [aria-selected="true"]')?.textContent?.trim() === '全部' &&
+      document.querySelector('[data-testid="ds-session-item"]')?.textContent?.includes('模糊开局超窗长档'),
+    );
+
+    await page.getByRole('button', { name: '返回' }).click();
+    await page.waitForFunction(() =>
+      document.querySelector('[data-testid="deepseek-import-panel"] [role="progressbar"]')?.getAttribute('aria-valuenow') === '1',
+    );
+    await page.setInputFiles('#deepseek-zip-input', {
+      name: 'pending-model-import.zip',
+      mimeType: 'application/zip',
+      buffer: Buffer.from(buildSyntheticDeepSeekZipE2E()),
+    });
+    await page.getByTestId('ds-session-list').waitFor();
+    let startHeldBlueprintRequest;
+    let releaseHeldBlueprintRequest;
+    let finishHeldBlueprintRequest;
+    const heldBlueprintRequestStarted = new Promise((resolve) => { startHeldBlueprintRequest = resolve; });
+    const heldBlueprintRequestWait = new Promise((resolve) => { releaseHeldBlueprintRequest = resolve; });
+    const heldBlueprintRequestDone = new Promise((resolve) => { finishHeldBlueprintRequest = resolve; });
+    nextBlueprintRequestGate = {
+      onStarted: startHeldBlueprintRequest,
+      waitForRelease: heldBlueprintRequestWait,
+      onFinished: finishHeldBlueprintRequest,
+    };
+    await page.getByTestId('ds-confirm-import-btn').click();
+    await heldBlueprintRequestStarted;
+    const importBackButton = page.getByRole('button', { name: '返回' });
+    if (!(await importBackButton.isDisabled())) {
+      throw new Error('Back remained enabled while the DeepSeek import was committing.');
+    }
+    await page.getByTestId('deepseek-import-busy').waitFor();
+    await importBackButton.evaluate((button) => button.click());
+    if (await page.getByTestId('deepseek-import-panel').getByRole('progressbar').getAttribute('aria-valuenow') !== '2') {
+      throw new Error('The import wizard left its committing step while import was pending.');
+    }
+    releaseHeldBlueprintRequest();
+    await heldBlueprintRequestDone;
+    await page.getByTestId('deepseek-import-receipt').waitFor();
+    await page.getByRole('button', { name: '继续这条故事' }).click();
+    await page.getByTestId('main-stage').getByText('原进度抵达东侧练歌房').waitFor();
 
     const fixturePath = process.env.LFH_SYNTHETIC_UI_STORY_ZIP;
     if (fixturePath && fs.existsSync(fixturePath)) {

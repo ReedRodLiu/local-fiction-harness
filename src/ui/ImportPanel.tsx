@@ -98,6 +98,7 @@ export function ImportPanel({
   const [isExtracting, setIsExtracting] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
+  const scriptInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const extractSeqRef = useRef(0);
   const fileSeqRef = useRef(0);
@@ -376,17 +377,24 @@ export function ImportPanel({
               if (file) void handleFile(file);
             }}
           >
-            <label htmlFor="import-file" className="import-file-picker">
+            <button
+              type="button"
+              className="import-file-picker"
+              data-testid="import-script-picker"
+              onClick={() => scriptInputRef.current?.click()}
+            >
               <span className="import-file-title">选择剧本文件</span>
-              <span className="import-file-description">支持 .docx、.md、.txt，也可以把文件拖到这里</span>
+              <span className="import-file-description">支持 .docx、.md、.txt；旧版 .doc 不可解析，请另存为 .docx，也可以把文件拖到这里</span>
               <span className="import-file-action">选择文件</span>
-            </label>
+            </button>
             <input
+              ref={scriptInputRef}
               id="import-file"
               name="scriptFile"
               className="visually-hidden"
               type="file"
-              accept=".docx,.md,.txt"
+              tabIndex={-1}
+              accept=".doc,.docx,.md,.txt"
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 event.target.value = '';
