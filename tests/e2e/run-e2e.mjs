@@ -250,6 +250,13 @@ async function completePendingSetup(page, key) {
   await wizard.waitFor({ state: 'detached' });
 }
 
+async function expectTouchTarget(locator, label) {
+  const box = await locator.boundingBox();
+  if (!box || box.width < 43.99 || box.height < 43.99) {
+    throw new Error(`${label} is below 44×44px: ${JSON.stringify(box)}`);
+  }
+}
+
 async function verifySliceOneViewportMatrix(page) {
   if ((await page.getByTestId('app-topbar').count()) !== 1) {
     throw new Error('Expected the mobile-first top navigation shell.');
@@ -303,6 +310,15 @@ async function verifySliceOneViewportMatrix(page) {
       }
       if (!layout.sheetHidden || layout.welcomeCoveredBySheet) {
         throw new Error(`Closed story sheet obscures the welcome view in ${theme} ${viewport.width}px.`);
+      }
+
+      if (viewport.width >= 960) {
+        const libraryToggle = page.getByTestId('desktop-library-toggle');
+        await libraryToggle.click();
+        if ((await page.getByRole('button', { name: '设置与模型密钥' }).count()) !== 1) {
+          throw new Error(`${cell} collapsed Settings button has no accessible name.`);
+        }
+        await libraryToggle.click();
       }
 
       await openSettings(page);
@@ -372,10 +388,25 @@ async function openSettings(page) {
   if (await page.getByTestId('settings-page').isVisible().catch(() => false)) return;
   const desktopEntry = page.getByTestId('desktop-settings-open');
   if (await desktopEntry.isVisible().catch(() => false)) {
+    await expectTouchTarget(desktopEntry, 'desktop settings entry');
     await desktopEntry.click();
   } else {
     await page.getByTestId('library-drawer-trigger').click();
-    await page.getByTestId('mobile-settings-open').click();
+    const drawer = page.getByTestId('mobile-library-dialog');
+    await drawer.waitFor({ state: 'visible' });
+    const entry = page.getByTestId('mobile-settings-open');
+    await expectTouchTarget(entry, 'mobile settings entry');
+    await entry.click();
+    await page.waitForFunction(() => {
+      const dialog = document.querySelector('[data-testid="mobile-library-dialog"]');
+      return dialog?.dataset.closing === 'true' || !dialog?.open;
+    });
+    if (await drawer.evaluate((dialog) => dialog.open)) {
+      if (!(await drawer.getAttribute('data-closing'))) {
+        throw new Error('Mobile drawer remained open without an exit state.');
+      }
+      await drawer.waitFor({ state: 'hidden' });
+    }
   }
   await page.getByTestId('settings-page').waitFor({ state: 'visible' });
 }
@@ -424,6 +455,20 @@ async function openStoryTree(page) {
     await page.getByTestId('open-story-tree').click();
     await sheet.waitFor({ state: 'visible' });
   }
+  if ((await page.evaluate(() => window.innerWidth)) < 768) {
+    const expand = sheet.getByRole('button', { name: '展开剧情面板' });
+    await expectTouchTarget(expand, 'mobile sheet size toggle');
+    await expectTouchTarget(sheet.getByRole('button', { name: '关闭剧情面板' }), 'mobile sheet close');
+    await expand.click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="story-tree-sheet"]')?.classList.contains('is-expanded'));
+    await page.waitForTimeout(200);
+    const height = await sheet.evaluate((dialog) => dialog.getBoundingClientRect().height);
+    if (height < await page.evaluate(() => window.innerHeight * 0.9)) {
+      throw new Error(`Expanded mobile story sheet is shorter than 90vh: ${height}px.`);
+    }
+    await sheet.getByRole('button', { name: '收起剧情面板' }).click();
+    await page.waitForFunction(() => !document.querySelector('[data-testid="story-tree-sheet"]')?.classList.contains('is-expanded'));
+  }
   return sheet;
 }
 
@@ -431,8 +476,42 @@ async function closeStoryTree(page) {
   const sheet = page.getByTestId('story-tree-sheet');
   if (await sheet.isVisible().catch(() => false)) {
     await sheet.getByRole('button', { name: '关闭剧情面板' }).click();
+    await page.waitForFunction(() => {
+      const dialog = document.querySelector('[data-testid="story-tree-sheet"]');
+      return dialog?.dataset.closing === 'true' || !dialog?.open;
+    });
     await sheet.waitFor({ state: 'hidden' });
   }
+}
+
+async function verifyModalDialogLifecycle(context, port) {
+  const page = await context.newPage();
+  await page.goto(`http://localhost:${port}/tests/e2e/modal-dialog-fixture.html`);
+  const dialog = page.getByRole('dialog', { name: 'Fixture dialog' });
+  await dialog.waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'Request close' }).click();
+  await page.waitForFunction(() => document.querySelector('dialog')?.dataset.closing === 'true');
+  if (!(await dialog.evaluate((element) => element.open))) {
+    throw new Error('Modal dialog left the Top Layer before the exit animation finished.');
+  }
+  if ((await page.getByTestId('close-count').textContent()) !== '1') {
+    throw new Error('Controlled modal close notified its owner more than once.');
+  }
+  await page.waitForFunction(() => !document.querySelector('dialog')?.open);
+  await page.waitForTimeout(220);
+  if ((await page.getByTestId('close-count').textContent()) !== '1') {
+    throw new Error('Programmatic close event notified its owner a second time.');
+  }
+
+  await page.goto(`http://localhost:${port}/tests/e2e/modal-dialog-fixture.html`);
+  await page.getByRole('dialog', { name: 'Fixture dialog' }).waitFor({ state: 'visible' });
+  await page.evaluate(() => document.querySelector('dialog')?.close());
+  await page.waitForFunction(() => document.querySelector('[data-testid="close-count"]')?.textContent === '1');
+  await page.waitForTimeout(220);
+  if ((await page.getByTestId('close-count').textContent()) !== '1') {
+    throw new Error('Native close path notified its owner more than once.');
+  }
+  await page.close();
 }
 
 async function main() {
@@ -446,10 +525,12 @@ async function main() {
 
   try {
     const context = await newOfflineContext(browser, port, { acceptDownloads: true });
+    await verifyModalDialogLifecycle(context, port);
     const page = await context.newPage();
     const replyCounts = new Map();
     let failNextBlueprintWith401 = false;
     let delayNextTurnMs = 0;
+    let delayNextSummaryMs = 0;
     let boundaryCallCount = 0;
     let lastTurnSystemText = '';
 
@@ -574,6 +655,11 @@ async function main() {
       }
 
       if (sys.includes('剧情摘要压缩')) {
+        if (delayNextSummaryMs > 0) {
+          const waitMs = delayNextSummaryMs;
+          delayNextSummaryMs = 0;
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+        }
         const sumText = lastMsg.includes('黑市线索')
           ? '【分支A摘要】含黑市线索'
           : lastMsg.includes('E2E模糊剧本') || lastMsg.includes('请贴出设定') || lastMsg.includes('码头')
@@ -768,11 +854,31 @@ async function main() {
     }
     await page.click('button:has-text("继续这条故事")');
     await page.waitForSelector('.turn-card.assistant:has-text("门后传来脚步声")');
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.click('button:has-text("补算剧情摘要")');
     await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
     await page.fill('#byok-api-key', 'sk-e2e-inline');
+    delayNextSummaryMs = 1200;
     await page.click('[data-testid="wizard-verify-save-btn"]');
+    const progress = page.locator('[data-testid="app-topbar"] .summary-progress');
+    await progress.waitFor({ state: 'visible' });
+    const progressLayout = await page.evaluate(() => {
+      const topbar = document.querySelector('[data-testid="app-topbar"]');
+      const status = topbar?.querySelector('.summary-progress');
+      const statusRect = status?.getBoundingClientRect();
+      const topbarRect = topbar?.getBoundingClientRect();
+      return {
+        display: status ? getComputedStyle(status).display : 'none',
+        statusWidth: statusRect?.width ?? 0,
+        insideTopbar: Boolean(statusRect && topbarRect && statusRect.left >= topbarRect.left && statusRect.right <= topbarRect.right),
+        storySheetOpen: Boolean(document.querySelector('[data-testid="story-tree-sheet"]')?.open),
+      };
+    });
+    if (progressLayout.display === 'none' || progressLayout.statusWidth <= 0 || !progressLayout.insideTopbar || progressLayout.storySheetOpen) {
+      throw new Error(`Mobile summary progress is not visible in the top bar while the sheet is closed: ${JSON.stringify(progressLayout)}`);
+    }
     await page.waitForSelector('[data-testid="active-plot-summary"]:has-text("【激活线压缩摘要】")');
+    await page.setViewportSize({ width: 1280, height: 720 });
     await page.locator('details summary:has-text("故事蓝图与原始剧本锚定")').click();
     await page.click('button:has-text("补拆蓝图")');
     await page.waitForSelector('button:has-text("补拆蓝图")', { state: 'detached' });
@@ -1062,6 +1168,27 @@ async function main() {
     await selectStoryByTitle(page, 'E2E训练营故事');
     await page.getByTestId('open-story-tree').waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
+    const mobileRows = await visibleStoryRows(page);
+    await page.getByTestId('mobile-library-dialog').waitFor({ state: 'visible' });
+    const activeMobileRow = mobileRows.filter({ hasText: 'E2E训练营故事' }).first();
+    const storyMenuTrigger = activeMobileRow.getByTestId('story-menu-trigger');
+    await expectTouchTarget(storyMenuTrigger, 'mobile story menu trigger');
+    await storyMenuTrigger.click();
+    const storyMenuItems = activeMobileRow.getByRole('menuitem');
+    for (let index = 0; index < await storyMenuItems.count(); index += 1) {
+      await expectTouchTarget(storyMenuItems.nth(index), `mobile story menu item ${index + 1}`);
+    }
+    await page.keyboard.press('Escape');
+    const mobileLibraryDialog = page.getByTestId('mobile-library-dialog');
+    await page.waitForFunction(() => {
+      const dialog = document.querySelector('[data-testid="mobile-library-dialog"]');
+      return dialog?.dataset.closing === 'true' || !dialog?.open;
+    });
+    if (!(await mobileLibraryDialog.getAttribute('data-closing'))) {
+      throw new Error('Escape closed the mobile drawer without its exit state.');
+    }
+    await mobileLibraryDialog.waitFor({ state: 'hidden' });
+    await expectTouchTarget(page.getByTestId('open-story-tree'), 'mobile branch badge');
     const checkNoHorizontalOverflow = async (label) => {
       const { scrollWidth, clientWidth } = await page.evaluate(() => ({
         scrollWidth: document.documentElement.scrollWidth,
@@ -1074,6 +1201,10 @@ async function main() {
     await page.locator('[data-testid="story-review"]').scrollIntoViewIfNeeded();
     await checkNoHorizontalOverflow('mobile main view');
     const mobileTree = await openStoryTree(page);
+    const smallStoryActions = mobileTree.locator('.btn-sm:visible');
+    for (let index = 0; index < await smallStoryActions.count(); index += 1) {
+      await expectTouchTarget(smallStoryActions.nth(index), `mobile story action ${index + 1}`);
+    }
     const treeForkMobile = mobileTree.locator('[data-testid^="story-tree-fork-"]').first();
     if ((await treeForkMobile.getAttribute('aria-expanded')) !== 'true') await treeForkMobile.click();
     await mobileTree.locator('.story-tree-siblings').waitFor();

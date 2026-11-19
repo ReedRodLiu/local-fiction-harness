@@ -35,7 +35,7 @@ export function SheetDialog({ open, title, label, testId, status, children, onCl
     <ModalDialog
       open={open}
       label={label}
-      className="sheet-dialog"
+      className={`sheet-dialog${expanded ? ' is-expanded' : ''}`}
       testId={testId}
       onClose={onClose}
     >

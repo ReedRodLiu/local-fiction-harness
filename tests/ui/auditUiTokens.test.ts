@@ -43,6 +43,42 @@ afterEach(() => {
 });
 
 describe('UI token audit command', () => {
+  it('rejects named CSS colors in styles and inline TSX styles', () => {
+    createFixture();
+    writeFileSync(
+      join(fixtureRoot, 'src', 'ui', 'styles', 'base.css'),
+      '.sample { color: red; background: var(--canvas); }',
+    );
+    writeFileSync(
+      join(fixtureRoot, 'src', 'ui', 'Sample.tsx'),
+      "import { Menu } from 'lucide-react';\nexport const Sample = () => <div style={{ color: 'blue' }}><Menu /></div>;\n",
+    );
+
+    const result = runAudit();
+    const output = result.stdout + result.stderr;
+    expect(result.status).toBe(1);
+    expect(output).toMatch(/base\.css:1: 样式中出现裸色值/);
+    expect(output).toMatch(/Sample\.tsx:2: 样式中出现裸色值/);
+  });
+
+  it('allows only hex and rgba color values in the token file', () => {
+    createFixture();
+    writeFileSync(
+      join(fixtureRoot, 'src', 'ui', 'styles', 'tokens.css'),
+      [
+        '[data-theme="light"] { --canvas: #fff; --text: rgb(0, 0, 0); }',
+        '[data-theme="dark"] { --canvas: #000; --text: red; }',
+        '[data-theme="warm"] { --canvas: #f7f3eb; --text: rgba(0, 0, 0, 0.8); }',
+      ].join('\n'),
+    );
+
+    const result = runAudit();
+    const output = result.stdout + result.stderr;
+    expect(result.status).toBe(1);
+    expect(output).toMatch(/tokens\.css:1:.*rgb\(\)/);
+    expect(output).toMatch(/tokens\.css:2:.*命名色值/);
+  });
+
   it('accepts a compliant UI and reports every required drift category', () => {
     createFixture();
     const clean = runAudit();

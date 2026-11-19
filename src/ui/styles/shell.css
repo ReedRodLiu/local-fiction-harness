@@ -98,7 +98,7 @@ summary:focus-visible {
 .mobile-topbar-action { display: inline-flex; }
 
 .branch-badge {
-  min-height: 36px;
+  min-height: 44px;
   padding: 6px 11px;
   border: 0;
   border-radius: 999px;
@@ -124,6 +124,7 @@ summary:focus-visible {
 }
 
 .app-workspace.is-overlay { grid-template-columns: minmax(0, 1fr); }
+.app-workspace.is-overlay .library-sidebar { display: none; }
 .app-workspace.is-library-collapsed { grid-template-columns: 72px minmax(0, 1fr); }
 
 .library-sidebar {
@@ -193,7 +194,7 @@ summary:focus-visible {
 .story-list-recent { color: var(--text-muted); font-size: 11px; }
 .story-list-recent { max-width: 190px; }
 .story-menu-container { position: relative; flex: 0 0 44px; justify-content: center; }
-.story-menu-trigger { width: 40px; min-width: 40px; height: 40px; flex-basis: 40px; }
+.story-menu-trigger { width: 44px; min-width: 44px; height: 44px; flex-basis: 44px; }
 .story-overflow-menu {
   position: absolute;
   z-index: 20;
@@ -208,7 +209,7 @@ summary:focus-visible {
   background: var(--bg-surface-elevated);
   box-shadow: var(--shadow-floating);
 }
-.story-overflow-menu button { min-height: 42px; padding: 7px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; }
+.story-overflow-menu button { min-height: 44px; padding: 7px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; }
 .story-overflow-menu button:hover { background: var(--bg-surface-hover); }
 .story-overflow-menu .danger-menu-item { color: var(--status-danger); }
 .story-rename-form { flex: 1; gap: 6px; min-width: 0; padding: 5px; }
@@ -302,7 +303,7 @@ summary:focus-visible {
 .composer-actions .btn { min-width: 44px; min-height: 44px; }
 .btn { min-height: 44px; border-color: var(--border-strong); border-radius: var(--radius-md); background: var(--bg-surface-elevated); color: var(--text-primary); }
 .btn-primary { border-color: transparent; background: var(--action-primary-bg); color: var(--action-primary-fg); }
-.btn-sm { min-height: 40px; padding: 6px 10px; font-size: 12px; }
+.btn-sm { min-height: 44px; padding: 6px 10px; font-size: 12px; }
 .btn-group { flex-wrap: wrap; }
 .panel-header { align-items: flex-start; }
 .badge { border-radius: 999px; background: var(--accent-fiction-soft); color: var(--accent-fiction); }
@@ -331,15 +332,26 @@ summary:focus-visible {
 .banner-alert-success { border-color: var(--status-ok); color: var(--status-ok); }
 
 .modal-dialog,
-.sheet-dialog { color: var(--text-primary); }
+.sheet-dialog {
+  color: var(--text-primary);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 180ms ease, transform 180ms ease, height 180ms ease;
+}
+@supports (transition-behavior: allow-discrete) {
+  .modal-dialog,
+  .sheet-dialog { transition: opacity 180ms ease, transform 180ms ease, height 180ms ease, display 180ms allow-discrete, overlay 180ms allow-discrete; }
+}
+.modal-dialog[data-closing="true"],
+.sheet-dialog[data-closing="true"] { opacity: 0; transform: translateY(12px); }
 .modal-dialog:not([open]),
 .sheet-dialog:not([open]),
 .library-dialog:not([open]) { display: none; }
 .modal-dialog::backdrop,
 .sheet-dialog::backdrop { background: var(--bg-scrim); }
 .sheet-dialog[open] { display: flex; flex-direction: column; }
-.sheet-dialog { position: fixed; inset: auto 0 0 auto; width: 100%; height: 74dvh; max-width: none; max-height: 92dvh; margin: 0; padding: 0 16px max(16px, var(--safe-area-bottom)); overflow: hidden; border: 1px solid var(--border-hairline); border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; background: var(--bg-surface-elevated); transition: height 180ms ease, display 180ms allow-discrete, overlay 180ms allow-discrete; }
-.sheet-dialog:has(.sheet-content[data-expanded="true"]) { height: 92dvh; }
+.sheet-dialog { position: fixed; inset: auto 0 0 auto; width: 100%; height: 74vh; height: 74dvh; max-width: none; max-height: 92vh; max-height: 92dvh; margin: 0; padding: 0 16px max(16px, var(--safe-area-bottom)); overflow: hidden; border: 1px solid var(--border-hairline); border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; background: var(--bg-surface-elevated); }
+.sheet-dialog.is-expanded { height: 92vh; height: 92dvh; }
 .sheet-handlebar { position: relative; display: flex; align-items: center; justify-content: center; flex: 0 0 40px; touch-action: none; }
 .sheet-grabber { width: 36px; height: 4px; border-radius: 999px; background: var(--border-strong); }
 .sheet-size-toggle,
@@ -351,19 +363,23 @@ summary:focus-visible {
 .sheet-status { color: var(--status-warn); font-size: 12px; }
 .sheet-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .sheet-content .story-tree-panel { border: 0; padding: 0; background: transparent; }
-.story-tree-panel .btn-sm { min-height: 40px; }
+.story-tree-panel .btn-sm { min-height: 44px; }
 
 @starting-style {
+  .modal-dialog[open],
   .sheet-dialog[open] { opacity: 0; transform: translateY(12px); }
 }
+
+.library-dialog[data-closing="true"] .library-dialog-sheet { animation: drawer-exit 180ms ease-in both; }
+@keyframes drawer-exit { from { transform: translateX(0); } to { transform: translateX(-100%); } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
 
 @media (min-width: 768px) {
-  .sheet-dialog { inset: 0 0 0 auto; width: min(440px, 100vw); height: 100dvh; max-height: none; border-radius: 0; }
-  .sheet-dialog:has(.sheet-content[data-expanded="true"]) { height: 100dvh; }
+  .sheet-dialog { inset: 0 0 0 auto; width: min(440px, 100vw); height: 100vh; height: 100dvh; max-height: none; border-radius: 0; }
+  .sheet-dialog.is-expanded { height: 100vh; height: 100dvh; }
   .sheet-content { padding-bottom: 20px; }
 }
 
@@ -382,15 +398,17 @@ summary:focus-visible {
   .desktop-topbar-action { display: none; }
   .mobile-topbar-action { display: inline-flex; }
   .library-dialog[open] { display: block; }
+  .app-topbar { grid-template-columns: 44px minmax(0, 1fr) auto; }
   .topbar-title-group { gap: 6px; }
   .branch-badge { max-width: 112px; overflow: hidden; padding-inline: 8px; text-overflow: ellipsis; }
-  .summary-progress { display: none; }
+  .summary-progress { max-width: 6em; overflow: hidden; text-overflow: ellipsis; }
   .main-stage { padding-inline: 16px; }
 }
 
 @media (max-width: 560px) {
-  .app-topbar { grid-template-columns: 44px minmax(0, 1fr) 44px; padding-inline: max(12px, var(--safe-area-left)) max(12px, var(--safe-area-right)); }
+  .app-topbar { grid-template-columns: 44px minmax(0, 1fr) auto; padding-inline: max(12px, var(--safe-area-left)) max(12px, var(--safe-area-right)); }
   .topbar-title-group { justify-content: flex-start; }
+  .summary-progress { max-width: 4em; font-size: 11px; }
   .topbar-title-group h1 { max-width: 38vw; font-size: 15px; }
   .topbar-tree-action { flex-basis: 44px; }
   .main-stage { padding: 16px 12px max(10px, var(--safe-area-bottom)); gap: 12px; }

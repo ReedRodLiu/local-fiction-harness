@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { waitForExitAnimation } from './waitForExitAnimation.ts';
 
 interface ModalDialogProps {
   open: boolean;
@@ -20,12 +21,23 @@ export function ModalDialog({
   onCancel,
 }: ModalDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const suppressCloseEventRef = useRef(false);
 
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    if (!open && dialog.open) dialog.close();
+    if (open) {
+      dialog.removeAttribute('data-closing');
+      if (!dialog.open) dialog.showModal();
+      return;
+    }
+    if (!dialog.open) return;
+
+    dialog.dataset.closing = 'true';
+    return waitForExitAnimation(dialog, () => {
+      suppressCloseEventRef.current = true;
+      dialog.close();
+    });
   }, [open]);
 
   return (
@@ -44,7 +56,13 @@ export function ModalDialog({
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
-      onClose={onClose}
+      onClose={() => {
+        if (suppressCloseEventRef.current) {
+          suppressCloseEventRef.current = false;
+          return;
+        }
+        onClose();
+      }}
     >
       {children}
     </dialog>

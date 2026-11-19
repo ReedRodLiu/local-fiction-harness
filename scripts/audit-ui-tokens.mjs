@@ -5,6 +5,10 @@ import { fileURLToPath } from 'node:url';
 const TOKEN_FILE = 'src/ui/styles/tokens.css';
 const THEME_NAMES = ['light', 'dark', 'warm'];
 const ICON_IMPORT_PATTERN = /(?:icon|heroicons|fontawesome|react-feather|phosphor)/i;
+const NAMED_COLOR_PATTERN = /\b(?:aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blanchedalmond|blue|blueviolet|brown|burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|cyan|darkblue|darkcyan|darkgoldenrod|darkgray|darkgreen|darkgrey|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|fuchsia|gainsboro|ghostwhite|gold|goldenrod|gray|green|greenyellow|grey|honeydew|hotpink|indianred|indigo|ivory|khaki|lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|lightgray|lightgreen|lightgrey|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|lightslategrey|lightsteelblue|lightyellow|lime|limegreen|linen|magenta|maroon|mediumaquamarine|mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|navy|oldlace|olive|olivedrab|orange|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|papayawhip|peachpuff|peru|pink|plum|powderblue|purple|rebeccapurple|red|rosybrown|royalblue|saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|silver|skyblue|slateblue|slategray|slategrey|snow|springgreen|steelblue|tan|teal|thistle|tomato|turquoise|violet|wheat|white|whitesmoke|yellow|yellowgreen)\b/i;
+const COLOR_DECLARATION_PATTERN = /(?:^|[;{])\s*(?:color|background(?:-color)?|border(?:-[\w-]+)?|outline(?:-[\w-]+)?|text-decoration-color|text-emphasis-color|column-rule-color|caret-color|scrollbar-color|box-shadow|text-shadow|filter|fill|stroke|accent-color)\s*:\s*([^;{}]+)/gi;
+const CUSTOM_PROPERTY_VALUE_PATTERN = /--[\w-]+\s*:\s*([^;{}]+)/g;
+const TSX_COLOR_VALUE_PATTERN = /\b(?:color|background|backgroundColor|borderColor|borderTopColor|borderRightColor|borderBottomColor|borderLeftColor|outlineColor|textDecorationColor|textEmphasisColor|columnRuleColor|caretColor|scrollbarColor|boxShadow|textShadow|fill|stroke|accentColor)\s*:\s*(['"`])([a-z]+)\1/gi;
 
 function listUiFiles(directory) {
   if (!fs.existsSync(directory)) return [];
@@ -32,6 +36,13 @@ function hasColorLiteral(source) {
   return /#(?:[\da-f]{8}|[\da-f]{6}|[\da-f]{4}|[\da-f]{3})\b|\b(?:rgb|rgba|hsl|hsla)\s*\(/i.test(source);
 }
 
+function namedColorInUiLine(line) {
+  const cssValues = Array.from(line.matchAll(COLOR_DECLARATION_PATTERN), (match) => match[1]);
+  const customValues = Array.from(line.matchAll(CUSTOM_PROPERTY_VALUE_PATTERN), (match) => match[1]);
+  const tsxValues = Array.from(line.matchAll(TSX_COLOR_VALUE_PATTERN), (match) => match[2]);
+  return [...cssValues, ...customValues, ...tsxValues].some((value) => NAMED_COLOR_PATTERN.test(value));
+}
+
 function colorLiteralLines(source) {
   const lines = source.split(/\r?\n/);
   const violations = [];
@@ -39,7 +50,23 @@ function colorLiteralLines(source) {
     const line = lines[index];
     const allowed = /\/\*\s*ui-token-allow:\s*[^*]+\*\//i.test(line) ||
       /\/\*\s*ui-token-allow:\s*[^*]+\*\//i.test(lines[index - 1] ?? '');
-    if (!allowed && hasColorLiteral(line)) violations.push(index + 1);
+    if (!allowed && (hasColorLiteral(line) || namedColorInUiLine(line))) violations.push(index + 1);
+  }
+  return violations;
+}
+
+function tokenColorLiteralLines(source) {
+  const violations = [];
+  const lines = source.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const tokenValues = Array.from(line.matchAll(/--[\w-]+\s*:\s*([^;}]+)/g), (match) => match[1]);
+    if (/\b(?:rgb|hsl|hsla)\s*\(/i.test(line)) {
+      violations.push({ line: index + 1, message: 'Token 色值必须使用 Hex 或 rgba()，不支持 rgb()/hsl()。' });
+    }
+    if (tokenValues.some((value) => NAMED_COLOR_PATTERN.test(value))) {
+      violations.push({ line: index + 1, message: 'Token 中出现命名色值；请改用 Hex 或 rgba()。' });
+    }
   }
   return violations;
 }
@@ -78,7 +105,11 @@ export function auditUiTokens(rootDirectory = process.cwd()) {
     const relativePath = path.relative(rootDirectory, filePath).split(path.sep).join('/');
     const source = fs.readFileSync(filePath, 'utf8');
     const isTokenFile = relativePath === TOKEN_FILE;
-    if (!isTokenFile) {
+    if (isTokenFile) {
+      for (const violation of tokenColorLiteralLines(source)) {
+        errors.push(`${relativePath}:${violation.line}: ${violation.message}`);
+      }
+    } else {
       for (const lineNumber of colorLiteralLines(source)) {
         errors.push(`${relativePath}:${lineNumber}: 样式中出现裸色值；请改用 Design Token。`);
       }

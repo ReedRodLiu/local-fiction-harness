@@ -950,23 +950,21 @@ export function App({ runtime }: AppProps) {
       <div
         className={`app-workspace ${libraryCollapsed ? 'is-library-collapsed' : ''} ${showImport || showSettings ? 'is-overlay' : ''}`}
       >
-        {!showImport && !showSettings && (
-          <LibraryDrawer
-            stories={stories}
-            activeStoryId={story.id}
-            collapsed={libraryCollapsed}
-            mobileOpen={mobileLibraryOpen}
-            hasCredentials={hasCredentials}
-            onCloseMobile={() => setMobileLibraryOpen(false)}
-            onOpenSettings={openSettings}
-            onStartDeepSeekImport={() => openImportView('deepseek')}
-            onStartScriptImport={() => openImportView('script')}
-            onSelectStory={(id) => void handleSelectStory(id)}
-            onRenameStory={(id, title) => void handleRenameStory(id, title)}
-            onDeleteStory={(id) => void handleDeleteStory(id)}
-            onExportStoryBackup={(id) => void handleExportBackup(id)}
-          />
-        )}
+        <LibraryDrawer
+          stories={stories}
+          activeStoryId={story.id}
+          collapsed={libraryCollapsed}
+          mobileOpen={mobileLibraryOpen && !showImport && !showSettings}
+          hasCredentials={hasCredentials}
+          onCloseMobile={() => setMobileLibraryOpen(false)}
+          onOpenSettings={openSettings}
+          onStartDeepSeekImport={() => openImportView('deepseek')}
+          onStartScriptImport={() => openImportView('script')}
+          onSelectStory={(id) => void handleSelectStory(id)}
+          onRenameStory={(id, title) => void handleRenameStory(id, title)}
+          onDeleteStory={(id) => void handleDeleteStory(id)}
+          onExportStoryBackup={(id) => void handleExportBackup(id)}
+        />
 
         <main className="main-stage" data-testid="main-stage">
           {errorMsg && (

@@ -2,6 +2,7 @@ import { useEffect, useRef, type PointerEvent, type ReactNode } from 'react';
 import { BookOpen, Settings, X } from 'lucide-react';
 import type { Story } from '../harness/index.ts';
 import { StoryLibrary } from './StoryLibrary.tsx';
+import { waitForExitAnimation } from './primitives/waitForExitAnimation.ts';
 
 interface LibraryDrawerProps {
   stories: Story[];
@@ -35,17 +36,28 @@ export function LibraryDrawer({
   onExportStoryBackup,
 }: LibraryDrawerProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const suppressCloseEventRef = useRef(false);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
-    if (mobileOpen && !dialog.open) dialog.showModal();
-    if (!mobileOpen && dialog.open) dialog.close();
+    if (mobileOpen) {
+      dialog.removeAttribute('data-closing');
+      if (!dialog.open) dialog.showModal();
+      return;
+    }
+    if (!dialog.open) return;
+
+    dialog.dataset.closing = 'true';
+    const sheet = dialog.querySelector<HTMLElement>('.library-dialog-sheet') ?? dialog;
+    return waitForExitAnimation(sheet, () => {
+      suppressCloseEventRef.current = true;
+      dialog.close();
+    });
   }, [mobileOpen]);
 
   const closeMobile = () => {
-    if (dialogRef.current?.open) dialogRef.current.close();
     onCloseMobile();
   };
 
@@ -91,6 +103,7 @@ export function LibraryDrawer({
       type="button"
       className="library-settings-entry"
       data-testid={`${location}-settings-open`}
+      aria-label="设置与模型密钥"
       onClick={() => {
         if (mobileOpen) closeMobile();
         onOpenSettings();
@@ -153,10 +166,18 @@ export function LibraryDrawer({
         className="library-dialog"
         aria-label="我的故事书架"
         data-testid="mobile-library-dialog"
+        onCancel={(event) => {
+          event.preventDefault();
+          closeMobile();
+        }}
         onClick={(event) => {
           if (event.target === event.currentTarget) closeMobile();
         }}
         onClose={() => {
+          if (suppressCloseEventRef.current) {
+            suppressCloseEventRef.current = false;
+            return;
+          }
           if (mobileOpen) onCloseMobile();
         }}
       >

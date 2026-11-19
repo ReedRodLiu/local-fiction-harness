@@ -40,7 +40,7 @@
   --status-warn: #9A6700;
   --status-warn-soft: #FEF6E6;
   --status-danger: #DC2626;
-  --status-danger-soft: #FEF2F2;
+  --status-danger-soft: #FEF5F5;
   --status-diag-bg: #F3F4F6;
   --status-diag-fg: #4B5563;
 }
@@ -93,7 +93,7 @@
   --action-primary-bg: #2A2520;
   --action-primary-fg: #F7F3EB;
   --accent-fiction: #3B5BDB;
-  --accent-fiction-soft: rgba(59, 91, 219, 0.10);
+  --accent-fiction-soft: rgba(59, 91, 219, 0.09);
   --status-ok: #2F6F4E;
   --status-warn: #8C5A00;
   --status-warn-soft: #F5EBD4;
