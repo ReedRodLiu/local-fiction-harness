@@ -1,11 +1,58 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const PACKAGE_NAME = 'io.localfiction.harness';
 const MAIN_ACTIVITY = `${PACKAGE_NAME}/.MainActivity`;
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const LAUNCHER_STABILITY_WINDOW_MS = 400;
+
+function sha256(buffer) {
+  return createHash('sha256').update(buffer).digest('hex');
+}
+
+export function evaluateLauncherEvidence(evidence, appPackage = PACKAGE_NAME) {
+  const failures = [];
+  const [firstFocus, secondFocus] = evidence.focusSamples;
+  const focusStable =
+    evidence.activityTopResumed === false &&
+    typeof firstFocus === 'string' &&
+    firstFocus.trim().length > 0 &&
+    firstFocus === secondFocus &&
+    !firstFocus.includes(appPackage);
+  if (!focusStable) {
+    failures.push('window or focus did not remain Launcher-stable');
+  }
+  if (evidence.launcherTopResumed !== true) {
+    failures.push('Launcher home task is not top-resumed');
+  }
+  if (
+    !Number.isFinite(evidence.stableAfterMs) ||
+    evidence.stableAfterMs < 300
+  ) {
+    failures.push('Launcher evidence window was shorter than 300 ms');
+  }
+  if (
+    typeof evidence.hierarchy !== 'string' ||
+    evidence.hierarchy.trim().length === 0 ||
+    evidence.hierarchy.includes(`package="${appPackage}"`) ||
+    evidence.hierarchy.includes(appPackage)
+  ) {
+    failures.push('uiautomator hierarchy still contains app content');
+  }
+  if (
+    !evidence.screenshotSha256 ||
+    evidence.screenshotSha256 === evidence.previousAppScreenshotSha256
+  ) {
+    failures.push('Launcher screenshot matches the previous app screenshot');
+  }
+  return {
+    valid: failures.length === 0,
+    failures,
+  };
+}
 
 function parseArgs(argv) {
   const options = {};
@@ -25,20 +72,83 @@ function parseArgs(argv) {
   return options;
 }
 
-function run(command, args, { encoding = 'utf8' } = {}) {
+function run(command, args, { encoding = 'utf8', allowFailure = false } = {}) {
   const result = spawnSync(command, args, {
     cwd: repoRoot,
     encoding,
     maxBuffer: 32 * 1024 * 1024,
   });
   if (result.error) throw result.error;
-  if (result.status !== 0) {
+  if (result.status !== 0 && !allowFailure) {
     const stderr = Buffer.isBuffer(result.stderr)
       ? result.stderr.toString('utf8')
       : result.stderr;
     throw new Error(`${command} ${args.join(' ')} failed: ${stderr.trim()}`);
   }
   return result.stdout;
+}
+
+export function installApkForCleanRun({
+  serial,
+  apkPath,
+  runCommand = run,
+}) {
+  const existingPath = runCommand('adb', [
+    '-s',
+    serial,
+    'shell',
+    'pm',
+    'path',
+    PACKAGE_NAME,
+  ], { allowFailure: true }).trim();
+  runCommand('adb', [
+    '-s',
+    serial,
+    'shell',
+    'am',
+    'force-stop',
+    PACKAGE_NAME,
+  ]);
+  const installOutput = runCommand('adb', [
+    '-s',
+    serial,
+    'install',
+    '-r',
+    '-t',
+    apkPath,
+  ]).trim();
+  if (!installOutput.includes('Success')) {
+    throw new Error(`APK install did not report Success: ${installOutput || '(no output)'}`);
+  }
+  const clearOutput = runCommand('adb', [
+    '-s',
+    serial,
+    'shell',
+    'pm',
+    'clear',
+    PACKAGE_NAME,
+  ]).trim();
+  if (!clearOutput.includes('Success')) {
+    throw new Error(`Package data clear did not report Success: ${clearOutput || '(no output)'}`);
+  }
+  const installedPath = runCommand('adb', [
+    '-s',
+    serial,
+    'shell',
+    'pm',
+    'path',
+    PACKAGE_NAME,
+  ]).trim();
+  if (!installedPath) {
+    throw new Error('Installed package path is empty after install.');
+  }
+  return {
+    packageWasInstalled: Boolean(existingPath),
+    existingPath: existingPath || null,
+    installOutput,
+    clearOutput,
+    installedPath,
+  };
 }
 
 function resolveSerial(requestedSerial) {
@@ -200,19 +310,35 @@ function createArtifactWriter(serial, artifactsDirectory, pid) {
   function captureScreenshot(name) {
     const png = run('adb', ['-s', serial, 'exec-out', 'screencap', '-p'], { encoding: 'buffer' });
     write(name, png);
+    return {
+      file: name,
+      sha256: sha256(png),
+      bytes: png.length,
+    };
   }
 
   function captureActivity(name) {
-    write(name, run('adb', ['-s', serial, 'shell', 'dumpsys', 'activity', 'activities']));
+    const output = run('adb', ['-s', serial, 'shell', 'dumpsys', 'activity', 'activities']);
+    write(name, output);
+    return output;
   }
 
   function captureUiHierarchy(name) {
+    try {
+      const hierarchy = readUiHierarchy();
+      write(name, hierarchy);
+      return hierarchy;
+    } catch (error) {
+      write(name.replace(/\.xml$/, '.error.txt'), `${error.message}\n`);
+      return null;
+    }
+  }
+
+  function readUiHierarchy() {
     const remotePath = `/sdcard/lfh-back-regression-${Date.now()}.xml`;
     try {
       run('adb', ['-s', serial, 'shell', 'uiautomator', 'dump', remotePath]);
-      write(name, run('adb', ['-s', serial, 'exec-out', 'cat', remotePath]));
-    } catch (error) {
-      write(name.replace(/\.xml$/, '.error.txt'), `${error.message}\n`);
+      return run('adb', ['-s', serial, 'exec-out', 'cat', remotePath]);
     } finally {
       spawnSync('adb', ['-s', serial, 'shell', 'rm', '-f', remotePath], {
         cwd: repoRoot,
@@ -241,19 +367,25 @@ function createArtifactWriter(serial, artifactsDirectory, pid) {
     captureScreenshot,
     captureActivity,
     captureUiHierarchy,
+    readUiHierarchy,
     captureLogcat,
   };
 }
 
-function activityIsTopResumed(serial) {
+function readActivityState(serial) {
   const output = run('adb', ['-s', serial, 'shell', 'dumpsys', 'activity', 'activities']);
-  return output
-    .split(/\r?\n/)
-    .some((line) =>
-      line.includes('topResumedActivity=') &&
-      line.includes(PACKAGE_NAME) &&
-      line.includes('.MainActivity')
-    );
+  return {
+    topResumedActivity: output.match(/^\s*topResumedActivity=(.+)$/m)?.[1]?.trim() ?? null,
+    launcherTopResumed: /topDisplayFocusedRootTask=Task\{[^}\n]*type=home/.test(output),
+  };
+}
+
+function activityIsTopResumed(serial) {
+  const { topResumedActivity } = readActivityState(serial);
+  return Boolean(
+    topResumedActivity?.includes(PACKAGE_NAME) &&
+    topResumedActivity?.includes('.MainActivity')
+  );
 }
 
 async function waitForTopResumed(serial, expected, description, timeoutMs = 10000) {
@@ -261,6 +393,84 @@ async function waitForTopResumed(serial, expected, description, timeoutMs = 1000
     const topResumed = activityIsTopResumed(serial);
     return topResumed === expected ? true : null;
   }, { description, timeoutMs });
+}
+
+function readLauncherFocus(serial) {
+  let output;
+  try {
+    output = run('adb', ['-s', serial, 'shell', 'dumpsys', 'window']);
+  } catch {
+    output = run('adb', ['-s', serial, 'shell', 'dumpsys', 'window', 'windows']);
+  }
+  const focusLines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('mCurrentFocus=') || line.startsWith('mFocusedApp='));
+  return focusLines.join('\n');
+}
+
+async function waitForStableLauncherEvidence(
+  serial,
+  artifacts,
+  name,
+  previousAppScreenshotSha256,
+) {
+  await waitForTopResumed(
+    serial,
+    false,
+    `${name}: activity no longer top-resumed`,
+    5000,
+  );
+  const evidence = await waitFor(async () => {
+    const sampledAt = Date.now();
+    const firstActivity = readActivityState(serial);
+    if (
+      firstActivity.topResumedActivity?.includes(PACKAGE_NAME) ||
+      !firstActivity.launcherTopResumed
+    ) {
+      return null;
+    }
+    const firstFocus = readLauncherFocus(serial);
+    if (!firstFocus || firstFocus.includes(PACKAGE_NAME)) return null;
+    await new Promise((resolve) => setTimeout(resolve, LAUNCHER_STABILITY_WINDOW_MS));
+    const secondActivity = readActivityState(serial);
+    const secondFocus = readLauncherFocus(serial);
+    const stableAfterMs = Date.now() - sampledAt;
+    const hierarchy = artifacts.readUiHierarchy();
+    const screenshot = artifacts.captureScreenshot(`${name}.png`);
+    const candidate = {
+      activityTopResumed: Boolean(secondActivity.topResumedActivity?.includes(PACKAGE_NAME)),
+      activityTop: secondActivity.topResumedActivity,
+      launcherTopResumed:
+        firstActivity.launcherTopResumed && secondActivity.launcherTopResumed,
+      focusSamples: [firstFocus, secondFocus],
+      stableAfterMs,
+      hierarchy,
+      hierarchySha256: sha256(hierarchy),
+      screenshotSha256: screenshot.sha256,
+      screenshot,
+      previousAppScreenshotSha256,
+    };
+    const verdict = evaluateLauncherEvidence(candidate, PACKAGE_NAME);
+    if (!verdict.valid) {
+      throw new Error(
+        `${name}: invalid Launcher evidence ${JSON.stringify({ failures: verdict.failures, candidate })}`,
+      );
+    }
+    return {
+      ...candidate,
+      ...verdict,
+      hierarchyFile: `${name}.ui.xml`,
+      activityFile: `${name}.activity.txt`,
+      logcatFile: `${name}.logcat.txt`,
+    };
+  }, { description: `${name}: stable Launcher evidence`, timeoutMs: 15000 });
+
+  artifacts.write(`${name}.ui.xml`, evidence.hierarchy);
+  artifacts.captureActivity(`${name}.activity.txt`);
+  artifacts.captureLogcat(`${name}.logcat.txt`);
+  artifacts.write(`${name}.json`, `${JSON.stringify(evidence, null, 2)}\n`);
+  return evidence;
 }
 
 async function readSnapshot(client) {
@@ -366,6 +576,13 @@ async function readSnapshot(client) {
       typeof state.lfhOverlaySession === 'string'
     );
     const depth = hasSession ? Number(state.lfhOverlayDepth) : 0;
+    const activeElement = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const storyMenuItems = [
+      ...document.querySelectorAll('[data-testid="story-overflow-menu"] [role="menuitem"]'),
+    ];
+    const storyMenuItemIndex = activeElement ? storyMenuItems.indexOf(activeElement) : -1;
     return JSON.stringify({
       documentReady: document.readyState === 'complete',
       timeOrigin: performance.timeOrigin,
@@ -376,6 +593,17 @@ async function readSnapshot(client) {
       historySession: hasSession ? state.lfhOverlaySession : null,
       overlayDepth: Number.isInteger(depth) && depth >= 0 ? depth : 0,
       rawHistoryState: state,
+      activeFocus: activeElement ? {
+        tagName: activeElement.tagName,
+        testId: activeElement.getAttribute('data-testid'),
+        role: activeElement.getAttribute('role'),
+        ariaLabel: activeElement.getAttribute('aria-label'),
+        text: activeElement.textContent?.replace(/\s+/g, ' ').trim().slice(0, 120) ?? '',
+        insideSettings: Boolean(activeElement.closest('[data-testid="settings-page"]')),
+        insideImport: Boolean(activeElement.closest('[data-testid="import-panel"], [data-testid="deepseek-import-panel"]')),
+        insideStoryMenu: Boolean(activeElement.closest('[data-testid="story-overflow-menu"]')),
+        storyMenuItemIndex,
+      } : null,
       diagnostics: describeElement('[data-testid="diagnostics-preview"]'),
       crashCard: describeElement('[data-testid="crash-recovery-card"]'),
       mobileLibrary: describeElement('[data-testid="mobile-library-dialog"]'),
@@ -420,11 +648,15 @@ async function captureStableView(client, artifacts, name, condition, description
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     })`);
     await new Promise((resolve) => setTimeout(resolve, 100));
-    artifacts.captureScreenshot(`${name}.png`);
+    const screenshot = artifacts.captureScreenshot(`${name}.png`);
     const afterCapture = await readSnapshot(client);
     if (afterCapture.documentReady && condition(afterCapture)) {
-      artifacts.write(`${name}.json`, `${JSON.stringify(afterCapture, null, 2)}\n`);
-      return afterCapture;
+      const stableSnapshot = {
+        ...afterCapture,
+        capturedScreenshot: screenshot,
+      };
+      artifacts.write(`${name}.json`, `${JSON.stringify(stableSnapshot, null, 2)}\n`);
+      return stableSnapshot;
     }
     snapshot = await waitForStableView(client, condition, description);
   }
@@ -506,25 +738,35 @@ async function openSettingsFromDrawer(client) {
     () => client.evaluate(`!document.querySelector('[data-testid="mobile-library-dialog"]')?.open`),
     { description: 'mobile library drawer close before settings', timeoutMs: 5000 },
   );
-  return waitForStableView(
+  await waitForStableView(
     client,
     (snapshot) => isStableElement(snapshot.settings),
     'settings page entry',
   );
+  return waitFor(async () => {
+    const snapshot = await readSnapshot(client);
+    return isStableElement(snapshot.settings) &&
+      snapshot.activeFocus?.insideSettings &&
+      snapshot.activeFocus.role === 'heading' &&
+      snapshot.activeFocus.text === '设置'
+      ? snapshot
+      : null;
+  }, { description: 'settings title focus', timeoutMs: 5000 });
 }
 
 async function openByokFromSettings(client) {
-  await openSettingsFromDrawer(client);
+  const settingsFocus = await openSettingsFromDrawer(client);
   await clickSelector(
     client,
     '[data-testid="open-setup-wizard-btn"], [data-testid="change-key-btn"]',
     'BYOK setup trigger',
   );
-  return waitForStableView(
+  await waitForStableView(
     client,
     (snapshot) => isStableDialog(snapshot.wizard),
     'BYOK wizard entry',
   );
+  return settingsFocus;
 }
 
 async function createSyntheticStory(client) {
@@ -546,6 +788,14 @@ async function createSyntheticStory(client) {
     () => client.evaluate(`Boolean(document.querySelector('[data-testid="import-panel"]'))`),
     { description: 'script import panel', timeoutMs: 10000 },
   );
+  const importFocus = await waitFor(async () => {
+    const snapshot = await readSnapshot(client);
+    return snapshot.activeFocus?.insideImport &&
+      snapshot.activeFocus.role === 'heading' &&
+      snapshot.activeFocus.text === '导入自由剧本'
+      ? snapshot
+      : null;
+  }, { description: 'script import title focus', timeoutMs: 5000 });
   await fillTextInput(
     client,
     '#import-raw-script',
@@ -562,11 +812,14 @@ async function createSyntheticStory(client) {
     () => client.evaluate(`!document.querySelector('[data-testid="import-panel"]')`),
     { description: 'script import panel close', timeoutMs: 10000 },
   );
+  return importFocus;
 }
 
-async function launchCleanScenario(serial, artifactsDirectory) {
+async function launchCleanScenario(serial, artifactsDirectory, { clearData = false } = {}) {
   run('adb', ['-s', serial, 'shell', 'am', 'force-stop', PACKAGE_NAME]);
-  run('adb', ['-s', serial, 'shell', 'pm', 'clear', PACKAGE_NAME]);
+  if (clearData) {
+    run('adb', ['-s', serial, 'shell', 'pm', 'clear', PACKAGE_NAME]);
+  }
   run('adb', ['-s', serial, 'logcat', '-c']);
   run('adb', ['-s', serial, 'shell', 'am', 'start', '-W', '-n', MAIN_ACTIVITY]);
   const session = await connectToWebView(serial);
@@ -613,10 +866,7 @@ async function main() {
   );
 
   console.log(`clean install ${path.basename(apkPath)} on ${serial} (API ${apiLevel})`);
-  run('adb', ['-s', serial, 'shell', 'am', 'force-stop', PACKAGE_NAME]);
-  run('adb', ['-s', serial, 'shell', 'pm', 'clear', PACKAGE_NAME]);
-  run('adb', ['-s', serial, 'install', '-r', '-t', apkPath]);
-  run('adb', ['-s', serial, 'shell', 'pm', 'clear', PACKAGE_NAME]);
+  const installation = installApkForCleanRun({ serial, apkPath });
   fs.mkdirSync(artifactsDirectory, { recursive: true });
   fs.writeFileSync(path.join(artifactsDirectory, 'run.json'), `${JSON.stringify({
     serial,
@@ -624,6 +874,7 @@ async function main() {
     apkPath,
     packageName: PACKAGE_NAME,
     activity: MAIN_ACTIVITY,
+    installation,
     startedAt: new Date().toISOString(),
   }, null, 2)}\n`);
 
@@ -669,7 +920,7 @@ async function main() {
         : null;
     }, { description: 'diagnostics page reload', timeoutMs: 20000 });
     artifacts.write('03-after-reload-stale-history.json', `${JSON.stringify(afterReload, null, 2)}\n`);
-    artifacts.captureScreenshot('03-after-reload-stale-history.png');
+    const staleHistoryScreenshot = artifacts.captureScreenshot('03-after-reload-stale-history.png');
     artifacts.captureActivity('03-after-reload-stale-history.activity.txt');
     if (
       typeof afterReload.historySession !== 'string' ||
@@ -679,15 +930,12 @@ async function main() {
     }
 
     run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
-    await waitForTopResumed(
+    const reloadLauncherEvidence = await waitForStableLauncherEvidence(
       serial,
-      false,
-      'one KEYCODE_BACK after diagnostics reload to reach Launcher',
-      5000,
+      artifacts,
+      '04-reload-one-back-launcher',
+      staleHistoryScreenshot.sha256,
     );
-    artifacts.captureScreenshot('04-reload-one-back-launcher.png');
-    artifacts.captureActivity('04-reload-one-back-launcher.activity.txt');
-    artifacts.captureLogcat('04-reload-one-back-launcher.logcat.txt');
     if (typeof afterReload.sessionToken !== 'string') {
       throw new Error(`The current Web overlay session token is not exposed: ${JSON.stringify(afterReload)}`);
     }
@@ -698,9 +946,9 @@ async function main() {
     closeScenario(activeSession);
     activeSession = null;
 
-    activeSession = await launchCleanScenario(serial, artifactsDirectory);
+    activeSession = await launchCleanScenario(serial, artifactsDirectory, { clearData: true });
     ({ client, artifacts } = activeSession);
-    await openByokFromSettings(client);
+    const settingsFocus = await openByokFromSettings(client);
     const byokOpen = await captureStableView(
       client,
       artifacts,
@@ -750,25 +998,23 @@ async function main() {
       ...settingsClosed,
       topResumed: settingsTopResumed,
     }, null, 2)}\n`);
-    artifacts.captureScreenshot('07-after-settings-back.png');
+    const settingsBackScreenshot = artifacts.captureScreenshot('07-after-settings-back.png');
     await waitAfterBackGuard();
 
     run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
-    await waitForTopResumed(
+    const ordinaryLauncherEvidence = await waitForStableLauncherEvidence(
       serial,
-      false,
-      'ordinary page back after all overlays to reach Launcher',
+      artifacts,
+      '08-ordinary-back-launcher',
+      settingsBackScreenshot.sha256,
     );
-    artifacts.captureScreenshot('08-ordinary-back-launcher.png');
-    artifacts.captureActivity('08-ordinary-back-launcher.activity.txt');
-    artifacts.captureLogcat('08-ordinary-back-launcher.logcat.txt');
     lastSnapshot = settingsClosed;
     closeScenario(activeSession);
     activeSession = null;
 
-    activeSession = await launchCleanScenario(serial, artifactsDirectory);
+    activeSession = await launchCleanScenario(serial, artifactsDirectory, { clearData: true });
     ({ client, artifacts } = activeSession);
-    await createSyntheticStory(client);
+    const scriptImportFocus = await createSyntheticStory(client);
     const libraryOpen = await openDrawer(client);
     await clickSelector(
       client,
@@ -790,6 +1036,24 @@ async function main() {
     if (storyMenuOpen.overlayDepth !== 2) {
       throw new Error(`Story menu above drawer did not create two history layers: ${JSON.stringify(storyMenuOpen)}`);
     }
+    if (
+      !storyMenuOpen.activeFocus?.insideStoryMenu ||
+      storyMenuOpen.activeFocus.role !== 'menuitem' ||
+      storyMenuOpen.activeFocus.storyMenuItemIndex !== 0
+    ) {
+      throw new Error(`Story menu did not focus its first item: ${JSON.stringify(storyMenuOpen.activeFocus)}`);
+    }
+    run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_DPAD_DOWN']);
+    const storyMenuAfterDown = await waitFor(async () => {
+      const snapshot = await readSnapshot(client);
+      return snapshot.activeFocus?.insideStoryMenu &&
+        snapshot.activeFocus.role === 'menuitem' &&
+        snapshot.activeFocus.storyMenuItemIndex === 1
+        ? snapshot
+        : null;
+    }, { description: 'story menu ArrowDown focus', timeoutMs: 5000 });
+    artifacts.write('09-story-menu-arrow-down.json', `${JSON.stringify(storyMenuAfterDown, null, 2)}\n`);
+    artifacts.captureActivity('09-story-menu-arrow-down.activity.txt');
     run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
     const menuClosed = await waitForStableView(
       client,
@@ -797,6 +1061,7 @@ async function main() {
         !snapshot.storyMenu.connected &&
         isStableDialog(snapshot.mobileLibrary) &&
         isStableElement(snapshot.mobileLibrarySheet) &&
+        snapshot.activeFocus?.testId === 'story-menu-trigger' &&
         snapshot.overlayDepth === 1,
       'story menu close while library drawer remains',
     );
@@ -839,6 +1104,7 @@ async function main() {
       status: 'passed',
       completedAt: new Date().toISOString(),
       cleanBeforeCrash,
+      settingsFocus,
       automaticOpen,
       afterReload,
       byokOpen,
@@ -846,8 +1112,14 @@ async function main() {
       settingsClosed,
       libraryOpen,
       storyMenuOpen,
+      storyMenuAfterDown,
       menuClosed,
+      scriptImportFocus,
       drawerClosed,
+      launcher: {
+        afterReloadBack: reloadLauncherEvidence,
+        afterOrdinaryBack: ordinaryLauncherEvidence,
+      },
       artifactsDirectory,
     }, null, 2)}\n`);
     console.log(`PASS ${artifactsDirectory}`);
@@ -889,7 +1161,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(`FAIL ${error.message}`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(`FAIL ${error.message}`);
+    process.exitCode = 1;
+  });
+}

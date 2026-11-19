@@ -1,5 +1,5 @@
 import { ArrowLeft } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, type ReactNode } from 'react';
 
 interface OverlayPageShellProps {
   title: string;
@@ -23,6 +23,23 @@ export function OverlayPageShell({
   children,
 }: OverlayPageShellProps) {
   const hasProgress = step !== undefined && stepCount !== undefined && stepCount > 0;
+  const titleRef = useRef<HTMLHeadingElement>(null);
+
+  useLayoutEffect(() => {
+    const focusTitleIfUnclaimed = () => {
+      const active = document.activeElement;
+      if (
+        active === document.body ||
+        active === null ||
+        (active instanceof Element && active.closest('dialog:not([open])'))
+      ) {
+        titleRef.current?.focus();
+      }
+    };
+    focusTitleIfUnclaimed();
+    const settleTimer = window.setTimeout(focusTitleIfUnclaimed, 260);
+    return () => window.clearTimeout(settleTimer);
+  }, []);
 
   return (
     <section className="overlay-page-shell" data-testid={testId} data-has-footer={Boolean(footer)}>
@@ -36,7 +53,15 @@ export function OverlayPageShell({
         >
           <ArrowLeft size={20} strokeWidth={1.75} />
         </button>
-        <h1>{title}</h1>
+        <h1
+          ref={titleRef}
+          role="heading"
+          aria-level={1}
+          tabIndex={-1}
+          data-testid={testId ? `${testId}-title` : undefined}
+        >
+          {title}
+        </h1>
         <span className="overlay-header-spacer" aria-hidden="true" />
       </header>
       {hasProgress && (

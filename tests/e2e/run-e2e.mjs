@@ -613,6 +613,122 @@ async function leaveImportView(page) {
   throw new Error('Import wizard did not return to the story stage after four Back actions.');
 }
 
+async function waitForVisibleNonBodyFocus(page, label) {
+  await page.waitForFunction(() => {
+    const active = document.activeElement;
+    return active instanceof HTMLElement &&
+      active !== document.body &&
+      active.isConnected &&
+      active.getClientRects().length > 0 &&
+      !active.matches(':disabled');
+  });
+  const focused = await page.evaluate(() => ({
+    tagName: document.activeElement?.tagName,
+    testId: document.activeElement?.getAttribute('data-testid'),
+    label: document.activeElement?.getAttribute('aria-label'),
+    text: document.activeElement?.textContent?.trim().slice(0, 80),
+  }));
+  if (focused.tagName === 'BODY' || !focused.tagName) {
+    throw new Error(`${label}: focus did not return to a visible control: ${JSON.stringify(focused)}`);
+  }
+}
+
+async function activeMenuItemIndex(page) {
+  return page.evaluate(() => {
+    const menu = document.querySelector('[data-testid="story-overflow-menu"]');
+    const items = [...(menu?.querySelectorAll('[role="menuitem"]') ?? [])];
+    return items.indexOf(document.activeElement);
+  });
+}
+
+async function verifyKeyboardFocusMatrix(page) {
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 1280, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+
+    if (viewport.width < 960) {
+      await page.getByTestId('library-drawer-trigger').click();
+      await page.getByTestId('mobile-library-dialog').waitFor({ state: 'visible' });
+    }
+    const trigger = page.locator('[data-testid="story-menu-trigger"]:visible').first();
+    await trigger.click();
+    const menu = page.getByTestId('story-overflow-menu');
+    await menu.waitFor({ state: 'visible' });
+    await page.waitForFunction(() =>
+      document.activeElement?.getAttribute('role') === 'menuitem',
+    );
+    if (await activeMenuItemIndex(page) !== 0) {
+      throw new Error(`Story menu did not focus its first item at ${viewport.width}px.`);
+    }
+    await page.keyboard.press('ArrowDown');
+    if (await activeMenuItemIndex(page) !== 1) {
+      throw new Error(`Story menu ArrowDown failed at ${viewport.width}px.`);
+    }
+    await page.keyboard.press('End');
+    if (await activeMenuItemIndex(page) !== 2) {
+      throw new Error(`Story menu End failed at ${viewport.width}px.`);
+    }
+    await page.keyboard.press('Home');
+    if (await activeMenuItemIndex(page) !== 0) {
+      throw new Error(`Story menu Home failed at ${viewport.width}px.`);
+    }
+    await page.keyboard.press('ArrowUp');
+    if (await activeMenuItemIndex(page) !== 2) {
+      throw new Error(`Story menu ArrowUp did not wrap at ${viewport.width}px.`);
+    }
+    await page.keyboard.press('Escape');
+    await menu.waitFor({ state: 'detached' });
+    await page.waitForFunction((element) => document.activeElement === element, await trigger.elementHandle());
+    if (viewport.width < 960) {
+      await page.evaluate(() => history.back());
+      await page.getByTestId('mobile-library-dialog').waitFor({ state: 'hidden' });
+    }
+
+    await openSettings(page);
+    const settings = page.getByTestId('settings-page');
+    await page.waitForFunction(() => {
+      const shell = document.querySelector('[data-testid="settings-page"]');
+      return document.activeElement instanceof HTMLElement &&
+        shell?.contains(document.activeElement) &&
+        document.activeElement.getAttribute('role') === 'heading' &&
+        document.activeElement.textContent?.trim() === '设置';
+    });
+    await page.keyboard.press('Escape');
+    await settings.waitFor({ state: 'detached' });
+    await waitForVisibleNonBodyFocus(page, `${viewport.width}px settings close`);
+
+    await startDeepSeekImport(page);
+    const deepseek = page.getByTestId('deepseek-import-panel');
+    await deepseek.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => {
+      const shell = document.querySelector('[data-testid="deepseek-import-panel"]');
+      return document.activeElement instanceof HTMLElement &&
+        shell?.contains(document.activeElement) &&
+        document.activeElement.getAttribute('role') === 'heading' &&
+        document.activeElement.textContent?.trim() === '从 DeepSeek 继续';
+    });
+    await page.keyboard.press('Escape');
+    await deepseek.waitFor({ state: 'detached' });
+    await waitForVisibleNonBodyFocus(page, `${viewport.width}px DeepSeek import close`);
+
+    await startScriptImport(page);
+    const scriptImport = page.getByTestId('import-panel');
+    await scriptImport.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => {
+      const shell = document.querySelector('[data-testid="import-panel"]');
+      return document.activeElement instanceof HTMLElement &&
+        shell?.contains(document.activeElement) &&
+        document.activeElement.getAttribute('role') === 'heading' &&
+        document.activeElement.textContent?.trim() === '导入自由剧本';
+    });
+    await page.keyboard.press('Escape');
+    await scriptImport.waitFor({ state: 'detached' });
+    await waitForVisibleNonBodyFocus(page, `${viewport.width}px script import close`);
+  }
+}
+
 async function openSessionPreview(page, title) {
   const row = page.getByTestId('ds-session-item').filter({ hasText: title }).first();
   await row.getByTestId('ds-session-preview-trigger').click();
@@ -1667,6 +1783,7 @@ async function importSyntheticStoryWithoutKey(page, port) {
 
 async function verifyOverlayHistoryAndShortcuts(page, port) {
   await importSyntheticStoryWithoutKey(page, port);
+  await verifyKeyboardFocusMatrix(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await openSettings(page);
   await page.getByTestId('settings-backup-group').getByTestId('export-current-story').waitFor();
