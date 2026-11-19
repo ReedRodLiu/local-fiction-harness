@@ -154,6 +154,7 @@ export function App({ runtime }: AppProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [isBranchSwitchSummarizing, setIsBranchSwitchSummarizing] = useState(false);
+  const [isBranchSwitching, setIsBranchSwitching] = useState(false);
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamContent, setStreamContent] = useState('');
   const [reasoningDurations, setReasoningDurations] = useState<Record<string, number>>({});
@@ -169,6 +170,8 @@ export function App({ runtime }: AppProps) {
   const storyCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
   const storyRef = useRef<Story | null>(story);
   storyRef.current = story;
+  const branchSwitchBusyRef = useRef(false);
+  const branchSwitchTransitionRef = useRef(false);
   const mainStageRef = useRef<HTMLElement | null>(null);
   const shouldFollowMainStageRef = useRef(true);
   const userPausedMainStageRef = useRef(false);
@@ -512,7 +515,7 @@ export function App({ runtime }: AppProps) {
     execute: (callbacks: TurnCallbacks) => Promise<TurnExecutionResult>,
     onErrorRestore?: () => void,
   ) => {
-    if (abortRef.current || isStreaming) return;
+    if (branchSwitchBusyRef.current || abortRef.current || isStreaming) return;
     const streamStartedAt = performance.now();
     setErrorMsg(null);
     setIsStreaming(true);
@@ -582,9 +585,17 @@ export function App({ runtime }: AppProps) {
       blockBusy?: boolean;
       trackSummarizing?: boolean;
       preserveSummaryTask?: boolean;
+      allowBranchSwitch?: boolean;
       mergeWithLatest?: (latestStory: Story | null, transitionedStory: Story) => Story | null;
     },
   ): Promise<Story | null> => {
+    if (
+      branchSwitchBusyRef.current &&
+      !opts?.allowBranchSwitch &&
+      !(opts?.preserveSummaryTask && !branchSwitchTransitionRef.current)
+    ) {
+      return null;
+    }
     if (opts?.blockBusy !== false && (abortRef.current || isStreaming || isSummarizing)) {
       return null;
     }
@@ -644,6 +655,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const openImportView = (mode: ImportMode) => {
+    if (branchSwitchBusyRef.current) return;
     abortActiveStream(true);
     setShowSettings(false);
     setStoryTreeOpen(false);
@@ -654,6 +666,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const openSettings = () => {
+    if (branchSwitchBusyRef.current) return;
     setShowImport(false);
     setMobileLibraryOpen(false);
     setStoryTreeOpen(false);
@@ -683,16 +696,27 @@ export function App({ runtime }: AppProps) {
     overrideConfig?: ModelConfig,
   ) => {
     const trimmed = userPrompt.trim();
-    if (!trimmed || abortRef.current || isStreaming || isSummarizing) return;
+    if (
+      !trimmed ||
+      branchSwitchBusyRef.current ||
+      abortRef.current ||
+      isStreaming ||
+      isSummarizing
+    ) return;
     withCredentials(
       '发送下一轮行动并继续故事',
       (activeCfg) => {
+        if (branchSwitchBusyRef.current) return;
         if (restoreOnError) {
           setInput('');
         }
         void runStreamingExecution(
           (callbacks) => harness.runTurn(story, trimmed, activeCfg, callbacks),
-          restoreOnError ? () => setInput(trimmed) : undefined,
+          restoreOnError
+            ? () => setInput((current) =>
+              current.length === 0 || current === trimmed ? trimmed : current,
+            )
+            : undefined,
         );
       },
       overrideConfig,
@@ -705,7 +729,7 @@ export function App({ runtime }: AppProps) {
     overrideConfig?: ModelConfig,
   ) => {
     const trimmed = newContent.trim();
-    if (!trimmed || isSummarizing) return;
+    if (!trimmed || branchSwitchBusyRef.current || isSummarizing) return;
     withCredentials(
       '编辑行动并生成新分支',
       (activeCfg) => {
@@ -721,7 +745,7 @@ export function App({ runtime }: AppProps) {
     targetAssistantNodeId: string,
     overrideConfig?: ModelConfig,
   ) => {
-    if (isSummarizing) return;
+    if (branchSwitchBusyRef.current || isSummarizing) return;
     withCredentials(
       '重新生成分支回复',
       (activeCfg) => {
@@ -764,35 +788,51 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleSwitchBranch = async (targetNodeId: string) => {
+    if (branchSwitchBusyRef.current || abortRef.current || isStreaming || isSummarizing) return;
+    branchSwitchBusyRef.current = true;
+    branchSwitchTransitionRef.current = true;
+    setIsBranchSwitching(true);
     const switchStartedAt = Date.now();
-    const switched = await runStoryTransition(
-      () => harness.switchBranch(storyRef.current!, targetNodeId),
-      '切换分支失败。',
-    );
-    runtime.diagnostics.recordEvent({
-      level: switched ? 'info' : 'warn',
-      category: 'branch',
-      action: switched ? 'switch_branch' : 'switch_branch_failed',
-      durationMs: Date.now() - switchStartedAt,
-    });
-    const targetLeafId = switched?.activeLeafNodeId ?? null;
-    if (
-      switched &&
-      targetLeafId &&
-      computeActiveReviewState(switched).needsSummaryCompression &&
-      hasModelCredentials(config, useDevEnvKey)
-    ) {
-      await runBackgroundSummary(
-        switched,
-        targetLeafId,
-        config,
-        '补算支线剧情摘要失败，可稍后重试。',
-        true,
+    try {
+      const switched = await runStoryTransition(
+        () => harness.switchBranch(storyRef.current!, targetNodeId),
+        '切换分支失败。',
+        { allowBranchSwitch: true },
       );
+      // The story commit is complete. Branch renaming may now use the existing
+      // exception while an automatic post-switch summary runs.
+      branchSwitchTransitionRef.current = false;
+      setIsBranchSwitching(false);
+      runtime.diagnostics.recordEvent({
+        level: switched ? 'info' : 'warn',
+        category: 'branch',
+        action: switched ? 'switch_branch' : 'switch_branch_failed',
+        durationMs: Date.now() - switchStartedAt,
+      });
+      const targetLeafId = switched?.activeLeafNodeId ?? null;
+      if (
+        switched &&
+        targetLeafId &&
+        computeActiveReviewState(switched).needsSummaryCompression &&
+        hasModelCredentials(config, useDevEnvKey)
+      ) {
+        await runBackgroundSummary(
+          switched,
+          targetLeafId,
+          config,
+          '补算支线剧情摘要失败，可稍后重试。',
+          true,
+        );
+      }
+    } finally {
+      branchSwitchTransitionRef.current = false;
+      branchSwitchBusyRef.current = false;
+      setIsBranchSwitching(false);
     }
   };
 
   const handleRenameBranch = async (branchEntryNodeId: string, name: string) => {
+    if (branchSwitchTransitionRef.current) return;
     await runStoryTransition(
       async () =>
         harness.calculateBranchRename(storyRef.current!, branchEntryNodeId, name),
@@ -810,6 +850,7 @@ export function App({ runtime }: AppProps) {
     branchEntryNodeId: string,
     overrideConfig?: ModelConfig,
   ) => {
+    if (branchSwitchBusyRef.current) return;
     withCredentials(
       'AI 提炼分支梗概',
       (activeCfg) => {
@@ -824,6 +865,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleComputeActiveSummary = (overrideConfig?: ModelConfig) => {
+    if (branchSwitchBusyRef.current) return;
     withCredentials(
       '补算当前支线剧情摘要',
       (activeCfg) => {
@@ -838,6 +880,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleReextractBlueprint = (overrideConfig?: ModelConfig) => {
+    if (branchSwitchBusyRef.current) return;
     if (!story.rawScript.trim()) return;
     withCredentials(
       '补拆故事蓝图',
@@ -872,6 +915,7 @@ export function App({ runtime }: AppProps) {
     rawScript: string;
     blueprint: StoryBlueprint;
   }) => {
+    if (branchSwitchBusyRef.current) return;
     abortActiveStream(true);
     invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
@@ -912,12 +956,14 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleContinueImportedStory = async (storyId: string) => {
+    if (branchSwitchBusyRef.current) return;
     await handleSelectStory(storyId);
     setShowImport(false);
     setShowSettings(false);
   };
 
   const handleSelectStory = async (id: string) => {
+    if (branchSwitchBusyRef.current) return;
     abortActiveStream(true);
     invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
@@ -940,6 +986,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleRenameStory = async (id: string, title: string) => {
+    if (branchSwitchBusyRef.current) return;
     setErrorMsg(null);
     try {
       const updated = await harness.renameStory(id, title);
@@ -953,6 +1000,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleDeleteStory = async (id: string) => {
+    if (branchSwitchBusyRef.current) return;
     abortActiveStream(true);
     invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
@@ -1243,7 +1291,7 @@ export function App({ runtime }: AppProps) {
                           turnNumber={Math.max(1, Math.ceil((index + 1) / 2))}
                           reasoningDurationSeconds={reasoningDurations[node.id]}
                           editableUserNode={editableUserNode}
-                          isStreaming={isStreaming || isSummarizing}
+                          isStreaming={isStreaming || isSummarizing || isBranchSwitching}
                           siblings={getSiblingBranchInfo(story, node.id)}
                           onSelectChoice={(choiceText) => void sendAction(choiceText)}
                           onSwitchBranch={(targetId) => void handleSwitchBranch(targetId)}
@@ -1354,7 +1402,7 @@ export function App({ runtime }: AppProps) {
                         type="submit"
                         className="btn btn-primary composer-send"
                         aria-label="发送行动"
-                        disabled={!input.trim() || isSummarizing || isWelcome}
+                        disabled={!input.trim() || isSummarizing || isBranchSwitching || isWelcome}
                       >
                         <ArrowUp size={19} strokeWidth={1.75} aria-hidden="true" />
                         <span className="visually-hidden">发送行动</span>
@@ -1410,8 +1458,8 @@ export function App({ runtime }: AppProps) {
       >
         <StoryTree
           story={story}
-          isBusy={isStreaming || isSummarizing}
-          isRenameBusy={isStreaming || (isSummarizing && !isBranchSwitchSummarizing)}
+          isBusy={isStreaming || isSummarizing || isBranchSwitching}
+          isRenameBusy={isStreaming || isBranchSwitching || (isSummarizing && !isBranchSwitchSummarizing)}
           onSwitchBranch={(id) => void handleSwitchBranch(id)}
           onRenameBranch={handleRenameBranch}
           onExtractBranchGist={handleExtractBranchGist}

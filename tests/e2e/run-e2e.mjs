@@ -514,6 +514,69 @@ async function verifyModalDialogLifecycle(context, port) {
   await page.close();
 }
 
+async function verifyBranchSwitchBlocksImmediateSend(page) {
+  const branchUser = page.getByTestId('turn-user').nth(1);
+  const initialPager = await branchUser.getByTestId('branch-pager').textContent();
+  if (!initialPager?.includes('2 / 2')) {
+    throw new Error(`Expected Branch B active before switch-lock check, got: ${initialPager}`);
+  }
+
+  const prompt = '分支切换期间不应发送';
+  await page.fill('#turn-input', prompt);
+  const racedRequests = [];
+  const recordRequest = (request) => {
+    if (request.url().includes('/chat/completions') && request.postData()?.includes(prompt)) {
+      racedRequests.push(request.url());
+    }
+  };
+  page.on('request', recordRequest);
+  await page.evaluate(() => {
+    const pager = document.querySelectorAll('[data-testid="turn-user"]')[1]
+      ?.querySelector('[data-testid="branch-pager"]');
+    pager?.querySelector('button[aria-label="上一分支"]')?.click();
+    document.querySelector('[data-testid="stage-composer"]')?.dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    );
+  });
+  await page.waitForTimeout(300);
+  page.off('request', recordRequest);
+
+  if (racedRequests.length || (await page.inputValue('#turn-input')) !== prompt) {
+    throw new Error('A send during branch switching started or cleared the composer draft.');
+  }
+  const switchedUser = page.getByTestId('turn-user').nth(1);
+  if (!(await switchedUser.getByTestId('branch-pager').count())) {
+    await switchedUser.getByTestId('turn-history-toggle').click();
+  }
+  const switchedPager = await switchedUser.getByTestId('branch-pager').textContent();
+  if (!switchedPager?.includes('1 / 2')) {
+    throw new Error(`Branch switch did not settle on the requested sibling: ${switchedPager}`);
+  }
+
+  await switchedUser.getByRole('button', { name: '下一分支' }).click();
+  await page.waitForFunction(() =>
+    document.querySelectorAll('[data-testid="turn-user"]')[1]
+      ?.querySelector('[data-testid="branch-pager"]')?.textContent?.includes('2 / 2'),
+  );
+  await page.fill('#turn-input', '');
+}
+
+async function verifyStoppedSendPreservesNewerDraft(page, delayNextTurn) {
+  const submittedPrompt = '停止时不覆盖后续草稿';
+  const newerDraft = '停止生成后仍要保留的草稿';
+  delayNextTurn();
+  await page.fill('#turn-input', submittedPrompt);
+  await page.getByRole('button', { name: '发送行动' }).click();
+  await page.getByRole('button', { name: '停止生成' }).waitFor();
+  await page.fill('#turn-input', newerDraft);
+  await page.getByRole('button', { name: '停止生成' }).click();
+  await page.getByTestId('main-error-banner').waitFor();
+  if ((await page.inputValue('#turn-input')) !== newerDraft) {
+    throw new Error('Stopping a turn replaced a newer composer draft with the submitted action.');
+  }
+  await page.fill('#turn-input', '');
+}
+
 async function main() {
   const port = 4177;
   const srv = await startViteServer(port);
@@ -1186,6 +1249,8 @@ async function main() {
       throw new Error(`Branch A leaked into Branch B summary: ${sumB}`);
     }
 
+    await verifyBranchSwitchBlocksImmediateSend(page);
+
     // 5b. Story Tree: verify linear span folding, fork badge ⑂ 2, expand fork, rename Branch B, AI gist, switch back to Branch A
     const storyTreeSheet = await openStoryTree(page);
     const spanText = await storyTreeSheet.locator('[data-testid="story-tree-span"]').first().textContent();
@@ -1337,6 +1402,8 @@ async function main() {
     if ((await (await visibleStoryRows(page)).count()) !== 2) {
       throw new Error('Expected two saved stories after aborted stream recovery.');
     }
+
+    await verifyStoppedSendPreservesNewerDraft(page, () => { delayNextTurnMs = 3000; });
 
     // 10b. Mid-stream abort via 停止生成 must NOT re-submit the composer form
     delayNextTurnMs = 3000;
