@@ -231,8 +231,11 @@
 }
 
 .text-action {
-  min-height: 36px;
-  padding: 4px 2px;
+  display: inline-flex;
+  align-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 4px;
   border: 0;
   background: transparent;
   color: var(--text-secondary);
@@ -312,7 +315,8 @@
 
 .ds-filter-tabs button {
   flex: 1 0 auto;
-  min-height: 40px;
+  min-width: 44px;
+  min-height: 44px;
   padding: 5px 10px;
   border: 1px solid transparent;
   border-radius: 999px;
@@ -328,7 +332,7 @@
   color: var(--text-primary);
 }
 
-.ds-filter-tabs button:disabled {
+.ds-filter-tabs button[aria-disabled='true'] {
   opacity: 0.6;
 }
 

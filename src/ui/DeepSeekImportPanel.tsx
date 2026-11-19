@@ -52,10 +52,20 @@ function moveTabSelection<T extends string>(
   idPrefix: string,
 ) {
   const currentIndex = tabs.findIndex((tab) => tab.id === currentId);
-  const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
-  if (currentIndex < 0 || direction === 0) return;
+  if (currentIndex < 0) return;
+  const nextIndex =
+    event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? tabs.length - 1
+        : event.key === 'ArrowRight'
+          ? (currentIndex + 1) % tabs.length
+          : event.key === 'ArrowLeft'
+            ? (currentIndex - 1 + tabs.length) % tabs.length
+            : -1;
+  if (nextIndex < 0) return;
   event.preventDefault();
-  const nextTab = tabs[(currentIndex + direction + tabs.length) % tabs.length];
+  const nextTab = tabs[nextIndex];
   onSelect(nextTab.id);
   document.getElementById(`${idPrefix}${nextTab.id}`)?.focus();
 }
@@ -122,9 +132,12 @@ export function DeepSeekImportPanel({
   const [isImporting, setIsImporting] = useState(false);
   const [receipt, setReceipt] = useState<DeepSeekImportBatchResult | null>(null);
   const [importError, setImportError] = useState<DeepSeekImportError | null>(null);
+  const [completedImportSessionIds, setCompletedImportSessionIds] = useState<string[]>([]);
+  const completedImportResultsRef = useRef<DeepSeekImportBatchResult[]>([]);
   const zipGenerationRef = useRef(0);
   const zipReadSeqRef = useRef(0);
   const aiAbortRef = useRef<AbortController | null>(null);
+  const aiPreviousFilterRef = useRef<DeepSeekFilterMode | null>(null);
 
   useEffect(() => {
     return () => {
@@ -180,14 +193,30 @@ export function DeepSeekImportPanel({
   const invalidateAiFilter = () => {
     aiAbortRef.current?.abort();
     aiAbortRef.current = null;
+    aiPreviousFilterRef.current = null;
     zipGenerationRef.current += 1;
     setAiMatchedIds(null);
     setIsAiFiltering(false);
     setFilterMode('all');
   };
 
+  const resetImportProgress = () => {
+    completedImportResultsRef.current = [];
+    setCompletedImportSessionIds([]);
+  };
+
+  const combineCompletedImports = (): DeepSeekImportBatchResult => {
+    const completed = completedImportResultsRef.current;
+    return {
+      stories: completed.flatMap((result) => result.stories),
+      previews: completed.flatMap((result) => result.previews),
+      summaryStatuses: Object.assign({}, ...completed.map((result) => result.summaryStatuses)),
+    };
+  };
+
   const loadZipBytes = (bytes: Uint8Array, source: 'zip_file' | 'url', startedAt: number) => {
     invalidateAiFilter();
+    resetImportProgress();
     const scanned = scanDeepSeekExportZip(bytes);
     if (scanned.sessions.length === 0) {
       recordScanFailure(
@@ -215,6 +244,7 @@ export function DeepSeekImportPanel({
   const resetLoadedZip = () => {
     zipReadSeqRef.current += 1;
     invalidateAiFilter();
+    resetImportProgress();
     setZipBytes(null);
     setScanResult(null);
     setSelectedIds([]);
@@ -225,6 +255,7 @@ export function DeepSeekImportPanel({
   const handleZipFile = async (file: File) => {
     const readSeq = ++zipReadSeqRef.current;
     invalidateAiFilter();
+    resetImportProgress();
     const startedAt = Date.now();
     setImportError(null);
     setReceipt(null);
@@ -259,6 +290,7 @@ export function DeepSeekImportPanel({
     if (isFetchingUrl) return;
     zipReadSeqRef.current += 1;
     invalidateAiFilter();
+    resetImportProgress();
     const startedAt = Date.now();
     setImportError(null);
     setReceipt(null);
@@ -340,6 +372,8 @@ export function DeepSeekImportPanel({
     if (zipGeneration !== zipGenerationRef.current || isAiFiltering) return;
     setImportError(null);
     setIsAiFiltering(true);
+    aiPreviousFilterRef.current = filterMode;
+    setFilterMode('ai');
     const controller = new AbortController();
     aiAbortRef.current = controller;
     try {
@@ -347,6 +381,7 @@ export function DeepSeekImportPanel({
       if (controller.signal.aborted || zipGeneration !== zipGenerationRef.current) return;
       setAiMatchedIds(new Set(ids));
       setFilterMode('ai');
+      aiPreviousFilterRef.current = null;
     } catch (err) {
       if (
         controller.signal.aborted ||
@@ -355,6 +390,8 @@ export function DeepSeekImportPanel({
       ) {
         return;
       }
+      setFilterMode(aiPreviousFilterRef.current ?? 'all');
+      aiPreviousFilterRef.current = null;
       setImportError({
         kind: 'ai_filter',
         message: toErrorMessage(err, 'AI 辅助筛选失败，请检查模型配置。'),
@@ -368,7 +405,7 @@ export function DeepSeekImportPanel({
   };
 
   const handleAiAssistClick = () => {
-    if (!scanResult) return;
+    if (!scanResult || isAiFiltering) return;
     if (aiMatchedIds) {
       setFilterMode('ai');
       return;
@@ -399,26 +436,50 @@ export function DeepSeekImportPanel({
       handleAiAssistClick();
       return;
     }
+    const activeAiFilter = aiAbortRef.current;
+    if (activeAiFilter) {
+      aiAbortRef.current = null;
+      activeAiFilter.abort();
+      aiPreviousFilterRef.current = null;
+      zipGenerationRef.current += 1;
+      setIsAiFiltering(false);
+    }
+    setImportError((current) => (current?.kind === 'ai_filter' ? null : current));
     setFilterMode(nextMode);
   };
 
   const handleConfirmImport = async () => {
-    if (!zipBytes || selectedIds.length === 0 || isImporting) return;
+    const pendingSessionIds = selectedIds.filter(
+      (sessionId) => !completedImportSessionIds.includes(sessionId),
+    );
+    if (!zipBytes || pendingSessionIds.length === 0 || isImporting) return;
     const startedAt = Date.now();
     setImportError(null);
     setIsImporting(true);
     try {
-      const result = await onImportBatch(zipBytes, selectedIds, scriptRangeOverrides);
+      for (const sessionId of pendingSessionIds) {
+        const result = await onImportBatch(zipBytes, [sessionId], scriptRangeOverrides);
+        completedImportResultsRef.current.push(result);
+        setCompletedImportSessionIds((current) => [...current, sessionId]);
+      }
+      const result = combineCompletedImports();
       const confidenceCounts = { strong: 0, ambiguous: 0 };
       for (const p of result.previews) confidenceCounts[p.scriptConfidence] += 1;
       recordImportRadar(
-        scanResult?.structure, loadedSource, 'success', selectedIds.length,
+        scanResult?.structure, loadedSource, 'success', result.previews.length,
         Date.now() - startedAt, confidenceCounts,
       );
       setReceipt(result);
     } catch (err) {
       const durationMs = Date.now() - startedAt;
-      recordImportRadar(scanResult?.structure, loadedSource, 'error', selectedIds.length, durationMs);
+      const savedCount = completedImportResultsRef.current.length;
+      recordImportRadar(
+        scanResult?.structure,
+        loadedSource,
+        'error',
+        pendingSessionIds.length,
+        durationMs,
+      );
       diagnostics.recordError({
         category: 'import',
         action: 'deepseek_import_error',
@@ -427,7 +488,9 @@ export function DeepSeekImportPanel({
       });
       setImportError({
         kind: 'import',
-        message: toErrorMessage(err, '导入所选故事失败。'),
+        message: savedCount > 0
+          ? `已保存 ${savedCount} 部故事。${toErrorMessage(err, '剩余故事导入失败。')} 重试只会处理未完成会话。`
+          : toErrorMessage(err, '导入所选故事失败。'),
       });
     } finally {
       setIsImporting(false);
@@ -454,6 +517,9 @@ export function DeepSeekImportPanel({
 
   const step = receipt ? 3 : scanResult ? 2 : 1;
   const primaryStory = receipt?.stories[0];
+  const pendingImportCount = selectedIds.filter(
+    (sessionId) => !completedImportSessionIds.includes(sessionId),
+  ).length;
   const handleBack = () => {
     if (isImporting) return;
     if (receipt) {
@@ -494,10 +560,14 @@ export function DeepSeekImportPanel({
       type="button"
       className="btn btn-primary import-primary-action"
       data-testid="ds-confirm-import-btn"
-      disabled={selectedIds.length === 0 || isImporting}
+      disabled={pendingImportCount === 0 || isImporting}
       onClick={() => void handleConfirmImport()}
     >
-      {isImporting ? '正在导入…' : `确认导入（已选 ${selectedIds.length} 部故事）`}
+      {isImporting
+        ? '正在导入…'
+        : completedImportSessionIds.length > 0
+          ? `重试导入剩余 ${pendingImportCount} 部`
+          : `确认导入（已选 ${selectedIds.length} 部故事）`}
     </button>
   ) : sourceMode === 'url' ? (
     isFetchingUrl ? (
@@ -599,14 +669,14 @@ export function DeepSeekImportPanel({
                 重试 AI 筛选
               </button>
             )}
-            {importError.kind === 'import' && (
+            {importError.kind === 'import' && pendingImportCount > 0 && (
               <button
                 type="button"
                 className="text-action"
                 data-testid="import-error-action-retry-import"
                 onClick={() => void handleConfirmImport()}
               >
-                重试导入
+                重试 {pendingImportCount} 部未完成导入
               </button>
             )}
             <button type="button" className="text-action" onClick={onPackageDiagnostics}>
@@ -792,7 +862,7 @@ export function DeepSeekImportPanel({
                       aria-selected={filterMode === tab.id}
                       aria-controls="deepseek-filter-panel"
                       tabIndex={filterMode === tab.id ? 0 : -1}
-                      disabled={tab.id === 'ai' && isAiFiltering}
+                      aria-disabled={tab.id === 'ai' && isAiFiltering}
                       onClick={() => selectFilterMode(tab.id)}
                       onKeyDown={(event) =>
                         moveTabSelection(

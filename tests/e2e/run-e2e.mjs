@@ -362,13 +362,13 @@ async function prepareAiFilterAbortProbe(page) {
         const body = typeof init.body === 'string' ? init.body : '';
         if (body.includes('互动叙事文游识别助手')) {
           init.signal?.addEventListener('abort', () => {
-            window.__lfhAiFilterAbortObserved = true;
+            window.__lfhAiFilterAbortCount += 1;
           }, { once: true });
         }
         return window.__lfhOriginalFetchForAiProbe(input, init);
       };
     }
-    window.__lfhAiFilterAbortObserved = false;
+    window.__lfhAiFilterAbortCount = 0;
   });
 }
 
@@ -729,11 +729,19 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       mimeType: 'application/zip',
       buffer: Buffer.from('not a zip archive'),
     });
+    await page.setViewportSize({ width: 390, height: 844 });
     const scanError = page.getByTestId('import-error');
-    await scanError.getByRole('button', { name: '重新选择导出包' }).waitFor();
+    const replaceZipAction = scanError.getByRole('button', { name: '重新选择导出包' });
+    await replaceZipAction.waitFor();
+    await expectTouchTarget(replaceZipAction, 'mobile ZIP replacement recovery action');
+    await expectTouchTarget(
+      scanError.getByRole('button', { name: '打包排障日志' }),
+      'mobile import diagnostics action',
+    );
     if (await scanError.getByRole('button', { name: '重试导入' }).count() !== 0) {
       throw new Error('ZIP scan failure offered final import retry.');
     }
+    await page.setViewportSize({ width: 1280, height: 800 });
     await leaveImportView(page);
 
     await startDeepSeekImport(page);
@@ -751,18 +759,23 @@ async function runImportWizardE2E(browser, port, tmpDir) {
 
     await startDeepSeekImport(page);
     await page.setInputFiles('#deepseek-zip-input', {
-      name: 'final-import-error.zip',
+      name: 'partial-import-error.zip',
       mimeType: 'application/zip',
       buffer: Buffer.from(buildSyntheticDeepSeekZipE2E()),
     });
     await page.getByTestId('ds-session-list').waitFor();
+    await page.getByRole('button', { name: '全选' }).click();
     await page.evaluate(() => {
       const originalPut = IDBObjectStore.prototype.put;
+      let storyPutCount = 0;
       let failed = false;
-      IDBObjectStore.prototype.put = function putWithOneSyntheticFailure(...args) {
-        if (!failed && this.name === 'stories') {
+      IDBObjectStore.prototype.put = function putWithSecondStoryFailure(...args) {
+        if (this.name === 'stories') {
+          storyPutCount += 1;
+        }
+        if (!failed && this.name === 'stories' && storyPutCount === 2) {
           failed = true;
-          throw new Error('Synthetic final import storage failure');
+          throw new Error('Synthetic second-story storage failure');
         }
         return originalPut.apply(this, args);
       };
@@ -772,9 +785,41 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     });
     await page.getByTestId('ds-confirm-import-btn').click();
     const importError = page.getByTestId('import-error');
-    await importError.getByRole('button', { name: '重试导入' }).waitFor();
+    const retryImport = importError.getByRole('button', { name: /重试.*未完成/ });
+    await retryImport.waitFor();
     await page.evaluate(() => window.__lfhRestoreStoryPut?.());
-    await leaveImportView(page);
+    await retryImport.click();
+    const partialReceipt = page.getByTestId('deepseek-import-receipt');
+    await partialReceipt.waitFor();
+    const partialReceiptText = await partialReceipt.textContent();
+    if (
+      !partialReceiptText?.includes('合成宫斗测试档') ||
+      !partialReceiptText.includes('解释一下 Promise.all 的用法')
+    ) {
+      throw new Error(`Partial import retry did not combine both saved stories: ${partialReceiptText}`);
+    }
+    await page.getByRole('button', { name: '继续这条故事' }).click();
+    await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '合成宫斗测试档', exact: true }).waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const persistedRows = await visibleStoryRows(page);
+    if ((await persistedRows.count()) !== 2) {
+      throw new Error(
+        `A partial import retry duplicated an already saved story: ${await persistedRows.allTextContents()}`,
+      );
+    }
+    for (const title of ['合成宫斗测试档', '解释一下 Promise.all 的用法']) {
+      if ((await persistedRows.filter({ hasText: title }).count()) !== 1) {
+        throw new Error(`Expected one persisted story row for ${title}.`);
+      }
+    }
+    await deleteAllStories(page);
+    const mobileLibrary = page.getByTestId('mobile-library-dialog');
+    if (await mobileLibrary.isVisible().catch(() => false)) {
+      await mobileLibrary.getByRole('button', { name: '关闭书架' }).click();
+      await mobileLibrary.waitFor({ state: 'hidden' });
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
 
     await startDeepSeekImport(page);
     await page.getByTestId('deepseek-import-panel').waitFor();
@@ -806,6 +851,25 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     ) {
       throw new Error('Import source tabs did not move back with ArrowLeft.');
     }
+    await fileSourceTab.focus();
+    await page.keyboard.press('End');
+    if (
+      await urlSourceTab.getAttribute('aria-selected') !== 'true' ||
+      await urlSourceTab.getAttribute('tabindex') !== '0' ||
+      await fileSourceTab.getAttribute('tabindex') !== '-1' ||
+      await page.evaluate(() => document.activeElement?.id) !== await urlSourceTab.getAttribute('id')
+    ) {
+      throw new Error('Import source tabs did not select the last tab with End.');
+    }
+    await page.keyboard.press('Home');
+    if (
+      await fileSourceTab.getAttribute('aria-selected') !== 'true' ||
+      await fileSourceTab.getAttribute('tabindex') !== '0' ||
+      await urlSourceTab.getAttribute('tabindex') !== '-1' ||
+      await page.evaluate(() => document.activeElement?.id) !== await fileSourceTab.getAttribute('id')
+    ) {
+      throw new Error('Import source tabs did not select the first tab with Home.');
+    }
     await page.getByTestId('deepseek-source-url').click();
     await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/export-valid.zip');
     await page.getByTestId('deepseek-fetch-zip').click();
@@ -829,6 +893,10 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     const filterTablist = page.getByRole('tablist', { name: '筛选会话' });
     const allFilterTab = filterTablist.getByRole('tab', { name: '全部' });
     const likelyFilterTab = filterTablist.getByRole('tab', { name: '疑似文游' });
+    const aiFilterTabAtMobile = filterTablist.getByRole('tab', { name: 'AI 辅助筛选' });
+    await expectTouchTarget(allFilterTab, 'mobile session filter All tab');
+    await expectTouchTarget(likelyFilterTab, 'mobile session filter Likely tab');
+    await expectTouchTarget(aiFilterTabAtMobile, 'mobile session filter AI tab');
     if (
       await allFilterTab.getAttribute('tabindex') !== '0' ||
       await likelyFilterTab.getAttribute('tabindex') !== '-1'
@@ -1012,6 +1080,65 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     }
     await page.getByRole('tab', { name: '全部', exact: true }).click();
 
+    let startHeldAllRequest;
+    let releaseHeldAllRequest;
+    let heldAllRequestFinished;
+    let finishHeldAllRequest;
+    const heldAllRequestStarted = new Promise((resolve) => { startHeldAllRequest = resolve; });
+    const heldAllRequestWait = new Promise((resolve) => { releaseHeldAllRequest = resolve; });
+    const heldAllRequestDone = new Promise((resolve) => { finishHeldAllRequest = resolve; });
+    nextAiRequestGate = {
+      onStarted: startHeldAllRequest,
+      waitForRelease: heldAllRequestWait,
+      onFinished: finishHeldAllRequest,
+    };
+    await prepareAiFilterAbortProbe(page);
+    await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
+    await heldAllRequestStarted;
+    if (
+      await page.getByRole('tab', { name: 'AI 筛选中…' }).getAttribute('aria-selected') !== 'true' ||
+      await page.getByRole('tab', { name: 'AI 筛选中…' }).getAttribute('tabindex') !== '0'
+    ) {
+      throw new Error('AI filtering did not synchronize its selected tab and roving tabIndex.');
+    }
+    await page.getByRole('tab', { name: '全部', exact: true }).click();
+    await page.waitForFunction(() => window.__lfhAiFilterAbortCount === 1);
+    releaseHeldAllRequest();
+    await heldAllRequestDone;
+    await page.waitForFunction(() =>
+      document.querySelector('.ds-filter-tabs [aria-selected="true"]')?.textContent?.trim() === '全部' &&
+      document.querySelectorAll('[data-testid="ds-session-item"]').length === 2,
+    );
+
+    let startHeldLikelyRequest;
+    let releaseHeldLikelyRequest;
+    let heldLikelyRequestFinished;
+    let finishHeldLikelyRequest;
+    const heldLikelyRequestStarted = new Promise((resolve) => { startHeldLikelyRequest = resolve; });
+    const heldLikelyRequestWait = new Promise((resolve) => { releaseHeldLikelyRequest = resolve; });
+    const heldLikelyRequestDone = new Promise((resolve) => { finishHeldLikelyRequest = resolve; });
+    nextAiRequestGate = {
+      onStarted: startHeldLikelyRequest,
+      waitForRelease: heldLikelyRequestWait,
+      onFinished: finishHeldLikelyRequest,
+    };
+    await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
+    await heldLikelyRequestStarted;
+    if (
+      await page.getByRole('tab', { name: 'AI 筛选中…' }).getAttribute('aria-selected') !== 'true' ||
+      await page.getByRole('tab', { name: 'AI 筛选中…' }).getAttribute('tabindex') !== '0'
+    ) {
+      throw new Error('A second AI filtering request did not synchronize its tab state.');
+    }
+    await page.getByRole('tab', { name: '疑似文游' }).click();
+    await page.waitForFunction(() => window.__lfhAiFilterAbortCount === 2);
+    releaseHeldLikelyRequest();
+    await heldLikelyRequestDone;
+    await page.waitForFunction(() =>
+      document.querySelector('.ds-filter-tabs [aria-selected="true"]')?.textContent?.trim() === '疑似文游' &&
+      document.querySelectorAll('[data-testid="ds-session-item"]').length === 1,
+    );
+
     let startHeldAiRequest;
     let releaseHeldAiRequest;
     let heldAiRequestFinished;
@@ -1028,7 +1155,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
     await heldAiRequestStarted;
     await page.getByRole('button', { name: '返回' }).click();
-    await page.waitForFunction(() => window.__lfhAiFilterAbortObserved === true);
+    await page.waitForFunction(() => window.__lfhAiFilterAbortCount === 1);
     await page.waitForFunction(() =>
       document.querySelector('[data-testid="deepseek-import-panel"] [role="progressbar"]')?.getAttribute('aria-valuenow') === '1',
     );
@@ -1044,6 +1171,41 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       document.querySelector('.ds-filter-tabs [aria-selected="true"]')?.textContent?.trim() === '全部' &&
       document.querySelector('[data-testid="ds-session-item"]')?.textContent?.includes('模糊开局超窗长档'),
     );
+    const aiFilterTab = page.getByRole('tab', { name: 'AI 辅助筛选' });
+    await allFilterTab.focus();
+    await page.keyboard.press('End');
+    await page.waitForFunction(() =>
+      document.querySelector('.ds-filter-tabs [aria-selected="true"]')?.textContent?.trim() === 'AI 辅助筛选',
+    );
+    if (
+      await aiFilterTab.getAttribute('tabindex') !== '0' ||
+      await allFilterTab.getAttribute('tabindex') !== '-1' ||
+      await page.evaluate(() => document.activeElement?.id) !== await aiFilterTab.getAttribute('id')
+    ) {
+      throw new Error(`Session filter tabs did not select the last tab with End: ${JSON.stringify({
+        aiTabIndex: await aiFilterTab.getAttribute('tabindex'),
+        allTabIndex: await allFilterTab.getAttribute('tabindex'),
+        activeId: await page.evaluate(() => document.activeElement?.id),
+        aiId: await aiFilterTab.getAttribute('id'),
+      })}`);
+    }
+    await page.keyboard.press('Home');
+    if (
+      await allFilterTab.getAttribute('aria-selected') !== 'true' ||
+      await allFilterTab.getAttribute('tabindex') !== '0' ||
+      await aiFilterTab.getAttribute('tabindex') !== '-1' ||
+      await page.evaluate(() => document.activeElement?.id) !== await allFilterTab.getAttribute('id')
+    ) {
+      throw new Error('Session filter tabs did not select the first tab with Home.');
+    }
+    await page.keyboard.press('End');
+    if (
+      await aiFilterTab.getAttribute('aria-selected') !== 'true' ||
+      await aiFilterTab.getAttribute('tabindex') !== '0' ||
+      await allFilterTab.getAttribute('tabindex') !== '-1'
+    ) {
+      throw new Error('Session filter tabs did not return to the cached AI result with End.');
+    }
 
     await page.getByRole('button', { name: '返回' }).click();
     await page.waitForFunction(() =>
