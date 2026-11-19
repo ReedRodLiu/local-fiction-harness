@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { ChevronRight, FileUp, Link2 } from 'lucide-react';
 import {
   DEFAULT_ZIP_MAX_BYTES,
@@ -30,6 +30,49 @@ const SUMMARY_STATUS_LABELS: Record<ImportSummaryStatus, string> = {
   pending_key: '待配置密钥',
 };
 
+type DeepSeekSourceMode = 'file' | 'url';
+type DeepSeekFilterMode = 'all' | 'likely' | 'ai';
+
+const SOURCE_TABS: ReadonlyArray<{ id: DeepSeekSourceMode; label: string }> = [
+  { id: 'file', label: '本地 .zip' },
+  { id: 'url', label: 'HTTPS 下载链接' },
+];
+
+const FILTER_TABS: ReadonlyArray<{ id: DeepSeekFilterMode; label: string }> = [
+  { id: 'all', label: '全部' },
+  { id: 'likely', label: '疑似文游' },
+  { id: 'ai', label: 'AI 辅助筛选' },
+];
+
+function moveTabSelection<T extends string>(
+  event: KeyboardEvent<HTMLButtonElement>,
+  currentId: T,
+  tabs: ReadonlyArray<{ id: T }>,
+  onSelect: (id: T) => void,
+  idPrefix: string,
+) {
+  const currentIndex = tabs.findIndex((tab) => tab.id === currentId);
+  const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+  if (currentIndex < 0 || direction === 0) return;
+  event.preventDefault();
+  const nextTab = tabs[(currentIndex + direction + tabs.length) % tabs.length];
+  onSelect(nextTab.id);
+  document.getElementById(`${idPrefix}${nextTab.id}`)?.focus();
+}
+
+type DeepSeekImportErrorKind =
+  | 'url_fetch'
+  | 'zip_read'
+  | 'zip_scan'
+  | 'empty_zip'
+  | 'ai_filter'
+  | 'import';
+
+interface DeepSeekImportError {
+  kind: DeepSeekImportErrorKind;
+  message: string;
+}
+
 interface DeepSeekImportPanelProps {
   config: ModelConfig;
   transport: LlmTransport;
@@ -59,7 +102,7 @@ export function DeepSeekImportPanel({
   onPackageDiagnostics,
   onCancel,
 }: DeepSeekImportPanelProps) {
-  const [sourceMode, setSourceMode] = useState<'file' | 'url'>('file');
+  const [sourceMode, setSourceMode] = useState<DeepSeekSourceMode>('file');
   const [zipUrl, setZipUrl] = useState('');
   const [isFetchingUrl, setIsFetchingUrl] = useState(false);
   const urlAbortRef = useRef<AbortController | null>(null);
@@ -70,7 +113,7 @@ export function DeepSeekImportPanel({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [previewSessionId, setPreviewSessionId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterMode, setFilterMode] = useState<'all' | 'likely' | 'ai'>('all');
+  const [filterMode, setFilterMode] = useState<DeepSeekFilterMode>('all');
   const [aiMatchedIds, setAiMatchedIds] = useState<Set<string> | null>(null);
   const [isAiFiltering, setIsAiFiltering] = useState(false);
   const [scriptRangeOverrides, setScriptRangeOverrides] = useState<Record<string, ScriptTurnRange>>(
@@ -78,11 +121,17 @@ export function DeepSeekImportPanel({
   );
   const [isImporting, setIsImporting] = useState(false);
   const [receipt, setReceipt] = useState<DeepSeekImportBatchResult | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [importError, setImportError] = useState<DeepSeekImportError | null>(null);
   const zipGenerationRef = useRef(0);
+  const zipReadSeqRef = useRef(0);
+  const aiAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     return () => {
+      zipReadSeqRef.current += 1;
+      aiAbortRef.current?.abort();
+      aiAbortRef.current = null;
+      zipGenerationRef.current += 1;
       urlAbortRef.current?.abort();
     };
   }, []);
@@ -129,6 +178,8 @@ export function DeepSeekImportPanel({
   };
 
   const invalidateAiFilter = () => {
+    aiAbortRef.current?.abort();
+    aiAbortRef.current = null;
     zipGenerationRef.current += 1;
     setAiMatchedIds(null);
     setIsAiFiltering(false);
@@ -145,9 +196,12 @@ export function DeepSeekImportPanel({
         Date.now() - startedAt,
         scanned.structure,
       );
-      setErrorMsg('这个 .zip 文件中没有可导入的会话。请换一个 DeepSeek 数据导出包，或使用自由剧本导入。');
+      setImportError({
+        kind: 'empty_zip',
+        message: '这个 .zip 文件中没有可导入的会话。请换一个 DeepSeek 数据导出包，或使用自由剧本导入。',
+      });
     } else {
-      setErrorMsg(null);
+      setImportError(null);
     }
     setLoadedSource(source);
     setZipBytes(bytes);
@@ -159,6 +213,7 @@ export function DeepSeekImportPanel({
   };
 
   const resetLoadedZip = () => {
+    zipReadSeqRef.current += 1;
     invalidateAiFilter();
     setZipBytes(null);
     setScanResult(null);
@@ -168,25 +223,44 @@ export function DeepSeekImportPanel({
   };
 
   const handleZipFile = async (file: File) => {
+    const readSeq = ++zipReadSeqRef.current;
     invalidateAiFilter();
     const startedAt = Date.now();
-    setErrorMsg(null);
+    setImportError(null);
     setReceipt(null);
+    let buffer: ArrayBuffer;
     try {
-      const buf = new Uint8Array(await file.arrayBuffer());
-      loadZipBytes(buf, 'zip_file', startedAt);
+      buffer = await file.arrayBuffer();
     } catch (err) {
+      if (zipReadSeqRef.current !== readSeq) return;
       resetLoadedZip();
       recordScanFailure(err, 'zip_file', Date.now() - startedAt);
-      setErrorMsg(toErrorMessage(err, '解析 DeepSeek 导出 .zip 文件失败。'));
+      setImportError({
+        kind: 'zip_read',
+        message: toErrorMessage(err, '读取 DeepSeek 导出 .zip 文件失败。'),
+      });
+      return;
+    }
+    if (zipReadSeqRef.current !== readSeq) return;
+    try {
+      loadZipBytes(new Uint8Array(buffer), 'zip_file', startedAt);
+    } catch (err) {
+      if (zipReadSeqRef.current !== readSeq) return;
+      resetLoadedZip();
+      recordScanFailure(err, 'zip_file', Date.now() - startedAt);
+      setImportError({
+        kind: 'zip_scan',
+        message: toErrorMessage(err, '解析 DeepSeek 导出 .zip 文件失败。'),
+      });
     }
   };
 
   const handleFetchZipUrl = async () => {
     if (isFetchingUrl) return;
+    zipReadSeqRef.current += 1;
     invalidateAiFilter();
     const startedAt = Date.now();
-    setErrorMsg(null);
+    setImportError(null);
     setReceipt(null);
     const controller = new AbortController();
     urlAbortRef.current = controller;
@@ -198,12 +272,25 @@ export function DeepSeekImportPanel({
         controller.signal,
       );
       if (controller.signal.aborted) return;
-      loadZipBytes(result.bytes, 'url', startedAt);
+      try {
+        loadZipBytes(result.bytes, 'url', startedAt);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        resetLoadedZip();
+        recordScanFailure(err, 'url', Date.now() - startedAt);
+        setImportError({
+          kind: 'zip_scan',
+          message: toErrorMessage(err, '解析下载的 DeepSeek 导出 .zip 文件失败。'),
+        });
+      }
     } catch (err) {
       if (controller.signal.aborted || isAbortError(err)) return;
       resetLoadedZip();
       recordScanFailure(err, 'url', Date.now() - startedAt);
-      setErrorMsg(toErrorMessage(err, '拉取 DeepSeek 导出链接失败，请改用本地 .zip 文件导入。'));
+      setImportError({
+        kind: 'url_fetch',
+        message: toErrorMessage(err, '拉取 DeepSeek 导出链接失败，请改用本地 .zip 文件导入。'),
+      });
     } finally {
       if (urlAbortRef.current === controller) {
         urlAbortRef.current = null;
@@ -251,18 +338,32 @@ export function DeepSeekImportPanel({
     sessions: readonly DeepSeekSessionIndexItem[],
   ) => {
     if (zipGeneration !== zipGenerationRef.current || isAiFiltering) return;
-    setErrorMsg(null);
+    setImportError(null);
     setIsAiFiltering(true);
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
     try {
-      const ids = await assistFilterDeepSeekSessions(sessions, transport, cfg);
-      if (zipGeneration !== zipGenerationRef.current) return;
+      const ids = await assistFilterDeepSeekSessions(sessions, transport, cfg, controller.signal);
+      if (controller.signal.aborted || zipGeneration !== zipGenerationRef.current) return;
       setAiMatchedIds(new Set(ids));
       setFilterMode('ai');
     } catch (err) {
-      if (zipGeneration !== zipGenerationRef.current) return;
-      setErrorMsg(toErrorMessage(err, 'AI 辅助筛选失败，请检查模型配置。'));
+      if (
+        controller.signal.aborted ||
+        isAbortError(err) ||
+        zipGeneration !== zipGenerationRef.current
+      ) {
+        return;
+      }
+      setImportError({
+        kind: 'ai_filter',
+        message: toErrorMessage(err, 'AI 辅助筛选失败，请检查模型配置。'),
+      });
     } finally {
-      if (zipGeneration === zipGenerationRef.current) setIsAiFiltering(false);
+      if (aiAbortRef.current === controller) {
+        aiAbortRef.current = null;
+        if (zipGeneration === zipGenerationRef.current) setIsAiFiltering(false);
+      }
     }
   };
 
@@ -283,10 +384,28 @@ export function DeepSeekImportPanel({
     void runAiAssistFilter(config, zipGeneration, sessions);
   };
 
+  const selectSourceMode = (nextMode: DeepSeekSourceMode) => {
+    if (nextMode === 'file') {
+      urlAbortRef.current?.abort();
+    } else {
+      zipReadSeqRef.current += 1;
+    }
+    setSourceMode(nextMode);
+    setImportError(null);
+  };
+
+  const selectFilterMode = (nextMode: DeepSeekFilterMode) => {
+    if (nextMode === 'ai') {
+      handleAiAssistClick();
+      return;
+    }
+    setFilterMode(nextMode);
+  };
+
   const handleConfirmImport = async () => {
     if (!zipBytes || selectedIds.length === 0 || isImporting) return;
     const startedAt = Date.now();
-    setErrorMsg(null);
+    setImportError(null);
     setIsImporting(true);
     try {
       const result = await onImportBatch(zipBytes, selectedIds, scriptRangeOverrides);
@@ -306,7 +425,10 @@ export function DeepSeekImportPanel({
         error: err,
         durationMs,
       });
-      setErrorMsg(toErrorMessage(err, '导入所选故事失败。'));
+      setImportError({
+        kind: 'import',
+        message: toErrorMessage(err, '导入所选故事失败。'),
+      });
     } finally {
       setIsImporting(false);
     }
@@ -340,7 +462,7 @@ export function DeepSeekImportPanel({
     }
     if (scanResult) {
       resetLoadedZip();
-      setErrorMsg(null);
+      setImportError(null);
       return;
     }
     onCancel?.();
@@ -384,7 +506,10 @@ export function DeepSeekImportPanel({
         className="btn import-primary-action"
         onClick={() => {
           urlAbortRef.current?.abort();
-          setErrorMsg('已取消拉取导出压缩包。');
+          setImportError({
+            kind: 'url_fetch',
+            message: '已取消拉取导出压缩包。',
+          });
         }}
       >
         取消拉取
@@ -421,29 +546,66 @@ export function DeepSeekImportPanel({
       onBack={handleBack}
       footer={<div className="import-footer-actions">{footer}</div>}
     >
-      {errorMsg && (
+      {importError && (
         <BannerAlert tone="danger" testId="import-error">
           <div className="import-error-copy">
-            <span>{errorMsg}</span>
-            {!scanResult && sourceMode === 'url' && (
+            <span>{importError.message}</span>
+            {importError.kind === 'url_fetch' && (
               <>
                 <button
                   type="button"
                   className="text-action"
+                  data-testid="import-error-action-local-zip"
                   onClick={() => {
                     setSourceMode('file');
-                    setErrorMsg(null);
+                    setImportError(null);
                   }}
                 >
                   改用本地 .zip 文件
                 </button>
-                <button type="button" className="text-action" onClick={() => void handleFetchZipUrl()}>
+                <button
+                  type="button"
+                  className="text-action"
+                  data-testid="import-error-action-retry-url"
+                  onClick={() => void handleFetchZipUrl()}
+                >
                   重试拉取
                 </button>
               </>
             )}
-            {scanResult && !receipt && (
-              <button type="button" className="text-action" onClick={() => void handleConfirmImport()}>
+            {(importError.kind === 'zip_read' ||
+              importError.kind === 'zip_scan' ||
+              importError.kind === 'empty_zip') && (
+              <button
+                type="button"
+                className="text-action"
+                data-testid="import-error-action-replace-zip"
+                onClick={() => {
+                  resetLoadedZip();
+                  setSourceMode('file');
+                  setImportError(null);
+                }}
+              >
+                重新选择导出包
+              </button>
+            )}
+            {importError.kind === 'ai_filter' && (
+              <button
+                type="button"
+                className="text-action"
+                data-testid="import-error-action-retry-ai-filter"
+                onClick={handleAiAssistClick}
+              >
+                重试 AI 筛选
+              </button>
+            )}
+            {importError.kind === 'import' && (
+              <button
+                type="button"
+                className="text-action"
+                data-testid="import-error-action-retry-import"
+                onClick={() => void handleConfirmImport()}
+              >
                 重试导入
               </button>
             )}
@@ -515,82 +677,89 @@ export function DeepSeekImportPanel({
             <p>本地按需筛选会话、预览剧情树和附件。文件只在此设备解析，无需提前填写 API Key。</p>
           </div>
           <div className="ds-source-tabs" role="tablist" aria-label="导入来源">
-            <button
-              type="button"
-              role="tab"
-              data-testid="deepseek-source-file"
-              aria-selected={sourceMode === 'file'}
-              className={`btn ${sourceMode === 'file' ? 'is-selected' : ''}`}
-              onClick={() => {
-                urlAbortRef.current?.abort();
-                setSourceMode('file');
-                setErrorMsg(null);
-              }}
-            >
-              <FileUp size={17} strokeWidth={1.75} /> 本地 .zip
-            </button>
-            <button
-              type="button"
-              role="tab"
-              data-testid="deepseek-source-url"
-              aria-selected={sourceMode === 'url'}
-              className={`btn ${sourceMode === 'url' ? 'is-selected' : ''}`}
-              onClick={() => {
-                setSourceMode('url');
-                setErrorMsg(null);
-              }}
-            >
-              <Link2 size={17} strokeWidth={1.75} /> HTTPS 下载链接
-            </button>
+            {SOURCE_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                id={`deepseek-source-tab-${tab.id}`}
+                type="button"
+                role="tab"
+                data-testid={`deepseek-source-${tab.id}`}
+                aria-selected={sourceMode === tab.id}
+                aria-controls="deepseek-source-panel"
+                tabIndex={sourceMode === tab.id ? 0 : -1}
+                className={`btn ${sourceMode === tab.id ? 'is-selected' : ''}`}
+                onClick={() => selectSourceMode(tab.id)}
+                onKeyDown={(event) =>
+                  moveTabSelection(
+                    event,
+                    sourceMode,
+                    SOURCE_TABS,
+                    selectSourceMode,
+                    'deepseek-source-tab-',
+                  )}
+              >
+                {tab.id === 'file'
+                  ? <FileUp size={17} strokeWidth={1.75} />
+                  : <Link2 size={17} strokeWidth={1.75} />}
+                {tab.label}
+              </button>
+            ))}
           </div>
 
-          {sourceMode === 'file' ? (
-            <div className="import-file-card ds-file-card">
-              <button
-                type="button"
-                className="import-file-picker"
-                data-testid="deepseek-zip-picker"
-                onClick={() => zipInputRef.current?.click()}
-              >
-                <FileUp size={24} strokeWidth={1.6} aria-hidden="true" />
-                <span className="import-file-title">选择 DeepSeek 数据导出包</span>
-                <span className="import-file-description">从「设置 → 数据管理」导出的 .zip 文件</span>
-                <span className="import-file-action">浏览文件</span>
-              </button>
-              <input
-                ref={zipInputRef}
-                id="deepseek-zip-input"
-                name="deepseekZip"
-                className="visually-hidden"
-                type="file"
-                tabIndex={-1}
-                accept=".zip"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.target.value = '';
-                  if (file) void handleZipFile(file);
-                }}
-              />
-            </div>
-          ) : (
-            <div className="import-url-card">
-              <div className="field">
-                <label htmlFor="deepseek-zip-url-input">粘贴 DeepSeek 数据管理生成的 HTTPS 下载链接</label>
+          <div
+            id="deepseek-source-panel"
+            role="tabpanel"
+            aria-labelledby={`deepseek-source-tab-${sourceMode}`}
+            tabIndex={0}
+          >
+            {sourceMode === 'file' ? (
+              <div className="import-file-card ds-file-card">
+                <button
+                  type="button"
+                  className="import-file-picker"
+                  data-testid="deepseek-zip-picker"
+                  onClick={() => zipInputRef.current?.click()}
+                >
+                  <FileUp size={24} strokeWidth={1.6} aria-hidden="true" />
+                  <span className="import-file-title">选择 DeepSeek 数据导出包</span>
+                  <span className="import-file-description">从「设置 → 数据管理」导出的 .zip 文件</span>
+                  <span className="import-file-action">浏览文件</span>
+                </button>
                 <input
-                  id="deepseek-zip-url-input"
-                  name="deepseekZipUrl"
-                  type="url"
-                  placeholder="https://..."
-                  value={zipUrl}
-                  disabled={isFetchingUrl}
-                  onChange={(event) => setZipUrl(event.target.value)}
+                  ref={zipInputRef}
+                  id="deepseek-zip-input"
+                  name="deepseekZip"
+                  className="visually-hidden"
+                  type="file"
+                  tabIndex={-1}
+                  accept=".zip"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = '';
+                    if (file) void handleZipFile(file);
+                  }}
                 />
               </div>
-              <p className="status-text">
-                下载链接会由浏览器直接拉取。若链接要求登录或来源站点限制跨域，可切换为本地 .zip 文件。
-              </p>
-            </div>
-          )}
+            ) : (
+              <div className="import-url-card">
+                <div className="field">
+                  <label htmlFor="deepseek-zip-url-input">粘贴 DeepSeek 数据管理生成的 HTTPS 下载链接</label>
+                  <input
+                    id="deepseek-zip-url-input"
+                    name="deepseekZipUrl"
+                    type="url"
+                    placeholder="https://..."
+                    value={zipUrl}
+                    disabled={isFetchingUrl}
+                    onChange={(event) => setZipUrl(event.target.value)}
+                  />
+                </div>
+                <p className="status-text">
+                  下载链接会由浏览器直接拉取。若链接要求登录或来源站点限制跨域，可切换为本地 .zip 文件。
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="import-step-content">
@@ -614,98 +783,103 @@ export function DeepSeekImportPanel({
                   onChange={(event) => setSearchQuery(event.target.value)}
                 />
                 <div className="ds-filter-tabs" role="tablist" aria-label="筛选会话">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={filterMode === 'all'}
-                    onClick={() => setFilterMode('all')}
-                  >
-                    全部
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={filterMode === 'likely'}
-                    onClick={() => setFilterMode('likely')}
-                  >
-                    疑似文游
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={filterMode === 'ai'}
-                    disabled={isAiFiltering}
-                    onClick={handleAiAssistClick}
-                  >
-                    {isAiFiltering ? 'AI 筛选中…' : 'AI 辅助筛选'}
-                  </button>
-                </div>
-              </div>
-              <div className="ds-selection-toolbar">
-                <span className="status-text">已选 {selectedIds.length} / 共 {scanResult.sessions.length} 条</span>
-                <div className="ds-selection-actions">
-                  <button
-                    type="button"
-                    className="text-action"
-                    onClick={() => setSelectedIds((current) => [...new Set([
-                      ...current,
-                      ...filteredSessions.map((session) => session.sessionId),
-                    ])])}
-                  >
-                    全选
-                  </button>
-                  <button type="button" className="text-action" onClick={() => setSelectedIds([])}>
-                    清空
-                  </button>
-                </div>
-              </div>
-              {filterMode === 'ai' && !aiMatchedIds && !isAiFiltering && (
-                <p className="status-text">选择「AI 辅助筛选」后会连接你配置的模型，结果只用于本次筛选。</p>
-              )}
-              <ul className="ds-session-list" data-testid="ds-session-list" aria-label="外部会话列表">
-                {filteredSessions.map((session) => {
-                  const checked = selectedIds.includes(session.sessionId);
-                  return (
-                    <li key={session.sessionId} className="ds-session-item" data-testid="ds-session-item">
-                      <div className="ds-session-row">
-                        <label className="ds-session-check">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleSelect(session.sessionId)}
-                          />
-                          <span className="ds-session-title">{session.title}{session.hasNullTitle ? '（自动命名）' : ''}</span>
-                        </label>
-                        <button
-                          type="button"
-                          className="ds-session-preview-trigger"
-                          aria-label={`预览《${session.title}》`}
-                          aria-haspopup="dialog"
-                          data-testid="ds-session-preview-trigger"
-                          onClick={() => setPreviewSessionId(session.sessionId)}
-                        >
-                          <ChevronRight size={19} strokeWidth={1.75} />
-                        </button>
-                      </div>
-                      <p className="ds-session-latest">{session.latestSnippet || session.firstSnippet || '暂无剧情片段'}</p>
-                      <div className="ds-session-chips">
-                        <span className="badge">{session.turnCount} 轮</span>
-                        {session.forkCount > 0 && <span className="badge">⑂ {session.forkCount}</span>}
-                        {(session.attachments.length > 0 || session.diagnosticCount > 0) && (
-                          <span className={`badge ${session.diagnosticCount > 0 ? 'badge-warn' : ''}`}>
-                            {session.attachments.length > 0 ? `${session.attachments.length} 附件` : ''}
-                            {session.attachments.length > 0 && session.diagnosticCount > 0 ? ' · ' : ''}
-                            {session.diagnosticCount > 0 ? `⚠ ${session.diagnosticCount}` : ''}
-                          </span>
+                  {FILTER_TABS.map((tab) => (
+                    <button
+                      key={tab.id}
+                      id={`deepseek-filter-tab-${tab.id}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={filterMode === tab.id}
+                      aria-controls="deepseek-filter-panel"
+                      tabIndex={filterMode === tab.id ? 0 : -1}
+                      disabled={tab.id === 'ai' && isAiFiltering}
+                      onClick={() => selectFilterMode(tab.id)}
+                      onKeyDown={(event) =>
+                        moveTabSelection(
+                          event,
+                          filterMode,
+                          FILTER_TABS,
+                          selectFilterMode,
+                          'deepseek-filter-tab-',
                         )}
-                      </div>
-                    </li>
-                  );
-                })}
-                {filteredSessions.length === 0 && (
-                  <li className="ds-session-empty">没有符合条件的会话。可以清除搜索或切换筛选方式。</li>
+                    >
+                      {tab.id === 'ai' && isAiFiltering ? 'AI 筛选中…' : tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div
+                id="deepseek-filter-panel"
+                role="tabpanel"
+                aria-labelledby={`deepseek-filter-tab-${filterMode}`}
+                tabIndex={0}
+              >
+                <div className="ds-selection-toolbar">
+                  <span className="status-text">已选 {selectedIds.length} / 共 {scanResult.sessions.length} 条</span>
+                  <div className="ds-selection-actions">
+                    <button
+                      type="button"
+                      className="text-action"
+                      onClick={() => setSelectedIds((current) => [...new Set([
+                        ...current,
+                        ...filteredSessions.map((session) => session.sessionId),
+                      ])])}
+                    >
+                      全选
+                    </button>
+                    <button type="button" className="text-action" onClick={() => setSelectedIds([])}>
+                      清空
+                    </button>
+                  </div>
+                </div>
+                {filterMode === 'ai' && !aiMatchedIds && !isAiFiltering && (
+                  <p className="status-text">选择「AI 辅助筛选」后会连接你配置的模型，结果只用于本次筛选。</p>
                 )}
-              </ul>
+                <ul className="ds-session-list" data-testid="ds-session-list" aria-label="外部会话列表">
+                  {filteredSessions.map((session) => {
+                    const checked = selectedIds.includes(session.sessionId);
+                    return (
+                      <li key={session.sessionId} className="ds-session-item" data-testid="ds-session-item">
+                        <div className="ds-session-row">
+                          <label className="ds-session-check">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleSelect(session.sessionId)}
+                            />
+                            <span className="ds-session-title">{session.title}{session.hasNullTitle ? '（自动命名）' : ''}</span>
+                          </label>
+                          <button
+                            type="button"
+                            className="ds-session-preview-trigger"
+                            aria-label={`预览《${session.title}》`}
+                            aria-haspopup="dialog"
+                            data-testid="ds-session-preview-trigger"
+                            onClick={() => setPreviewSessionId(session.sessionId)}
+                          >
+                            <ChevronRight size={19} strokeWidth={1.75} />
+                          </button>
+                        </div>
+                        <p className="ds-session-latest">{session.latestSnippet || session.firstSnippet || '暂无剧情片段'}</p>
+                        <div className="ds-session-chips">
+                          <span className="badge">{session.turnCount} 轮</span>
+                          {session.forkCount > 0 && <span className="badge">⑂ {session.forkCount}</span>}
+                          {(session.attachments.length > 0 || session.diagnosticCount > 0) && (
+                            <span className={`badge ${session.diagnosticCount > 0 ? 'badge-warn' : ''}`}>
+                              {session.attachments.length > 0 ? `${session.attachments.length} 附件` : ''}
+                              {session.attachments.length > 0 && session.diagnosticCount > 0 ? ' · ' : ''}
+                              {session.diagnosticCount > 0 ? `⚠ ${session.diagnosticCount}` : ''}
+                            </span>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                  {filteredSessions.length === 0 && (
+                    <li className="ds-session-empty">没有符合条件的会话。可以清除搜索或切换筛选方式。</li>
+                  )}
+                </ul>
+              </div>
             </>
           ) : (
             <div className="ds-session-empty" data-testid="ds-session-empty">

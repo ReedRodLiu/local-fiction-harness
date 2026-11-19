@@ -5,6 +5,7 @@
 }
 
 .overlay-page-shell[data-has-footer='true'] {
+  height: calc(100vh - 32px - var(--safe-area-bottom));
   height: calc(100dvh - 32px - var(--safe-area-bottom));
   min-height: 0;
   flex: 0 0 auto;
@@ -584,6 +585,7 @@
 
 @media (max-width: 560px) {
   .overlay-page-shell[data-has-footer='true'] {
+    height: calc(100vh - 26px - var(--safe-area-bottom));
     height: calc(100dvh - 26px - var(--safe-area-bottom));
   }
 

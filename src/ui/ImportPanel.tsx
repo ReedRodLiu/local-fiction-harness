@@ -264,6 +264,7 @@ export function ImportPanel({
   };
 
   const handleBack = () => {
+    if (isConfirming) return;
     if (step === 2) {
       setStep(1);
       setEditingBlueprint(false);
@@ -298,6 +299,7 @@ export function ImportPanel({
       testId="import-panel"
       step={step}
       stepCount={2}
+      backDisabled={isConfirming}
       onBack={handleBack}
       footer={step === 1 ? (
         <div className="import-footer-actions">
@@ -357,7 +359,11 @@ export function ImportPanel({
       )}
 
       {step === 1 ? (
-        <div className="import-step-content">
+        <div
+          className="import-step-content"
+          inert={isConfirming}
+          aria-busy={isConfirming}
+        >
           <div className="import-intro">
             <h2>先放入你的原始剧本</h2>
             <p>文件在本机读取。故事蓝图拆解需要连接你自己的 DeepSeek 密钥；也可以跳过拆解直接开始。</p>
@@ -373,6 +379,7 @@ export function ImportPanel({
             onDrop={(event) => {
               event.preventDefault();
               setIsDragging(false);
+              if (isConfirming) return;
               const file = event.dataTransfer.files?.[0];
               if (file) void handleFile(file);
             }}
@@ -441,7 +448,11 @@ export function ImportPanel({
           </div>
         </div>
       ) : (
-        <div className="import-step-content">
+        <div
+          className="import-step-content"
+          inert={isConfirming}
+          aria-busy={isConfirming}
+        >
           <div className="import-intro">
             <h2>确认故事蓝图</h2>
             <p>拆解结果默认只读。确认后，原始剧本会作为锚定内容保留。</p>
