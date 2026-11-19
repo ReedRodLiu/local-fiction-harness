@@ -4,13 +4,26 @@ import type { ReactNode } from 'react';
 interface OverlayPageShellProps {
   title: string;
   testId?: string;
+  step?: number;
+  stepCount?: number;
+  footer?: ReactNode;
   onBack: () => void;
   children: ReactNode;
 }
 
-export function OverlayPageShell({ title, testId, onBack, children }: OverlayPageShellProps) {
+export function OverlayPageShell({
+  title,
+  testId,
+  step,
+  stepCount,
+  footer,
+  onBack,
+  children,
+}: OverlayPageShellProps) {
+  const hasProgress = step !== undefined && stepCount !== undefined && stepCount > 0;
+
   return (
-    <section className="overlay-page-shell" data-testid={testId}>
+    <section className="overlay-page-shell" data-testid={testId} data-has-footer={Boolean(footer)}>
       <header className="overlay-page-header">
         <button type="button" className="icon-button" aria-label="返回" onClick={onBack}>
           <ArrowLeft size={20} strokeWidth={1.75} />
@@ -18,7 +31,23 @@ export function OverlayPageShell({ title, testId, onBack, children }: OverlayPag
         <h1>{title}</h1>
         <span className="overlay-header-spacer" aria-hidden="true" />
       </header>
+      {hasProgress && (
+        <div className="overlay-page-progress">
+          <div className="overlay-page-progress-label">第 {step} 步，共 {stepCount} 步</div>
+          <div
+            className="overlay-page-progress-track"
+            role="progressbar"
+            aria-label={`${title}进度`}
+            aria-valuemin={1}
+            aria-valuemax={stepCount}
+            aria-valuenow={step}
+          >
+            <span style={{ width: `${Math.min(100, Math.max(0, (step / stepCount) * 100))}%` }} />
+          </div>
+        </div>
+      )}
       <div className="overlay-page-content">{children}</div>
+      {footer && <footer className="overlay-page-footer">{footer}</footer>}
     </section>
   );
 }

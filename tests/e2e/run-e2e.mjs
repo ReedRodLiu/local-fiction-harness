@@ -347,10 +347,7 @@ async function verifySliceOneViewportMatrix(page) {
 }
 
 async function startDeepSeekImport(page) {
-  if (await page.locator('.import-panel').isVisible().catch(() => false)) {
-    await page.getByRole('button', { name: '返回当前故事' }).click();
-    await page.locator('.import-panel').waitFor({ state: 'hidden' });
-  }
+  await leaveImportView(page);
   const welcomeAction = page.getByTestId('welcome-deepseek-import');
   if (await welcomeAction.isVisible()) {
     await welcomeAction.click();
@@ -366,10 +363,7 @@ async function startDeepSeekImport(page) {
 }
 
 async function startScriptImport(page) {
-  if (await page.locator('.import-panel').isVisible().catch(() => false)) {
-    await page.getByRole('button', { name: '返回当前故事' }).click();
-    await page.locator('.import-panel').waitFor({ state: 'hidden' });
-  }
+  await leaveImportView(page);
   const welcomeAction = page.getByTestId('welcome-script-import');
   if (await welcomeAction.isVisible()) {
     await welcomeAction.click();
@@ -382,6 +376,242 @@ async function startScriptImport(page) {
   }
   await page.getByTestId('library-drawer-trigger').click();
   await page.getByTestId('mobile-library-start-script').click();
+}
+
+async function leaveImportView(page) {
+  for (let attempts = 0; attempts < 4; attempts += 1) {
+    const deepseek = page.getByTestId('deepseek-import-panel');
+    const script = page.getByTestId('import-panel');
+    const shell = await deepseek.isVisible().catch(() => false)
+      ? deepseek
+      : await script.isVisible().catch(() => false)
+        ? script
+        : null;
+    if (!shell) return;
+    const currentStep = Number(await shell.getByRole('progressbar').getAttribute('aria-valuenow'));
+    await shell.getByRole('button', { name: '返回' }).click();
+    if (currentStep > 1) {
+      await page.waitForFunction((expectedStep) =>
+        Number(document.querySelector('[data-testid="deepseek-import-panel"] [role="progressbar"], [data-testid="import-panel"] [role="progressbar"]')?.getAttribute('aria-valuenow')) === expectedStep,
+      currentStep - 1);
+    } else {
+      await shell.waitFor({ state: 'hidden' });
+    }
+  }
+  throw new Error('Import wizard did not return to the story stage after four Back actions.');
+}
+
+async function openSessionPreview(page, title) {
+  const row = page.getByTestId('ds-session-item').filter({ hasText: title }).first();
+  await row.getByTestId('ds-session-preview-trigger').click();
+  const sheet = page.getByTestId('deepseek-preview-sheet');
+  await sheet.waitFor({ state: 'visible' });
+  return { sheet, card: page.getByTestId('deepseek-preview-card') };
+}
+
+async function closeSessionPreview(sheet) {
+  await sheet.getByRole('button', { name: '关闭剧情面板' }).click();
+  await sheet.waitFor({ state: 'hidden' });
+}
+
+async function assertImportWizardLayout(page, testId, step, viewport) {
+  const shell = page.getByTestId(testId);
+  await shell.waitFor({ state: 'visible' });
+  const layout = await shell.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const progress = element.querySelector('[role="progressbar"]');
+    const footer = element.querySelector('.overlay-page-footer');
+    const footerBounds = footer?.getBoundingClientRect();
+    return {
+      width: bounds.width,
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+      progressValue: Number(progress?.getAttribute('aria-valuenow')),
+      footerVisible: Boolean(footerBounds && footerBounds.top < innerHeight && footerBounds.bottom <= innerHeight + 1),
+      footerTop: footerBounds?.top ?? null,
+      footerBottom: footerBounds?.bottom ?? null,
+      shellHeight: bounds.height,
+    };
+  });
+  if (layout.width > Math.min(640, viewport.width) + 1) {
+    throw new Error(`${testId} exceeded its ${viewport.width}px viewport width: ${layout.width}px.`);
+  }
+  if (layout.scrollWidth > layout.clientWidth) {
+    throw new Error(`Horizontal overflow in ${testId} at ${viewport.width}px.`);
+  }
+  if (layout.progressValue !== step) {
+    throw new Error(`${testId} should report step ${step}, got ${layout.progressValue}.`);
+  }
+  if (!layout.footerVisible) {
+    throw new Error(`${testId} primary actions are outside the ${viewport.height}px viewport: ${JSON.stringify(layout)}.`);
+  }
+}
+
+async function assertImportThemeMatrix(page, testId, step, viewport) {
+  for (const theme of ['light', 'dark', 'warm']) {
+    await page.evaluate((selectedTheme) => {
+      document.documentElement.dataset.theme = selectedTheme;
+    }, theme);
+    await assertImportWizardLayout(page, testId, step, viewport);
+  }
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = 'light';
+  });
+}
+
+async function runImportWizardE2E(browser, port, tmpDir) {
+  const context = await newOfflineContext(browser, port, { acceptDownloads: true });
+  const page = await context.newPage();
+  try {
+    await mockSuccessfulKeyVerification(page);
+    let blueprintRequestCount = 0;
+    await page.route('https://cdn.deepseek.example/export-valid.zip', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/zip',
+        body: Buffer.from(buildSyntheticDeepSeekZipE2E()),
+      }),
+    );
+    await page.route('**/chat/completions', async (route) => {
+      const body = route.request().postDataJSON();
+      const systemPrompt = body.messages?.[0]?.content ?? '';
+      if (systemPrompt.includes('严格只输出一个 JSON 对象')) {
+        blueprintRequestCount += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: sseResponse([{
+            choices: [{
+              delta: { content: JSON.stringify({
+                title: '导入向导合成故事',
+                worldRules: ['每轮保留状态面板'],
+                protagonist: '沈知夏',
+                npcs: [{ name: '顾老师', role: '导师', traits: '谨慎' }],
+                taboos: ['不跳过关键线索'],
+                openingHook: '你走进排练室。',
+              }) },
+              finish_reason: 'stop',
+            }],
+          }]),
+        });
+        return;
+      }
+      if (systemPrompt.includes('AI 辅助筛选')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: sseResponse([{ choices: [{ delta: { content: 'ds-e2e-fiction' }, finish_reason: 'stop' }] }]),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: sseResponse([{ choices: [{ delta: { content: '合成续玩回执。' }, finish_reason: 'stop' }] }]),
+      });
+    });
+
+    await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await startDeepSeekImport(page);
+    await page.getByTestId('deepseek-import-panel').waitFor();
+    await assertImportThemeMatrix(page, 'deepseek-import-panel', 1, { width: 1280, height: 800 });
+    await page.getByTestId('deepseek-source-url').click();
+    await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/export-valid.zip');
+    await page.getByTestId('deepseek-fetch-zip').click();
+    await page.getByTestId('ds-session-list').waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await assertImportThemeMatrix(page, 'deepseek-import-panel', 2, { width: 390, height: 844 });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await assertImportWizardLayout(page, 'deepseek-import-panel', 2, { width: 1280, height: 800 });
+
+    const firstSession = page.getByTestId('ds-session-item').filter({ hasText: '合成宫斗测试档' });
+    await firstSession.getByTestId('ds-session-preview-trigger').click();
+    const previewSheet = page.getByTestId('deepseek-preview-sheet');
+    await previewSheet.waitFor({ state: 'visible' });
+    const previewText = await page.getByTestId('deepseek-preview-card').textContent();
+    if (!previewText?.includes('规则附件.docx') || !previewText.includes('另存为 .docx') || !previewText.includes('原进度抵达东侧练歌房')) {
+      throw new Error(`DeepSeek preview omitted story, attachment, or legacy .doc guidance: ${previewText}`);
+    }
+    await previewSheet.getByText('手动调整原始剧本起点/终点').click();
+    await page.fill('#ds-script-start', '2');
+    await page.fill('#ds-script-end', '2');
+    if (!(await previewSheet.getByTestId('ds-script-range-status').textContent())?.includes('已手动调整')) {
+      throw new Error('Manual script-range edits were not reflected in the preview.');
+    }
+    await previewSheet.getByRole('button', { name: '关闭剧情面板' }).click();
+    await page.getByTestId('ds-confirm-import-btn').click();
+    await page.getByTestId('deepseek-import-receipt').waitFor();
+    await assertImportWizardLayout(page, 'deepseek-import-panel', 3, { width: 1280, height: 800 });
+    const receipt = await page.getByTestId('deepseek-import-receipt').textContent();
+    if (!receipt?.includes('老版本.doc') || !receipt.includes('另存为 .docx')) {
+      throw new Error(`DeepSeek receipt omitted the skipped attachment conversion advice: ${receipt}`);
+    }
+    await page.getByRole('button', { name: '继续这条故事' }).click();
+    await page.getByTestId('main-stage').getByText('原进度抵达东侧练歌房').waitFor();
+
+    await startScriptImport(page);
+    await page.getByTestId('import-panel').waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await assertImportThemeMatrix(page, 'import-panel', 1, { width: 390, height: 844 });
+    await page.setInputFiles('#import-file', {
+      name: 'legacy-story.doc',
+      mimeType: 'application/msword',
+      buffer: Buffer.from('synthetic legacy Word document'),
+    });
+    await page.getByTestId('import-error').getByText('另存为 .docx').waitFor();
+    await page.fill('#import-raw-script', '【本地直接开局】\n主角：沈知夏。');
+    await page.getByText('填写故事标题（可选）').click();
+    await page.fill('#import-title', '无密钥开局测试');
+    await page.getByRole('button', { name: '暂不拆解，直接开始' }).click();
+    await page.getByTestId('import-panel').waitFor({ state: 'detached' });
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '无密钥开局测试', exact: true }).waitFor();
+    if (blueprintRequestCount !== 0) throw new Error('Direct start without extraction should not make a model request.');
+
+    await startScriptImport(page);
+    await page.getByTestId('import-panel').waitFor();
+    await assertImportWizardLayout(page, 'import-panel', 1, { width: 390, height: 844 });
+    await page.fill('#import-raw-script', '【合成导入剧本】\n主角：沈知夏。\n规则：每轮保留状态面板。');
+    await page.getByRole('button', { name: '拆解故事蓝图' }).click();
+    await page.getByTestId('deepseek-setup-wizard').waitFor();
+    await completePendingSetup(page, 'sk-e2e-import-wizard');
+    await page.getByTestId('import-panel').getByTestId('story-blueprint-card').waitFor();
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await assertImportThemeMatrix(page, 'import-panel', 2, { width: 1280, height: 800 });
+    const blueprint = page.getByTestId('import-panel').getByTestId('story-blueprint-card');
+    if (!(await blueprint.textContent())?.includes('导入向导合成故事')) {
+      throw new Error('The extracted story blueprint was not shown as a read-only card.');
+    }
+    await page.getByTestId('import-panel').getByRole('button', { name: '微调' }).click();
+    await page.fill('#bp-title', '已微调的合成故事');
+    await page.fill('#bp-protagonist', '沈知夏（已微调）');
+    await page.fill('#bp-npcs-name-0', '顾老师（已微调）');
+    await page.getByRole('button', { name: '保存蓝图微调' }).click();
+    if (!(await blueprint.textContent())?.includes('沈知夏（已微调）')) {
+      throw new Error('Structured blueprint edits were not reflected in the read-only card.');
+    }
+    if (blueprintRequestCount !== 1) throw new Error('BYOK resume did not issue exactly one mocked blueprint request.');
+    await page.getByRole('button', { name: '确认并开启第一幕' }).click();
+    await page.getByTestId('import-panel').waitFor({ state: 'detached' });
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '已微调的合成故事', exact: true }).waitFor();
+
+    const fixturePath = process.env.LFH_SYNTHETIC_UI_STORY_ZIP;
+    if (fixturePath && fs.existsSync(fixturePath)) {
+      await startDeepSeekImport(page);
+      await page.setInputFiles('#deepseek-zip-input', fixturePath);
+      await page.getByTestId('ds-session-list').waitFor();
+      const count = await page.getByTestId('ds-session-item').count();
+      if (count === 0) throw new Error('The supplied synthetic long-story archive had no sessions.');
+      await page.getByTestId('ds-session-item').first().getByTestId('ds-session-preview-trigger').click();
+      await page.getByTestId('deepseek-preview-card').waitFor();
+      await page.getByTestId('deepseek-preview-sheet').getByRole('button', { name: '关闭剧情面板' }).click();
+      await page.getByTestId('ds-confirm-import-btn').click();
+      await page.getByTestId('deepseek-import-receipt').waitFor();
+      console.log(`SYNTHETIC_LONG_IMPORT_PASSED sessions=${count}`);
+    }
+  } finally {
+    await context.close();
+  }
 }
 
 async function openSettings(page) {
@@ -699,7 +929,7 @@ async function verifyModalDialogLifecycle(context, port) {
 }
 
 async function main() {
-  const port = 4177;
+  const port = 4185;
   const srv = await startViteServer(port);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lfh-e2e-suite-'));
   const browser = await chromium.launch({
@@ -917,29 +1147,40 @@ async function main() {
       await route.fulfill({ status: 404, body: 'Not Found' });
     });
 
+    if (process.env.LFH_IMPORT_WIZARD_ONLY === '1') {
+      await runImportWizardE2E(browser, port, tmpDir);
+      console.log('IMPORT_WIZARD_E2E_PASSED');
+      return;
+    }
+
+    await runImportWizardE2E(browser, port, tmpDir);
+    console.log('IMPORT_WIZARD_E2E_PASSED');
+
     await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
     await verifySliceOneViewportMatrix(page);
 
     // 0-url. DeepSeek HTTPS export link fetch (HTML login fallback, CORS fallback, and valid ZIP fetch)
     await startDeepSeekImport(page);
-    await page.click('button[role="tab"]:has-text("粘贴导出 .zip 下载链接")');
+    await page.getByTestId('deepseek-source-url').click();
     await page.waitForSelector('#deepseek-zip-url-input');
 
     await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/export-html.zip');
-    await page.click('button:has-text("拉取并预览")');
-    await page.waitForSelector('[data-testid="deepseek-import-panel"] .error-banner:has-text("HTML")');
+    await page.getByTestId('deepseek-fetch-zip').click();
+    await page.waitForSelector('[data-testid="import-error"]:has-text("HTML")');
 
     await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/export-cors.zip');
-    await page.click('button:has-text("拉取并预览")');
-    await page.waitForSelector('[data-testid="deepseek-import-panel"] .error-banner:has-text("CORS")');
+    await page.getByTestId('deepseek-fetch-zip').click();
+    await page.waitForSelector('[data-testid="import-error"]:has-text("CORS")');
 
     await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/export-valid.zip');
-    await page.click('button:has-text("拉取并预览")');
-    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
-    const urlPreviewText = await page.locator('[data-testid="deepseek-preview-card"]').textContent();
+    await page.getByTestId('deepseek-fetch-zip').click();
+    await page.getByTestId('ds-session-list').waitFor();
+    const { sheet: urlPreviewSheet } = await openSessionPreview(page, '合成宫斗测试档');
+    const urlPreviewText = await urlPreviewSheet.textContent();
     if (!urlPreviewText?.includes('合成宫斗测试档')) {
       throw new Error(`Expected fetched ZIP preview, got: ${urlPreviewText}`);
     }
+    await closeSessionPreview(urlPreviewSheet);
     // Complete story import directly from URL-fetched session list, verify active progress, then clean up
     await page.click('[data-testid="ds-confirm-import-btn"]');
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
@@ -953,8 +1194,9 @@ async function main() {
     await startDeepSeekImport(page);
     await page.waitForSelector('#deepseek-zip-input');
     await page.setInputFiles('#deepseek-zip-input', dsZipPath);
-    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
-    const previewCardText = await page.locator('[data-testid="deepseek-preview-card"]').textContent();
+    await page.getByTestId('ds-session-list').waitFor();
+    const { sheet: dsPreviewSheet, card: dsPreviewCard } = await openSessionPreview(page, '合成宫斗测试档');
+    const previewCardText = await dsPreviewCard.textContent();
     if (
       !previewCardText?.includes('规则附件.docx') ||
       !previewCardText?.includes('另存为 .docx') ||
@@ -962,6 +1204,7 @@ async function main() {
     ) {
       throw new Error(`DeepSeek preview missing attachment/branch cues: ${previewCardText}`);
     }
+    await closeSessionPreview(dsPreviewSheet);
 
     // Check 390px narrow mobile viewport on DeepSeek preview panel
     await page.setViewportSize({ width: 390, height: 844 });
@@ -975,7 +1218,7 @@ async function main() {
     await page.setViewportSize({ width: 1280, height: 720 });
 
     // Also select the second (null-title) session to verify 1-to-1 batch import without API Key
-    await page.locator('.ds-session-item', { hasText: 'Promise.all' }).locator('input[type="checkbox"]').check();
+    await page.getByTestId('ds-session-item').filter({ hasText: 'Promise.all' }).locator('input[type="checkbox"]').check();
     await page.click('[data-testid="ds-confirm-import-btn"]');
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
     const receiptText = await page.locator('[data-testid="deepseek-import-receipt"]').textContent();
@@ -1032,20 +1275,22 @@ async function main() {
     await startDeepSeekImport(page);
     await page.waitForSelector('#deepseek-zip-input');
     await page.setInputFiles('#deepseek-zip-input', ambigZipPath);
-    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
+    await page.getByTestId('ds-session-list').waitFor();
+    const { sheet: ambigPreviewSheet, card: ambigPreviewCard } = await openSessionPreview(page, '模糊开局超窗长档');
     // Exercise collapsed manual script range override in preview and then clear back to auto
-    await page.locator('details summary:has-text("手动调整原始剧本起点")').click();
+    await ambigPreviewSheet.getByText('手动调整原始剧本起点/终点').click();
     await page.fill('#ds-script-start', '3');
     await page.fill('#ds-script-end', '3');
-    const overridePreviewText = await page.locator('[data-testid="deepseek-preview-card"]').textContent();
-    if (!overridePreviewText?.includes('已自动锁定剧本')) {
+    const overridePreviewText = await ambigPreviewCard.textContent();
+    if (!overridePreviewText?.includes('已手动调整原始剧本边界')) {
       throw new Error(`Expected manual override to lock script, got: ${overridePreviewText}`);
     }
     await page.fill('#ds-script-start', '');
+    await closeSessionPreview(ambigPreviewSheet);
     await page.click('[data-testid="ds-confirm-import-btn"]');
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
     const keylessAmbigReceipt = await page.locator('[data-testid="deepseek-import-receipt"]').textContent();
-    if (!keylessAmbigReceipt?.includes('待配置密钥后补充')) {
+    if (!keylessAmbigReceipt?.includes('待配置密钥')) {
       throw new Error(`Expected pending_key badge in receipt, got: ${keylessAmbigReceipt}`);
     }
     await page.click('button:has-text("继续这条故事")');
@@ -1092,7 +1337,7 @@ async function main() {
     await startDeepSeekImport(page);
     await page.waitForSelector('#deepseek-zip-input');
     await page.setInputFiles('#deepseek-zip-input', dsZipPath);
-    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
+    await page.getByTestId('ds-session-list').waitFor();
     await page.click('[data-testid="ds-confirm-import-btn"]');
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
     if (boundaryCallCount !== 0) {
@@ -1102,14 +1347,14 @@ async function main() {
     await startDeepSeekImport(page);
     await page.waitForSelector('#deepseek-zip-input');
     await page.setInputFiles('#deepseek-zip-input', ambigZipPath);
-    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
+    await page.getByTestId('ds-session-list').waitFor();
     await page.click('[data-testid="ds-confirm-import-btn"]');
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
     if (boundaryCallCount !== 1) {
       throw new Error(`Expected 1 boundary LLM call for ambiguous opening, got ${boundaryCallCount}`);
     }
     const ambigReceipt = await page.locator('[data-testid="deepseek-import-receipt"]').textContent();
-    if (!ambigReceipt?.includes('已压缩激活线摘要')) {
+    if (!ambigReceipt?.includes('已压缩')) {
       throw new Error(`Expected compressed summary status in receipt, got: ${ambigReceipt}`);
     }
     await page.click('button:has-text("继续这条故事")');
@@ -1162,8 +1407,11 @@ async function main() {
       return el && 'value' in el && String(el.value).includes('| 人气 | 50 |');
     });
     await page.click('button:has-text("拆解故事蓝图")');
-    await page.waitForSelector('#bp-title');
-    await page.click('button:has-text("确认蓝图并开始故事")');
+    await page.getByTestId('import-panel').getByTestId('story-blueprint-card').waitFor();
+    await page.getByTestId('import-panel').getByRole('button', { name: '微调' }).click();
+    await page.fill('#bp-title', 'E2E训练营故事');
+    await page.getByRole('button', { name: '保存蓝图微调' }).click();
+    await page.getByRole('button', { name: '确认并开启第一幕' }).click();
 
     // 3. Play 6 turns (including clicking A choice button & rendering HUD panel + separated reasoning)
     await page.click('button:has-text("开启第一幕")');
@@ -1371,15 +1619,13 @@ async function main() {
 
     failNextBlueprintWith401 = true;
     await page.click('button:has-text("拆解故事蓝图")');
-    await page.waitForSelector('.import-panel .error-banner');
-    const bpError = await page.locator('.import-panel .error-banner').textContent();
+    await page.waitForSelector('[data-testid="import-error"]');
+    const bpError = await page.getByTestId('import-error').textContent();
     if (!bpError?.includes('401')) {
       throw new Error(`Expected 401 error banner in ImportPanel, got: ${bpError}`);
     }
-    // Non-blocking: user can still skip to manual blueprint fallback
-    await page.click('button:has-text("跳过模型拆解")');
-    await page.waitForSelector('#bp-title');
-    await page.click('button:has-text("确认蓝图并开始故事")');
+    // Non-blocking: user can still create a story with the default blueprint.
+    await page.getByRole('button', { name: '暂不拆解，直接开始' }).last().click();
     await page.waitForFunction(() =>
       [...document.querySelectorAll('[data-testid="story-list-item"]')]
         .filter((item) => item.getClientRects().length > 0).length === 2,
@@ -1455,7 +1701,7 @@ async function main() {
     await checkNoHorizontalOverflow('mobile story tree expanded');
     await closeStoryTree(page);
     await startScriptImport(page);
-    await page.waitForSelector('.import-panel');
+    await page.getByTestId('import-panel').waitFor();
     await checkNoHorizontalOverflow('mobile import view');
 
     await runComprehensiveSpec18MobileE2E(browser, port, tmpDir);
@@ -1678,31 +1924,33 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
 
     // 1. Link error fallback -> upload comprehensive zip -> search & preview -> keyless import -> Continue This Story
     await startDeepSeekImport(page);
-    await page.click('button[role="tab"]:has-text("粘贴导出 .zip 下载链接")');
+    await page.getByTestId('deepseek-source-url').click();
     await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/login.zip');
-    await page.click('button:has-text("拉取并预览")');
-    await page.waitForSelector('[data-testid="deepseek-import-panel"] .error-banner:has-text("HTML")');
-    await page.click('button:has-text("改用本地 .zip 文件导入")');
+    await page.getByTestId('deepseek-fetch-zip').click();
+    await page.waitForSelector('[data-testid="import-error"]:has-text("HTML")');
+    await page.getByRole('button', { name: '改用本地 .zip 文件' }).click();
 
     const zipPath = path.join(tmpDir, 'spec18-comprehensive.zip');
     fs.writeFileSync(zipPath, buildComprehensiveSpec18ZipE2E());
     await page.setInputFiles('#deepseek-zip-input', zipPath);
-    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
-    await page.fill('input[aria-label="搜索 DeepSeek 会话"]', '庄园');
-    const previewText = await page.locator('[data-testid="deepseek-preview-card"]').textContent();
+    await page.getByTestId('ds-session-list').waitFor();
+    await page.fill('input[aria-label="搜索外部会话"]', '庄园');
+    const { sheet: comprehensiveSheet, card: comprehensivePreview } = await openSessionPreview(page, '庄园');
+    const previewText = await comprehensivePreview.textContent();
     if (
       !previewText?.includes('2 处') ||
       !previewText?.includes('庄园规则.docx') ||
       !previewText?.includes('封面.png') ||
       !previewText?.includes('另存为 .docx') ||
-      !previewText?.includes('只读平台诊断标记')
+      !previewText?.includes('1 条只读平台诊断')
     ) {
       throw new Error(`Unexpected comprehensive preview: ${previewText}`);
     }
     await assertNoOverflow('spec18 mobile preview');
 
+    await closeSessionPreview(comprehensiveSheet);
     await page.click('[data-testid="ds-confirm-import-btn"]');
-    await page.waitForSelector('[data-testid="deepseek-import-receipt"]:has-text("待配置密钥后补充")');
+    await page.waitForSelector('[data-testid="deepseek-import-receipt"]:has-text("待配置密钥")');
     await page.click('button:has-text("继续这条故事")');
     await page.waitForSelector('.turn-card.assistant:has-text("抵达东楼密室终点")');
     await page.waitForSelector('[data-testid="turn-diagnostics"]:has-text("CONTENT_FILTER")');
@@ -1916,7 +2164,9 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
       mimeType: 'application/zip',
       buffer: Buffer.from(buildLongSpec24Zip()),
     });
-    await page.getByTestId('deepseek-preview-card').waitFor();
+    await page.getByTestId('ds-session-list').waitFor();
+    const { sheet: longPreviewSheet } = await openSessionPreview(page, LONG_STORY_TITLE);
+    await closeSessionPreview(longPreviewSheet);
     await page.getByTestId('ds-confirm-import-btn').click();
     await page.getByTestId('deepseek-import-receipt').waitFor();
     await page.getByRole('button', { name: '继续这条故事' }).click();
@@ -2098,7 +2348,7 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
         'manifest.json': strToU8(JSON.stringify({ export_format_version: 137 })),
       })),
     });
-    await page.waitForSelector('[data-testid="deepseek-import-panel"] [role="alert"]');
+    await page.getByTestId('import-error').waitFor();
     await page.setInputFiles('#deepseek-zip-input', {
       name: 'SYNTHETIC_MALFORMED_SESSIONS.zip',
       mimeType: 'application/zip',
@@ -2107,9 +2357,15 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
         'chat_sessions/SYNTHETIC_MALFORMED_SESSION.json': strToU8('malformed session JSON'),
       })),
     });
-    await page.getByText(/共 0 条会话/).waitFor();
+    await page.getByTestId('ds-session-empty').waitFor();
+    await page.getByTestId('deepseek-import-panel').getByRole('button', { name: '返回' }).click();
+    await page.waitForFunction(() =>
+      document.querySelector('[data-testid="deepseek-import-panel"] [role="progressbar"]')?.getAttribute('aria-valuenow') === '1',
+    );
     await page.setInputFiles('#deepseek-zip-input', zipPath);
-    await page.waitForSelector('[data-testid="deepseek-preview-card"]');
+    await page.getByTestId('ds-session-list').waitFor();
+    const { sheet: diagnosticPreviewSheet } = await openSessionPreview(page, '合成宫斗测试档');
+    await closeSessionPreview(diagnosticPreviewSheet);
     await page.click('[data-testid="ds-confirm-import-btn"]');
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
 

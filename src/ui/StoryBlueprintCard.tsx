@@ -142,6 +142,10 @@ export function StoryBlueprintCard({
               <ul>{story.blueprint.taboos.map((taboo) => <li key={taboo}>{taboo}</li>)}</ul>
             ) : <p>暂无禁忌条款</p>}
           </div>
+          <div className="story-blueprint-field">
+            <h4>开场提示</h4>
+            <p>{story.blueprint.openingHook || '暂无开场提示'}</p>
+          </div>
         </div>
       )}
 
