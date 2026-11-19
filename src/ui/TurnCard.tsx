@@ -63,7 +63,7 @@ export function TurnCard({
   };
 
   const turnActions = (node.role === 'assistant' || siblings.total > 1) ? (
-    <div className="turn-actions" aria-label="节点操作">
+    <div className="turn-actions" data-testid="turn-actions" aria-label="节点操作">
       {siblings.total > 1 && (
         <span className="branch-pager" data-testid="branch-pager" aria-label="分支切换">
           <button
@@ -204,7 +204,7 @@ export function TurnCard({
               <ChevronUp className="reasoning-chevron-up" size={14} strokeWidth={1.75} aria-hidden="true" />
               <ChevronDown className="reasoning-chevron-down" size={14} strokeWidth={1.75} aria-hidden="true" />
             </summary>
-            <div className="reasoning-content">{node.reasoningContent}</div>
+            <div className="reasoning-content" data-testid="reasoning-content">{node.reasoningContent}</div>
           </details>
         )}
 
@@ -217,7 +217,7 @@ export function TurnCard({
               value={editDraft}
               onChange={(event) => setEditDraft(event.target.value)}
             />
-            <div className="turn-actions">
+            <div className="turn-actions" data-testid="turn-actions">
               <button
                 type="button"
                 className="btn turn-action-button"

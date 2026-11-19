@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { ShieldCheck } from 'lucide-react';
 import type { DiagnosticBundle, PlatformRuntime } from '../harness/index.ts';
 import { buildCrashDiagnosticBundle } from './crashDiagnosticContext.ts';
 import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
@@ -10,14 +11,20 @@ interface AppErrorBoundaryProps {
 
 interface AppErrorBoundaryState {
   hasError: boolean;
-  showDiagnostics: boolean;
+  diagnosticsMounted: boolean;
+  diagnosticsOpen: boolean;
+  diagnosticsRevision: number;
 }
 
 export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundaryState> {
   state: AppErrorBoundaryState = {
     hasError: false,
-    showDiagnostics: false,
+    diagnosticsMounted: false,
+    diagnosticsOpen: false,
+    diagnosticsRevision: 0,
   };
+
+  private diagnosticsTriggerRef: HTMLButtonElement | null = null;
 
   static getDerivedStateFromError(): Partial<AppErrorBoundaryState> {
     return { hasError: true };
@@ -35,17 +42,36 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
 
   componentDidCatch(error: Error, _info: ErrorInfo): void {
     this.recordCrash('unhandled_render_crash', error);
-    this.setState({ showDiagnostics: true });
+    this.openDiagnostics();
   }
 
   private readonly handleWindowError = (event: ErrorEvent): void => {
     this.recordCrash('unhandled_window_error', event.error ?? new Error('Unhandled window error'));
-    this.setState({ hasError: true, showDiagnostics: true });
+    this.setState({ hasError: true });
+    this.openDiagnostics();
   };
 
   private readonly handleUnhandledRejection = (event: PromiseRejectionEvent): void => {
     this.recordCrash('unhandled_rejection', event.reason);
-    this.setState({ hasError: true, showDiagnostics: true });
+    this.setState({ hasError: true });
+    this.openDiagnostics();
+  };
+
+  private readonly openDiagnostics = (): void => {
+    this.setState((state) => ({
+      diagnosticsMounted: true,
+      diagnosticsOpen: true,
+      diagnosticsRevision: state.diagnosticsRevision + 1,
+    }));
+  };
+
+  private readonly closeDiagnostics = (): void => {
+    this.setState({ diagnosticsOpen: false });
+  };
+
+  private readonly finishDiagnosticsExit = (): void => {
+    this.setState({ diagnosticsMounted: false });
+    window.requestAnimationFrame(() => this.diagnosticsTriggerRef?.focus());
   };
 
   private recordCrash(action: 'unhandled_render_crash' | 'unhandled_window_error' | 'unhandled_rejection', error: unknown): void {
@@ -66,32 +92,46 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     if (!this.state.hasError) return this.props.children;
 
     return (
-      <main className="crash-recovery" role="alertdialog" aria-modal="true" aria-labelledby="crash-title">
-        <section className="crash-recovery-card">
-          <h2 id="crash-title">应用发生严重错误</h2>
-          <p>本地故事存档保存在设备上，重新载入界面不会删除已保存的故事。</p>
+      <main className="crash-recovery" role="alert" aria-labelledby="crash-title" data-testid="crash-recovery">
+        <section className="crash-recovery-card" data-testid="crash-recovery-card">
+          <span className="crash-recovery-mark" aria-hidden="true">
+            <ShieldCheck size={26} strokeWidth={1.75} />
+          </span>
+          <h2 id="crash-title">界面遇到意外波动</h2>
+          <p>本地故事存档未受损。你可以重新载入界面，或先预览并导出脱敏诊断包。</p>
           <div className="btn-group">
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => this.setState({ showDiagnostics: true })}
+              onClick={() => window.location.reload()}
             >
-              重新打开诊断预览
-            </button>
-            <button type="button" className="btn" onClick={() => window.location.reload()}>
               重新载入界面
+            </button>
+            <button
+              type="button"
+              className="btn"
+              data-testid="crash-open-diagnostics"
+              onClick={(event) => {
+                this.diagnosticsTriggerRef = event.currentTarget;
+                this.openDiagnostics();
+              }}
+            >
+              预览并导出脱敏诊断包
             </button>
           </div>
         </section>
-        {this.state.showDiagnostics && (
+        {this.state.diagnosticsMounted && (
           <DiagnosticsPreview
+            key={this.state.diagnosticsRevision}
+            open={this.state.diagnosticsOpen}
             buildBundle={this.buildBundle}
             reassurance="本地故事存档保存在设备上，重新载入界面不会删除已保存的故事。"
             onReload={() => window.location.reload()}
             onExport={(fileName, json) =>
               this.props.runtime.backupExporter.exportJsonFile(fileName, json)
             }
-            onClose={() => this.setState({ showDiagnostics: false })}
+            onClose={this.closeDiagnostics}
+            onExitComplete={this.finishDiagnosticsExit}
           />
         )}
       </main>

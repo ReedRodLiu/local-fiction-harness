@@ -64,7 +64,9 @@ export function TopBar({
       </div>
 
       <div className="topbar-right">
-        {isSummaryInProgress && <span className="summary-progress" role="status">补算摘要中…</span>}
+        {isSummaryInProgress && (
+          <span className="summary-progress" data-testid="summary-progress" role="status">补算摘要中…</span>
+        )}
         <button
           type="button"
           className="icon-button topbar-tree-action"

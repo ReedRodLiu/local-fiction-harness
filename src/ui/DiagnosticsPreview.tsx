@@ -1,39 +1,40 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import { Clipboard, Download, RotateCcw, ShieldCheck, X } from 'lucide-react';
 import type { DiagnosticBundle } from '../harness/index.ts';
+import { ModalDialog } from './primitives/ModalDialog.tsx';
 import { toErrorMessage } from './textHelpers.ts';
+import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 
 interface DiagnosticsPreviewProps {
+  open: boolean;
   buildBundle: () => DiagnosticBundle;
   onExport: (fileName: string, jsonContent: string) => Promise<void>;
   onClose: () => void;
+  onExitComplete: () => void;
   reassurance?: string;
   onReload?: () => void;
 }
 
 export function DiagnosticsPreview({
+  open,
   buildBundle,
   onExport,
   onClose,
+  onExitComplete,
   reassurance,
   onReload,
 }: DiagnosticsPreviewProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [includeActiveStory, setIncludeActiveStory] = useState(true);
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const [bundleSnapshot] = useState(() => buildBundle());
+  useWebHistoryLayer('diagnostics', 1000, true, onClose);
   const { activeStorySkeleton: _activeStorySkeleton, ...bundleWithoutSkeleton } = bundleSnapshot;
   const jsonText = JSON.stringify(
     includeActiveStory ? bundleSnapshot : bundleWithoutSkeleton,
     null,
     2,
   );
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    dialog?.showModal();
-    return () => dialog?.close();
-  }, []);
 
   const handleExport = async () => {
     setNotice(null);
@@ -59,69 +60,85 @@ export function DiagnosticsPreview({
   };
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="modal-card"
-      aria-label="脱敏诊断包预览"
-      data-testid="diagnostics-preview"
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
+    <ModalDialog
+      open={open}
+      label="脱敏诊断包预览"
+      className="modal-dialog diagnostics-dialog"
+      testId="diagnostics-preview"
+      onClose={onClose}
+      onExitComplete={onExitComplete}
     >
-      <header className="panel-header">
-        <h4>脱敏诊断包预览（最近 30 分钟）</h4>
-        <button type="button" className="btn" onClick={onClose}>
-          关闭
-        </button>
-      </header>
-      {reassurance && (
-        <p className="status-text" style={{ margin: 0 }}>
-          {reassurance}
-        </p>
-      )}
-      <div className="btn-group">
-        {onReload && (
-          <button type="button" className="btn" onClick={onReload}>
-            重新载入界面
+      <div className="diagnostics-content">
+        <header className="diagnostics-header">
+          <div>
+            <h2>脱敏诊断包</h2>
+            <p>最近 30 分钟运行摘要，可先预览再导出。</p>
+          </div>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="关闭诊断预览"
+            data-testid="diagnostics-close"
+            onClick={onClose}
+          >
+            <X size={18} strokeWidth={1.75} />
           </button>
-        )}
-        <button type="button" className="btn btn-primary" onClick={() => void handleExport()}>
-          导出 .json
-        </button>
-        <button type="button" className="btn" onClick={() => void handleCopy()}>
-          复制到剪贴板
-        </button>
-      </div>
-      <p className="status-text" style={{ margin: 0 }}>
-        以下即为将导出的全部内容；故事骨架可选，且只包含匿名结构与计数。
-      </p>
-      <pre className="diagnostics-json" data-testid="diagnostics-json">
-        {jsonText}
-      </pre>
-      <div className="checkbox-row">
-        <input
-          id="diagnostics-active-story"
-          data-testid="diagnostics-active-story"
-          type="checkbox"
-          checked={includeActiveStory}
-          onChange={(event) => setIncludeActiveStory(event.target.checked)}
-        />
-        <label htmlFor="diagnostics-active-story">附带当前故事匿名树骨架</label>
-      </div>
-      <p className="status-text" style={{ margin: 0 }}>
-        不含剧本、对话正文、推理链、剧情摘要、故事标题、分支名称、附件文件名与 API Key。私人中转域名仅以哈希显示。你可以将诊断包保存到本机、通过 Android 系统分享或复制到剪贴板。
-      </p>
-      {notice && (
-        <div className="status-text" role="status">
-          {notice}
+        </header>
+
+        <div className="diagnostics-safe" role="note" data-testid="diagnostics-safety">
+          <ShieldCheck size={20} strokeWidth={1.75} aria-hidden="true" />
+          <span><strong>零正文、零剧本、零密钥</strong>，只保留运行结构与计数。</span>
         </div>
-      )}
-      {failure && (
-        <div className="error-banner" role="alert">
-          {failure}
+        {reassurance && <p className="diagnostics-reassurance">{reassurance}</p>}
+
+        <div className="diagnostics-action-row">
+          {onReload && (
+            <button type="button" className="btn" data-testid="diagnostics-reload" onClick={onReload}>
+              <RotateCcw size={18} strokeWidth={1.75} />
+              重新载入界面
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn"
+            data-testid="diagnostics-copy"
+            onClick={() => void handleCopy()}
+          >
+            <Clipboard size={18} strokeWidth={1.75} />
+            复制到剪贴板
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            data-testid="diagnostics-export"
+            onClick={() => void handleExport()}
+          >
+            <Download size={18} strokeWidth={1.75} />
+            导出 .json
+          </button>
         </div>
-      )}
-    </dialog>
+
+        <label className="checkbox-row diagnostics-checkbox" htmlFor="diagnostics-active-story">
+          <input
+            id="diagnostics-active-story"
+            data-testid="diagnostics-active-story"
+            type="checkbox"
+            checked={includeActiveStory}
+            onChange={(event) => setIncludeActiveStory(event.target.checked)}
+          />
+          <span>附带当前故事匿名树骨架</span>
+        </label>
+        <p className="diagnostics-note">
+          不含剧本、对话正文、推理链、剧情摘要、故事标题、分支名称、附件文件名与 API Key。私人中转域名仅以哈希显示。
+        </p>
+
+        <pre className="diagnostics-json" data-testid="diagnostics-json">
+          {jsonText}
+        </pre>
+
+        {notice && <div className="status-text" role="status">{notice}</div>}
+        {failure && <div className="error-banner" role="alert">{failure}</div>}
+      </div>
+    </ModalDialog>
   );
 }

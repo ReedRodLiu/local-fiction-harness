@@ -368,6 +368,7 @@ export function ImportPanel({
       {step === 1 ? (
         <div
           className="import-step-content"
+          data-testid="import-step-content"
           inert={isConfirming}
           aria-busy={isConfirming}
         >
@@ -457,6 +458,7 @@ export function ImportPanel({
       ) : (
         <div
           className="import-step-content"
+          data-testid="import-step-content"
           inert={isConfirming}
           aria-busy={isConfirming}
         >

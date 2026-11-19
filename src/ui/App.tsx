@@ -35,6 +35,14 @@ import {
   type DevTestConfigResponse,
 } from '../platform/runtime.ts';
 import { CompanionSheet } from './CompanionSheet.tsx';
+import {
+  applyDisplayPreferences,
+  persistDisplayPreferences,
+  readDisplayPreferences,
+  type DisplayFontSize,
+  type DisplayPreferences,
+  type DisplayThemePreference,
+} from './displayPreferences.ts';
 import { LibraryDrawer } from './LibraryDrawer.tsx';
 import { setCrashDiagnosticBundleBuilder } from './crashDiagnosticContext.ts';
 import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
@@ -51,6 +59,7 @@ import { SettingsPage } from './SettingsPage.tsx';
 import { TopBar } from './TopBar.tsx';
 import { TurnCard } from './TurnCard.tsx';
 import { toErrorMessage } from './textHelpers.ts';
+import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 import { WelcomeView } from './WelcomeView.tsx';
 import './styles/play-stage.css';
 
@@ -143,6 +152,8 @@ export function App({ runtime }: AppProps) {
   const [libraryCollapsed, setLibraryCollapsed] = useState(readLibraryCollapsedPreference);
   const [storyTreeOpen, setStoryTreeOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardMounted, setWizardMounted] = useState(false);
+  const [wizardVerifying, setWizardVerifying] = useState(false);
   const [pendingByok, setPendingByok] = useState<{
     label: string;
     resume: (resolvedConfig: ModelConfig) => void;
@@ -161,8 +172,17 @@ export function App({ runtime }: AppProps) {
   const [reasoningDurations, setReasoningDurations] = useState<Record<string, number>>({});
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [diagnosticsMounted, setDiagnosticsMounted] = useState(false);
+  const [diagnosticsRevision, setDiagnosticsRevision] = useState(0);
   const [diagnosticTrigger, setDiagnosticTrigger] = useState<DiagnosticBundleTrigger>('settings_manual');
+  const [displayPreferences, setDisplayPreferences] = useState<DisplayPreferences>(readDisplayPreferences);
+  const [prefersDark, setPrefersDark] = useState(() =>
+    window.matchMedia('(prefers-color-scheme: dark)').matches,
+  );
+  const overlayReturnFocusRef = useRef<HTMLElement | null>(null);
+  const wizardReturnFocusRef = useRef<HTMLElement | null>(null);
+  const wizardCloseReasonRef = useRef<'success' | 'cancel' | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const streamSeqRef = useRef(0);
@@ -185,9 +205,27 @@ export function App({ runtime }: AppProps) {
   const suppressedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet());
   const isSummaryInProgress = isBranchSwitchSummarizing || isSummaryComputationInProgress;
 
+  const captureOverlayTrigger = () => {
+    overlayReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+  };
+
   const openDiagnostics = (trigger: DiagnosticBundleTrigger = 'error_banner') => {
+    captureOverlayTrigger();
     setDiagnosticTrigger(trigger);
-    setShowDiagnostics(true);
+    setDiagnosticsRevision((revision) => revision + 1);
+    setDiagnosticsMounted(true);
+    setDiagnosticsOpen(true);
+  };
+
+  const closeDiagnostics = () => {
+    setDiagnosticsOpen(false);
+  };
+
+  const finishDiagnosticsExit = () => {
+    setDiagnosticsMounted(false);
+    window.requestAnimationFrame(() => overlayReturnFocusRef.current?.focus());
   };
 
   const buildDiagnosticBundle = useCallback(
@@ -352,6 +390,90 @@ export function App({ runtime }: AppProps) {
     }
   }, [libraryCollapsed]);
 
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const updatePreference = (event: MediaQueryListEvent) => setPrefersDark(event.matches);
+    setPrefersDark(media.matches);
+    media.addEventListener?.('change', updatePreference);
+    return () => media.removeEventListener?.('change', updatePreference);
+  }, []);
+
+  useEffect(() => {
+    applyDisplayPreferences(displayPreferences, prefersDark);
+    persistDisplayPreferences(displayPreferences);
+  }, [displayPreferences, prefersDark]);
+
+  useWebHistoryLayer(
+    'setup-wizard',
+    80,
+    wizardOpen,
+    () => {
+      const cancel = pendingByok?.onCancel;
+      wizardCloseReasonRef.current = 'cancel';
+      setPendingByok(null);
+      setWizardOpen(false);
+      cancel?.();
+    },
+    !wizardVerifying,
+    () => !document.querySelector('[data-testid="deepseek-setup-wizard"] [data-verifying="true"]'),
+    () => null,
+  );
+  useWebHistoryLayer(
+    'companion-sheet',
+    40,
+    storyTreeOpen,
+    () => setStoryTreeOpen(false),
+    true,
+    undefined,
+    () => document.querySelector<HTMLElement>('[data-testid="open-story-tree"]'),
+  );
+  useWebHistoryLayer('mobile-library', 30, mobileLibraryOpen, () => setMobileLibraryOpen(false));
+  useWebHistoryLayer(
+    'settings',
+    20,
+    showSettings,
+    () => setShowSettings(false),
+    true,
+    undefined,
+    () => overlayReturnFocusRef.current,
+  );
+  useWebHistoryLayer(
+    'import-view',
+    20,
+    showImport,
+    () => setShowImport(false),
+    true,
+    undefined,
+    () => overlayReturnFocusRef.current,
+  );
+
+  const setThemePreference = (theme: DisplayThemePreference) => {
+    setDisplayPreferences((current) => ({ ...current, theme }));
+  };
+
+  const setDisplayFontSize = (fontSize: DisplayFontSize) => {
+    setDisplayPreferences((current) => ({ ...current, fontSize }));
+  };
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === 'b' &&
+        window.matchMedia('(min-width: 960px)').matches &&
+        !showImport &&
+        !showSettings
+      ) {
+        event.preventDefault();
+        setLibraryCollapsed((collapsed) => !collapsed);
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [showImport, showSettings]);
+
   const enqueueConfigSave = (task: () => Promise<void>) => {
     configSaveQueueRef.current = configSaveQueueRef.current
       .then(task)
@@ -418,6 +540,7 @@ export function App({ runtime }: AppProps) {
   );
 
   useLayoutEffect(() => {
+    if (showImport || showSettings) return;
     const stage = mainStageRef.current;
     const storyChanged = mainStageStoryIdRef.current !== story.id;
     if (storyChanged) {
@@ -468,7 +591,16 @@ export function App({ runtime }: AppProps) {
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [story.id, story.activeLeafNodeId, activeNodes.length, isStreaming, streamReasoning, streamContent]);
+  }, [
+    story.id,
+    story.activeLeafNodeId,
+    activeNodes.length,
+    isStreaming,
+    streamReasoning,
+    streamContent,
+    showImport,
+    showSettings,
+  ]);
 
   useEffect(() => {
     const keepLatestInView = () => {
@@ -712,13 +844,33 @@ export function App({ runtime }: AppProps) {
     resume: (resolvedConfig: ModelConfig) => void,
     onCancel?: () => void,
   ) => {
+    wizardReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    wizardCloseReasonRef.current = null;
     setPendingByok({ label, resume, onCancel });
+    setWizardMounted(true);
     setWizardOpen(true);
   };
 
   const openSetupWizard = () => {
+    wizardReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    wizardCloseReasonRef.current = null;
     setPendingByok(null);
+    setWizardMounted(true);
     setWizardOpen(true);
+  };
+
+  const finishWizardExit = () => {
+    setWizardMounted(false);
+    const preferred = wizardCloseReasonRef.current === 'success'
+      ? document.querySelector<HTMLElement>('[data-testid="change-key-btn"]')
+      : wizardReturnFocusRef.current;
+    wizardCloseReasonRef.current = null;
+    wizardReturnFocusRef.current = null;
+    window.requestAnimationFrame(() => preferred?.focus());
   };
 
   const handleClearSavedKey = () => {
@@ -728,6 +880,7 @@ export function App({ runtime }: AppProps) {
 
   const openImportView = (mode: ImportMode) => {
     if (branchSwitchBusyRef.current) return;
+    captureOverlayTrigger();
     abortActiveStream(true);
     setShowSettings(false);
     setStoryTreeOpen(false);
@@ -739,6 +892,7 @@ export function App({ runtime }: AppProps) {
 
   const openSettings = () => {
     if (branchSwitchBusyRef.current) return;
+    captureOverlayTrigger();
     setShowImport(false);
     setMobileLibraryOpen(false);
     setStoryTreeOpen(false);
@@ -1197,6 +1351,7 @@ export function App({ runtime }: AppProps) {
 
       <div
         className={`app-workspace ${libraryCollapsed ? 'is-library-collapsed' : ''} ${showImport || showSettings ? 'is-overlay' : ''}`}
+        data-testid="app-workspace"
       >
         <LibraryDrawer
           stories={stories}
@@ -1249,12 +1404,19 @@ export function App({ runtime }: AppProps) {
               config={config}
               useDevEnvKey={useDevEnvKey}
               showDevTestProxy={import.meta.env.DEV && isWebDev && Boolean(devTestInfo?.available)}
+              themePreference={displayPreferences.theme}
+              fontSize={displayPreferences.fontSize}
+              canExportCurrentStory={storyExists}
+              currentStoryTitle={story.title}
               onBack={() => setShowSettings(false)}
               onOpenSetupWizard={openSetupWizard}
               onClearSavedKey={handleClearSavedKey}
               onApplyDevTestConfig={applyDevTestConfig}
               onOpenDiagnostics={() => openDiagnostics('settings_manual')}
+              onExportCurrentStory={() => void handleExportBackup(story.id)}
               onImportBackupFile={(file) => void handleImportBackupFile(file)}
+              onThemePreferenceChange={setThemePreference}
+              onFontSizeChange={setDisplayFontSize}
             />
           ) : showImport ? (
             <ImportPanel
@@ -1473,8 +1635,9 @@ export function App({ runtime }: AppProps) {
             </>
           )}
 
-          {wizardOpen && (
+          {wizardMounted && (
             <DeepSeekSetupWizard
+              open={wizardOpen}
               initialKey={config.apiKey}
               pendingLabel={pendingByok?.label ?? null}
               verifyUrlBase={
@@ -1485,13 +1648,17 @@ export function App({ runtime }: AppProps) {
                   ? { ...config, apiKey: verifiedKey, memoryOnly: false }
                   : normalizeOfficialModelConfig({ ...config, apiKey: verifiedKey });
                 const resume = pendingByok?.resume;
+                wizardCloseReasonRef.current = 'success';
                 setPendingByok(null);
                 setWizardOpen(false);
                 updateConfig(nextCfg, false);
                 if (resume) resume(nextCfg);
               }}
+              onVerifyingChange={setWizardVerifying}
+              onExitComplete={finishWizardExit}
               onCancel={() => {
                 const cancel = pendingByok?.onCancel;
+                wizardCloseReasonRef.current = 'cancel';
                 setPendingByok(null);
                 setWizardOpen(false);
                 cancel?.();
@@ -1501,11 +1668,15 @@ export function App({ runtime }: AppProps) {
         </main>
       </div>
 
-      {showDiagnostics && (
+      {diagnosticsMounted && (
         <DiagnosticsPreview
+          key={diagnosticsRevision}
+          open={diagnosticsOpen}
           buildBundle={() => buildDiagnosticBundle(diagnosticTrigger)}
           onExport={(fileName, json) => runtime.backupExporter.exportJsonFile(fileName, json)}
-          onClose={() => setShowDiagnostics(false)}
+          onReload={() => window.location.reload()}
+          onClose={closeDiagnostics}
+          onExitComplete={finishDiagnosticsExit}
         />
       )}
 

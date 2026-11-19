@@ -1,0 +1,118 @@
+.diagnostics-dialog {
+  width: min(680px, calc(100% - 24px));
+  max-width: 680px;
+  max-height: 90vh;
+  max-height: 90dvh;
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-overlay);
+}
+
+.diagnostics-dialog[open] {
+  display: flex;
+}
+
+.diagnostics-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-height: 90vh;
+  max-height: 90dvh;
+  padding: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.diagnostics-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.diagnostics-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.diagnostics-header p,
+.diagnostics-reassurance,
+.diagnostics-note {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.diagnostics-safe {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid var(--status-ok);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--status-ok);
+  font-size: 12px;
+}
+
+.diagnostics-safe svg {
+  flex: 0 0 auto;
+}
+
+.diagnostics-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.diagnostics-action-row .btn {
+  display: inline-flex;
+  flex: 1 1 150px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.diagnostics-checkbox {
+  min-height: 44px;
+}
+
+.diagnostics-json {
+  flex: 1 1 auto;
+  min-height: 140px;
+  max-height: 38dvh;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-hover);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+@media (max-width: 760px) {
+  .diagnostics-dialog {
+    inset: auto 0 0;
+    width: 100%;
+    max-width: none;
+    max-height: 92vh;
+    max-height: 92dvh;
+    margin: auto 0 0;
+    border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  }
+
+  .diagnostics-content {
+    max-height: 92vh;
+    max-height: 92dvh;
+    padding: 16px 14px max(14px, var(--safe-area-bottom));
+  }
+}

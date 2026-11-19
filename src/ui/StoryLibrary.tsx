@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { getActiveBranchNodes, projectStoryTreeSpine, type Story } from '../harness/index.ts';
+import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 
 interface StoryLibraryProps {
   stories: Story[];
@@ -22,6 +23,73 @@ export function StoryLibrary({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const restoreMenuFocusRef = useRef(true);
+  const closeMenu = (restoreFocus = true) => {
+    restoreMenuFocusRef.current = restoreFocus;
+    setOpenMenuId(null);
+  };
+  const closeMenuRef = useRef(closeMenu);
+  closeMenuRef.current = closeMenu;
+  useWebHistoryLayer('story-menu', 100, Boolean(openMenuId), closeMenuRef.current);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.closest('.story-menu-container')) closeMenu();
+    };
+    window.addEventListener('pointerdown', closeOnOutsidePointer, true);
+    return () => window.removeEventListener('pointerdown', closeOnOutsidePointer, true);
+  }, [openMenuId]);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    const menuId = openMenuId;
+    const firstItem = menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
+    firstItem?.focus();
+    return () => {
+      if (!restoreMenuFocusRef.current) {
+        restoreMenuFocusRef.current = true;
+        return;
+      }
+      const restoreTriggerFocus = () => {
+        if (document.querySelector('[data-testid="story-overflow-menu"]')) return;
+        const trigger = menuTriggerRefs.current.get(menuId);
+        if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+      };
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(restoreTriggerFocus);
+      });
+      window.setTimeout(restoreTriggerFocus, 60);
+    };
+  }, [openMenuId]);
+
+  const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    if (items.length === 0) return;
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+    let nextIndex = currentIndex;
+    if (event.key === 'ArrowDown') {
+      nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
+    } else if (event.key === 'ArrowUp') {
+      nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = items.length - 1;
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMenu();
+      return;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    items[nextIndex]?.focus();
+  };
 
   const commitRename = (id: string) => {
     const trimmed = renameDraft.trim();
@@ -49,7 +117,7 @@ export function StoryLibrary({
             return (
               <li
                 key={item.id}
-                className={`story-list-item ${isActive ? 'is-active' : ''}`}
+                className={`story-list-item ${isActive ? 'is-active' : ''} ${openMenuId === item.id ? 'is-menu-open' : ''}`}
                 data-testid="story-list-item"
                 data-active={isActive ? 'true' : undefined}
               >
@@ -98,23 +166,41 @@ export function StoryLibrary({
                     </button>
                     <div className="story-menu-container">
                       <button
+                        ref={(element) => {
+                          if (element) menuTriggerRefs.current.set(item.id, element);
+                          else menuTriggerRefs.current.delete(item.id);
+                        }}
                         type="button"
                         className="icon-button story-menu-trigger"
                         data-testid="story-menu-trigger"
                         aria-label={`更多 ${item.title} 的操作`}
                         aria-haspopup="menu"
                         aria-expanded={openMenuId === item.id}
-                        onClick={() => setOpenMenuId((current) => current === item.id ? null : item.id)}
+                        onClick={() => {
+                          if (openMenuId === item.id) {
+                            closeMenu();
+                          } else {
+                            restoreMenuFocusRef.current = true;
+                            setOpenMenuId(item.id);
+                          }
+                        }}
                       >
                         <MoreHorizontal size={18} strokeWidth={1.75} />
                       </button>
                       {openMenuId === item.id && (
-                        <div className="story-overflow-menu" role="menu" aria-label={`${item.title} 的操作`}>
+                        <div
+                          ref={menuRef}
+                          className="story-overflow-menu"
+                          role="menu"
+                          aria-label={`${item.title} 的操作`}
+                          data-testid="story-overflow-menu"
+                          onKeyDown={handleMenuKeyDown}
+                        >
                           <button
                             type="button"
                             role="menuitem"
                             onClick={() => {
-                              setOpenMenuId(null);
+                              closeMenu(false);
                               setRenamingId(item.id);
                               setRenameDraft(item.title);
                             }}
@@ -125,7 +211,7 @@ export function StoryLibrary({
                             type="button"
                             role="menuitem"
                             onClick={() => {
-                              setOpenMenuId(null);
+                              closeMenu();
                               onExportStoryBackup(item.id);
                             }}
                           >
@@ -136,7 +222,7 @@ export function StoryLibrary({
                             role="menuitem"
                             className="danger-menu-item"
                             onClick={() => {
-                              setOpenMenuId(null);
+                              closeMenu();
                               onDeleteStory(item.id);
                             }}
                           >

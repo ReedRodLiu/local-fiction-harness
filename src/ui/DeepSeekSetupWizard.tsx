@@ -1,25 +1,32 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   DEEPSEEK_OFFICIAL_KEYS_URL,
   sanitizeApiKeyInput,
   validateApiKeyFormat,
   verifyDeepSeekApiKey,
 } from '../harness/index.ts';
+import { ModalDialog } from './primitives/ModalDialog.tsx';
 
 export interface DeepSeekSetupWizardProps {
+  open: boolean;
   initialKey?: string;
   pendingLabel?: string | null;
   verifyUrlBase: string;
   onComplete: (apiKey: string) => void;
   onCancel: () => void;
+  onExitComplete: () => void;
+  onVerifyingChange?: (isVerifying: boolean) => void;
 }
 
 export function DeepSeekSetupWizard({
+  open,
   initialKey = '',
   pendingLabel,
   verifyUrlBase,
   onComplete,
   onCancel,
+  onExitComplete,
+  onVerifyingChange,
 }: DeepSeekSetupWizardProps) {
   const [keyDraft, setKeyDraft] = useState(initialKey);
   const [showKey, setShowKey] = useState(false);
@@ -29,6 +36,13 @@ export function DeepSeekSetupWizard({
   const [clipboardHint, setClipboardHint] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const verifySeqRef = useRef(0);
+
+  useEffect(() => {
+    onVerifyingChange?.(isVerifying);
+    return () => {
+      if (isVerifying) onVerifyingChange?.(false);
+    };
+  }, [isVerifying, onVerifyingChange]);
 
   const handleOpenPlatform = () => {
     window.open(DEEPSEEK_OFFICIAL_KEYS_URL, '_blank', 'noopener,noreferrer');
@@ -99,22 +113,19 @@ export function DeepSeekSetupWizard({
   };
 
   return (
-    <div
-      className="wizard-backdrop"
-      role="presentation"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !isVerifying) {
-          onCancel();
-        }
+    <ModalDialog
+      open={open}
+      label="连接 DeepSeek 官方"
+      className="modal-dialog wizard-dialog"
+      testId="deepseek-setup-wizard"
+      closeDisabled={isVerifying}
+      onClose={onCancel}
+      onExitComplete={onExitComplete}
+      onCancel={(event) => {
+        if (isVerifying) event.preventDefault();
       }}
     >
-      <section
-        className="wizard-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="wizard-title"
-        data-testid="deepseek-setup-wizard"
-      >
+      <div className="wizard-dialog-content" data-verifying={isVerifying ? 'true' : 'false'}>
         <div className="wizard-header">
           <div>
             <h3 id="wizard-title">连接 DeepSeek 官方（DeepSeek-Flash）</h3>
@@ -261,7 +272,7 @@ export function DeepSeekSetupWizard({
             取消
           </button>
         </div>
-      </section>
-    </div>
+      </div>
+    </ModalDialog>
   );
 }
