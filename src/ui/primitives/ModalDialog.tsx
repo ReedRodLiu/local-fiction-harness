@@ -1,6 +1,17 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { waitForExitAnimation } from './waitForExitAnimation.ts';
 
+function isBackdropPointer(event: React.PointerEvent<HTMLDialogElement>) {
+  if (event.target !== event.currentTarget) return false;
+  const bounds = event.currentTarget.getBoundingClientRect();
+  return (
+    event.clientX < bounds.left ||
+    event.clientX > bounds.right ||
+    event.clientY < bounds.top ||
+    event.clientY > bounds.bottom
+  );
+}
+
 interface ModalDialogProps {
   open: boolean;
   label: string;
@@ -22,6 +33,8 @@ export function ModalDialog({
 }: ModalDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const suppressCloseEventRef = useRef(false);
+  const backdropPointerRef = useRef<{ pointerId: number; startedOnBackdrop: boolean } | null>(null);
+  const backdropClickRef = useRef(false);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -53,8 +66,27 @@ export function ModalDialog({
           onClose();
         }
       }}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
+      onPointerDown={(event) => {
+        backdropPointerRef.current = {
+          pointerId: event.pointerId,
+          startedOnBackdrop: isBackdropPointer(event),
+        };
+        backdropClickRef.current = false;
+      }}
+      onPointerUp={(event) => {
+        const pointer = backdropPointerRef.current;
+        if (!pointer || pointer.pointerId !== event.pointerId) return;
+        backdropClickRef.current = pointer.startedOnBackdrop && isBackdropPointer(event);
+        backdropPointerRef.current = null;
+      }}
+      onPointerCancel={() => {
+        backdropPointerRef.current = null;
+        backdropClickRef.current = false;
+      }}
+      onClick={() => {
+        if (!backdropClickRef.current) return;
+        backdropClickRef.current = false;
+        onClose();
       }}
       onClose={() => {
         if (suppressCloseEventRef.current) {

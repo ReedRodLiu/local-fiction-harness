@@ -352,12 +352,13 @@ summary:focus-visible {
 .sheet-dialog[open] { display: flex; flex-direction: column; }
 .sheet-dialog { position: fixed; inset: auto 0 0 auto; width: 100%; height: 74vh; height: 74dvh; max-width: none; max-height: 92vh; max-height: 92dvh; margin: 0; padding: 0 16px max(16px, var(--safe-area-bottom)); overflow: hidden; border: 1px solid var(--border-hairline); border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; background: var(--bg-surface-elevated); }
 .sheet-dialog.is-expanded { height: 92vh; height: 92dvh; }
-.sheet-handlebar { position: relative; display: flex; align-items: center; justify-content: center; flex: 0 0 40px; touch-action: none; }
+.sheet-handlebar { position: relative; display: flex; align-items: center; justify-content: center; flex: 0 0 44px; }
+.sheet-drag-handle { display: flex; align-items: center; justify-content: center; width: 44px; min-width: 44px; height: 44px; padding: 0; border: 0; border-radius: 999px; background: transparent; touch-action: none; cursor: grab; }
+.sheet-drag-handle:active { cursor: grabbing; }
 .sheet-grabber { width: 36px; height: 4px; border-radius: 999px; background: var(--border-strong); }
-.sheet-size-toggle,
 .sheet-close { position: absolute; top: 0; }
-.sheet-size-toggle { left: 0; }
 .sheet-close { right: 0; }
+.sheet-dialog[data-dragging="true"] { height: calc(var(--sheet-base-height, 74dvh) + var(--sheet-grow-by, 0px)); transform: translateY(var(--sheet-drag-offset, 0px)); transition: none; }
 .sheet-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .sheet-header h2 { margin: 0; font-size: 16px; }
 .sheet-status { color: var(--status-warn); font-size: 12px; }
@@ -375,11 +376,13 @@ summary:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  .sheet-dialog[data-dragging="true"] { transition: none; }
 }
 
 @media (min-width: 768px) {
   .sheet-dialog { inset: 0 0 0 auto; width: min(440px, 100vw); height: 100vh; height: 100dvh; max-height: none; border-radius: 0; }
   .sheet-dialog.is-expanded { height: 100vh; height: 100dvh; }
+  .sheet-dialog[data-dragging="true"] { height: 100vh; height: 100dvh; transform: none; transition: none; }
   .sheet-content { padding-bottom: 20px; }
 }
 

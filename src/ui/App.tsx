@@ -34,7 +34,7 @@ import {
   writeDevSessionProxy,
   type DevTestConfigResponse,
 } from '../platform/runtime.ts';
-import { ContextOverview } from './ContextOverview.tsx';
+import { CompanionSheet } from './CompanionSheet.tsx';
 import { LibraryDrawer } from './LibraryDrawer.tsx';
 import { setCrashDiagnosticBundleBuilder } from './crashDiagnosticContext.ts';
 import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
@@ -46,10 +46,7 @@ import { DeepSeekSetupWizard } from './DeepSeekSetupWizard.tsx';
 import { ImportPanel, type ImportMode } from './ImportPanel.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
-import { StoryReview } from './StoryReview.tsx';
-import { StoryTree } from './StoryTree.tsx';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
-import { SheetDialog } from './primitives/SheetDialog.tsx';
 import { SettingsPage } from './SettingsPage.tsx';
 import { TopBar } from './TopBar.tsx';
 import { TurnCard } from './TurnCard.tsx';
@@ -153,6 +150,8 @@ export function App({ runtime }: AppProps) {
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [isSummaryComputationInProgress, setIsSummaryComputationInProgress] = useState(false);
+  const [isBlueprintReextracting, setIsBlueprintReextracting] = useState(false);
   const [isBranchSwitchSummarizing, setIsBranchSwitchSummarizing] = useState(false);
   const [isBranchSwitching, setIsBranchSwitching] = useState(false);
   const [streamReasoning, setStreamReasoning] = useState('');
@@ -180,6 +179,7 @@ export function App({ runtime }: AppProps) {
   const configEditSeqRef = useRef(0);
   const configSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const suppressedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet());
+  const isSummaryInProgress = isBranchSwitchSummarizing || isSummaryComputationInProgress;
 
   const openDiagnostics = (trigger: DiagnosticBundleTrigger = 'error_banner') => {
     setDiagnosticTrigger(trigger);
@@ -263,6 +263,7 @@ export function App({ runtime }: AppProps) {
   const invalidateSummaryTask = useCallback(() => {
     summarySeqRef.current += 1;
     setIsSummarizing(false);
+    setIsSummaryComputationInProgress(false);
     setIsBranchSwitchSummarizing(false);
   }, []);
 
@@ -604,9 +605,11 @@ export function App({ runtime }: AppProps) {
     setErrorMsg(null);
     if (opts?.trackSummarizing) {
       setIsSummarizing(true);
+      setIsSummaryComputationInProgress(false);
       setIsBranchSwitchSummarizing(false);
     } else if (!opts?.preserveSummaryTask) {
       setIsSummarizing(false);
+      setIsSummaryComputationInProgress(false);
       setIsBranchSwitchSummarizing(false);
     }
     try {
@@ -766,6 +769,7 @@ export function App({ runtime }: AppProps) {
   ) => {
     const summarySeq = ++summarySeqRef.current;
     setIsSummarizing(true);
+    setIsSummaryComputationInProgress(!allowRenameDuringSummary);
     setIsBranchSwitchSummarizing(allowRenameDuringSummary);
     try {
       const summarized = await harness.calculateActiveBranchSummary(targetStory, activeCfg);
@@ -782,6 +786,7 @@ export function App({ runtime }: AppProps) {
     } finally {
       if (summarySeqRef.current === summarySeq) {
         setIsSummarizing(false);
+        setIsSummaryComputationInProgress(false);
         setIsBranchSwitchSummarizing(false);
       }
     }
@@ -885,6 +890,7 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '补拆故事蓝图',
       (activeCfg) => {
+        setIsBlueprintReextracting(true);
         void runStoryTransition(
           async () => {
             const extracted = await harness.extractStoryBlueprint(
@@ -896,7 +902,7 @@ export function App({ runtime }: AppProps) {
           },
           '补拆故事蓝图失败。',
           { trackSummarizing: true },
-        );
+        ).finally(() => setIsBlueprintReextracting(false));
       },
       overrideConfig,
     );
@@ -1112,7 +1118,7 @@ export function App({ runtime }: AppProps) {
           hasStory={storyExists}
           branchLabel={branchLabel}
           forkCount={forkCount}
-          isSummarizing={isSummarizing}
+          isSummaryInProgress={isSummaryInProgress}
           libraryCollapsed={libraryCollapsed}
           onOpenLibrary={() => setMobileLibraryOpen(true)}
           onToggleLibrary={toggleLibraryCollapsed}
@@ -1211,24 +1217,6 @@ export function App({ runtime }: AppProps) {
                 />
               ) : (
                 <>
-                  <StoryReview
-                    story={story}
-                    metrics={contextPreview.metrics}
-                    isBusy={isStreaming}
-                    isSummarizing={isSummarizing}
-                    onComputeSummary={() => void handleComputeActiveSummary()}
-                  />
-
-                  <ContextOverview
-                    story={story}
-                    summarySnapshot={activeSummary}
-                    metrics={contextPreview.metrics}
-                    isStreaming={isStreaming || isSummarizing}
-                    isReextracting={isSummarizing}
-                    onSaveBlueprintTweak={handleSaveBlueprintTweak}
-                    onReextractBlueprint={() => handleReextractBlueprint()}
-                  />
-
                   <section className="timeline" data-testid="story-timeline" aria-label="故事对话记录">
                     {activeNodes.length === 0 && !isStreaming && (
                       <div className="turn-card empty-story-card">
@@ -1448,23 +1436,26 @@ export function App({ runtime }: AppProps) {
         />
       )}
 
-      <SheetDialog
+      <CompanionSheet
         open={storyTreeOpen && storyExists && !showImport && !showSettings}
-        title="剧情树"
-        label="剧情树伴生面板"
-        testId="story-tree-sheet"
-        status={isSummarizing ? '补算摘要中…' : undefined}
+        story={story}
+        summarySnapshot={activeSummary}
+        metrics={contextPreview.metrics}
+        hasCredentials={hasCredentials}
+        isStreaming={isStreaming}
+        isSummarizing={isSummarizing}
+        isSummaryInProgress={isSummaryInProgress}
+        isBlueprintReextracting={isBlueprintReextracting}
+        isBranchSwitchSummarizing={isBranchSwitchSummarizing}
+        onSwitchBranch={(id) => void handleSwitchBranch(id)}
+        onRenameBranch={handleRenameBranch}
+        onExtractBranchGist={handleExtractBranchGist}
+        onComputeSummary={() => void handleComputeActiveSummary()}
+        onSaveBlueprintTweak={handleSaveBlueprintTweak}
+        onReextractBlueprint={() => handleReextractBlueprint()}
+        isBranchSwitching={isBranchSwitching}
         onClose={() => setStoryTreeOpen(false)}
-      >
-        <StoryTree
-          story={story}
-          isBusy={isStreaming || isSummarizing || isBranchSwitching}
-          isRenameBusy={isStreaming || isBranchSwitching || (isSummarizing && !isBranchSwitchSummarizing)}
-          onSwitchBranch={(id) => void handleSwitchBranch(id)}
-          onRenameBranch={handleRenameBranch}
-          onExtractBranchGist={handleExtractBranchGist}
-        />
-      </SheetDialog>
+      />
     </div>
   );
 }

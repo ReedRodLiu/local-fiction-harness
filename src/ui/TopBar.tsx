@@ -5,7 +5,7 @@ interface TopBarProps {
   hasStory: boolean;
   branchLabel: string;
   forkCount: number;
-  isSummarizing: boolean;
+  isSummaryInProgress: boolean;
   libraryCollapsed: boolean;
   onOpenLibrary: () => void;
   onToggleLibrary: () => void;
@@ -17,7 +17,7 @@ export function TopBar({
   hasStory,
   branchLabel,
   forkCount,
-  isSummarizing,
+  isSummaryInProgress,
   libraryCollapsed,
   onOpenLibrary,
   onToggleLibrary,
@@ -64,7 +64,7 @@ export function TopBar({
       </div>
 
       <div className="topbar-right">
-        {isSummarizing && <span className="summary-progress" role="status">补算摘要中…</span>}
+        {isSummaryInProgress && <span className="summary-progress" role="status">补算摘要中…</span>}
         <button
           type="button"
           className="icon-button topbar-tree-action"
