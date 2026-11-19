@@ -28,6 +28,8 @@ interface CompanionSheetProps {
   hasCredentials: boolean;
   isStreaming: boolean;
   isSummarizing: boolean;
+  isSummaryInProgress: boolean;
+  isBlueprintReextracting: boolean;
   isBranchSwitchSummarizing: boolean;
   onSwitchBranch: (targetNodeId: string) => void;
   onRenameBranch: (branchEntryNodeId: string, name: string) => Promise<void> | void;
@@ -46,6 +48,8 @@ export function CompanionSheet({
   hasCredentials,
   isStreaming,
   isSummarizing,
+  isSummaryInProgress,
+  isBlueprintReextracting,
   isBranchSwitchSummarizing,
   onSwitchBranch,
   onRenameBranch,
@@ -74,7 +78,7 @@ export function CompanionSheet({
       title="故事结构"
       label="故事伴生面板"
       testId="story-tree-sheet"
-      status={isSummarizing ? '补算摘要中…' : undefined}
+      status={isSummaryInProgress ? '补算摘要中…' : undefined}
       statusTestId="companion-summary-progress"
       onClose={onClose}
     >
@@ -139,8 +143,8 @@ export function CompanionSheet({
           <StoryReview
             story={story}
             metrics={metrics}
-            isBusy={isStreaming}
-            isSummarizing={isSummarizing}
+            isBusy={isStreaming || isSummarizing}
+            isSummarizing={isSummaryInProgress}
             onComputeSummary={() => {
               if (!hasCredentials) onClose();
               onComputeSummary();
@@ -161,7 +165,7 @@ export function CompanionSheet({
             summarySnapshot={summarySnapshot}
             metrics={metrics}
             isStreaming={isStreaming || isSummarizing}
-            isReextracting={isSummarizing}
+            isReextracting={isBlueprintReextracting}
             onSaveBlueprintTweak={onSaveBlueprintTweak}
             onReextractBlueprint={() => {
               if (!hasCredentials) onClose();

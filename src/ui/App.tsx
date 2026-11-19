@@ -148,6 +148,8 @@ export function App({ runtime }: AppProps) {
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [isSummaryComputationInProgress, setIsSummaryComputationInProgress] = useState(false);
+  const [isBlueprintReextracting, setIsBlueprintReextracting] = useState(false);
   const [isBranchSwitchSummarizing, setIsBranchSwitchSummarizing] = useState(false);
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamContent, setStreamContent] = useState('');
@@ -165,6 +167,7 @@ export function App({ runtime }: AppProps) {
   const configEditSeqRef = useRef(0);
   const configSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const suppressedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet());
+  const isSummaryInProgress = isBranchSwitchSummarizing || isSummaryComputationInProgress;
 
   const openDiagnostics = (trigger: DiagnosticBundleTrigger = 'error_banner') => {
     setDiagnosticTrigger(trigger);
@@ -248,6 +251,7 @@ export function App({ runtime }: AppProps) {
   const invalidateSummaryTask = useCallback(() => {
     summarySeqRef.current += 1;
     setIsSummarizing(false);
+    setIsSummaryComputationInProgress(false);
     setIsBranchSwitchSummarizing(false);
   }, []);
 
@@ -476,9 +480,11 @@ export function App({ runtime }: AppProps) {
     setErrorMsg(null);
     if (opts?.trackSummarizing) {
       setIsSummarizing(true);
+      setIsSummaryComputationInProgress(false);
       setIsBranchSwitchSummarizing(false);
     } else if (!opts?.preserveSummaryTask) {
       setIsSummarizing(false);
+      setIsSummaryComputationInProgress(false);
       setIsBranchSwitchSummarizing(false);
     }
     try {
@@ -625,6 +631,7 @@ export function App({ runtime }: AppProps) {
   ) => {
     const summarySeq = ++summarySeqRef.current;
     setIsSummarizing(true);
+    setIsSummaryComputationInProgress(!allowRenameDuringSummary);
     setIsBranchSwitchSummarizing(allowRenameDuringSummary);
     try {
       const summarized = await harness.calculateActiveBranchSummary(targetStory, activeCfg);
@@ -641,6 +648,7 @@ export function App({ runtime }: AppProps) {
     } finally {
       if (summarySeqRef.current === summarySeq) {
         setIsSummarizing(false);
+        setIsSummaryComputationInProgress(false);
         setIsBranchSwitchSummarizing(false);
       }
     }
@@ -725,6 +733,7 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '补拆故事蓝图',
       (activeCfg) => {
+        setIsBlueprintReextracting(true);
         void runStoryTransition(
           async () => {
             const extracted = await harness.extractStoryBlueprint(
@@ -736,7 +745,7 @@ export function App({ runtime }: AppProps) {
           },
           '补拆故事蓝图失败。',
           { trackSummarizing: true },
-        );
+        ).finally(() => setIsBlueprintReextracting(false));
       },
       overrideConfig,
     );
@@ -936,7 +945,7 @@ export function App({ runtime }: AppProps) {
           hasStory={storyExists}
           branchLabel={branchLabel}
           forkCount={forkCount}
-          isSummarizing={isSummarizing}
+          isSummaryInProgress={isSummaryInProgress}
           libraryCollapsed={libraryCollapsed}
           onOpenLibrary={() => setMobileLibraryOpen(true)}
           onToggleLibrary={toggleLibraryCollapsed}
@@ -1199,6 +1208,8 @@ export function App({ runtime }: AppProps) {
         hasCredentials={hasCredentials}
         isStreaming={isStreaming}
         isSummarizing={isSummarizing}
+        isSummaryInProgress={isSummaryInProgress}
+        isBlueprintReextracting={isBlueprintReextracting}
         isBranchSwitchSummarizing={isBranchSwitchSummarizing}
         onSwitchBranch={(id) => void handleSwitchBranch(id)}
         onRenameBranch={handleRenameBranch}

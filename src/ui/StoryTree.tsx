@@ -1,10 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import {
+  getActiveBranchNodes,
   getForkSiblingBranches,
   projectStoryTreeSpine,
+  toCompactPreview,
   type ForkSiblingBranch,
   type NodeDiagnosticStatus,
   type Story,
+  type StoryTreeSpanItem,
 } from '../harness/index.ts';
 
 export interface StoryTreeProps {
@@ -23,6 +26,11 @@ const DIAGNOSTIC_LABELS: Record<NodeDiagnosticStatus, string> = {
   TIMEOUT: '响应超时 (TIMEOUT)',
   INCOMPLETE: '输出未完成 (INCOMPLETE)',
 };
+
+interface ExpandedSpanNode {
+  id: string;
+  turn: number;
+}
 
 export function formatDiagnosticTags(
   statuses: readonly NodeDiagnosticStatus[],
@@ -47,16 +55,40 @@ export function StoryTree({
 }: StoryTreeProps) {
   const [isPanelOpen, setIsPanelOpen] = useState(defaultExpanded);
   const [expandedForkIds, setExpandedForkIds] = useState<Record<string, boolean>>({});
+  const [expandedSpanNodes, setExpandedSpanNodes] = useState<Record<string, ExpandedSpanNode[]>>({});
   const [renamingEntryId, setRenamingEntryId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [extractingGistId, setExtractingGistId] = useState<string | null>(null);
   const renameBusy = isRenameBusy ?? isBusy;
   const treeOpen = !collapsible || isPanelOpen;
+  const spanIdPrefix = useId();
 
   const spine = useMemo(() => projectStoryTreeSpine(story), [story]);
 
   const toggleFork = (forkId: string) => {
     setExpandedForkIds((prev) => ({ ...prev, [forkId]: !prev[forkId] }));
+  };
+
+  const toggleSpan = (item: StoryTreeSpanItem) => {
+    if (expandedSpanNodes[item.id]) {
+      setExpandedSpanNodes((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+      return;
+    }
+
+    const activePath = getActiveBranchNodes(story, spine.activeLeafNodeId);
+    const startIndex = activePath.findIndex((node) => node.id === item.startNodeId);
+    const endIndex = activePath.findIndex((node) => node.id === item.endNodeId);
+    if (startIndex < 0 || endIndex < startIndex) return;
+
+    const nodes = activePath.slice(startIndex, endIndex + 1).map((node, offset) => ({
+      id: node.id,
+      turn: Math.floor((startIndex + offset) / 2) + 1,
+    }));
+    setExpandedSpanNodes((prev) => ({ ...prev, [item.id]: nodes }));
   };
 
   const startRename = (branch: ForkSiblingBranch) => {
@@ -110,28 +142,81 @@ export function StoryTree({
             </p>
           ) : (
             <ol className="story-tree-spine">
-              {spine.items.map((item) => {
+              {spine.items.map((item, index) => {
                 if (item.kind === 'span') {
                   const turnLabel =
                     item.startTurn === item.endTurn
                       ? `第 ${item.startTurn} 轮`
                       : `第 ${item.startTurn}–${item.endTurn} 轮`;
+                  const expandedNodes = expandedSpanNodes[item.id];
+                  const isExpanded = expandedNodes !== undefined;
+                  const previewId = `${spanIdPrefix}-span-${index}`;
                   return (
                     <li
                       key={item.id}
                       className={`story-tree-span ${item.isActiveEnd ? 'active-end' : ''}`}
                       data-testid="story-tree-span"
                     >
-                      <span className="badge">{turnLabel}</span>
-                      <span className="status-text">
-                        {item.isActiveEnd ? '当前激活终点' : `折叠 ${item.turnCount} 轮`}
-                      </span>
-                      {item.diagnosticsCount > 0 && (
-                        <span className="badge badge-warn">
-                          含 {item.diagnosticsCount} 条诊断标记
+                      <button
+                        type="button"
+                        className="story-tree-span-toggle"
+                        aria-label={`${isExpanded ? '收起' : '展开'}${turnLabel}连续区间`}
+                        aria-expanded={isExpanded}
+                        aria-controls={isExpanded ? previewId : undefined}
+                        data-testid="story-tree-span-toggle"
+                        onClick={() => toggleSpan(item)}
+                      >
+                        <span className="badge">{turnLabel}</span>
+                        <span className="status-text">
+                          {isExpanded ? '收起连续区间' : '展开连续区间'}
                         </span>
+                        <span className="status-text">
+                          {item.isActiveEnd ? '当前激活终点' : `折叠 ${item.turnCount} 轮`}
+                        </span>
+                        {item.diagnosticsCount > 0 && (
+                          <span className="badge badge-warn">
+                            含 {item.diagnosticsCount} 条诊断标记
+                          </span>
+                        )}
+                        <span className="story-tree-preview-inline">{item.preview}</span>
+                      </button>
+                      {expandedNodes && (
+                        <ol
+                          id={previewId}
+                          className="story-tree-span-nodes"
+                          aria-label={`${turnLabel}连续节点只读预览`}
+                          data-testid="story-tree-span-preview"
+                        >
+                          {expandedNodes.map(({ id, turn }) => {
+                            const node = story.nodes[id];
+                            if (!node) return null;
+                            const diagnostics = formatDiagnosticTags(
+                              node.diagnostics?.sourceStatus ? [node.diagnostics.sourceStatus] : [],
+                              Boolean(node.diagnostics?.contentRisk),
+                            );
+                            return (
+                              <li
+                                key={id}
+                                className="story-tree-span-node"
+                                data-node-id={id}
+                                data-testid="story-tree-span-node"
+                              >
+                                <span className="story-tree-span-node-heading">
+                                  第 {turn} 轮 · {node.role === 'user' ? '玩家' : '叙事 AI'}
+                                </span>
+                                <p className="story-tree-span-node-preview">
+                                  {toCompactPreview(node.content, 180)}
+                                </p>
+                                {diagnostics.length > 0 && (
+                                  <span className="story-tree-span-node-diagnostics" role="note">
+                                    只读诊断：{diagnostics.join(' · ')}
+                                  </span>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ol>
                       )}
-                      <span className="story-tree-preview-inline">{item.preview}</span>
                     </li>
                   );
                 }

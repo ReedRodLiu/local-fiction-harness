@@ -560,11 +560,31 @@ summary:focus-visible {
   border-radius: 8px;
   padding: 0.42rem 0.65rem;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.story-tree-span-toggle {
+  display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.35rem 0.5rem;
-  min-width: 0;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.story-tree-span-toggle:focus-visible {
+  outline: 2px solid var(--accent-fiction);
+  outline-offset: 2px;
 }
 
 .story-tree-preview-inline {
@@ -575,6 +595,42 @@ summary:focus-visible {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.story-tree-span-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.4rem 0 0;
+  border-top: 1px solid var(--border-hairline);
+  list-style: none;
+}
+
+.story-tree-span-node {
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border-inline-start: 2px solid var(--border-hairline);
+}
+
+.story-tree-span-node-heading {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.story-tree-span-node-preview {
+  margin: 0.2rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.83rem;
+  overflow-wrap: anywhere;
+}
+
+.story-tree-span-node-diagnostics {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--status-warn);
+  font-size: 0.76rem;
 }
 
 .story-tree-span.active-end {

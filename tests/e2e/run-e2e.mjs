@@ -608,6 +608,16 @@ async function openStoryBlueprint(page) {
   return openCompanionTab(page, '故事蓝图');
 }
 
+async function assertNoSummaryProgress(page, sheet, label) {
+  const statuses = [
+    page.locator('[data-testid="app-topbar"] .summary-progress'),
+    sheet.getByTestId('companion-summary-progress'),
+  ];
+  if (await Promise.all(statuses.map((status) => status.isVisible())).then((visible) => visible.some(Boolean))) {
+    throw new Error(`${label} was incorrectly announced as summary progress.`);
+  }
+}
+
 async function readActivePlotSummary(page) {
   const sheet = await openStoryReview(page);
   const text = await sheet.getByTestId('active-plot-summary').textContent();
@@ -644,6 +654,25 @@ async function verifyModalDialogLifecycle(context, port) {
   await page.goto(`http://localhost:${port}/tests/e2e/modal-dialog-fixture.html`);
   const dialog = page.getByRole('dialog', { name: 'Fixture dialog' });
   await dialog.waitFor({ state: 'visible' });
+  const bounds = await dialog.boundingBox();
+  if (!bounds) throw new Error('Modal dialog has no visible bounds.');
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x - 12, bounds.y + bounds.height / 2, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForTimeout(50);
+  if ((await page.getByTestId('close-count').textContent()) !== '0' || !(await dialog.evaluate((element) => element.open))) {
+    throw new Error('Dragging from inside the dialog onto the backdrop should not close it.');
+  }
+  await page.mouse.click(4, 4);
+  await page.waitForFunction(() => document.querySelector('dialog')?.dataset.closing === 'true');
+  if ((await page.getByTestId('close-count').textContent()) !== '1') {
+    throw new Error('A pointer press and release on the backdrop should close the dialog once.');
+  }
+  await page.waitForFunction(() => !document.querySelector('dialog')?.open);
+
+  await page.goto(`http://localhost:${port}/tests/e2e/modal-dialog-fixture.html`);
+  await page.getByRole('dialog', { name: 'Fixture dialog' }).waitFor({ state: 'visible' });
   await page.getByRole('button', { name: 'Request close' }).click();
   await page.waitForFunction(() => document.querySelector('dialog')?.dataset.closing === 'true');
   if (!(await dialog.evaluate((element) => element.open))) {
@@ -686,6 +715,8 @@ async function main() {
     let failNextBlueprintWith401 = false;
     let delayNextTurnMs = 0;
     let delayNextSummaryMs = 0;
+    let delayNextBlueprintMs = 0;
+    let delayNextGistMs = 0;
     let boundaryCallCount = 0;
     let lastTurnSystemText = '';
 
@@ -747,6 +778,11 @@ async function main() {
           });
           return;
         }
+        if (delayNextBlueprintMs > 0) {
+          const waitMs = delayNextBlueprintMs;
+          delayNextBlueprintMs = 0;
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+        }
         await route.fulfill({
           status: 200,
           contentType: 'text/event-stream',
@@ -801,6 +837,11 @@ async function main() {
       }
 
       if (sys.includes('分支梗概助手')) {
+        if (delayNextGistMs > 0) {
+          const waitMs = delayNextGistMs;
+          delayNextGistMs = 0;
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+        }
         await route.fulfill({
           status: 200,
           contentType: 'text/event-stream',
@@ -1039,7 +1080,10 @@ async function main() {
     await waitForActivePlotSummary(page, '【激活线压缩摘要】');
     await page.setViewportSize({ width: 1280, height: 720 });
     const blueprintSheet = await openStoryBlueprint(page);
+    delayNextBlueprintMs = 1200;
     await blueprintSheet.getByTestId('story-blueprint-card').getByRole('button', { name: '补拆完整故事蓝图' }).click();
+    await blueprintSheet.getByRole('button', { name: '补拆蓝图中…' }).waitFor({ state: 'visible' });
+    await assertNoSummaryProgress(page, blueprintSheet, 'Blueprint re-extraction');
     await blueprintSheet.getByRole('button', { name: '补拆蓝图中…' }).waitFor({ state: 'detached' });
     await closeCompanionSheet(page);
 
@@ -1205,7 +1249,17 @@ async function main() {
     await storyTreeSheet.getByRole('tab', { name: '剧情树' }).click();
 
     // On-demand AI gist on active sibling branch
-    await siblingB.locator('button:has-text("AI 提炼梗概")').click();
+    delayNextGistMs = 1200;
+    await Promise.all([
+      page.waitForRequest((request) =>
+        request.method() === 'POST' &&
+        request.url().endsWith('/chat/completions') &&
+        request.postDataJSON()?.messages?.[0]?.content.includes('分支梗概助手'),
+      ),
+      siblingB.locator('button:has-text("AI 提炼梗概")').click(),
+    ]);
+    await page.waitForTimeout(50);
+    await assertNoSummaryProgress(page, storyTreeSheet, 'Branch gist extraction');
     await siblingB.getByText('AI 梗概：AI提炼：改道休息线稳妥推进', { exact: false }).waitFor();
 
     // Switch back to Branch A via Story Tree sibling button
@@ -1900,6 +1954,41 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
 
     await submit.waitFor();
     let storyTreeSheet = await openStoryTree(page);
+    const spans = storyTreeSheet.getByTestId('story-tree-span');
+    if ((await spans.count()) < 2) throw new Error('Expected the long active route to include a linear span after its fork.');
+    const longSpan = spans.nth(1);
+    const longSpanToggle = longSpan.getByTestId('story-tree-span-toggle');
+    await longSpanToggle.waitFor({ state: 'visible' });
+    const spanRange = await longSpan.locator('.badge').textContent();
+    const spanRangeMatch = /^第 (\d+)–(\d+) 轮$/.exec(spanRange?.trim() ?? '');
+    if (!spanRangeMatch || Number(spanRangeMatch[2]) <= Number(spanRangeMatch[1])) {
+      throw new Error(`Expected a multi-turn linear span, got: ${spanRange}`);
+    }
+    if ((await longSpanToggle.getAttribute('aria-label')) !== `展开${spanRange}连续区间`) {
+      throw new Error('Linear span does not provide a descriptive disclosure label.');
+    }
+    if (await longSpan.getByTestId('story-tree-span-preview').count()) {
+      throw new Error('Collapsed linear span rendered node previews before expansion.');
+    }
+    await longSpanToggle.click();
+    if ((await longSpanToggle.getAttribute('aria-expanded')) !== 'true') {
+      throw new Error('Expanding a multi-turn linear span did not update its disclosure state.');
+    }
+    const longSpanPreviews = longSpan.getByTestId('story-tree-span-preview');
+    await longSpanPreviews.waitFor({ state: 'visible' });
+    const activePathPreviews = await longSpanPreviews.getByTestId('story-tree-span-node').allTextContents();
+    if (
+      activePathPreviews.length <= 2 ||
+      !activePathPreviews.join('\n').includes(EARLY_BRANCH_A) ||
+      activePathPreviews.join('\n').includes(EARLY_BRANCH_B) ||
+      (await longSpanPreviews.locator('button').count()) !== 0
+    ) {
+      throw new Error('Expanded span must show read-only previews from the active path only.');
+    }
+    await longSpanToggle.click();
+    if ((await longSpanToggle.getAttribute('aria-expanded')) !== 'false' || await longSpanPreviews.count()) {
+      throw new Error('Collapsing a linear span did not hide its node previews.');
+    }
     let fork = storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first();
     if ((await fork.getAttribute('aria-expanded')) !== 'true') await fork.click();
     const alternateId = await storyTreeSheet.locator('[data-testid^="story-tree-branch-"]', {
