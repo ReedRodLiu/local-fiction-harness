@@ -3,6 +3,7 @@ import { Clipboard, Download, RotateCcw, ShieldCheck, X } from 'lucide-react';
 import type { DiagnosticBundle } from '../harness/index.ts';
 import { ModalDialog } from './primitives/ModalDialog.tsx';
 import { toErrorMessage } from './textHelpers.ts';
+import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 
 interface DiagnosticsPreviewProps {
   open: boolean;
@@ -27,6 +28,7 @@ export function DiagnosticsPreview({
   const [failure, setFailure] = useState<string | null>(null);
   const [includeActiveStory, setIncludeActiveStory] = useState(true);
   const [bundleSnapshot] = useState(() => buildBundle());
+  useWebHistoryLayer('diagnostics', 1000, true, onClose);
   const { activeStorySkeleton: _activeStorySkeleton, ...bundleWithoutSkeleton } = bundleSnapshot;
   const jsonText = JSON.stringify(
     includeActiveStory ? bundleSnapshot : bundleWithoutSkeleton,

@@ -1620,6 +1620,29 @@ async function verifyDiagnosticsDialog(page, port) {
     await page.keyboard.press('Escape');
   });
   await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'crash-open-diagnostics');
+
+  await page.evaluate(() => {
+    history.pushState({ uiImpl05AutomaticCrashBase: true }, '', '#ui-impl-05-crash-base');
+    window.dispatchEvent(new ErrorEvent('error', {
+      error: new Error('development automatic crash history probe'),
+      message: 'development automatic crash history probe',
+    }));
+  });
+  await crashDiagnostics.waitFor({ state: 'visible' });
+  await expectControlledDialogExit(page, crashDiagnostics, 'diagnostics-preview', async () => {
+    await page.evaluate(() => history.back());
+  });
+  const retainedCrashHistory = await page.evaluate(() => ({
+    hash: location.hash,
+    state: history.state,
+  }));
+  if (
+    retainedCrashHistory.hash !== '#ui-impl-05-crash-base' ||
+    retainedCrashHistory.state?.uiImpl05AutomaticCrashBase !== true
+  ) {
+    throw new Error(`Automatic crash diagnostics consumed the base history entry: ${JSON.stringify(retainedCrashHistory)}`);
+  }
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'crash-open-diagnostics');
 }
 
 async function importSyntheticStoryWithoutKey(page, port) {
@@ -2049,6 +2072,7 @@ async function runUiImpl05ProductionE2E(browser, port) {
     await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'open-diagnostics');
 
     await page.evaluate(() => {
+      history.pushState({ uiImpl05ProductionCrashBase: true }, '', '#ui-impl-05-production-crash-base');
       window.dispatchEvent(new ErrorEvent('error', {
         error: new Error('production crash focus probe'),
         message: 'production crash focus probe',
@@ -2056,11 +2080,32 @@ async function runUiImpl05ProductionE2E(browser, port) {
     });
     const crashDiagnostics = page.getByTestId('diagnostics-preview');
     await crashDiagnostics.waitFor({ state: 'visible' });
+    const openProductionCrashHistory = await page.evaluate(() => ({
+      hash: location.hash,
+      state: history.state,
+    }));
+    if (
+      openProductionCrashHistory.state?.lfhOverlayDepth !== 1 ||
+      typeof openProductionCrashHistory.state?.lfhOverlaySession !== 'string'
+    ) {
+      throw new Error(`Production automatic crash diagnostics did not register its history layer: ${JSON.stringify(openProductionCrashHistory)}`);
+    }
     await expectControlledDialogExit(page, crashDiagnostics, 'diagnostics-preview', async () => {
-      await page.keyboard.press('Escape');
+      await page.evaluate(() => history.back());
     });
+    const retainedProductionCrashHistory = await page.evaluate(() => ({
+      hash: location.hash,
+      state: history.state,
+    }));
+    if (
+      retainedProductionCrashHistory.hash !== '#ui-impl-05-production-crash-base' ||
+      retainedProductionCrashHistory.state?.uiImpl05ProductionCrashBase !== true
+    ) {
+      throw new Error(`Production automatic crash diagnostics consumed the base history entry: ${JSON.stringify(retainedProductionCrashHistory)}`);
+    }
     const crashTrigger = page.getByTestId('crash-open-diagnostics');
     await crashTrigger.waitFor();
+    await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'crash-open-diagnostics');
     await crashTrigger.click();
     await crashDiagnostics.waitFor({ state: 'visible' });
     await expectControlledDialogExit(page, crashDiagnostics, 'diagnostics-preview', async () => {

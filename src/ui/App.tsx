@@ -404,15 +404,6 @@ export function App({ runtime }: AppProps) {
   }, [displayPreferences, prefersDark]);
 
   useWebHistoryLayer(
-    'diagnostics',
-    90,
-    diagnosticsOpen,
-    closeDiagnostics,
-    true,
-    undefined,
-    () => null,
-  );
-  useWebHistoryLayer(
     'setup-wizard',
     80,
     wizardOpen,

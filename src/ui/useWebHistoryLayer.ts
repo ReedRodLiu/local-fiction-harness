@@ -51,6 +51,7 @@ function scheduleHistorySync(): void {
   syncQueued = true;
   queueMicrotask(() => {
     syncQueued = false;
+    currentDepth = readCurrentDepth();
     const desiredDepth = layers.size;
     if (desiredDepth > currentDepth) {
       currentDepth += 1;
@@ -96,6 +97,7 @@ function restoreVisibleFocus(preferred: HTMLElement | null): void {
   }
   const candidates = [
     preferred,
+    document.querySelector<HTMLElement>('[data-testid="crash-open-diagnostics"]'),
     document.querySelector<HTMLElement>('[data-testid="open-diagnostics"]'),
     document.querySelector<HTMLElement>('[data-testid="change-key-btn"]'),
     document.querySelector<HTMLElement>('[data-testid="open-setup-wizard-btn"]'),
@@ -155,7 +157,9 @@ export function useWebHistoryLayer(
       unregister();
       const restoreTarget = restoreFocusRef.current;
       restoreFocusRef.current = null;
-      window.requestAnimationFrame(() => restoreVisibleFocus(restoreTarget));
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => restoreVisibleFocus(restoreTarget));
+      });
     };
   }, [id, open, priority]);
 }
