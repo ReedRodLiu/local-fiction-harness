@@ -6,6 +6,13 @@ import { describe, expect, it } from 'vitest';
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const readSource = (path: string) => readFileSync(join(repoRoot, path), 'utf8');
 
+function exactFocusSelectors(source: string) {
+  return Array.from(source.matchAll(/([^{}]+)\{([^{}]*)\}/g))
+    .filter(([, , declarations]) => declarations.includes(':focus-visible') || declarations.includes('outline'))
+    .flatMap(([, selectors]) => selectors.split(',').map((selector) => selector.trim()))
+    .filter((selector) => selector.includes(':focus-visible'));
+}
+
 describe('UI review fix contracts', () => {
   it('loads every presentation module through the stylesheet barrel', () => {
     const barrel = readSource('src/ui/styles.css');
@@ -96,6 +103,14 @@ describe('UI review fix contracts', () => {
     ]) {
       expect(base).not.toMatch(new RegExp(`^${selector.replace('.', '\\.')}\\s*\\{`, 'm'));
     }
+  });
+
+  it('defines shared keyboard focus treatment for buttons and summaries once', () => {
+    const selectors = exactFocusSelectors(
+      `${readSource('src/ui/styles/base.css')}\n${readSource('src/ui/styles/shell.css')}`,
+    );
+    expect(selectors.filter((selector) => selector === 'button:focus-visible')).toHaveLength(1);
+    expect(selectors.filter((selector) => selector === 'summary:focus-visible')).toHaveLength(1);
   });
 
   it('keeps App state and history wiring in focused presentation hooks', () => {

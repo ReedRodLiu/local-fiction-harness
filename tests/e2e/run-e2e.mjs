@@ -2166,9 +2166,150 @@ async function runUiImpl05E2E(browser, port) {
     await verifyDiagnosticsDialog(page, port);
     await verifyDisplayPreferenceMatrix(page, port);
     await verifyOverlayHistoryAndShortcuts(page, port);
+    await verifyUiImplFixContracts(page);
   } finally {
     await context.close();
   }
+}
+
+async function verifyUiImplFixContracts(page) {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const measurements = {};
+
+  const blueprint = await openStoryBlueprint(page);
+  const contextSummary = page.locator('#context-overview > summary');
+  await contextSummary.waitFor();
+  const contextMetrics = await contextSummary.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      matchesTarget: element.matches('#context-overview > summary'),
+      minHeight: style.minHeight,
+      height: element.getBoundingClientRect().height,
+    };
+  });
+  measurements.contextOverviewSummary = contextMetrics;
+  if (
+    !contextMetrics.matchesTarget ||
+    contextMetrics.minHeight !== '44px' ||
+    contextMetrics.height < 43.99
+  ) {
+    throw new Error(`Context overview summary is not a 44px target: ${JSON.stringify(contextMetrics)}`);
+  }
+  await closeCompanionSheet(page);
+
+  await page.getByTestId('library-drawer-trigger').click();
+  const drawer = page.getByTestId('mobile-library-dialog');
+  await drawer.waitFor({ state: 'visible' });
+  const storyRow = drawer.locator('[data-testid="story-list-item"]:visible').first();
+  await storyRow.getByTestId('story-menu-trigger').click();
+  await drawer.getByRole('menuitem', { name: '重命名' }).click();
+  const renameInput = storyRow.getByRole('textbox', { name: '重命名故事标题' });
+  await renameInput.waitFor();
+  const renameMetrics = await renameInput.evaluate((element) => ({
+    minHeight: getComputedStyle(element).minHeight,
+    height: element.getBoundingClientRect().height,
+    focused: document.activeElement === element,
+  }));
+  measurements.storyRenameInput = renameMetrics;
+  if (
+    renameMetrics.minHeight !== '44px' ||
+    renameMetrics.height < 43.99 ||
+    !renameMetrics.focused
+  ) {
+    throw new Error(`Story rename input is not a focused 44px target: ${JSON.stringify(renameMetrics)}`);
+  }
+  await page.keyboard.press('Tab');
+  const renameNextFocus = await page.evaluate(() => ({
+    tagName: document.activeElement?.tagName,
+    type: document.activeElement?.getAttribute('type'),
+    text: document.activeElement?.textContent?.trim(),
+  }));
+  if (renameNextFocus.tagName !== 'BUTTON' || renameNextFocus.type !== 'submit' || renameNextFocus.text !== '保存') {
+    throw new Error(`Story rename Tab order skipped its save action: ${JSON.stringify(renameNextFocus)}`);
+  }
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Enter');
+  await renameInput.waitFor({ state: 'detached' });
+  await drawer.getByRole('button', { name: '关闭书架' }).click();
+  await drawer.waitFor({ state: 'hidden' });
+
+  await openSettings(page);
+  const settings = page.getByTestId('settings-page');
+  const hiddenBackupInput = settings.getByTestId('backup-import-input');
+  const exportCurrentStory = settings.getByTestId('export-current-story');
+  await exportCurrentStory.focus();
+  await page.keyboard.press('Tab');
+  const settingsFocus = await page.evaluate(() => ({
+    testId: document.activeElement?.getAttribute('data-testid'),
+  }));
+  measurements.backupInput = {
+    tabIndex: await hiddenBackupInput.getAttribute('tabindex'),
+    nextFocus: settingsFocus.testId,
+  };
+  if (
+    await hiddenBackupInput.getAttribute('tabindex') !== '-1' ||
+    settingsFocus.testId !== 'restore-backup-btn'
+  ) {
+    throw new Error(`Hidden backup input interrupted Settings Tab order: ${JSON.stringify(settingsFocus)}`);
+  }
+
+  const darkThemeOption = settings.getByTestId('theme-option-dark');
+  await darkThemeOption.click();
+  const darkThemeMetrics = await settings.evaluate((element) => {
+    const option = element.querySelector('[data-testid="theme-option-dark"]');
+    const swatches = option
+      ? Array.from(option.querySelectorAll('.theme-option-canvas > span'))
+      : [];
+    const rootStyle = getComputedStyle(document.documentElement);
+    return {
+      pressed: option?.getAttribute('aria-pressed'),
+      borderColor: option ? getComputedStyle(option).borderTopColor : null,
+      accent: rootStyle.getPropertyValue('--accent-fiction').trim(),
+      swatches: swatches.map((swatch) => ({
+        inlineBackground: swatch.style.background,
+        backgroundColor: getComputedStyle(swatch).backgroundColor,
+      })),
+    };
+  });
+  measurements.darkTheme = darkThemeMetrics;
+  if (
+    darkThemeMetrics.pressed !== 'true' ||
+    darkThemeMetrics.borderColor === null ||
+    parseCssColor(darkThemeMetrics.borderColor).join(',') !==
+      parseCssColor(darkThemeMetrics.accent).join(',') ||
+    darkThemeMetrics.swatches.some((swatch) => swatch.inlineBackground.includes('accent-fiction'))
+  ) {
+    throw new Error(`Dark theme preview did not preserve the accent selection boundary: ${JSON.stringify(darkThemeMetrics)}`);
+  }
+  await closeSettings(page);
+
+  await startDeepSeekImport(page);
+  await page.setInputFiles('#deepseek-zip-input', {
+    name: 'ui-impl-fix-contracts.zip',
+    mimeType: 'application/zip',
+    buffer: Buffer.from(buildSyntheticDeepSeekZipE2E()),
+  });
+  await page.getByTestId('ds-session-list').waitFor();
+  const diagnosticBadge = page.getByTestId('ds-session-item')
+    .filter({ hasText: '合成宫斗测试档' })
+    .first()
+    .getByLabel('1 条诊断');
+  await diagnosticBadge.waitFor();
+  const diagnosticBadgeMetrics = await diagnosticBadge.evaluate((element) => ({
+    text: element.textContent?.replace(/\s+/g, ' ').trim(),
+    svgCount: element.querySelectorAll('svg').length,
+    svgAriaHidden: element.querySelector('svg')?.getAttribute('aria-hidden'),
+  }));
+  measurements.diagnosticBadge = diagnosticBadgeMetrics;
+  if (
+    diagnosticBadgeMetrics.text?.includes('⚠') ||
+    diagnosticBadgeMetrics.svgCount !== 1 ||
+    diagnosticBadgeMetrics.svgAriaHidden !== 'true'
+  ) {
+    throw new Error(`Diagnostic badge is not backed by an accessible Lucide icon: ${JSON.stringify(diagnosticBadgeMetrics)}`);
+  }
+  console.log(`UI_IMPL_FIX_MEASUREMENTS ${JSON.stringify(measurements)}`);
+  await leaveImportView(page);
 }
 
 async function runUiImpl05ProductionE2E(browser, port) {

@@ -35,7 +35,7 @@ export function ContextOverview({
         onReextractBlueprint={onReextractBlueprint}
       />
 
-      <details className="reasoning-details" data-testid="context-overview">
+      <details id="context-overview" className="reasoning-details" data-testid="context-overview">
         <summary>
           三区上下文（估算 {metrics.totalEstimatedTokens} tokens · 已压缩{' '}
           {summarySnapshot.summarizedTurnCount} 条历史）

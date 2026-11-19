@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { ChevronRight, FileUp, GitBranch, Link2 } from 'lucide-react';
+import { ChevronRight, FileUp, GitBranch, Link2, TriangleAlert } from 'lucide-react';
 import {
   DEFAULT_ZIP_MAX_BYTES,
   UnsupportedDeepSeekExportVersionError,
@@ -993,11 +993,13 @@ export function DeepSeekImportPanel({
                               {session.forkCount}
                             </span>
                           )}
-                          {(session.attachments.length > 0 || session.diagnosticCount > 0) && (
-                            <span className={`badge ${session.diagnosticCount > 0 ? 'badge-warn' : ''}`}>
-                              {session.attachments.length > 0 ? `${session.attachments.length} 附件` : ''}
-                              {session.attachments.length > 0 && session.diagnosticCount > 0 ? ' · ' : ''}
-                              {session.diagnosticCount > 0 ? `⚠ ${session.diagnosticCount}` : ''}
+                          {session.attachments.length > 0 && (
+                            <span className="badge">{session.attachments.length} 附件</span>
+                          )}
+                          {session.diagnosticCount > 0 && (
+                            <span className="badge badge-warn" aria-label={`${session.diagnosticCount} 条诊断`}>
+                              <TriangleAlert size={12} strokeWidth={1.75} aria-hidden="true" />
+                              {session.diagnosticCount}
                             </span>
                           )}
                         </div>

@@ -37,7 +37,7 @@ const THEME_OPTIONS: Array<{
 }> = [
   { value: 'system', label: '跟随系统', swatches: ['var(--text-primary)', 'var(--bg-canvas)'] },
   { value: 'light', label: '浅色', swatches: ['var(--bg-canvas)', 'var(--bg-surface-hover)'] },
-  { value: 'dark', label: '深邃炭黑', swatches: ['var(--bg-canvas)', 'var(--accent-fiction)'] },
+  { value: 'dark', label: '深邃炭黑', swatches: ['var(--bg-canvas)', 'var(--bg-surface-hover)'] },
   { value: 'warm', label: '暖纸护眼', swatches: ['var(--bg-canvas)', 'var(--bg-user-bubble)'] },
 ];
 
@@ -230,6 +230,7 @@ export function SettingsPage({
           aria-label="导入 .lfh.json 备份"
           data-testid="backup-import-input"
           className="visually-hidden"
+          tabIndex={-1}
           onChange={(event) => {
             const file = event.target.files?.[0];
             event.target.value = '';

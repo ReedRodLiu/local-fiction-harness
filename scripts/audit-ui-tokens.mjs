@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 const TOKEN_FILE = 'src/ui/styles/tokens.css';
 const THEME_NAMES = ['light', 'dark', 'warm'];
 const ICON_IMPORT_PATTERN = /(?:icon|heroicons|fontawesome|react-feather|phosphor)/i;
+const HANDWRITTEN_UI_ICON_PATTERN = /[⚠✦⑂]/g;
 const NAMED_COLOR_PATTERN = /\b(?:aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blanchedalmond|blue|blueviolet|brown|burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|cyan|darkblue|darkcyan|darkgoldenrod|darkgray|darkgreen|darkgrey|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|fuchsia|gainsboro|ghostwhite|gold|goldenrod|gray|green|greenyellow|grey|honeydew|hotpink|indianred|indigo|ivory|khaki|lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|lightgray|lightgreen|lightgrey|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|lightslategrey|lightsteelblue|lightyellow|lime|limegreen|linen|magenta|maroon|mediumaquamarine|mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|navy|oldlace|olive|olivedrab|orange|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|papayawhip|peachpuff|peru|pink|plum|powderblue|purple|rebeccapurple|red|rosybrown|royalblue|saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|silver|skyblue|slateblue|slategray|slategrey|snow|springgreen|steelblue|tan|teal|thistle|tomato|turquoise|violet|wheat|white|whitesmoke|yellow|yellowgreen)\b/i;
 const COLOR_TOKEN_NAME_PATTERN = /^--(?:bg|text|border|action|accent|status)-[\w-]+$/;
 const HEX_COLOR_VALUE_PATTERN = /^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i;
@@ -150,6 +151,10 @@ export function auditUiTokens(rootDirectory = process.cwd()) {
       if (svgMatch) {
         const lineNumber = source.slice(0, svgMatch.index).split('\n').length;
         errors.push(`${relativePath}:${lineNumber}: 图标不得散落为手写 SVG，请使用 lucide-react。`);
+      }
+      for (const match of source.matchAll(HANDWRITTEN_UI_ICON_PATTERN)) {
+        const lineNumber = source.slice(0, match.index).split('\n').length;
+        errors.push(`${relativePath}:${lineNumber}: 图标不得使用 Unicode 符号 ${match[0]}，请使用 lucide-react。`);
       }
     }
   }

@@ -83,6 +83,10 @@
   margin: 0 0 8px;
 }
 
+#context-overview > summary {
+  min-height: 44px;
+}
+
 .context-overview-details p:last-child {
   margin-bottom: 0;
 }

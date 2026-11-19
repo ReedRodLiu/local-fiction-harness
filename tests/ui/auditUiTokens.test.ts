@@ -142,4 +142,17 @@ describe('UI token audit command', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('UI 样式审计通过');
   });
+
+  it('rejects Unicode symbols used as hand-written interface icons', () => {
+    createFixture();
+    writeFileSync(
+      join(fixtureRoot, 'src', 'ui', 'Sample.tsx'),
+      "import { Menu } from 'lucide-react';\nexport const Sample = () => <div><Menu /> ⚠ ✦ ⑂</div>;\n",
+    );
+
+    const result = runAudit();
+    const output = result.stdout + result.stderr;
+    expect(result.status).toBe(1);
+    expect(output).toContain('Sample.tsx:2: 图标不得使用 Unicode 符号');
+  });
 });
