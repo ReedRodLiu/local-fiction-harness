@@ -648,6 +648,10 @@ summary:focus-visible {
   background: var(--bg-surface-hover);
 }
 
+.story-tree-sibling.active .badge {
+  color: var(--text-primary);
+}
+
 .story-tree-cues {
   display: flex;
   flex-wrap: wrap;

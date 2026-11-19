@@ -6,6 +6,9 @@ const TOKEN_FILE = 'src/ui/styles/tokens.css';
 const THEME_NAMES = ['light', 'dark', 'warm'];
 const ICON_IMPORT_PATTERN = /(?:icon|heroicons|fontawesome|react-feather|phosphor)/i;
 const NAMED_COLOR_PATTERN = /\b(?:aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blanchedalmond|blue|blueviolet|brown|burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|cyan|darkblue|darkcyan|darkgoldenrod|darkgray|darkgreen|darkgrey|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|fuchsia|gainsboro|ghostwhite|gold|goldenrod|gray|green|greenyellow|grey|honeydew|hotpink|indianred|indigo|ivory|khaki|lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|lightgray|lightgreen|lightgrey|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|lightslategrey|lightsteelblue|lightyellow|lime|limegreen|linen|magenta|maroon|mediumaquamarine|mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|navy|oldlace|olive|olivedrab|orange|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|papayawhip|peachpuff|peru|pink|plum|powderblue|purple|rebeccapurple|red|rosybrown|royalblue|saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|silver|skyblue|slateblue|slategray|slategrey|snow|springgreen|steelblue|tan|teal|thistle|tomato|turquoise|violet|wheat|white|whitesmoke|yellow|yellowgreen)\b/i;
+const COLOR_TOKEN_NAME_PATTERN = /^--(?:bg|text|border|action|accent|status)-[\w-]+$/;
+const HEX_COLOR_VALUE_PATTERN = /^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i;
+const RGBA_COLOR_VALUE_PATTERN = /^rgba\(\s*(?:(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*){3}(?:0(?:\.\d+)?|1(?:\.0+)?|(?:0?\.\d+))\s*\)$/i;
 const COLOR_DECLARATION_PATTERN = /(?:^|[;{])\s*(?:color|background(?:-color)?|border(?:-[\w-]+)?|outline(?:-[\w-]+)?|text-decoration-color|text-emphasis-color|column-rule-color|caret-color|scrollbar-color|box-shadow|text-shadow|filter|fill|stroke|accent-color)\s*:\s*([^;{}]+)/gi;
 const CUSTOM_PROPERTY_VALUE_PATTERN = /--[\w-]+\s*:\s*([^;{}]+)/g;
 const TSX_COLOR_VALUE_PATTERN = /\b(?:color|background|backgroundColor|borderColor|borderTopColor|borderRightColor|borderBottomColor|borderLeftColor|outlineColor|textDecorationColor|textEmphasisColor|columnRuleColor|caretColor|scrollbarColor|boxShadow|textShadow|fill|stroke|accentColor)\s*:\s*(['"`])([a-z]+)\1/gi;
@@ -60,12 +63,18 @@ function tokenColorLiteralLines(source) {
   const lines = source.split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    const tokenValues = Array.from(line.matchAll(/--[\w-]+\s*:\s*([^;}]+)/g), (match) => match[1]);
-    if (/\b(?:rgb|hsl|hsla)\s*\(/i.test(line)) {
-      violations.push({ line: index + 1, message: 'Token 色值必须使用 Hex 或 rgba()，不支持 rgb()/hsl()。' });
-    }
-    if (tokenValues.some((value) => NAMED_COLOR_PATTERN.test(value))) {
-      violations.push({ line: index + 1, message: 'Token 中出现命名色值；请改用 Hex 或 rgba()。' });
+    const declarations = Array.from(line.matchAll(/(--[\w-]+)\s*:\s*([^;}]+)/g));
+    for (const [, name, rawValue] of declarations) {
+      if (!COLOR_TOKEN_NAME_PATTERN.test(name)) continue;
+      const value = rawValue.replace(/\/\*.*?\*\//g, '').trim();
+      if (HEX_COLOR_VALUE_PATTERN.test(value) || RGBA_COLOR_VALUE_PATTERN.test(value)) continue;
+
+      const message = /\b(?:rgb|hsl|hsla)\s*\(/i.test(value)
+        ? 'Token 色值必须使用 Hex 或 rgba()，不支持 rgb()/hsl()。'
+        : NAMED_COLOR_PATTERN.test(value)
+          ? 'Token 中出现命名色值；请改用 Hex 或 rgba()。'
+          : 'Token 色值必须使用有效的 Hex 或 rgba()。';
+      violations.push({ line: index + 1, message });
     }
   }
   return violations;

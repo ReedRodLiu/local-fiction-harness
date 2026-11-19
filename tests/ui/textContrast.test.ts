@@ -5,6 +5,22 @@ import { describe, expect, it } from 'vitest';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const tokensCss = readFileSync(join(repoRoot, 'src', 'ui', 'styles', 'tokens.css'), 'utf8');
+const baseCss = readFileSync(join(repoRoot, 'src', 'ui', 'styles', 'base.css'), 'utf8');
+const shellCss = readFileSync(join(repoRoot, 'src', 'ui', 'styles', 'shell.css'), 'utf8');
+
+function declarationsFor(selector: string, source: string) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const block = new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`).exec(source)?.[1] ?? '';
+  return Object.fromEntries(
+    Array.from(block.matchAll(/([\w-]+)\s*:\s*([^;]+);/g), ([, property, value]) => [property, value.trim()]),
+  );
+}
+
+function tokenName(value: string | undefined) {
+  const match = /^var\(--([\w-]+)\)$/.exec(value ?? '');
+  if (!match) throw new Error(`Expected a semantic color token, received ${value}`);
+  return match[1];
+}
 
 function themeTokens(theme: 'light' | 'dark' | 'warm') {
   const selector = theme === 'light'
@@ -88,6 +104,22 @@ describe('small text color contrast', () => {
           `${theme} ${foreground} on ${background}`,
         ).toBeGreaterThanOrEqual(4.5);
       }
+
+      const activeRow = declarationsFor('.story-tree-sibling.active', baseCss);
+      const badge = declarationsFor('.badge', shellCss);
+      const activeBadge = declarationsFor('.story-tree-sibling.active .badge', baseCss);
+      expect(activeRow.background).toBe('var(--bg-surface-hover)');
+      expect(badge.background).toBe('var(--accent-fiction-soft)');
+      expect(activeBadge.color).toBe('var(--text-primary)');
+
+      const actualBadgeBackground = composite(
+        colors[tokenName(badge.background)],
+        colors[tokenName(activeRow.background)],
+      );
+      expect(
+        contrastRatio(colors[tokenName(activeBadge.color)], actualBadgeBackground),
+        `${theme} active StoryTree badge on its bg-surface-hover row`,
+      ).toBeGreaterThanOrEqual(4.5);
     },
   );
 });

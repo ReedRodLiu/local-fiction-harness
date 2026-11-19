@@ -15,12 +15,12 @@ function createFixture() {
   writeFileSync(
     join(fixtureRoot, 'src', 'ui', 'styles', 'tokens.css'),
     [
-      '[data-theme="light"] { --canvas: #fff; --text: #111; }',
-      '[data-theme="dark"] { --canvas: #000; --text: #fff; }',
-      '[data-theme="warm"] { --canvas: #f7f3eb; --text: #111; }',
+      '[data-theme="light"] { --bg-canvas: #fff; --text-primary: #111; }',
+      '[data-theme="dark"] { --bg-canvas: #000; --text-primary: #fff; }',
+      '[data-theme="warm"] { --bg-canvas: #f7f3eb; --text-primary: #111; }',
     ].join('\n'),
   );
-  writeFileSync(join(fixtureRoot, 'src', 'ui', 'styles', 'base.css'), '.sample { color: var(--text); }');
+  writeFileSync(join(fixtureRoot, 'src', 'ui', 'styles', 'base.css'), '.sample { color: var(--text-primary); }');
   writeFileSync(
     join(fixtureRoot, 'src', 'ui', 'Sample.tsx'),
     "import { Menu } from 'lucide-react';\nexport const Sample = () => <Menu />;\n",
@@ -47,7 +47,7 @@ describe('UI token audit command', () => {
     createFixture();
     writeFileSync(
       join(fixtureRoot, 'src', 'ui', 'styles', 'base.css'),
-      '.sample { color: red; background: var(--canvas); }',
+      '.sample { color: red; background: var(--bg-canvas); }',
     );
     writeFileSync(
       join(fixtureRoot, 'src', 'ui', 'Sample.tsx'),
@@ -66,9 +66,9 @@ describe('UI token audit command', () => {
     writeFileSync(
       join(fixtureRoot, 'src', 'ui', 'styles', 'tokens.css'),
       [
-        '[data-theme="light"] { --canvas: #fff; --text: rgb(0, 0, 0); }',
-        '[data-theme="dark"] { --canvas: #000; --text: red; }',
-        '[data-theme="warm"] { --canvas: #f7f3eb; --text: rgba(0, 0, 0, 0.8); }',
+        '[data-theme="light"] { --bg-canvas: #fff; --text-primary: rgb(0, 0, 0); }',
+        '[data-theme="dark"] { --bg-canvas: #000; --text-primary: red; }',
+        '[data-theme="warm"] { --bg-canvas: #f7f3eb; --text-primary: rgba(0, 0, 0, 0.8); }',
       ].join('\n'),
     );
 
@@ -77,6 +77,23 @@ describe('UI token audit command', () => {
     expect(result.status).toBe(1);
     expect(output).toMatch(/tokens\.css:1:.*rgb\(\)/);
     expect(output).toMatch(/tokens\.css:2:.*命名色值/);
+  });
+
+  it('rejects values outside the Hex and rgba grammar for known color tokens', () => {
+    createFixture();
+    writeFileSync(
+      join(fixtureRoot, 'src', 'ui', 'styles', 'tokens.css'),
+      [
+        '[data-theme="light"] { --bg-canvas: transparent; --text-primary: #111; }',
+        '[data-theme="dark"] { --bg-canvas: #000; --text-primary: #fff; }',
+        '[data-theme="warm"] { --bg-canvas: #f7f3eb; --text-primary: #111; }',
+      ].join('\n'),
+    );
+
+    const result = runAudit();
+    const output = result.stdout + result.stderr;
+    expect(result.status).toBe(1);
+    expect(output).toMatch(/tokens\.css:1:.*Hex 或 rgba/);
   });
 
   it('accepts a compliant UI and reports every required drift category', () => {
@@ -91,9 +108,9 @@ describe('UI token audit command', () => {
     writeFileSync(
       join(fixtureRoot, 'src', 'ui', 'styles', 'tokens.css'),
       [
-        '[data-theme="light"] { --canvas: #fff; --text: #111; }',
-        '[data-theme="dark"] { --canvas: #000; --text: #fff; }',
-        '[data-theme="warm"] { --canvas: #f7f3eb; }',
+        '[data-theme="light"] { --bg-canvas: #fff; --text-primary: #111; }',
+        '[data-theme="dark"] { --bg-canvas: #000; --text-primary: #fff; }',
+        '[data-theme="warm"] { --bg-canvas: #f7f3eb; }',
       ].join('\n'),
     );
     writeFileSync(
