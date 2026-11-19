@@ -2295,6 +2295,49 @@ async function verifyUiImplFixContracts(page) {
     .first()
     .getByLabel('1 条诊断');
   await diagnosticBadge.waitFor();
+  const criticalSession = page.getByTestId('ds-session-item')
+    .filter({ hasText: '合成宫斗测试档' })
+    .first();
+  const criticalSessionChips = criticalSession.locator(
+    '[data-testid="ds-session-chips"] > [data-testid$="-chip"]',
+  );
+  const criticalChipTestIds = await criticalSessionChips.evaluateAll((chips) =>
+    chips.map((chip) => chip.getAttribute('data-testid')),
+  );
+  if (
+    criticalChipTestIds.join(',') !== [
+      'ds-session-diagnostic-chip',
+      'ds-session-attachment-chip',
+      'ds-session-turn-fork-chip',
+    ].join(',')
+  ) {
+    throw new Error(`DeepSeek session chips did not prioritize and merge as specified: ${JSON.stringify(criticalChipTestIds)}`);
+  }
+  for (const row of await page.getByTestId('ds-session-item').all()) {
+    const chipCount = await row.locator(
+      '[data-testid="ds-session-chips"] > [data-testid$="-chip"]',
+    ).count();
+    if (chipCount > 3) {
+      throw new Error(`A DeepSeek session row rendered ${chipCount} chips; the maximum is 3.`);
+    }
+  }
+  const turnForkChip = criticalSession.getByTestId('ds-session-turn-fork-chip');
+  const turnForkText = await turnForkChip.textContent();
+  const turnForkLabel = await turnForkChip.getAttribute('aria-label');
+  const turnForkMatch = turnForkLabel?.match(/^(\d+) 轮，(\d+) 处分叉$/);
+  if (
+    !turnForkMatch ||
+    !turnForkText?.includes(`${turnForkMatch[1]} 轮`) ||
+    !turnForkText.includes(`${turnForkMatch[2]} 分支`)
+  ) {
+    throw new Error(`Merged turn/fork chip lost key context: ${JSON.stringify({ turnForkText, turnForkLabel })}`);
+  }
+  if (
+    !(await criticalSession.getByTestId('ds-session-attachment-chip').textContent())?.includes('3 附件') ||
+    !(await criticalSession.getByTestId('ds-session-diagnostic-chip').getAttribute('aria-label'))?.includes('1 条诊断')
+  ) {
+    throw new Error('DeepSeek session chips lost attachment or diagnostic information.');
+  }
   const diagnosticBadgeMetrics = await diagnosticBadge.evaluate((element) => ({
     text: element.textContent?.replace(/\s+/g, ' ').trim(),
     svgCount: element.querySelectorAll('svg').length,
@@ -2307,6 +2350,51 @@ async function verifyUiImplFixContracts(page) {
     diagnosticBadgeMetrics.svgAriaHidden !== 'true'
   ) {
     throw new Error(`Diagnostic badge is not backed by an accessible Lucide icon: ${JSON.stringify(diagnosticBadgeMetrics)}`);
+  }
+
+  const assertPreviewCloseFocus = async (close, label) => {
+    const trigger = criticalSession.getByTestId('ds-session-preview-trigger');
+    await trigger.click();
+    const previewSheet = page.getByTestId('deepseek-preview-sheet');
+    await previewSheet.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => history.state?.lfhOverlayDepth === 2);
+    await close(previewSheet);
+    await previewSheet.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => history.state?.lfhOverlayDepth === 1);
+    await page.waitForFunction(() =>
+      document.activeElement?.getAttribute('data-testid') === 'ds-session-preview-trigger',
+    );
+    if (
+      !(await page.getByTestId('deepseek-import-panel').isVisible()) ||
+      await page.getByTestId('deepseek-import-panel')
+        .getByRole('progressbar')
+        .getAttribute('aria-valuenow') !== '2'
+    ) {
+      throw new Error(`${label} did not leave the DeepSeek import page on its session step.`);
+    }
+  };
+
+  try {
+    await assertPreviewCloseFocus(
+      () => page.goBack(),
+      'Preview history close',
+    );
+    await assertPreviewCloseFocus(
+      (previewSheet) => previewSheet.getByRole('button', { name: '关闭剧情面板' }).click(),
+      'Preview button close',
+    );
+
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await assertPreviewCloseFocus(
+      () => page.goBack(),
+      'Reduced-motion preview history close',
+    );
+    await assertPreviewCloseFocus(
+      (previewSheet) => previewSheet.getByRole('button', { name: '关闭剧情面板' }).click(),
+      'Reduced-motion preview button close',
+    );
+  } finally {
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
   }
   console.log(`UI_IMPL_FIX_MEASUREMENTS ${JSON.stringify(measurements)}`);
   await leaveImportView(page);

@@ -130,6 +130,7 @@ export function useWebHistoryLayer(
   closeEnabled = true,
   canClose?: () => boolean,
   restoreFocus?: () => HTMLElement | null,
+  restoreFocusAfterClose = true,
 ): void {
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -162,11 +163,12 @@ export function useWebHistoryLayer(
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       unregister();
+      if (!restoreFocusAfterClose) return;
       const restoreTarget = restoreFocusRef.current;
       restoreFocusRef.current = null;
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => restoreVisibleFocus(restoreTarget));
       });
     };
-  }, [id, open, priority]);
+  }, [id, open, priority, restoreFocusAfterClose]);
 }

@@ -147,11 +147,16 @@ export function DeepSeekImportPanel({
   const aiPreviousFilterRef = useRef<DeepSeekFilterMode | null>(null);
   const aiByokPreviousFilterRef = useRef<DeepSeekFilterMode | null>(null);
   const pendingFilterTabFocusRef = useRef<DeepSeekFilterMode | null>(null);
+  const previewTriggerRef = useRef<HTMLButtonElement | null>(null);
   useWebHistoryLayer(
     'deepseek-preview',
     60,
     Boolean(previewSessionId && !receipt),
     () => setPreviewSessionId(null),
+    true,
+    undefined,
+    undefined,
+    false,
   );
 
   useEffect(() => {
@@ -958,6 +963,46 @@ export function DeepSeekImportPanel({
                 <ul className="ds-session-list" data-testid="ds-session-list" aria-label="外部会话列表">
                   {filteredSessions.map((session) => {
                     const checked = selectedIds.includes(session.sessionId);
+                    const sessionChips = [
+                      session.diagnosticCount > 0 && (
+                        <span
+                          key="diagnostics"
+                          className="badge badge-warn"
+                          data-testid="ds-session-diagnostic-chip"
+                          aria-label={`${session.diagnosticCount} 条诊断`}
+                        >
+                          <TriangleAlert size={12} strokeWidth={1.75} aria-hidden="true" />
+                          {session.diagnosticCount}
+                        </span>
+                      ),
+                      session.attachments.length > 0 && (
+                        <span
+                          key="attachments"
+                          className="badge"
+                          data-testid="ds-session-attachment-chip"
+                          aria-label={`${session.attachments.length} 个附件`}
+                        >
+                          {session.attachments.length} 附件
+                        </span>
+                      ),
+                      <span
+                        key="turn-fork"
+                        className="badge"
+                        data-testid="ds-session-turn-fork-chip"
+                        aria-label={session.forkCount > 0
+                          ? `${session.turnCount} 轮，${session.forkCount} 处分叉`
+                          : `${session.turnCount} 轮`}
+                      >
+                        {session.turnCount} 轮
+                        {session.forkCount > 0 && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <GitBranch size={12} strokeWidth={1.75} aria-hidden="true" />
+                            {session.forkCount} 分支
+                          </>
+                        )}
+                      </span>,
+                    ].filter(Boolean).slice(0, 3);
                     return (
                       <li key={session.sessionId} className="ds-session-item" data-testid="ds-session-item">
                         <div className="ds-session-row">
@@ -975,33 +1020,17 @@ export function DeepSeekImportPanel({
                             aria-label={`预览《${session.title}》`}
                             aria-haspopup="dialog"
                             data-testid="ds-session-preview-trigger"
-                            onClick={() => setPreviewSessionId(session.sessionId)}
+                            onClick={(event) => {
+                              previewTriggerRef.current = event.currentTarget;
+                              setPreviewSessionId(session.sessionId);
+                            }}
                           >
                             <ChevronRight size={19} strokeWidth={1.75} />
                           </button>
                         </div>
                         <p className="ds-session-latest">{session.latestSnippet || session.firstSnippet || '暂无剧情片段'}</p>
-                        <div className="ds-session-chips">
-                          <span className="badge">{session.turnCount} 轮</span>
-                          {session.forkCount > 0 && (
-                            <span
-                              className="badge"
-                              data-testid="ds-session-fork-chip"
-                              aria-label={`${session.forkCount} 处分叉`}
-                            >
-                              <GitBranch size={12} strokeWidth={1.75} aria-hidden="true" />
-                              {session.forkCount}
-                            </span>
-                          )}
-                          {session.attachments.length > 0 && (
-                            <span className="badge">{session.attachments.length} 附件</span>
-                          )}
-                          {session.diagnosticCount > 0 && (
-                            <span className="badge badge-warn" aria-label={`${session.diagnosticCount} 条诊断`}>
-                              <TriangleAlert size={12} strokeWidth={1.75} aria-hidden="true" />
-                              {session.diagnosticCount}
-                            </span>
-                          )}
+                        <div className="ds-session-chips" data-testid="ds-session-chips">
+                          {sessionChips}
                         </div>
                       </li>
                     );
@@ -1028,6 +1057,13 @@ export function DeepSeekImportPanel({
         label="DeepSeek 外部会话预览"
         testId="deepseek-preview-sheet"
         onClose={() => setPreviewSessionId(null)}
+        onExitComplete={() => {
+          const trigger = previewTriggerRef.current;
+          const target = trigger?.isConnected && trigger.getClientRects().length > 0
+            ? trigger
+            : document.querySelector<HTMLElement>('[data-testid="ds-session-preview-trigger"]');
+          target?.focus();
+        }}
       >
         {preview && (
           <div className="ds-preview-content" data-testid="deepseek-preview-card">

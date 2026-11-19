@@ -11,6 +11,7 @@ interface SheetDialogProps {
   statusTestId?: string;
   children: ReactNode;
   onClose: () => void;
+  onExitComplete?: () => void;
 }
 
 type PointerListenerSet = {
@@ -28,6 +29,7 @@ export function SheetDialog({
   statusTestId,
   children,
   onClose,
+  onExitComplete,
 }: SheetDialogProps) {
   const [expanded, setExpanded] = useState(false);
   const pointerStart = useRef<number | null>(null);
@@ -187,6 +189,7 @@ export function SheetDialog({
       className={`sheet-dialog${expanded ? ' is-expanded' : ''}`}
       testId={testId}
       onClose={requestClose}
+      onExitComplete={onExitComplete}
     >
       <div className="sheet-handlebar">
         <button
