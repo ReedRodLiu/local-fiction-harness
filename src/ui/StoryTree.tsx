@@ -205,7 +205,11 @@ export function StoryTree({
                                     value={renameDraft}
                                     onChange={(e) => setRenameDraft(e.target.value)}
                                     onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
+                                      if (
+                                        e.key === 'Enter' &&
+                                        !e.nativeEvent.isComposing &&
+                                        e.nativeEvent.keyCode !== 229
+                                      ) {
                                         e.preventDefault();
                                         void commitRename(branch.entryNodeId);
                                       }

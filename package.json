@@ -16,12 +16,14 @@
     "android:test": "cd android && ./gradlew testDebugUnitTest",
     "android:build": "npm run android:sync && cd android && ./gradlew --offline :app:testDebugUnitTest --rerun-tasks assembleDebug",
     "audit:artifacts": "node scripts/audit-artifacts.mjs",
-    "verify:all": "npm run typecheck:harness && npm run typecheck && npm run build && npm test && npm run test:e2e && npm run android:build && npm run audit:artifacts"
+    "audit:ui": "node scripts/audit-ui-tokens.mjs",
+    "verify:all": "npm run typecheck:harness && npm run typecheck && npm run build && npm test && npm run test:e2e && npm run android:build && npm run audit:artifacts && npm run audit:ui"
   },
   "dependencies": {
     "@capacitor/android": "^8.6.2",
     "@capacitor/core": "^8.6.2",
     "fflate": "^0.8.3",
+    "lucide-react": "^1.76.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

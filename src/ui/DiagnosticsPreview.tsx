@@ -102,6 +102,7 @@ export function DiagnosticsPreview({
       <div className="checkbox-row">
         <input
           id="diagnostics-active-story"
+          data-testid="diagnostics-active-story"
           type="checkbox"
           checked={includeActiveStory}
           onChange={(event) => setIncludeActiveStory(event.target.checked)}

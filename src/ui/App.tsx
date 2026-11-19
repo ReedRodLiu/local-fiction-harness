@@ -13,6 +13,7 @@ import {
   isAbortError,
   maskApiKey,
   normalizeOfficialModelConfig,
+  projectStoryTreeSpine,
   type DeepSeekImportBatchResult,
   type DiagnosticBundleTrigger,
   type ModelConfig,
@@ -33,6 +34,7 @@ import {
   type DevTestConfigResponse,
 } from '../platform/runtime.ts';
 import { ContextOverview } from './ContextOverview.tsx';
+import { LibraryDrawer } from './LibraryDrawer.tsx';
 import { setCrashDiagnosticBundleBuilder } from './crashDiagnosticContext.ts';
 import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
 import {
@@ -45,8 +47,23 @@ import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
 import { StoryReview } from './StoryReview.tsx';
 import { StoryTree } from './StoryTree.tsx';
+import { BannerAlert } from './primitives/BannerAlert.tsx';
+import { SheetDialog } from './primitives/SheetDialog.tsx';
+import { SettingsPage } from './SettingsPage.tsx';
+import { TopBar } from './TopBar.tsx';
 import { TurnCard } from './TurnCard.tsx';
 import { toErrorMessage } from './textHelpers.ts';
+import { WelcomeView } from './WelcomeView.tsx';
+
+const LIBRARY_COLLAPSED_PREFERENCE = 'lfh.ui.library_collapsed';
+
+function readLibraryCollapsedPreference(): boolean {
+  try {
+    return window.localStorage.getItem(LIBRARY_COLLAPSED_PREFERENCE) === 'true';
+  } catch {
+    return false;
+  }
+}
 
 function hasModelCredentials(config: ModelConfig, useDevEnvKey: boolean): boolean {
   if (
@@ -122,6 +139,10 @@ export function App({ runtime }: AppProps) {
   const [showImport, setShowImport] = useState(false);
   const [importMode, setImportMode] = useState<ImportMode>('deepseek');
   const [importResetKey, setImportResetKey] = useState(0);
+  const [showSettings, setShowSettings] = useState(false);
+  const [mobileLibraryOpen, setMobileLibraryOpen] = useState(false);
+  const [libraryCollapsed, setLibraryCollapsed] = useState(readLibraryCollapsedPreference);
+  const [storyTreeOpen, setStoryTreeOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [pendingByok, setPendingByok] = useState<{
     label: string;
@@ -304,6 +325,14 @@ export function App({ runtime }: AppProps) {
       cancelled = true;
     };
   }, [isWebDev]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LIBRARY_COLLAPSED_PREFERENCE, String(libraryCollapsed));
+    } catch {
+      // A collapsed sidebar is a display preference and does not block the player.
+    }
+  }, [libraryCollapsed]);
 
   const enqueueConfigSave = (task: () => Promise<void>) => {
     configSaveQueueRef.current = configSaveQueueRef.current
@@ -502,9 +531,23 @@ export function App({ runtime }: AppProps) {
 
   const openImportView = (mode: ImportMode) => {
     abortActiveStream(true);
+    setShowSettings(false);
+    setStoryTreeOpen(false);
+    setMobileLibraryOpen(false);
     setImportMode(mode);
     setImportResetKey((k) => k + 1);
     setShowImport(true);
+  };
+
+  const openSettings = () => {
+    setShowImport(false);
+    setMobileLibraryOpen(false);
+    setStoryTreeOpen(false);
+    setShowSettings(true);
+  };
+
+  const toggleLibraryCollapsed = () => {
+    setLibraryCollapsed((collapsed) => !collapsed);
   };
 
   const withCredentials = (
@@ -727,6 +770,7 @@ export function App({ runtime }: AppProps) {
       if (storyOpSeqRef.current !== opSeq) return;
       await commitStoryState(created);
       setShowImport(false);
+      setShowSettings(false);
     } catch (err) {
       if (storyOpSeqRef.current === opSeq) {
         setErrorMsg(toErrorMessage(err, '保存导入故事失败。'));
@@ -756,6 +800,7 @@ export function App({ runtime }: AppProps) {
   const handleContinueImportedStory = async (storyId: string) => {
     await handleSelectStory(storyId);
     setShowImport(false);
+    setShowSettings(false);
   };
 
   const handleSelectStory = async (id: string) => {
@@ -770,6 +815,8 @@ export function App({ runtime }: AppProps) {
         storyRef.current = switched;
         setStory(switched);
         setShowImport(false);
+        setShowSettings(false);
+        setMobileLibraryOpen(false);
       }
     } catch (err) {
       if (storyOpSeqRef.current === opSeq) {
@@ -833,11 +880,13 @@ export function App({ runtime }: AppProps) {
     }
   };
 
-  const handleExportBackup = async () => {
+  const handleExportBackup = async (storyId: string) => {
     setErrorMsg(null);
     try {
-      const json = exportStoryBackup(story);
-      const fileName = `${story.title.replace(/[\\/:*?"<>|]+/g, '_') || 'story'}.lfh.json`;
+      const targetStory = stories.find((item) => item.id === storyId) ?? (story.id === storyId ? story : null);
+      if (!targetStory) return;
+      const json = exportStoryBackup(targetStory);
+      const fileName = `${targetStory.title.replace(/[\\/:*?"<>|]+/g, '_') || 'story'}.lfh.json`;
       await runtime.backupExporter.exportJsonFile(fileName, json);
     } catch (err) {
       setErrorMsg(toErrorMessage(err, '导出 JSON 备份失败。'));
@@ -863,6 +912,7 @@ export function App({ runtime }: AppProps) {
       if (storyOpSeqRef.current !== opSeq) return;
       await commitStoryState(restored);
       setShowImport(false);
+      setShowSettings(false);
     } catch (err) {
       if (storyOpSeqRef.current === opSeq) {
         setErrorMsg(toErrorMessage(err, '导入 JSON 备份失败。'));
@@ -870,115 +920,291 @@ export function App({ runtime }: AppProps) {
     }
   };
 
+  const storyExists =
+    stories.some((item) => item.id === story.id) ||
+    Boolean(story.rawScript.trim()) ||
+    activeNodes.length > 0;
+  const isWelcome = !storyExists;
+  const reviewState = computeActiveReviewState(story);
+  const branchLabel = reviewState.activeBranchLabel === '当前主干路线'
+    ? '主线'
+    : reviewState.activeBranchLabel;
+  const forkCount = projectStoryTreeSpine(story).forkCount;
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div>
-          <h1 className="app-title">本地优先 AI 文游</h1>
-          <p className="app-subtitle">本地优先 · 连接 DeepSeek 官方</p>
-        </div>
-
-        <div className="btn-group">
-          <button
-            type="button"
-            className="btn btn-primary"
-            style={{ flex: 1 }}
-            onClick={() => openImportView('deepseek')}
-          >
-            从 DeepSeek 继续
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              if (showImport) {
-                setShowImport(false);
-              } else {
-                openImportView('script');
-              }
-            }}
-          >
-            {showImport ? '返回游玩界面' : '导入剧本 / 新建故事'}
-          </button>
-        </div>
-
-        <StoryLibrary
-          stories={stories}
-          activeStoryId={story.id}
-          onSelectStory={(id) => void handleSelectStory(id)}
-          onRenameStory={(id, title) => void handleRenameStory(id, title)}
-          onDeleteStory={(id) => void handleDeleteStory(id)}
-          onExportBackup={() => void handleExportBackup()}
-          onImportBackupFile={(file) => void handleImportBackupFile(file)}
+    <div className="app-root">
+      {!showImport && !showSettings && (
+        <TopBar
+          title={storyExists ? story.title : '本地文游播放器'}
+          hasStory={storyExists}
+          branchLabel={branchLabel}
+          forkCount={forkCount}
+          isSummarizing={isSummarizing}
+          libraryCollapsed={libraryCollapsed}
+          onOpenLibrary={() => setMobileLibraryOpen(true)}
+          onToggleLibrary={toggleLibraryCollapsed}
+          onOpenStoryTree={() => setStoryTreeOpen(true)}
         />
+      )}
 
-        <section className="connected-key-card" data-testid="deepseek-connection-card" aria-label="DeepSeek 连接状态">
-          {hasCredentials ? (
-            <>
-              <div className="connected-key-header">
-                <strong>已连接 DeepSeek 官方（DeepSeek-Flash）</strong>
-                <span className="badge" data-testid="connected-key-mask">
-                  {useDevEnvKey ? '开发代理' : maskApiKey(config.apiKey) || '本地已连接'}
-                </span>
-              </div>
-              <p className="wizard-privacy-note">
-                密钥仅保存在你的手机本地，不会上传到任何第三方服务器。
-              </p>
-              <div className="btn-group">
-                <button
-                  type="button"
-                  className="btn"
-                  data-testid="change-key-btn"
-                  onClick={openSetupWizard}
-                >
-                  更换 Key
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  data-testid="clear-key-btn"
-                  onClick={handleClearSavedKey}
-                >
-                  清除已保存的key
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="connected-key-header">
-                <strong>未连接 DeepSeek 官方</strong>
-                <span className="badge">DeepSeek-Flash</span>
-              </div>
-              <p className="wizard-privacy-note">
-                密钥仅保存在你的手机本地，不会上传到任何第三方服务器。
-              </p>
+      <div
+        className={`app-workspace ${libraryCollapsed ? 'is-library-collapsed' : ''} ${showImport || showSettings ? 'is-overlay' : ''}`}
+      >
+        {!showImport && !showSettings && (
+          <LibraryDrawer
+            stories={stories}
+            activeStoryId={story.id}
+            collapsed={libraryCollapsed}
+            mobileOpen={mobileLibraryOpen}
+            hasCredentials={hasCredentials}
+            onCloseMobile={() => setMobileLibraryOpen(false)}
+            onOpenSettings={openSettings}
+            onStartDeepSeekImport={() => openImportView('deepseek')}
+            onStartScriptImport={() => openImportView('script')}
+            onSelectStory={(id) => void handleSelectStory(id)}
+            onRenameStory={(id, title) => void handleRenameStory(id, title)}
+            onDeleteStory={(id) => void handleDeleteStory(id)}
+            onExportStoryBackup={(id) => void handleExportBackup(id)}
+          />
+        )}
+
+        <main className="main-stage" data-testid="main-stage">
+          {errorMsg && (
+            <BannerAlert tone="danger" testId="main-error-banner">
+              <span>{errorMsg}</span>
               <button
                 type="button"
-                className="btn btn-primary"
-                data-testid="open-setup-wizard-btn"
-                onClick={openSetupWizard}
+                className="btn btn-sm"
+                onClick={() => openDiagnostics('error_banner')}
               >
-                连接 DeepSeek 钥匙
+                打包排障日志
               </button>
+            </BannerAlert>
+          )}
+
+          {showSettings ? (
+            <SettingsPage
+              appVersion={APP_VERSION}
+              hasCredentials={hasCredentials}
+              config={config}
+              useDevEnvKey={useDevEnvKey}
+              showDevTestProxy={import.meta.env.DEV && isWebDev && Boolean(devTestInfo?.available)}
+              onBack={() => setShowSettings(false)}
+              onOpenSetupWizard={openSetupWizard}
+              onClearSavedKey={handleClearSavedKey}
+              onApplyDevTestConfig={applyDevTestConfig}
+              onOpenDiagnostics={() => openDiagnostics('settings_manual')}
+              onImportBackupFile={(file) => void handleImportBackupFile(file)}
+            />
+          ) : showImport ? (
+            <ImportPanel
+              initialMode={importMode}
+              resetKey={importResetKey}
+              config={config}
+              transport={runtime.transport}
+              binaryDownloader={runtime.binaryDownloader}
+              hasCredentials={hasCredentials}
+              onRequireByok={openByokPrompt}
+              extractBlueprint={(raw, cfg, title, signal) =>
+                harness.extractStoryBlueprint(raw, cfg, title, signal)
+              }
+              onConfirmStory={handleConfirmImportedStory}
+              onImportDeepSeekBatch={handleImportDeepSeekBatch}
+              diagnostics={runtime.diagnostics}
+              onPackageDiagnostics={() => openDiagnostics('error_banner')}
+              onContinueStory={(storyId) => void handleContinueImportedStory(storyId)}
+              onCancel={() => setShowImport(false)}
+            />
+          ) : (
+            <>
+              {isWelcome ? (
+                <WelcomeView
+                  stories={stories}
+                  onStartDeepSeekImport={() => openImportView('deepseek')}
+                  onStartScriptImport={() => openImportView('script')}
+                  onSelectStory={(id) => void handleSelectStory(id)}
+                />
+              ) : (
+                <>
+                  <StoryReview
+                    story={story}
+                    metrics={contextPreview.metrics}
+                    isBusy={isStreaming}
+                    isSummarizing={isSummarizing}
+                    onComputeSummary={() => void handleComputeActiveSummary()}
+                  />
+
+                  <ContextOverview
+                    story={story}
+                    summarySnapshot={activeSummary}
+                    metrics={contextPreview.metrics}
+                    isStreaming={isStreaming || isSummarizing}
+                    isReextracting={isSummarizing}
+                    onSaveBlueprintTweak={handleSaveBlueprintTweak}
+                    onReextractBlueprint={() => handleReextractBlueprint()}
+                  />
+
+                  <section className="timeline" aria-label="故事对话记录">
+                    {activeNodes.length === 0 && !isStreaming && (
+                      <div className="turn-card empty-story-card">
+                        <div className="turn-role">开场引导</div>
+                        <div className="turn-body">
+                          {story.blueprint.openingHook
+                            ? story.blueprint.openingHook
+                            : '可从「从 DeepSeek 继续」导入长对话存档，或点击「导入剧本 / 新建故事」载入自由格式剧本后开始演绎。'}
+                        </div>
+                        {!story.blueprint.openingHook && (
+                          <div className="btn-group" style={{ marginTop: '0.75rem' }}>
+                            <button
+                              type="button"
+                              className="btn btn-primary"
+                              onClick={() => openImportView('deepseek')}
+                            >
+                              从 DeepSeek 继续（.zip）
+                            </button>
+                            <button
+                              type="button"
+                              className="btn"
+                              onClick={() => openImportView('script')}
+                            >
+                              导入自由剧本
+                            </button>
+                          </div>
+                        )}
+                        {story.blueprint.openingHook && (
+                          <div className="composer-actions" style={{ marginTop: '0.75rem' }}>
+                            <span className="status-text">已保留原始剧本全文锚定</span>
+                            <button
+                              type="button"
+                              className="btn btn-primary"
+                              onClick={() =>
+                                void sendAction(
+                                  '开始故事，请按照剧本开场规则生成第一幕与初始状态栏。',
+                                )
+                              }
+                            >
+                              开启第一幕
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {activeNodes.map((node) => (
+                      <TurnCard
+                        key={node.id}
+                        node={node}
+                        isActiveLeaf={node.id === story.activeLeafNodeId}
+                        isStreaming={isStreaming || isSummarizing}
+                        siblings={getSiblingBranchInfo(story, node.id)}
+                        onSelectChoice={(choiceText) => void sendAction(choiceText)}
+                        onSwitchBranch={(targetId) => void handleSwitchBranch(targetId)}
+                        onEditAndBranch={(nodeId, text) => void handleEditAndBranch(nodeId, text)}
+                        onRegenerate={(nodeId) => void handleRegenerateNode(nodeId)}
+                        onRewindToNode={(nodeId) => void handleRewindToNode(nodeId)}
+                      />
+                    ))}
+
+                    {isStreaming && (
+                      <article className="turn-card assistant" aria-live="polite">
+                        <div className="turn-role">叙事 AI（生成中…）</div>
+                        {streamReasoning && (
+                          <details className="reasoning-details" open>
+                            <summary>思考过程（实时流式）</summary>
+                            <div className="reasoning-content">{streamReasoning}</div>
+                          </details>
+                        )}
+                        {streamContent ? (
+                          <MessageContent content={streamContent} />
+                        ) : (
+                          <div className="turn-body">正在等待响应…</div>
+                        )}
+                      </article>
+                    )}
+                  </section>
+                </>
+              )}
+
+              <form className="composer" onSubmit={handleSubmit}>
+                <label htmlFor="turn-input">输入你的行动或对话</label>
+                <textarea
+                  id="turn-input"
+                  name="playerInput"
+                  rows={2}
+                  value={input}
+                  placeholder={isWelcome
+                    ? '导入故事后即可开始行动…'
+                    : '输入你的抉择、对话或行动（Ctrl/Cmd + Enter 发送）…'}
+                  disabled={isWelcome}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
+                      event.preventDefault();
+                      void handleSubmit();
+                    }
+                  }}
+                />
+                <div className="composer-actions">
+                  <span className="status-text">
+                    {isWelcome ? '先导入一部故事，再开始游玩' : `已保存轮次：${Math.floor(activeNodes.length / 2)}`}
+                  </span>
+                  <div>
+                    {isStreaming ? (
+                      <button
+                        key="stop-generation-btn"
+                        type="button"
+                        className="btn"
+                        aria-label="停止生成"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          abortRef.current?.abort();
+                        }}
+                      >
+                        停止生成
+                      </button>
+                    ) : (
+                      <button
+                        key="send-action-btn"
+                        type="submit"
+                        className="btn btn-primary"
+                        aria-label="发送行动"
+                        disabled={!input.trim() || isSummarizing || isWelcome}
+                      >
+                        发送行动
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </form>
             </>
           )}
 
-          {devTestInfo?.available && (
-            <button type="button" className="btn" onClick={applyDevTestConfig}>
-              使用本地 .env.local 测试代理
-            </button>
+          {wizardOpen && (
+            <DeepSeekSetupWizard
+              initialKey={config.apiKey}
+              pendingLabel={pendingByok?.label ?? null}
+              verifyUrlBase={
+                useDevProxyForSetup ? config.baseUrl : DEFAULT_MODEL_CONFIG.baseUrl
+              }
+              onComplete={(verifiedKey) => {
+                const nextCfg: ModelConfig = useDevProxyForSetup
+                  ? { ...config, apiKey: verifiedKey, memoryOnly: false }
+                  : normalizeOfficialModelConfig({ ...config, apiKey: verifiedKey });
+                const resume = pendingByok?.resume;
+                setPendingByok(null);
+                setWizardOpen(false);
+                updateConfig(nextCfg, false);
+                if (resume) resume(nextCfg);
+              }}
+              onCancel={() => {
+                setPendingByok(null);
+                setWizardOpen(false);
+              }}
+            />
           )}
-        </section>
-
-        <button
-          type="button"
-          className="btn"
-          data-testid="open-diagnostics"
-          onClick={() => openDiagnostics('settings_manual')}
-        >
-          导出最近 30 分钟脱敏日志
-        </button>
-      </aside>
+        </main>
+      </div>
 
       {showDiagnostics && (
         <DiagnosticsPreview
@@ -988,229 +1214,23 @@ export function App({ runtime }: AppProps) {
         />
       )}
 
-      <main className="main-stage">
-        <header className="stage-header">
-          <h2>{story.title}</h2>
-          <span className="status-text">
-            {hasCredentials ? 'DeepSeek-Flash · 已连接' : 'DeepSeek-Flash · 未连接'}
-          </span>
-        </header>
-
-        {errorMsg && (
-          <div className="error-banner" role="alert">
-            {errorMsg}
-            <button
-              type="button"
-              className="btn btn-sm"
-              style={{ marginLeft: '0.6rem' }}
-              onClick={() => openDiagnostics('error_banner')}
-            >
-              打包排障日志
-            </button>
-          </div>
-        )}
-
-        {wizardOpen && (
-          <DeepSeekSetupWizard
-            initialKey={config.apiKey}
-            pendingLabel={pendingByok?.label ?? null}
-            verifyUrlBase={
-              useDevProxyForSetup ? config.baseUrl : DEFAULT_MODEL_CONFIG.baseUrl
-            }
-            onComplete={(verifiedKey) => {
-              const nextCfg: ModelConfig = useDevProxyForSetup
-                ? { ...config, apiKey: verifiedKey, memoryOnly: false }
-                : normalizeOfficialModelConfig({ ...config, apiKey: verifiedKey });
-              const resume = pendingByok?.resume;
-              setPendingByok(null);
-              setWizardOpen(false);
-              updateConfig(nextCfg, false);
-              if (resume) {
-                resume(nextCfg);
-              }
-            }}
-            onCancel={() => {
-              setPendingByok(null);
-              setWizardOpen(false);
-            }}
-          />
-        )}
-
-        {showImport ? (
-          <ImportPanel
-            initialMode={importMode}
-            resetKey={importResetKey}
-            config={config}
-            transport={runtime.transport}
-            binaryDownloader={runtime.binaryDownloader}
-            hasCredentials={hasCredentials}
-            onRequireByok={openByokPrompt}
-            extractBlueprint={(raw, cfg, title, signal) =>
-              harness.extractStoryBlueprint(raw, cfg, title, signal)
-            }
-            onConfirmStory={handleConfirmImportedStory}
-            onImportDeepSeekBatch={handleImportDeepSeekBatch}
-            diagnostics={runtime.diagnostics}
-            onPackageDiagnostics={() => openDiagnostics('error_banner')}
-            onContinueStory={(storyId) => void handleContinueImportedStory(storyId)}
-            onCancel={() => setShowImport(false)}
-          />
-        ) : (
-          <>
-            <StoryReview
-              story={story}
-              metrics={contextPreview.metrics}
-              isBusy={isStreaming}
-              isSummarizing={isSummarizing}
-              onComputeSummary={() => void handleComputeActiveSummary()}
-            />
-
-            <StoryTree
-              story={story}
-              isBusy={isStreaming || isSummarizing}
-              isRenameBusy={isStreaming || (isSummarizing && !isBranchSwitchSummarizing)}
-              onSwitchBranch={(id) => void handleSwitchBranch(id)}
-              onRenameBranch={handleRenameBranch}
-              onExtractBranchGist={handleExtractBranchGist}
-            />
-
-            <ContextOverview
-              story={story}
-              summarySnapshot={activeSummary}
-              metrics={contextPreview.metrics}
-              isStreaming={isStreaming}
-              isReextracting={isSummarizing}
-              onSaveBlueprintTweak={handleSaveBlueprintTweak}
-              onReextractBlueprint={() => handleReextractBlueprint()}
-            />
-
-            <section className="timeline" aria-label="故事对话记录">
-              {activeNodes.length === 0 && !isStreaming && (
-                <div className="turn-card">
-                  <div className="turn-role">开场引导</div>
-                  <div className="turn-body">
-                    {story.blueprint.openingHook
-                      ? story.blueprint.openingHook
-                      : '可从「从 DeepSeek 继续」导入长对话存档，或点击「导入剧本 / 新建故事」载入自由格式剧本后开始演绎。'}
-                  </div>
-                  {!story.blueprint.openingHook && (
-                    <div className="btn-group" style={{ marginTop: '0.75rem' }}>
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={() => openImportView('deepseek')}
-                      >
-                        从 DeepSeek 继续（.zip）
-                      </button>
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => openImportView('script')}
-                      >
-                        导入自由剧本
-                      </button>
-                    </div>
-                  )}
-                  {story.blueprint.openingHook && (
-                    <div className="composer-actions" style={{ marginTop: '0.75rem' }}>
-                      <span className="status-text">已保留原始剧本全文锚定</span>
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={() =>
-                          void sendAction(
-                            '开始故事，请按照剧本开场规则生成第一幕与初始状态栏。',
-                          )
-                        }
-                      >
-                        开启第一幕
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {activeNodes.map((node) => (
-                <TurnCard
-                  key={node.id}
-                  node={node}
-                  isActiveLeaf={node.id === story.activeLeafNodeId}
-                  isStreaming={isStreaming || isSummarizing}
-                  siblings={getSiblingBranchInfo(story, node.id)}
-                  onSelectChoice={(choiceText) => void sendAction(choiceText)}
-                  onSwitchBranch={(targetId) => void handleSwitchBranch(targetId)}
-                  onEditAndBranch={(nodeId, text) => void handleEditAndBranch(nodeId, text)}
-                  onRegenerate={(nodeId) => void handleRegenerateNode(nodeId)}
-                  onRewindToNode={(nodeId) => void handleRewindToNode(nodeId)}
-                />
-              ))}
-
-              {isStreaming && (
-                <article className="turn-card assistant" aria-live="polite">
-                  <div className="turn-role">叙事 AI（生成中…）</div>
-                  {streamReasoning && (
-                    <details className="reasoning-details" open>
-                      <summary>思考过程（实时流式）</summary>
-                      <div className="reasoning-content">{streamReasoning}</div>
-                    </details>
-                  )}
-                  {streamContent ? (
-                    <MessageContent content={streamContent} />
-                  ) : (
-                    <div className="turn-body">正在等待响应…</div>
-                  )}
-                </article>
-              )}
-            </section>
-
-            <form className="composer" onSubmit={handleSubmit}>
-              <label htmlFor="turn-input">输入你的行动或对话</label>
-              <textarea
-                id="turn-input"
-                name="playerInput"
-                rows={3}
-                value={input}
-                placeholder="输入你的抉择、对话或行动（Ctrl/Cmd + Enter 发送）…"
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
-                    e.preventDefault();
-                    void handleSubmit();
-                  }
-                }}
-              />
-              <div className="composer-actions">
-                <span className="status-text">已保存轮次：{Math.floor(activeNodes.length / 2)}</span>
-                <div>
-                  {isStreaming ? (
-                    <button
-                      key="stop-generation-btn"
-                      type="button"
-                      className="btn"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        abortRef.current?.abort();
-                      }}
-                    >
-                      停止生成
-                    </button>
-                  ) : (
-                    <button
-                      key="send-action-btn"
-                      type="submit"
-                      className="btn btn-primary"
-                      disabled={!input.trim() || isSummarizing}
-                    >
-                      发送行动
-                    </button>
-                  )}
-                </div>
-              </div>
-            </form>
-          </>
-        )}
-      </main>
+      <SheetDialog
+        open={storyTreeOpen && storyExists && !showImport && !showSettings}
+        title="剧情树"
+        label="剧情树伴生面板"
+        testId="story-tree-sheet"
+        status={isSummarizing ? '补算摘要中…' : undefined}
+        onClose={() => setStoryTreeOpen(false)}
+      >
+        <StoryTree
+          story={story}
+          isBusy={isStreaming || isSummarizing}
+          isRenameBusy={isStreaming || (isSummarizing && !isBranchSwitchSummarizing)}
+          onSwitchBranch={(id) => void handleSwitchBranch(id)}
+          onRenameBranch={handleRenameBranch}
+          onExtractBranchGist={handleExtractBranchGist}
+        />
+      </SheetDialog>
     </div>
   );
 }

@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
-import type { Story } from '../harness/index.ts';
+import { useState } from 'react';
+import { MoreHorizontal } from 'lucide-react';
+import { getActiveBranchNodes, projectStoryTreeSpine, type Story } from '../harness/index.ts';
 
 interface StoryLibraryProps {
   stories: Story[];
@@ -7,8 +8,7 @@ interface StoryLibraryProps {
   onSelectStory: (id: string) => void;
   onRenameStory: (id: string, title: string) => void;
   onDeleteStory: (id: string) => void;
-  onExportBackup: () => void;
-  onImportBackupFile: (file: File) => void;
+  onExportStoryBackup: (id: string) => void;
 }
 
 export function StoryLibrary({
@@ -17,105 +17,133 @@ export function StoryLibrary({
   onSelectStory,
   onRenameStory,
   onDeleteStory,
-  onExportBackup,
-  onImportBackupFile,
+  onExportStoryBackup,
 }: StoryLibraryProps) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
-  const backupInputRef = useRef<HTMLInputElement | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   const commitRename = (id: string) => {
+    const trimmed = renameDraft.trim();
     setRenamingId(null);
-    onRenameStory(id, renameDraft);
+    if (trimmed) onRenameStory(id, trimmed);
   };
 
   return (
-    <section className="story-library" aria-label="本地故事列表与备份">
-      <div className="panel-header">
-        <h3>我的故事（{stories.length}）</h3>
-        <div className="btn-group">
-          <button type="button" className="btn btn-sm" onClick={onExportBackup}>
-            导出 JSON
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => backupInputRef.current?.click()}
-          >
-            导入 JSON
-          </button>
-          <input
-            ref={backupInputRef}
-            type="file"
-            accept=".json,application/json"
-            aria-label="导入故事 JSON 备份"
-            className="visually-hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = '';
-              if (file) {
-                onImportBackupFile(file);
-              }
-            }}
-          />
-        </div>
+    <section className="story-library" aria-label="我的故事">
+      <div className="library-section-heading">
+        <h2>我的故事</h2>
+        <span className="story-count">{stories.length}</span>
       </div>
 
       {stories.length === 0 ? (
-        <p className="status-text">尚无已保存故事，导入剧本或发送第一轮后将自动保存。</p>
+        <p className="library-empty">导入剧本或 DeepSeek 存档后，故事会保存在这里。</p>
       ) : (
         <ul className="story-list">
           {stories.map((item) => {
             const isActive = item.id === activeStoryId;
+            const activeNodes = getActiveBranchNodes(item);
+            const turnCount = Math.floor(activeNodes.length / 2);
+            const forkCount = projectStoryTreeSpine(item).forkCount;
+            const recentTitle = activeNodes.at(-1)?.content.replace(/\s+/g, ' ').trim();
             return (
-              <li key={item.id} className={`story-item ${isActive ? 'active' : ''}`}>
+              <li
+                key={item.id}
+                className={`story-list-item ${isActive ? 'is-active' : ''}`}
+                data-testid="story-list-item"
+                data-active={isActive ? 'true' : undefined}
+              >
                 {renamingId === item.id ? (
-                  <div className="rename-row">
+                  <form
+                    className="story-rename-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      commitRename(item.id);
+                    }}
+                  >
                     <input
                       type="text"
                       aria-label="重命名故事标题"
                       value={renameDraft}
-                      onChange={(e) => setRenameDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                          commitRename(item.id);
+                      onChange={(event) => setRenameDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (
+                          event.key === 'Enter' &&
+                          (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
+                        ) {
+                          event.preventDefault();
                         }
                       }}
+                      autoFocus
                     />
-                    <button type="button" className="btn btn-sm" onClick={() => commitRename(item.id)}>
-                      保存
-                    </button>
-                  </div>
+                    <button type="submit" className="btn btn-sm">保存</button>
+                  </form>
                 ) : (
                   <>
                     <button
                       type="button"
-                      className="story-select-btn"
+                      className="story-select-button"
+                      data-testid="story-select-button"
                       aria-current={isActive ? 'true' : undefined}
                       onClick={() => onSelectStory(item.id)}
                     >
-                      {item.title}
+                      <span className="story-active-dot" aria-hidden="true" />
+                      <span className="story-list-copy">
+                        <span className="story-list-title">{item.title}</span>
+                        <span className="story-list-meta">
+                          {turnCount} 轮 · {forkCount} 分支
+                        </span>
+                        {recentTitle && <span className="story-list-recent">{recentTitle}</span>}
+                      </span>
                     </button>
-                    <div className="btn-group">
+                    <div className="story-menu-container">
                       <button
                         type="button"
-                        className="btn btn-sm"
-                        aria-label={`重命名 ${item.title}`}
-                        onClick={() => {
-                          setRenamingId(item.id);
-                          setRenameDraft(item.title);
-                        }}
+                        className="icon-button story-menu-trigger"
+                        data-testid="story-menu-trigger"
+                        aria-label={`更多 ${item.title} 的操作`}
+                        aria-haspopup="menu"
+                        aria-expanded={openMenuId === item.id}
+                        onClick={() => setOpenMenuId((current) => current === item.id ? null : item.id)}
                       >
-                        改名
+                        <MoreHorizontal size={18} strokeWidth={1.75} />
                       </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        aria-label={`删除 ${item.title}`}
-                        onClick={() => onDeleteStory(item.id)}
-                      >
-                        删除
-                      </button>
+                      {openMenuId === item.id && (
+                        <div className="story-overflow-menu" role="menu" aria-label={`${item.title} 的操作`}>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setOpenMenuId(null);
+                              setRenamingId(item.id);
+                              setRenameDraft(item.title);
+                            }}
+                          >
+                            重命名
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setOpenMenuId(null);
+                              onExportStoryBackup(item.id);
+                            }}
+                          >
+                            导出 .lfh.json
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="danger-menu-item"
+                            onClick={() => {
+                              setOpenMenuId(null);
+                              onDeleteStory(item.id);
+                            }}
+                          >
+                            删除故事
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </>
                 )}

@@ -250,6 +250,191 @@ async function completePendingSetup(page, key) {
   await wizard.waitFor({ state: 'detached' });
 }
 
+async function verifySliceOneViewportMatrix(page) {
+  if ((await page.getByTestId('app-topbar').count()) !== 1) {
+    throw new Error('Expected the mobile-first top navigation shell.');
+  }
+  if ((await page.getByTestId('welcome-view').count()) !== 1) {
+    throw new Error('Expected the welcome view when no story is active.');
+  }
+
+  for (const theme of ['light', 'dark', 'warm']) {
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 1280, height: 800 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.evaluate((selectedTheme) => {
+        document.documentElement.dataset.theme = selectedTheme;
+      }, theme);
+      const layout = await page.evaluate(() => {
+        const topbar = document.querySelector('[data-testid="app-topbar"]');
+        const menu = document.querySelector('[data-testid="library-drawer-trigger"]');
+        const sidebar = document.querySelector('[data-testid="desktop-library"]');
+        const sheet = document.querySelector('[data-testid="story-tree-sheet"]');
+        const welcome = document.querySelector('[data-testid="welcome-view"]');
+        const menuRect = menu?.getBoundingClientRect();
+        const sidebarStyle = sidebar ? getComputedStyle(sidebar) : null;
+        const welcomeRect = welcome?.getBoundingClientRect();
+        const welcomeHit = welcomeRect
+          ? document.elementFromPoint(welcomeRect.left + welcomeRect.width / 2, welcomeRect.top + welcomeRect.height / 2)
+          : null;
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          clientWidth: document.documentElement.clientWidth,
+          topbarVisible: Boolean(topbar && getComputedStyle(topbar).display !== 'none'),
+          menuSize: menuRect ? Math.min(menuRect.width, menuRect.height) : 0,
+          sidebarWidth: sidebarStyle?.display === 'none' ? 0 : sidebar?.getBoundingClientRect().width ?? 0,
+          sheetHidden: Boolean(sheet && !sheet.open && getComputedStyle(sheet).display === 'none'),
+          welcomeCoveredBySheet: Boolean(sheet && welcomeHit && sheet.contains(welcomeHit)),
+        };
+      });
+      if (layout.scrollWidth > layout.clientWidth) {
+        throw new Error(`Horizontal overflow in ${theme} ${viewport.width}x${viewport.height}: ${layout.scrollWidth} > ${layout.clientWidth}`);
+      }
+      if (!layout.topbarVisible) {
+        throw new Error(`Top bar was hidden in ${theme} ${viewport.width}x${viewport.height}.`);
+      }
+      if (viewport.width < 960 && layout.menuSize < 44) {
+        throw new Error(`Mobile drawer control is below 44px in ${theme}: ${layout.menuSize}px.`);
+      }
+      if (viewport.width >= 960 && layout.sidebarWidth < 44) {
+        throw new Error(`Desktop library is missing in ${theme} ${viewport.width}px.`);
+      }
+      if (!layout.sheetHidden || layout.welcomeCoveredBySheet) {
+        throw new Error(`Closed story sheet obscures the welcome view in ${theme} ${viewport.width}px.`);
+      }
+
+      await openSettings(page);
+      const settingsLayout = await page.evaluate(() => {
+        const pageShell = document.querySelector('[data-testid="settings-page"]');
+        const workspace = document.querySelector('.app-workspace');
+        const sheet = document.querySelector('[data-testid="story-tree-sheet"]');
+        return {
+          width: pageShell?.getBoundingClientRect().width ?? 0,
+          columns: workspace ? getComputedStyle(workspace).gridTemplateColumns.split(' ').length : 0,
+          sheetHidden: Boolean(sheet && !sheet.open && getComputedStyle(sheet).display === 'none'),
+        };
+      });
+      const minSettingsWidth = viewport.width < 960 ? viewport.width - 24 : 640;
+      if (settingsLayout.width < minSettingsWidth || settingsLayout.columns !== 1 || !settingsLayout.sheetHidden) {
+        throw new Error(`Settings layout is constrained or covered in ${theme} ${viewport.width}px (width=${settingsLayout.width}, columns=${settingsLayout.columns}).`);
+      }
+      await closeSettings(page);
+    }
+  }
+
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = 'light';
+  });
+  await page.setViewportSize({ width: 1280, height: 720 });
+}
+
+async function startDeepSeekImport(page) {
+  if (await page.locator('.import-panel').isVisible().catch(() => false)) {
+    await page.getByRole('button', { name: '返回当前故事' }).click();
+    await page.locator('.import-panel').waitFor({ state: 'hidden' });
+  }
+  const welcomeAction = page.getByTestId('welcome-deepseek-import');
+  if (await welcomeAction.isVisible()) {
+    await welcomeAction.click();
+    return;
+  }
+  const desktopAction = page.getByTestId('desktop-library-start-deepseek');
+  if (await desktopAction.isVisible()) {
+    await desktopAction.click();
+    return;
+  }
+  await page.getByTestId('library-drawer-trigger').click();
+  await page.getByTestId('mobile-library-start-deepseek').click();
+}
+
+async function startScriptImport(page) {
+  if (await page.locator('.import-panel').isVisible().catch(() => false)) {
+    await page.getByRole('button', { name: '返回当前故事' }).click();
+    await page.locator('.import-panel').waitFor({ state: 'hidden' });
+  }
+  const welcomeAction = page.getByTestId('welcome-script-import');
+  if (await welcomeAction.isVisible()) {
+    await welcomeAction.click();
+    return;
+  }
+  const desktopAction = page.getByTestId('desktop-library-start-script');
+  if (await desktopAction.isVisible()) {
+    await desktopAction.click();
+    return;
+  }
+  await page.getByTestId('library-drawer-trigger').click();
+  await page.getByTestId('mobile-library-start-script').click();
+}
+
+async function openSettings(page) {
+  if (await page.getByTestId('settings-page').isVisible().catch(() => false)) return;
+  const desktopEntry = page.getByTestId('desktop-settings-open');
+  if (await desktopEntry.isVisible().catch(() => false)) {
+    await desktopEntry.click();
+  } else {
+    await page.getByTestId('library-drawer-trigger').click();
+    await page.getByTestId('mobile-settings-open').click();
+  }
+  await page.getByTestId('settings-page').waitFor({ state: 'visible' });
+}
+
+async function closeSettings(page) {
+  const settings = page.getByTestId('settings-page');
+  if (await settings.isVisible().catch(() => false)) {
+    await settings.getByRole('button', { name: '返回' }).click();
+    await settings.waitFor({ state: 'detached' });
+  }
+}
+
+async function visibleStoryRows(page) {
+  let rows = page.locator('[data-testid="story-list-item"]:visible');
+  if ((await rows.count()) === 0 && await page.getByTestId('library-drawer-trigger').isVisible().catch(() => false)) {
+    await page.getByTestId('library-drawer-trigger').click();
+    rows = page.locator('[data-testid="story-list-item"]:visible');
+  }
+  return rows;
+}
+
+async function deleteAllStories(page) {
+  let rows = await visibleStoryRows(page);
+  while ((await rows.count()) > 0) {
+    const previousCount = await rows.count();
+    const row = rows.first();
+    await row.getByTestId('story-menu-trigger').click();
+    await row.getByRole('menuitem', { name: '删除故事' }).click();
+    await page.waitForFunction((count) =>
+      [...document.querySelectorAll('[data-testid="story-list-item"]')]
+        .filter((item) => item.getClientRects().length > 0).length < count,
+    previousCount);
+    rows = page.locator('[data-testid="story-list-item"]:visible');
+  }
+}
+
+async function selectStoryByTitle(page, title) {
+  const rows = await visibleStoryRows(page);
+  const row = rows.filter({ hasText: title }).first();
+  await row.getByTestId('story-select-button').click();
+}
+
+async function openStoryTree(page) {
+  const sheet = page.getByTestId('story-tree-sheet');
+  if (!(await sheet.isVisible().catch(() => false))) {
+    await page.getByTestId('open-story-tree').click();
+    await sheet.waitFor({ state: 'visible' });
+  }
+  return sheet;
+}
+
+async function closeStoryTree(page) {
+  const sheet = page.getByTestId('story-tree-sheet');
+  if (await sheet.isVisible().catch(() => false)) {
+    await sheet.getByRole('button', { name: '关闭剧情面板' }).click();
+    await sheet.waitFor({ state: 'hidden' });
+  }
+}
+
 async function main() {
   const port = 4177;
   const srv = await startViteServer(port);
@@ -451,9 +636,10 @@ async function main() {
     });
 
     await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+    await verifySliceOneViewportMatrix(page);
 
     // 0-url. DeepSeek HTTPS export link fetch (HTML login fallback, CORS fallback, and valid ZIP fetch)
-    await page.click('button:has-text("从 DeepSeek 继续")');
+    await startDeepSeekImport(page);
     await page.click('button[role="tab"]:has-text("粘贴导出 .zip 下载链接")');
     await page.waitForSelector('#deepseek-zip-url-input');
 
@@ -477,15 +663,12 @@ async function main() {
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
     await page.click('button:has-text("继续这条故事")');
     await page.waitForSelector('.turn-card.assistant:has-text("原进度抵达东侧练歌房")');
-    while ((await page.locator('button[aria-label^="删除 "]').count()) > 0) {
-      await page.locator('button[aria-label^="删除 "]').first().click();
-      await page.waitForTimeout(50);
-    }
+    await deleteAllStories(page);
 
     // 0. Keyless DeepSeek .zip import -> preview -> batch 1-to-1 import -> Continue This Story -> inline BYOK prompt -> stream
     const dsZipPath = path.join(tmpDir, 'deepseek-export.zip');
     fs.writeFileSync(dsZipPath, buildSyntheticDeepSeekZipE2E());
-    await page.click('button:has-text("从 DeepSeek 继续")');
+    await startDeepSeekImport(page);
     await page.waitForSelector('#deepseek-zip-input');
     await page.setInputFiles('#deepseek-zip-input', dsZipPath);
     await page.waitForSelector('[data-testid="deepseek-preview-card"]');
@@ -527,7 +710,7 @@ async function main() {
     // Verify IndexedDB reload keeps DeepSeek stories + diagnostics
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForSelector('.turn-card.assistant:has-text("原进度抵达东侧练歌房")');
-    if ((await page.locator('.story-item').count()) !== 2) {
+    if ((await (await visibleStoryRows(page)).count()) !== 2) {
       throw new Error('Expected 2 independent DeepSeek stories persisted in IndexedDB');
     }
 
@@ -550,17 +733,21 @@ async function main() {
     await page.fill('#byok-api-key', 'sk-e2e-inline');
     await page.click('[data-testid="wizard-verify-save-btn"]');
     await page.waitForSelector('.turn-card.assistant:has-text("回执：推开练歌房钢琴盖")');
+    await openSettings(page);
     const maskText = await page.locator('[data-testid="connected-key-mask"]').textContent();
     if (!maskText?.includes('••••line')) {
       throw new Error(`Expected masked key tail in connected card, got: ${maskText}`);
     }
+    await closeSettings(page);
 
     // 0a. Keyless ambiguous + over-window import -> pending_key -> complete summary + blueprint after wizard
+    await openSettings(page);
     await page.click('[data-testid="clear-key-btn"]');
     await page.waitForSelector('[data-testid="open-setup-wizard-btn"]');
+    await closeSettings(page);
     const ambigZipPath = path.join(tmpDir, 'deepseek-ambiguous-long.zip');
     fs.writeFileSync(ambigZipPath, buildAmbiguousOverWindowZipE2E());
-    await page.click('button:has-text("从 DeepSeek 继续")');
+    await startDeepSeekImport(page);
     await page.waitForSelector('#deepseek-zip-input');
     await page.setInputFiles('#deepseek-zip-input', ambigZipPath);
     await page.waitForSelector('[data-testid="deepseek-preview-card"]');
@@ -592,7 +779,7 @@ async function main() {
 
     // 0b. Keyed imports: strong turn-1 skips boundary locator; ambiguous runs boundary locator once + compresses + carries both on continuation
     boundaryCallCount = 0;
-    await page.click('button:has-text("从 DeepSeek 继续")');
+    await startDeepSeekImport(page);
     await page.waitForSelector('#deepseek-zip-input');
     await page.setInputFiles('#deepseek-zip-input', dsZipPath);
     await page.waitForSelector('[data-testid="deepseek-preview-card"]');
@@ -602,7 +789,7 @@ async function main() {
       throw new Error(`Expected 0 boundary LLM calls for strong turn-1 script, got ${boundaryCallCount}`);
     }
 
-    await page.click('button:has-text("从 DeepSeek 继续")');
+    await startDeepSeekImport(page);
     await page.waitForSelector('#deepseek-zip-input');
     await page.setInputFiles('#deepseek-zip-input', ambigZipPath);
     await page.waitForSelector('[data-testid="deepseek-preview-card"]');
@@ -633,12 +820,10 @@ async function main() {
     }
 
     // Clean up DeepSeek stories before running existing script-import workflow assertions
-    while ((await page.locator('button[aria-label^="删除 "]').count()) > 0) {
-      await page.locator('button[aria-label^="删除 "]').first().click();
-      await page.waitForTimeout(50);
-    }
+    await deleteAllStories(page);
 
     // 1. Privacy note + clear key + network-error fallback save via wizard
+    await openSettings(page);
     const cardText = await page.locator('[data-testid="deepseek-connection-card"]').textContent();
     if (!cardText?.includes('不会上传到任何第三方服务器')) {
       throw new Error(`Plain-language privacy note missing: ${cardText}`);
@@ -655,11 +840,12 @@ async function main() {
     await page.waitForSelector('[data-testid="wizard-fallback-save-btn"]');
     await page.click('[data-testid="wizard-fallback-save-btn"]');
     await page.waitForSelector('[data-testid="connected-key-mask"]');
+    await closeSettings(page);
 
     // 2. Import synthetic .docx fixture -> extract & tweak blueprint -> confirm story
     const docxPath = path.join(tmpDir, 'fixture.docx');
     fs.writeFileSync(docxPath, buildFixtureDocx());
-    await page.click('button:has-text("导入剧本 / 新建故事")');
+    await startScriptImport(page);
     await page.setInputFiles('#import-file', docxPath);
     await page.waitForFunction(() => {
       const el = document.querySelector('#import-raw-script');
@@ -708,18 +894,19 @@ async function main() {
     }
 
     // 5b. Story Tree: verify linear span folding, fork badge ⑂ 2, expand fork, rename Branch B, AI gist, switch back to Branch A
-    const spanText = await page.locator('[data-testid="story-tree-span"]').first().textContent();
+    const storyTreeSheet = await openStoryTree(page);
+    const spanText = await storyTreeSheet.locator('[data-testid="story-tree-span"]').first().textContent();
     if (!spanText?.includes('第 1–2 轮') && !spanText?.includes('第 1')) {
       throw new Error(`Expected folded span in Story Tree, got: ${spanText}`);
     }
-    const forkBtn = page.locator('[data-testid^="story-tree-fork-"]').first();
+    const forkBtn = storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first();
     const forkBtnText = await forkBtn.textContent();
     if (!forkBtnText?.includes('⑂ 2')) {
       throw new Error(`Expected fork badge ⑂ 2 in Story Tree, got: ${forkBtnText}`);
     }
     await forkBtn.click();
-    await page.waitForSelector('.story-tree-siblings');
-    const siblingB = page.locator('.story-tree-sibling.active');
+    await storyTreeSheet.locator('.story-tree-siblings').waitFor();
+    const siblingB = storyTreeSheet.locator('.story-tree-sibling.active');
     await siblingB.locator('button:has-text("重命名")').click();
     await siblingB.locator('input[aria-label="分支名称"]').fill('休息支线');
     await siblingB.locator('button:has-text("保存名称")').click();
@@ -727,36 +914,50 @@ async function main() {
 
     // On-demand AI gist on active sibling branch
     await siblingB.locator('button:has-text("AI 提炼梗概")').click();
-    await page.waitForSelector('.story-tree-gist:has-text("AI提炼：改道休息线稳妥推进")');
+    await storyTreeSheet.locator('.story-tree-gist:has-text("AI提炼：改道休息线稳妥推进")').waitFor();
 
     // Switch back to Branch A via Story Tree sibling button
-    const nonActiveSibling = page.locator('.story-tree-sibling:not(.active)').first();
+    const nonActiveSibling = storyTreeSheet.locator('.story-tree-sibling:not(.active)').first();
     await nonActiveSibling.locator('button:has-text("切换至此分支")').click();
     await page.waitForSelector('.turn-card.assistant:has-text("回执：A. 继续训练声乐")');
+    await closeStoryTree(page);
 
     await page.reload({ waitUntil: 'networkidle' });
-    await page.waitForSelector('.story-item.active');
+    await page.waitForSelector('[data-testid="story-list-item"][data-active="true"]');
+    await openSettings(page);
     await page.waitForSelector('[data-testid="connected-key-mask"]');
+    await closeSettings(page);
     const sumAfterReload = await page.locator('[data-testid="active-plot-summary"]').textContent();
     const pagerAfterReload = await page.locator('.turn-card.user').nth(1).locator('.branch-pager').textContent();
     if (!sumAfterReload?.includes('【分支A摘要】含黑市线索') || !pagerAfterReload?.includes('1 / 2')) {
       throw new Error('IndexedDB reload did not restore branch tree & summary');
     }
     // Verify renamed Branch B survived reload in Story Tree
-    await page.locator('[data-testid^="story-tree-fork-"]').first().click();
-    await page.waitForSelector('.story-tree-siblings:has-text("休息支线")');
+    const reloadedTree = await openStoryTree(page);
+    await reloadedTree.locator('[data-testid^="story-tree-fork-"]').first().click();
+    await reloadedTree.locator('.story-tree-siblings:has-text("休息支线")').waitFor();
+    await closeStoryTree(page);
 
     // 7. Export JSON backup -> delete story -> re-import JSON backup
+    const backupRows = await visibleStoryRows(page);
+    const backupRowCount = await backupRows.count();
+    const backupRow = backupRows.first();
+    await backupRow.getByTestId('story-menu-trigger').click();
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      page.click('button:has-text("导出 JSON")'),
+      backupRow.getByRole('menuitem', { name: '导出 .lfh.json' }).click(),
     ]);
     const backupFile = path.join(tmpDir, download.suggestedFilename());
     await download.saveAs(backupFile);
-    await page.click('button[aria-label^="删除 "]');
-    await page.waitForSelector('.story-item', { state: 'detached' });
-    await page.setInputFiles('input[aria-label="导入故事 JSON 备份"]', backupFile);
-    await page.waitForSelector('.story-item.active');
+    await backupRow.getByTestId('story-menu-trigger').click();
+    await backupRow.getByRole('menuitem', { name: '删除故事' }).click();
+    await page.waitForFunction((count) =>
+      [...document.querySelectorAll('[data-testid="story-list-item"]')]
+        .filter((item) => item.getClientRects().length > 0).length < count,
+    backupRowCount);
+    await openSettings(page);
+    await page.setInputFiles('[data-testid="backup-import-input"]', backupFile);
+    await page.waitForSelector('[data-testid="story-list-item"][data-active="true"]');
     await page.waitForSelector('.turn-card.assistant:has-text("回执：A. 继续训练声乐")');
 
     // 8. Collapsible reasoning panel rendering (.reasoning-content)
@@ -807,7 +1008,7 @@ async function main() {
     fs.writeFileSync(txtPath, '【纯文本剧本】\n规则：每晚点名。', 'utf8');
     fs.writeFileSync(mdPath, '# 星光练习生 Markdown\n- 不可迟到\n```\n[体力: 100]\n```', 'utf8');
 
-    await page.click('button:has-text("导入剧本 / 新建故事")');
+    await startScriptImport(page);
     await page.setInputFiles('#import-file', txtPath);
     await page.waitForFunction(() => {
       const el = document.querySelector('#import-raw-script');
@@ -831,7 +1032,13 @@ async function main() {
     await page.click('button:has-text("跳过模型拆解")');
     await page.waitForSelector('#bp-title');
     await page.click('button:has-text("确认蓝图并开始故事")');
-    await page.waitForFunction(() => document.querySelectorAll('.story-item').length === 2);
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('[data-testid="story-list-item"]')]
+        .filter((item) => item.getClientRects().length > 0).length === 2,
+    );
+    if ((await (await visibleStoryRows(page)).count()) !== 2) {
+      throw new Error('Expected two saved stories after aborted stream recovery.');
+    }
 
     // 10b. Mid-stream abort via 停止生成 must NOT re-submit the composer form
     delayNextTurnMs = 3000;
@@ -839,8 +1046,8 @@ async function main() {
     await page.click('button:has-text("发送行动")');
     await page.waitForSelector('button:has-text("停止生成")');
     await page.click('button:has-text("停止生成")');
-    await page.waitForSelector('.main-stage > .error-banner');
-    const abortMsg = await page.locator('.main-stage > .error-banner').textContent();
+    await page.getByTestId('main-error-banner').waitFor();
+    const abortMsg = await page.getByTestId('main-error-banner').textContent();
     if (!abortMsg?.includes('已中止本次生成')) {
       throw new Error(`Expected abort banner, got: ${abortMsg}`);
     }
@@ -852,8 +1059,8 @@ async function main() {
     }
 
     // 11. Mobile narrow viewport check (390x844, no horizontal overflow) on multi-branch story
-    await page.locator('.story-select-btn', { hasText: 'E2E训练营故事' }).click();
-    await page.waitForSelector('[data-testid^="story-tree-fork-"]');
+    await selectStoryByTitle(page, 'E2E训练营故事');
+    await page.getByTestId('open-story-tree').waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
     const checkNoHorizontalOverflow = async (label) => {
       const { scrollWidth, clientWidth } = await page.evaluate(() => ({
@@ -866,11 +1073,13 @@ async function main() {
     };
     await page.locator('[data-testid="story-review"]').scrollIntoViewIfNeeded();
     await checkNoHorizontalOverflow('mobile main view');
-    const treeForkMobile = page.locator('[data-testid^="story-tree-fork-"]').first();
-    await treeForkMobile.click();
-    await page.waitForSelector('.story-tree-siblings');
+    const mobileTree = await openStoryTree(page);
+    const treeForkMobile = mobileTree.locator('[data-testid^="story-tree-fork-"]').first();
+    if ((await treeForkMobile.getAttribute('aria-expanded')) !== 'true') await treeForkMobile.click();
+    await mobileTree.locator('.story-tree-siblings').waitFor();
     await checkNoHorizontalOverflow('mobile story tree expanded');
-    await page.click('button:has-text("导入剧本 / 新建故事")');
+    await closeStoryTree(page);
+    await startScriptImport(page);
     await page.waitForSelector('.import-panel');
     await checkNoHorizontalOverflow('mobile import view');
 
@@ -1093,7 +1302,7 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     };
 
     // 1. Link error fallback -> upload comprehensive zip -> search & preview -> keyless import -> Continue This Story
-    await page.click('button:has-text("从 DeepSeek 继续")');
+    await startDeepSeekImport(page);
     await page.click('button[role="tab"]:has-text("粘贴导出 .zip 下载链接")');
     await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/login.zip');
     await page.click('button:has-text("拉取并预览")');
@@ -1125,22 +1334,24 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     await assertNoOverflow('spec18 mobile main play');
 
     // 2. Expand Fork 1 -> rename both branches -> switch to Branch B -> inline BYOK -> continue Branch B
-    const fork1Btn = page.locator('[data-testid^="story-tree-fork-"]').first();
+    let storyTreeSheet = await openStoryTree(page);
+    const fork1Btn = storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first();
     await fork1Btn.click();
-    await page.waitForSelector('.story-tree-siblings');
+    await storyTreeSheet.locator('.story-tree-siblings').waitFor();
 
-    const branchASibling = page.locator('.story-tree-sibling', { hasText: '东楼' }).first();
+    const branchASibling = storyTreeSheet.locator('.story-tree-sibling', { hasText: '东楼' }).first();
     await branchASibling.locator('button:has-text("重命名")').click();
     await branchASibling.locator('input[aria-label="分支名称"]').fill('银钥东楼线');
     await branchASibling.locator('button:has-text("保存名称")').click();
 
-    const branchBSibling = page.locator('.story-tree-sibling', { hasText: '西塔' }).first();
+    const branchBSibling = storyTreeSheet.locator('.story-tree-sibling', { hasText: '西塔' }).first();
     await branchBSibling.locator('button:has-text("重命名")').click();
     await branchBSibling.locator('input[aria-label="分支名称"]').fill('毒药西塔线');
     await branchBSibling.locator('button:has-text("保存名称")').click();
 
     await branchBSibling.locator('button:has-text("切换至此分支")').click();
     await page.waitForSelector('.turn-card.assistant:has-text("抵达西塔终点")');
+    await closeStoryTree(page);
 
     await page.fill('#turn-input', '追查西塔温室');
     await page.click('button:has-text("发送行动")');
@@ -1159,13 +1370,15 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     }
 
     // 3. Switch back to Branch A -> lazy summary + continue Branch A -> verify StoryReview & prompt zero Event Y leak
-    const fork1AfterB = page.locator('[data-testid^="story-tree-fork-"]').first();
+    storyTreeSheet = await openStoryTree(page);
+    const fork1AfterB = storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first();
     if ((await fork1AfterB.getAttribute('aria-expanded')) !== 'true') {
       await fork1AfterB.click();
     }
-    await page.locator('.story-tree-sibling', { hasText: '银钥东楼线' }).locator('button:has-text("切换至此分支")').click();
+    await storyTreeSheet.locator('.story-tree-sibling', { hasText: '银钥东楼线' }).locator('button:has-text("切换至此分支")').click();
     await page.waitForSelector('.turn-card.assistant:has-text("抵达东楼密室终点")');
     await page.waitForSelector('[data-testid="active-plot-summary"]:has-text("事件X_银钥匙")');
+    await closeStoryTree(page);
     const reviewA = await page.locator('[data-testid="active-plot-summary"]').textContent();
     if (!reviewA?.includes('事件X_银钥匙') || reviewA.includes('事件Y_西塔毒药')) {
       throw new Error(`StoryReview on Branch A not isolated: ${reviewA}`);
@@ -1186,8 +1399,9 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     await page.waitForSelector('[data-testid="story-review"]:has-text("银钥东楼线")');
     await page.waitForSelector('[data-testid="active-plot-summary"]:has-text("事件X_银钥匙")');
     await page.waitForSelector('[data-testid="turn-diagnostics"]:has-text("CONTENT_FILTER")');
-    await page.locator('[data-testid^="story-tree-fork-"]').first().click();
-    await page.waitForSelector('.story-tree-siblings:has-text("毒药西塔线")');
+    storyTreeSheet = await openStoryTree(page);
+    await storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first().click();
+    await storyTreeSheet.locator('.story-tree-siblings:has-text("毒药西塔线")').waitFor();
     await assertNoOverflow('spec18 mobile post-reload');
   } finally {
     await mobileCtx.close();
@@ -1318,7 +1532,7 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     });
 
     await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
-    await page.getByRole('button', { name: '从 DeepSeek 继续', exact: true }).click();
+    await startDeepSeekImport(page);
     await page.locator('#deepseek-zip-input').setInputFiles({
       name: 'spec24-long-synthetic.zip',
       mimeType: 'application/zip',
@@ -1360,13 +1574,14 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
       throw new Error('The nonduplicate instruction from the attachment setup was lost');
     }
 
-    const fork = page.locator('[data-testid^="story-tree-fork-"]').first();
     await submit.waitFor();
+    let storyTreeSheet = await openStoryTree(page);
+    let fork = storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first();
     if ((await fork.getAttribute('aria-expanded')) !== 'true') await fork.click();
-    const alternateId = await page.locator('.story-tree-sibling', {
+    const alternateId = await storyTreeSheet.locator('.story-tree-sibling', {
       hasText: '备用线第 35 轮合成回执',
     }).getAttribute('data-testid', { timeout: 5000 });
-    const alternate = page.getByTestId(alternateId);
+    let alternate = storyTreeSheet.getByTestId(alternateId);
     const alternateRequestStart = requests.length;
     alternateSelected = true;
     await Promise.all([
@@ -1377,10 +1592,13 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
       }, { timeout: 10000 }),
       alternate.getByRole('button', { name: '切换至此分支' }).click(),
     ]);
-    await page.getByRole('button', { name: '补算摘要中…' }).waitFor();
+    await storyTreeSheet.getByRole('status').filter({ hasText: '补算摘要中…' }).waitFor();
     await page.locator('.turn-card.assistant[data-node-id]', { hasText: '备用线第 35 轮合成回执' }).waitFor();
+    await closeStoryTree(page);
     await page.fill('#turn-input', '等待备用线补算');
     if (!(await submit.isDisabled())) throw new Error('Composer was enabled while branch summary was in flight');
+    storyTreeSheet = await openStoryTree(page);
+    alternate = storyTreeSheet.getByTestId(alternateId);
     await alternate.getByRole('button', { name: '重命名' }).click({ timeout: 5000 });
     await alternate.getByRole('textbox', { name: '分支名称' }).fill(LONG_BRANCH_NAME);
     await alternate.getByRole('button', { name: '保存名称' }).click();
@@ -1393,14 +1611,19 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
       throw new Error('Alternate branch catch-up did not use its own early history in isolation');
     }
     await page.locator('button:enabled', { hasText: '发送行动' }).waitFor({ timeout: 5000 });
+    await closeStoryTree(page);
     await page.reload({ waitUntil: 'networkidle' });
     await page.getByTestId('story-review').getByText(LONG_BRANCH_NAME, { exact: false }).waitFor();
     await page.getByTestId('active-plot-summary').getByText(SUMMARY_B, { exact: false }).waitFor();
+    storyTreeSheet = await openStoryTree(page);
+    fork = storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first();
     if ((await fork.getAttribute('aria-expanded')) !== 'true') await fork.click();
-    const renamed = page.locator('.story-tree-sibling', { hasText: LONG_BRANCH_NAME });
+    const renamed = storyTreeSheet.locator('.story-tree-sibling', { hasText: LONG_BRANCH_NAME });
     await renamed.getByRole('button', { name: 'AI 提炼梗概' }).click();
     await renamed.getByText(LONG_BRANCH_GIST, { exact: false }).waitFor();
+    await closeStoryTree(page);
 
+    await openSettings(page);
     await page.getByTestId('open-diagnostics').click();
     const bundleText = await page.getByTestId('diagnostics-json').textContent();
     const slot = await page.evaluate(() => localStorage.getItem('lfh.diagnostics.v1') ?? '');
@@ -1448,7 +1671,7 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
     // DeepSeek import (success radar) with canary title / attachment names
     const zipPath = path.join(tmpDir, 'spec26-deepseek.zip');
     fs.writeFileSync(zipPath, buildSyntheticDeepSeekZipE2E());
-    await page.click('button:has-text("从 DeepSeek 继续")');
+    await startDeepSeekImport(page);
     await page.waitForSelector('#deepseek-zip-input');
     await page.setInputFiles('#deepseek-zip-input', {
       name: 'SYNTHETIC_INVALID_ARCHIVE.zip',
@@ -1477,7 +1700,7 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
     await page.fill('#turn-input', '绝密玩家行动_CANARY');
     await page.click('button:has-text("发送行动")');
     await completePendingSetup(page, 'sk-e2e-canary-9988776655443322');
-    await page.waitForSelector('.error-banner');
+    await page.getByTestId('main-error-banner').waitFor();
 
     await page.getByRole('button', { name: '打包排障日志' }).click({ timeout: 5000 });
     await page.waitForSelector('[data-testid="diagnostics-preview"]');
@@ -1553,7 +1776,8 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
 
     // Persisted slot survives reload
     await page.reload({ waitUntil: 'networkidle' });
-    await page.click('[data-testid="open-diagnostics"]');
+    await openSettings(page);
+    await page.getByTestId('open-diagnostics').click();
     await page.waitForSelector('[data-testid="diagnostics-preview"]');
     const afterReload = await page.locator('[data-testid="diagnostics-json"]').textContent();
     assertZeroLeak('post-reload preview', afterReload ?? '');
@@ -1565,7 +1789,9 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
 
     await page.goto(`http://localhost:${port}/tests/e2e/crash-fixture.html`);
     await page.getByRole('heading', { name: '合成宫斗测试档' }).waitFor();
+    await openSettings(page);
     await page.getByTestId('connected-key-mask').filter({ hasText: /^sk-••••3322$/ }).waitFor();
+    await closeSettings(page);
     await page.getByRole('button', { name: '触发测试渲染崩溃' }).click();
     const crashText = await page.getByTestId('diagnostics-json').textContent({ timeout: 5000 });
     const crashBundle = JSON.parse(crashText);
@@ -1604,6 +1830,7 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
     ]);
     await page.goto(`http://localhost:${port}/`, { waitUntil: 'networkidle' });
     await page.getByRole('heading', { name: '合成宫斗测试档' }).waitFor();
+    await openSettings(page);
     await page.getByTestId('open-diagnostics').click();
     const recoveredText = await page.getByTestId('diagnostics-json').textContent();
     assertZeroLeak('recovered crash report', recoveredText);
@@ -1640,6 +1867,8 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
         page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
         page.getByTestId('diagnostics-preview').getByRole('button', { name: '重新载入界面' }).click(),
       ]);
+      await page.waitForLoadState('networkidle');
+      await openSettings(page);
       await page.getByTestId('open-diagnostics').waitFor();
     }
 

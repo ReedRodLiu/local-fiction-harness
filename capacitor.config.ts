@@ -9,6 +9,10 @@ const config: CapacitorConfig = {
     CapacitorHttp: {
       enabled: false,
     },
+    SystemBars: {
+      insetsHandling: 'css',
+      initialViewportFitValueHint: 'cover',
+    },
   },
 };
 
