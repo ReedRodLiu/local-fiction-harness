@@ -1,5 +1,11 @@
 import { useEffect, useRef } from 'react';
 
+declare global {
+  interface Window {
+    __lfhOverlayHistorySession?: string;
+  }
+}
+
 interface HistoryLayer {
   id: string;
   priority: number;
@@ -7,6 +13,7 @@ interface HistoryLayer {
 }
 
 const HISTORY_SESSION_KEY = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+window.__lfhOverlayHistorySession = HISTORY_SESSION_KEY;
 const layers = new Map<string, HistoryLayer>();
 let currentDepth = readCurrentDepth();
 let installPromise: Promise<void> | null = null;

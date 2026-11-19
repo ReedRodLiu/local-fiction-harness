@@ -64,7 +64,7 @@ export function StoryLibrary({
             return (
               <li
                 key={item.id}
-                className={`story-list-item ${isActive ? 'is-active' : ''}`}
+                className={`story-list-item ${isActive ? 'is-active' : ''} ${openMenuId === item.id ? 'is-menu-open' : ''}`}
                 data-testid="story-list-item"
                 data-active={isActive ? 'true' : undefined}
               >

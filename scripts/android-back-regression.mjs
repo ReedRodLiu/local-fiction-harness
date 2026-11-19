@@ -256,10 +256,109 @@ function activityIsTopResumed(serial) {
     );
 }
 
+async function waitForTopResumed(serial, expected, description, timeoutMs = 10000) {
+  return waitFor(() => {
+    const topResumed = activityIsTopResumed(serial);
+    return topResumed === expected ? true : null;
+  }, { description, timeoutMs });
+}
+
 async function readSnapshot(client) {
   const value = await client.evaluate(`(() => {
-    const dialog = document.querySelector('[data-testid="diagnostics-preview"]');
-    const card = document.querySelector('[data-testid="crash-recovery-card"]');
+    const describeElement = (selector) => {
+      const elements = [...document.querySelectorAll(selector)];
+      const element = elements.find((candidate) => {
+        const candidateStyle = getComputedStyle(candidate);
+        return candidate.getClientRects().length > 0 &&
+          candidateStyle.display !== 'none' &&
+          candidateStyle.visibility !== 'hidden';
+      }) ?? elements[0];
+      if (!element) {
+        return {
+          connected: false,
+          visible: false,
+          tagName: null,
+          dialogOpen: null,
+          dataClosing: null,
+          opacity: null,
+          pointerEvents: null,
+          position: null,
+          zIndex: null,
+          overflow: null,
+          animationsBusy: null,
+          unobscured: null,
+          hitElement: null,
+          ancestors: null,
+          bounds: null,
+        };
+      }
+      const style = getComputedStyle(element);
+      let animations = [];
+      try {
+        animations = typeof element.getAnimations === 'function'
+          ? element.getAnimations({ subtree: true })
+          : [];
+      } catch {
+        animations = [];
+      }
+      const rect = element.getBoundingClientRect();
+      const clamp = (value, minimum, maximum) =>
+        Math.max(minimum, Math.min(value, maximum));
+      const topElement = document.elementFromPoint(
+        clamp(rect.left + Math.min(rect.width / 2, 100), 0, innerWidth - 1),
+        clamp(rect.top + Math.min(rect.height / 2, 100), 0, innerHeight - 1),
+      );
+      return {
+        connected: true,
+        visible: element.getClientRects().length > 0 &&
+          style.display !== 'none' &&
+          style.visibility !== 'hidden',
+        tagName: element.tagName,
+        dialogOpen: element instanceof HTMLDialogElement ? element.open : null,
+        dataClosing: element.getAttribute('data-closing'),
+        opacity: Number.parseFloat(style.opacity),
+        pointerEvents: style.pointerEvents,
+        position: style.position,
+        zIndex: style.zIndex,
+        overflow: style.overflow,
+        animationsBusy: animations.some((animation) =>
+          animation.playState === 'running' || animation.playState === 'pending'
+        ),
+        unobscured: Boolean(
+          topElement &&
+          (topElement === element || element.contains(topElement))
+        ),
+        hitElement: topElement ? {
+          tagName: topElement.tagName,
+          testId: topElement.getAttribute('data-testid'),
+          className: topElement.getAttribute('class'),
+        } : null,
+        ancestors: [
+          element.parentElement,
+          element.parentElement?.parentElement,
+          element.parentElement?.parentElement?.parentElement,
+          element.parentElement?.parentElement?.parentElement?.parentElement,
+        ]
+          .filter(Boolean)
+          .map((ancestor) => {
+            const ancestorStyle = getComputedStyle(ancestor);
+            return {
+              tagName: ancestor.tagName,
+              testId: ancestor.getAttribute('data-testid'),
+              className: ancestor.getAttribute('class'),
+              position: ancestorStyle.position,
+              zIndex: ancestorStyle.zIndex,
+              overflow: ancestorStyle.overflow,
+            };
+          }),
+        bounds: {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        },
+      };
+    };
     const state = history.state;
     const hasSession = Boolean(
       state &&
@@ -268,45 +367,74 @@ async function readSnapshot(client) {
     );
     const depth = hasSession ? Number(state.lfhOverlayDepth) : 0;
     return JSON.stringify({
-      dialogConnected: Boolean(dialog),
-      dialogOpen: Boolean(dialog?.open),
-      cardVisible: Boolean(card && card.getClientRects().length),
+      documentReady: document.readyState === 'complete',
+      timeOrigin: performance.timeOrigin,
+      sessionToken: typeof window.__lfhOverlayHistorySession === 'string'
+        ? window.__lfhOverlayHistorySession
+        : null,
       historyLength: history.length,
+      historySession: hasSession ? state.lfhOverlaySession : null,
       overlayDepth: Number.isInteger(depth) && depth >= 0 ? depth : 0,
       rawHistoryState: state,
+      diagnostics: describeElement('[data-testid="diagnostics-preview"]'),
+      crashCard: describeElement('[data-testid="crash-recovery-card"]'),
+      mobileLibrary: describeElement('[data-testid="mobile-library-dialog"]'),
+      mobileLibrarySheet: describeElement('[data-testid="mobile-library-sheet"]'),
+      settings: describeElement('[data-testid="settings-page"]'),
+      wizard: describeElement('[data-testid="deepseek-setup-wizard"]'),
+      storyMenu: describeElement('[data-testid="story-overflow-menu"]'),
     });
   })()`);
   return JSON.parse(value);
 }
 
-async function clickCrashDiagnosticsTrigger(client) {
-  const bounds = await client.evaluate(`(() => {
-    const button = document.querySelector('[data-testid="crash-open-diagnostics"]');
-    if (!button) return null;
-    const rect = button.getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  })()`);
-  if (!bounds) throw new Error('Crash diagnostics trigger is not present.');
-  await client.send('Input.dispatchMouseEvent', {
-    type: 'mousePressed',
-    x: bounds.x,
-    y: bounds.y,
-    button: 'left',
-    clickCount: 1,
-  });
-  await client.send('Input.dispatchMouseEvent', {
-    type: 'mouseReleased',
-    x: bounds.x,
-    y: bounds.y,
-    button: 'left',
-    clickCount: 1,
-  });
+function isStableElement(
+  element,
+  { requireVisible = true, requireUnobscured = true } = {},
+) {
+  return Boolean(
+    element?.connected &&
+    (!requireVisible || element.visible) &&
+    (!requireUnobscured || element.unobscured) &&
+    element.dataClosing === null &&
+    element.opacity === 1 &&
+    element.animationsBusy === false
+  );
 }
 
-function assertOverlayState(snapshot, label) {
+function isStableDialog(element) {
+  return isStableElement(element) && element.tagName === 'DIALOG' && element.dialogOpen === true;
+}
+
+async function waitForStableView(client, condition, description, timeoutMs = 5000) {
+  return waitFor(async () => {
+    const snapshot = await readSnapshot(client);
+    return snapshot.documentReady && condition(snapshot) ? snapshot : null;
+  }, { description, timeoutMs });
+}
+
+async function captureStableView(client, artifacts, name, condition, description) {
+  let snapshot = await waitForStableView(client, condition, description);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await client.evaluate(`new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    })`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    artifacts.captureScreenshot(`${name}.png`);
+    const afterCapture = await readSnapshot(client);
+    if (afterCapture.documentReady && condition(afterCapture)) {
+      artifacts.write(`${name}.json`, `${JSON.stringify(afterCapture, null, 2)}\n`);
+      return afterCapture;
+    }
+    snapshot = await waitForStableView(client, condition, description);
+  }
+  throw new Error(`${description}: screenshot state was not stable ${JSON.stringify(snapshot)}`);
+}
+
+function assertDiagnosticsOpen(snapshot, label) {
   const failures = [];
-  if (!snapshot.dialogOpen) failures.push('diagnostics dialog is not open');
-  if (!snapshot.cardVisible) failures.push('reassurance card is not visible');
+  if (!isStableDialog(snapshot.diagnostics)) failures.push('diagnostics dialog is not stably open');
+  if (!snapshot.crashCard.visible) failures.push('reassurance card is not visible');
   if (snapshot.overlayDepth !== 1) {
     failures.push(`overlay depth is ${snapshot.overlayDepth}, expected 1`);
   }
@@ -315,30 +443,151 @@ function assertOverlayState(snapshot, label) {
   }
 }
 
-function assertClosedState(snapshot, topResumed, label) {
-  const failures = [];
-  if (snapshot.dialogOpen) failures.push('diagnostics dialog is still open');
-  if (!snapshot.cardVisible) failures.push('reassurance card was not retained');
-  if (snapshot.overlayDepth !== 0) {
-    failures.push(`overlay depth is ${snapshot.overlayDepth}, expected 0`);
-  }
-  if (!topResumed) failures.push(`${MAIN_ACTIVITY} is no longer topResumed`);
-  if (failures.length > 0) {
-    throw new Error(`${label}: ${failures.join('; ')} ${JSON.stringify(snapshot)}`);
-  }
+async function clickSelector(client, selector, description = selector) {
+  const clicked = await client.evaluate(`(() => {
+    const elements = [...document.querySelectorAll(${JSON.stringify(selector)})];
+    const element = elements.find((candidate) => {
+      const style = getComputedStyle(candidate);
+      return candidate.getClientRects().length > 0 &&
+        style.display !== 'none' &&
+        style.visibility !== 'hidden';
+    }) ?? elements[0];
+    if (!(element instanceof HTMLElement)) return false;
+    element.scrollIntoView({ block: 'center', inline: 'center' });
+    element.click();
+    return true;
+  })()`);
+  if (!clicked) throw new Error(`${description} is not present.`);
 }
 
-async function waitForClosedOverlay(client) {
-  try {
-    await waitFor(async () => {
-      const snapshot = await readSnapshot(client);
-      return !snapshot.dialogOpen && snapshot.overlayDepth === 0 ? snapshot : null;
-    }, { description: 'diagnostics overlay to close', timeoutMs: 5000 });
-  } catch (error) {
-    const snapshot = await readSnapshot(client);
-    throw new Error(`${error.message}. Current state: ${JSON.stringify(snapshot)}`);
+async function clickButtonByText(client, selector, text, description = text) {
+  const clicked = await client.evaluate(`(() => {
+    const button = [...document.querySelectorAll(${JSON.stringify(selector)})]
+      .find((candidate) => candidate.textContent?.trim().includes(${JSON.stringify(text)}));
+    if (!(button instanceof HTMLElement)) return false;
+    button.scrollIntoView({ block: 'center', inline: 'center' });
+    button.click();
+    return true;
+  })()`);
+  if (!clicked) throw new Error(`${description} button is not present.`);
+}
+
+async function fillTextInput(client, selector, value, description = selector) {
+  const filled = await client.evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
+      return false;
+    }
+    const prototype = element instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+    setter?.call(element, ${JSON.stringify(value)});
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  if (!filled) throw new Error(`${description} input is not present.`);
+}
+
+async function openDrawer(client) {
+  await clickSelector(client, '[data-testid="library-drawer-trigger"]', 'library drawer trigger');
+  return waitForStableView(
+    client,
+    (snapshot) => isStableDialog(snapshot.mobileLibrary) && isStableElement(snapshot.mobileLibrarySheet),
+    'mobile library drawer entry',
+  );
+}
+
+async function openSettingsFromDrawer(client) {
+  await openDrawer(client);
+  await clickSelector(client, '[data-testid="mobile-settings-open"]', 'mobile settings entry');
+  await waitFor(
+    () => client.evaluate(`!document.querySelector('[data-testid="mobile-library-dialog"]')?.open`),
+    { description: 'mobile library drawer close before settings', timeoutMs: 5000 },
+  );
+  return waitForStableView(
+    client,
+    (snapshot) => isStableElement(snapshot.settings),
+    'settings page entry',
+  );
+}
+
+async function openByokFromSettings(client) {
+  await openSettingsFromDrawer(client);
+  await clickSelector(
+    client,
+    '[data-testid="open-setup-wizard-btn"], [data-testid="change-key-btn"]',
+    'BYOK setup trigger',
+  );
+  return waitForStableView(
+    client,
+    (snapshot) => isStableDialog(snapshot.wizard),
+    'BYOK wizard entry',
+  );
+}
+
+async function createSyntheticStory(client) {
+  const welcomeTrigger = await client.evaluate(
+    `Boolean(document.querySelector('[data-testid="welcome-script-import"]'))`,
+  );
+  if (welcomeTrigger) {
+    await clickSelector(client, '[data-testid="welcome-script-import"]', 'welcome script import');
+  } else {
+    await openDrawer(client);
+    await clickSelector(client, '[data-testid="mobile-library-start-script"]', 'mobile script import');
   }
-  return readSnapshot(client);
+  await waitForStableView(
+    client,
+    (snapshot) => snapshot.documentReady,
+    'script import page entry',
+  );
+  await waitFor(
+    () => client.evaluate(`Boolean(document.querySelector('[data-testid="import-panel"]'))`),
+    { description: 'script import panel', timeoutMs: 10000 },
+  );
+  await fillTextInput(
+    client,
+    '#import-raw-script',
+    '【安卓返回回归故事】\n主角：合成测试者。\n规则：只验证本地返回键层级。',
+    'synthetic script',
+  );
+  await clickButtonByText(
+    client,
+    '[data-testid="import-panel"] button',
+    '暂不拆解，直接开始',
+    'start without extraction',
+  );
+  await waitFor(
+    () => client.evaluate(`!document.querySelector('[data-testid="import-panel"]')`),
+    { description: 'script import panel close', timeoutMs: 10000 },
+  );
+}
+
+async function launchCleanScenario(serial, artifactsDirectory) {
+  run('adb', ['-s', serial, 'shell', 'am', 'force-stop', PACKAGE_NAME]);
+  run('adb', ['-s', serial, 'shell', 'pm', 'clear', PACKAGE_NAME]);
+  run('adb', ['-s', serial, 'logcat', '-c']);
+  run('adb', ['-s', serial, 'shell', 'am', 'start', '-W', '-n', MAIN_ACTIVITY]);
+  const session = await connectToWebView(serial);
+  return {
+    ...session,
+    serial,
+    artifacts: createArtifactWriter(serial, artifactsDirectory, session.pid),
+  };
+}
+
+function closeScenario(session) {
+  if (!session) return;
+  session.client.close();
+  spawnSync('adb', ['-s', session.serial, 'forward', '--remove', `tcp:${session.localPort}`], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+}
+
+async function waitAfterBackGuard() {
+  await new Promise((resolve) => setTimeout(resolve, 350));
 }
 
 async function main() {
@@ -368,127 +617,257 @@ async function main() {
   run('adb', ['-s', serial, 'shell', 'pm', 'clear', PACKAGE_NAME]);
   run('adb', ['-s', serial, 'install', '-r', '-t', apkPath]);
   run('adb', ['-s', serial, 'shell', 'pm', 'clear', PACKAGE_NAME]);
-  run('adb', ['-s', serial, 'logcat', '-c']);
-  run('adb', ['-s', serial, 'shell', 'am', 'start', '-W', '-n', MAIN_ACTIVITY]);
-
-  const { client, localPort, pid } = await connectToWebView(serial);
-  const artifacts = createArtifactWriter(serial, artifactsDirectory, pid);
-  artifacts.write('run.json', `${JSON.stringify({
+  fs.mkdirSync(artifactsDirectory, { recursive: true });
+  fs.writeFileSync(path.join(artifactsDirectory, 'run.json'), `${JSON.stringify({
     serial,
     apiLevel,
     apkPath,
     packageName: PACKAGE_NAME,
     activity: MAIN_ACTIVITY,
-    pid,
     startedAt: new Date().toISOString(),
   }, null, 2)}\n`);
 
+  let activeSession = null;
   let failure;
+  let lastSnapshot = null;
   try {
-    artifacts.captureScreenshot('01-clean-before-error.png');
-    artifacts.captureActivity('01-clean-before-error.activity.txt');
+    activeSession = await launchCleanScenario(serial, artifactsDirectory);
+    let { client, artifacts } = activeSession;
+    const cleanBeforeCrash = await captureStableView(
+      client,
+      artifacts,
+      '01-clean-before-crash',
+      (snapshot) => !snapshot.diagnostics.dialogOpen,
+      'clean app before crash',
+    );
+    artifacts.captureActivity('01-clean-before-crash.activity.txt');
 
     await client.evaluate(`window.dispatchEvent(new ErrorEvent('error', {
       error: new Error('lfh-back-regression automatic crash'),
       message: 'lfh-back-regression automatic crash'
     }))`);
-    await waitFor(async () => {
+    const automaticOpen = await captureStableView(
+      client,
+      artifacts,
+      '02-automatic-diagnostics-open',
+      (snapshot) =>
+        isStableDialog(snapshot.diagnostics) &&
+        snapshot.crashCard.visible &&
+        snapshot.overlayDepth === 1,
+      'automatic crash diagnostics overlay',
+    );
+    artifacts.captureActivity('02-automatic-diagnostics-open.activity.txt');
+    assertDiagnosticsOpen(automaticOpen, 'automatic diagnostics open');
+
+    await clickSelector(client, '[data-testid="diagnostics-reload"]', 'reload diagnostics');
+    const afterReload = await waitFor(async () => {
       const snapshot = await readSnapshot(client);
-      return snapshot.dialogOpen && snapshot.overlayDepth === 1 ? snapshot : null;
-    }, { description: 'automatic crash diagnostics overlay', timeoutMs: 10000 });
-
-    const automaticOpen = await readSnapshot(client);
-    artifacts.write('02-automatic-open.json', `${JSON.stringify(automaticOpen, null, 2)}\n`);
-    artifacts.captureScreenshot('02-automatic-open.png');
-    artifacts.captureActivity('02-automatic-open.activity.txt');
-    assertOverlayState(automaticOpen, 'automatic diagnostics open');
-
-    run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    if (!activityIsTopResumed(serial)) {
-      throw new Error(
-        `automatic diagnostics back: ${MAIN_ACTIVITY} returned to Launcher while the overlay was open`,
-      );
+      return snapshot.documentReady &&
+        snapshot.timeOrigin !== automaticOpen.timeOrigin &&
+        !snapshot.diagnostics.dialogOpen
+        ? snapshot
+        : null;
+    }, { description: 'diagnostics page reload', timeoutMs: 20000 });
+    artifacts.write('03-after-reload-stale-history.json', `${JSON.stringify(afterReload, null, 2)}\n`);
+    artifacts.captureScreenshot('03-after-reload-stale-history.png');
+    artifacts.captureActivity('03-after-reload-stale-history.activity.txt');
+    if (
+      typeof afterReload.historySession !== 'string' ||
+      afterReload.overlayDepth !== 1
+    ) {
+      throw new Error(`Reload did not preserve the expected stale overlay history: ${JSON.stringify(afterReload)}`);
     }
-    const automaticClosed = await waitForClosedOverlay(client);
-    const automaticTopResumed = activityIsTopResumed(serial);
-    artifacts.write('03-automatic-closed.json', `${JSON.stringify({
-      ...automaticClosed,
-      topResumed: automaticTopResumed,
+
+    run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
+    await waitForTopResumed(
+      serial,
+      false,
+      'one KEYCODE_BACK after diagnostics reload to reach Launcher',
+      5000,
+    );
+    artifacts.captureScreenshot('04-reload-one-back-launcher.png');
+    artifacts.captureActivity('04-reload-one-back-launcher.activity.txt');
+    artifacts.captureLogcat('04-reload-one-back-launcher.logcat.txt');
+    if (typeof afterReload.sessionToken !== 'string') {
+      throw new Error(`The current Web overlay session token is not exposed: ${JSON.stringify(afterReload)}`);
+    }
+    if (afterReload.historySession === afterReload.sessionToken) {
+      throw new Error(`Reloaded page history still matches the current session token: ${JSON.stringify(afterReload)}`);
+    }
+    lastSnapshot = afterReload;
+    closeScenario(activeSession);
+    activeSession = null;
+
+    activeSession = await launchCleanScenario(serial, artifactsDirectory);
+    ({ client, artifacts } = activeSession);
+    await openByokFromSettings(client);
+    const byokOpen = await captureStableView(
+      client,
+      artifacts,
+      '05-settings-byok-open',
+      (snapshot) =>
+        isStableElement(snapshot.settings, { requireUnobscured: false }) &&
+        isStableDialog(snapshot.wizard),
+      'settings and BYOK wizard entry',
+    );
+    artifacts.captureActivity('05-settings-byok-open.activity.txt');
+    if (byokOpen.overlayDepth !== 2 || !byokOpen.wizard.dialogOpen) {
+      throw new Error(`Settings to BYOK did not create two history layers: ${JSON.stringify(byokOpen)}`);
+    }
+    run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
+    const byokClosed = await waitForStableView(
+      client,
+      (snapshot) =>
+        !snapshot.wizard.connected &&
+        isStableElement(snapshot.settings) &&
+        snapshot.overlayDepth === 1,
+      'BYOK wizard close while settings remains',
+    );
+    const byokTopResumed = await waitForTopResumed(
+      serial,
+      true,
+      'settings remains resumed after closing BYOK',
+    );
+    artifacts.write('06-settings-after-byok-back.json', `${JSON.stringify({
+      ...byokClosed,
+      topResumed: byokTopResumed,
     }, null, 2)}\n`);
-    artifacts.captureScreenshot('03-automatic-closed.png');
-    artifacts.captureActivity('03-automatic-closed.activity.txt');
-    artifacts.captureUiHierarchy('03-automatic-closed.ui.xml');
-    artifacts.captureLogcat('03-automatic-closed.logcat.txt');
-    assertClosedState(automaticClosed, automaticTopResumed, 'automatic diagnostics closed');
-
-    await waitFor(() => {
-      return client.evaluate(`Boolean(document.querySelector('[data-testid="crash-open-diagnostics"]'))`);
-    }, { description: 'manual diagnostics trigger after automatic close' });
-    await clickCrashDiagnosticsTrigger(client);
-    await waitFor(async () => {
-      const snapshot = await readSnapshot(client);
-      return snapshot.dialogOpen && snapshot.overlayDepth === 1 ? snapshot : null;
-    }, { description: 'manually reopened diagnostics overlay', timeoutMs: 10000 });
-    const manualOpen = await readSnapshot(client);
-    artifacts.write('04-manual-open.json', `${JSON.stringify(manualOpen, null, 2)}\n`);
-    artifacts.captureScreenshot('04-manual-open.png');
-    artifacts.captureActivity('04-manual-open.activity.txt');
-    assertOverlayState(manualOpen, 'manual diagnostics open');
+    artifacts.captureScreenshot('06-settings-after-byok-back.png');
+    await waitAfterBackGuard();
 
     run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
-    run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
-    const manualClosed = await waitForClosedOverlay(client);
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    const manualTopResumed = activityIsTopResumed(serial);
-    artifacts.write('05-manual-double-back-closed.json', `${JSON.stringify({
-      ...manualClosed,
-      topResumed: manualTopResumed,
+    const settingsClosed = await waitForStableView(
+      client,
+      (snapshot) => !snapshot.settings.connected && snapshot.overlayDepth === 0,
+      'settings close while app remains',
+    );
+    const settingsTopResumed = await waitForTopResumed(
+      serial,
+      true,
+      'app remains resumed after closing settings',
+    );
+    artifacts.write('07-after-settings-back.json', `${JSON.stringify({
+      ...settingsClosed,
+      topResumed: settingsTopResumed,
     }, null, 2)}\n`);
-    artifacts.captureScreenshot('05-manual-double-back-closed.png');
-    artifacts.captureActivity('05-manual-double-back-closed.activity.txt');
-    artifacts.captureUiHierarchy('05-manual-double-back-closed.ui.xml');
-    artifacts.captureLogcat('05-manual-double-back-closed.logcat.txt');
-    assertClosedState(manualClosed, manualTopResumed, 'manual diagnostics closed after rapid double back');
+    artifacts.captureScreenshot('07-after-settings-back.png');
+    await waitAfterBackGuard();
 
     run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
-    await waitFor(() => {
-      try {
-        return !activityIsTopResumed(serial);
-      } catch {
-        return false;
-      }
-    }, {
-      description: 'ordinary back to leave the activity',
-      timeoutMs: 10000,
-    });
-    artifacts.captureScreenshot('06-ordinary-back-exit.png');
-    artifacts.captureActivity('06-ordinary-back-exit.activity.txt');
-    artifacts.captureLogcat('06-ordinary-back-exit.logcat.txt');
+    await waitForTopResumed(
+      serial,
+      false,
+      'ordinary page back after all overlays to reach Launcher',
+    );
+    artifacts.captureScreenshot('08-ordinary-back-launcher.png');
+    artifacts.captureActivity('08-ordinary-back-launcher.activity.txt');
+    artifacts.captureLogcat('08-ordinary-back-launcher.logcat.txt');
+    lastSnapshot = settingsClosed;
+    closeScenario(activeSession);
+    activeSession = null;
+
+    activeSession = await launchCleanScenario(serial, artifactsDirectory);
+    ({ client, artifacts } = activeSession);
+    await createSyntheticStory(client);
+    const libraryOpen = await openDrawer(client);
+    await clickSelector(
+      client,
+      '[data-testid="story-menu-trigger"]',
+      'story overflow menu trigger',
+    );
+    const storyMenuOpen = await captureStableView(
+      client,
+      artifacts,
+      '09-story-menu-over-drawer',
+      (snapshot) =>
+        isStableDialog(snapshot.mobileLibrary) &&
+        isStableElement(snapshot.mobileLibrarySheet) &&
+        isStableElement(snapshot.storyMenu) &&
+        snapshot.overlayDepth === 2,
+      'story menu over library drawer',
+    );
+    artifacts.captureActivity('09-story-menu-over-drawer.activity.txt');
+    if (storyMenuOpen.overlayDepth !== 2) {
+      throw new Error(`Story menu above drawer did not create two history layers: ${JSON.stringify(storyMenuOpen)}`);
+    }
+    run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
+    const menuClosed = await waitForStableView(
+      client,
+      (snapshot) =>
+        !snapshot.storyMenu.connected &&
+        isStableDialog(snapshot.mobileLibrary) &&
+        isStableElement(snapshot.mobileLibrarySheet) &&
+        snapshot.overlayDepth === 1,
+      'story menu close while library drawer remains',
+    );
+    const menuClosedTopResumed = await waitForTopResumed(
+      serial,
+      true,
+      'drawer remains resumed after closing story menu',
+    );
+    artifacts.write('10-drawer-after-story-menu-back.json', `${JSON.stringify({
+      ...menuClosed,
+      topResumed: menuClosedTopResumed,
+    }, null, 2)}\n`);
+    artifacts.captureScreenshot('10-drawer-after-story-menu-back.png');
+    await waitAfterBackGuard();
+
+    run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
+    const drawerClosed = await waitForStableView(
+      client,
+      (snapshot) =>
+        !snapshot.mobileLibrary.dialogOpen &&
+        snapshot.mobileLibrary.animationsBusy === false &&
+        snapshot.overlayDepth === 0,
+      'library drawer close while app remains',
+    );
+    const drawerClosedTopResumed = await waitForTopResumed(
+      serial,
+      true,
+      'app remains resumed after closing library drawer',
+    );
+    artifacts.write('11-after-drawer-back.json', `${JSON.stringify({
+      ...drawerClosed,
+      topResumed: drawerClosedTopResumed,
+    }, null, 2)}\n`);
+    artifacts.captureScreenshot('11-after-drawer-back.png');
+    artifacts.captureUiHierarchy('11-after-drawer-back.ui.xml');
+    artifacts.captureLogcat('11-after-drawer-back.logcat.txt');
+    lastSnapshot = drawerClosed;
+
     artifacts.write('result.json', `${JSON.stringify({
       status: 'passed',
       completedAt: new Date().toISOString(),
+      cleanBeforeCrash,
       automaticOpen,
-      automaticClosed,
-      manualOpen,
-      manualClosed,
+      afterReload,
+      byokOpen,
+      byokClosed,
+      settingsClosed,
+      libraryOpen,
+      storyMenuOpen,
+      menuClosed,
+      drawerClosed,
       artifactsDirectory,
     }, null, 2)}\n`);
     console.log(`PASS ${artifactsDirectory}`);
   } catch (error) {
     failure = error;
-    const snapshot = await readSnapshot(client).catch(() => null);
-    artifacts.write('failure.json', `${JSON.stringify({
+    const snapshot = activeSession
+      ? await readSnapshot(activeSession.client).catch(() => null)
+      : lastSnapshot;
+    const failureArtifacts = activeSession?.artifacts;
+    failureArtifacts?.write('failure.json', `${JSON.stringify({
       status: 'failed',
       completedAt: new Date().toISOString(),
       error: error.message,
       snapshot,
     }, null, 2)}\n`);
     for (const capture of [
-      () => artifacts.captureScreenshot('failure.png'),
-      () => artifacts.captureActivity('failure.activity.txt'),
-      () => artifacts.captureUiHierarchy('failure.ui.xml'),
-      () => artifacts.captureLogcat('failure.logcat.txt'),
+      () => failureArtifacts?.captureScreenshot('failure.png'),
+      () => failureArtifacts?.captureActivity('failure.activity.txt'),
+      () => failureArtifacts?.captureUiHierarchy('failure.ui.xml'),
+      () => failureArtifacts?.captureLogcat('failure.logcat.txt'),
     ]) {
       try {
         capture();
@@ -498,12 +877,10 @@ async function main() {
     }
     throw error;
   } finally {
-    client.close();
-    spawnSync('adb', ['-s', serial, 'forward', '--remove', `tcp:${localPort}`], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-    });
-    artifacts.captureLogcat('final.logcat.txt');
+    if (activeSession) {
+      activeSession.artifacts.captureLogcat('final.logcat.txt');
+      closeScenario(activeSession);
+    }
     if (!failure) {
       console.log(`evidence ${artifactsDirectory}`);
     } else {

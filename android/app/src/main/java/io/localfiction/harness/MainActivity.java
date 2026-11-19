@@ -6,13 +6,23 @@ import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
-    private static final String HAS_WEB_OVERLAY_SCRIPT =
+    private static final int BACK_MODE_ORDINARY = 0;
+    private static final int BACK_MODE_OVERLAY = 1;
+    private static final int BACK_MODE_STALE_OVERLAY = 2;
+    private static final String HANDLE_WEB_BACK_SCRIPT =
         "(function(){" +
+        "var currentSession=window.__lfhOverlayHistorySession;" +
         "var state=history.state;" +
-        "return !!(state&&typeof state==='object'&&" +
-        "typeof state.lfhOverlaySession==='string'&&" +
-        "Number(state.lfhOverlayDepth)===state.lfhOverlayDepth&&" +
-        "state.lfhOverlayDepth>0);" +
+        "var hasOverlayState=!!(state&&typeof state==='object'&&" +
+        "typeof state.lfhOverlaySession==='string');" +
+        "var depth=hasOverlayState?Number(state.lfhOverlayDepth):0;" +
+        "if(hasOverlayState&&typeof currentSession==='string'&&" +
+        "state.lfhOverlaySession===currentSession&&" +
+        "Number.isInteger(depth)&&depth>0){" +
+        "history.back();return " + BACK_MODE_OVERLAY + ";" +
+        "}" +
+        "if(hasOverlayState)return " + BACK_MODE_STALE_OVERLAY + ";" +
+        "return " + BACK_MODE_ORDINARY + ";" +
         "})()";
     private static final long BACK_NAVIGATION_GUARD_MS = 300;
 
@@ -35,17 +45,23 @@ public class MainActivity extends BridgeActivity {
                 if (backNavigationInFlight) return;
 
                 backNavigationInFlight = true;
-                webView.evaluateJavascript(HAS_WEB_OVERLAY_SCRIPT, result ->
+                webView.evaluateJavascript(HANDLE_WEB_BACK_SCRIPT, result ->
                     runOnUiThread(() -> {
-                        if ("true".equals(result)) {
-                            webView.evaluateJavascript("history.back()", ignored ->
-                                runOnUiThread(() ->
-                                    webView.postDelayed(
-                                        () -> backNavigationInFlight = false,
-                                        BACK_NAVIGATION_GUARD_MS
-                                    )
-                                )
+                        if (webView != getBridge().getWebView()) {
+                            backNavigationInFlight = false;
+                            return;
+                        }
+                        int mode = parseBackMode(result);
+                        if (mode == BACK_MODE_OVERLAY) {
+                            webView.postDelayed(
+                                () -> backNavigationInFlight = false,
+                                BACK_NAVIGATION_GUARD_MS
                             );
+                            return;
+                        }
+                        if (mode == BACK_MODE_STALE_OVERLAY) {
+                            backNavigationInFlight = false;
+                            finish();
                             return;
                         }
                         if (webView.canGoBack()) {
@@ -62,5 +78,13 @@ public class MainActivity extends BridgeActivity {
                 );
             }
         });
+    }
+
+    private static int parseBackMode(String result) {
+        if (result == null) return BACK_MODE_ORDINARY;
+        String value = result.replace("\"", "").trim();
+        if ("1".equals(value)) return BACK_MODE_OVERLAY;
+        if ("2".equals(value)) return BACK_MODE_STALE_OVERLAY;
+        return BACK_MODE_ORDINARY;
     }
 }

@@ -167,9 +167,10 @@ summary:focus-visible {
 .library-section-heading h2 { margin: 0; font-size: 13px; font-weight: 650; }
 .story-count { color: var(--text-muted); font-size: 12px; }
 .library-empty { margin: 0; color: var(--text-muted); font-size: 13px; }
-.story-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.story-list { display: flex; flex-direction: column; gap: 4px; max-height: none; margin: 0; padding: 0; overflow: visible; list-style: none; }
 .story-list-item { position: relative; min-width: 0; min-height: 56px; border-radius: var(--radius-md); }
 .story-list-item.is-active { background: var(--bg-surface-hover); }
+.story-list-item.is-menu-open { z-index: 21; }
 .story-select-button {
   flex: 1 1 auto;
   gap: 10px;
