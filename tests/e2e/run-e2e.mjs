@@ -928,6 +928,124 @@ async function verifyModalDialogLifecycle(context, port) {
   await page.close();
 }
 
+async function verifyBranchSwitchBlocksImmediateSend(page) {
+  const branchUser = page.getByTestId('turn-user').nth(1);
+  const initialPager = await branchUser.getByTestId('branch-pager').textContent();
+  if (!initialPager?.includes('2 / 2')) {
+    throw new Error(`Expected Branch B active before switch-lock check, got: ${initialPager}`);
+  }
+
+  const stage = page.getByTestId('main-stage');
+  const scrollTopBeforeSwitch = await stage.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: -1, bubbles: true }));
+    element.scrollTop = Math.min(200, element.scrollHeight - element.clientHeight - 100);
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    return element.scrollTop;
+  });
+  await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
+
+  const prompt = '分支切换期间不应发送';
+  await page.fill('#turn-input', prompt);
+  const racedRequests = [];
+  const recordRequest = (request) => {
+    if (request.url().includes('/chat/completions') && request.postData()?.includes(prompt)) {
+      racedRequests.push(request.url());
+    }
+  };
+  page.on('request', recordRequest);
+  await page.evaluate(() => {
+    const pager = document.querySelectorAll('[data-testid="turn-user"]')[1]
+      ?.querySelector('[data-testid="branch-pager"]');
+    pager?.querySelector('button[aria-label="上一分支"]')?.click();
+    document.querySelector('[data-testid="stage-composer"]')?.dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    );
+  });
+  await page.waitForTimeout(300);
+  page.off('request', recordRequest);
+
+  if (racedRequests.length || (await page.inputValue('#turn-input')) !== prompt) {
+    throw new Error('A send during branch switching started or cleared the composer draft.');
+  }
+  const switchedUser = page.getByTestId('turn-user').nth(1);
+  const switchedLabel = await switchedUser.getByTestId('turn-history-toggle').textContent();
+  if (!switchedLabel?.includes('分支 1/2')) {
+    throw new Error(`Branch switch did not settle on the requested sibling: ${switchedLabel}`);
+  }
+  const scrollTopAfterSwitch = await stage.evaluate((element) => element.scrollTop);
+  if (Math.abs(scrollTopAfterSwitch - scrollTopBeforeSwitch) > 1) {
+    throw new Error(`Same-story branch switching changed the paused scroll position: ${scrollTopBeforeSwitch}px -> ${scrollTopAfterSwitch}px.`);
+  }
+
+  await switchedUser.getByTestId('turn-history-toggle').click();
+  await switchedUser.getByRole('button', { name: '下一分支' }).click();
+  await page.waitForFunction(() =>
+    document.querySelectorAll('[data-testid="turn-user"]')[1]
+      ?.querySelector('[data-testid="branch-pager"]')?.textContent?.includes('2 / 2'),
+  );
+  await page.fill('#turn-input', '');
+}
+
+async function verifyStoppedSendPreservesNewerDraft(page, delayNextTurn) {
+  const submittedPrompt = '停止时不覆盖后续草稿';
+  const newerDraft = '停止生成后仍要保留的草稿';
+  delayNextTurn();
+  await page.fill('#turn-input', submittedPrompt);
+  await page.getByRole('button', { name: '发送行动' }).click();
+  await page.getByRole('button', { name: '停止生成' }).waitFor();
+  await page.fill('#turn-input', newerDraft);
+  await page.getByRole('button', { name: '停止生成' }).click();
+  await page.getByTestId('main-error-banner').waitFor();
+  if ((await page.inputValue('#turn-input')) !== newerDraft) {
+    throw new Error('Stopping a turn replaced a newer composer draft with the submitted action.');
+  }
+  await page.fill('#turn-input', '');
+}
+
+async function verifyScrollDetachAndResumeThreshold(page, delayNextTurn) {
+  const stage = page.getByTestId('main-stage');
+  await stage.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+  await stage.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: -1, bubbles: true }));
+    element.scrollTop = element.scrollHeight - element.clientHeight - 100;
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+  await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
+  await stage.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: 1, bubbles: true }));
+    element.scrollTop = element.scrollHeight - element.clientHeight - 40;
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+  await page.waitForTimeout(50);
+  if (!(await page.getByTestId('scroll-to-bottom').isVisible().catch(() => false))) {
+    throw new Error('Manual scrolling back to 40px from the bottom should remain paused until 24px or closer.');
+  }
+
+  delayNextTurn();
+  await page.fill('#turn-input', '验证滚动暂停阈值');
+  await page.locator('#turn-input').press('Enter');
+  await page.getByRole('button', { name: '停止生成' }).waitFor();
+  const gapWhileStreaming = await stage.evaluate((element) =>
+    element.scrollHeight - element.scrollTop - element.clientHeight,
+  );
+  if (gapWhileStreaming <= 24) {
+    throw new Error(`Streaming output resumed follow above the 24px threshold: ${gapWhileStreaming}px.`);
+  }
+  await page.getByRole('button', { name: '停止生成' }).click();
+  await page.getByTestId('main-error-banner').waitFor();
+  await page.fill('#turn-input', '');
+
+  await stage.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: 1, bubbles: true }));
+    element.scrollTop = element.scrollHeight - element.clientHeight - 20;
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+  await page.getByTestId('scroll-to-bottom').waitFor({ state: 'hidden' });
+}
+
 async function main() {
   const port = 4185;
   const srv = await startViteServer(port);
@@ -939,6 +1057,9 @@ async function main() {
 
   try {
     const context = await newOfflineContext(browser, port, { acceptDownloads: true });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+      origin: `http://localhost:${port}`,
+    });
     await verifyModalDialogLifecycle(context, port);
     const page = await context.newPage();
     const replyCounts = new Map();
@@ -1106,7 +1227,7 @@ async function main() {
       const content = [
         `${replyPrefix}：${lastMsg}`,
         '```text',
-        `[状态 | 人气: 60 | 节点: ${lastMsg.slice(0, 6)}]`,
+        `[状态 | 人气: 60 | 节点: ${lastMsg.slice(0, 6)} | 长线索: 东侧走廊尽头的控制室仍亮着灯，巡夜人留下的值班记录尚未归档，门外还有未解锁的线索]`,
         '```',
         'A. 继续训练声乐',
         'B. 前往休息室',
@@ -1185,7 +1306,7 @@ async function main() {
     await page.click('[data-testid="ds-confirm-import-btn"]');
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
     await page.click('button:has-text("继续这条故事")');
-    await page.waitForSelector('.turn-card.assistant:has-text("原进度抵达东侧练歌房")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("原进度抵达东侧练歌房")');
     await deleteAllStories(page);
 
     // 0. Keyless DeepSeek .zip import -> preview -> batch 1-to-1 import -> Continue This Story -> inline BYOK prompt -> stream
@@ -1226,7 +1347,18 @@ async function main() {
       throw new Error(`Expected 2 imported stories in receipt, got: ${receiptText}`);
     }
     await page.click('button:has-text("继续这条故事")');
-    await page.waitForSelector('.turn-card.assistant:has-text("原进度抵达东侧练歌房")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("原进度抵达东侧练歌房")');
+    const setupTurn = page.getByTestId('turn-user').first();
+    const setupNode = setupTurn.getByTestId('setup-node');
+    const setupLabel = await setupNode.locator('summary').textContent();
+    if (!setupLabel?.includes('设定')) {
+      throw new Error(`Collapsed setup node should identify itself directly: ${setupLabel}`);
+    }
+    await setupNode.waitFor();
+    await setupNode.locator('summary').click();
+    if (!(await setupNode.textContent())?.includes('请按附件规则开始演绎第一幕')) {
+      throw new Error('Setup node did not preserve its original submitted text.');
+    }
     const diagText = await page.locator('[data-testid="turn-diagnostics"]').textContent();
     if (!diagText?.includes('CONTENT_FILTER') || !diagText?.includes('CONTENT_RISK')) {
       throw new Error(`Expected read-only NodeDiagnostics badge, got: ${diagText}`);
@@ -1234,14 +1366,14 @@ async function main() {
 
     // Verify IndexedDB reload keeps DeepSeek stories + diagnostics
     await page.reload({ waitUntil: 'networkidle' });
-    await page.waitForSelector('.turn-card.assistant:has-text("原进度抵达东侧练歌房")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("原进度抵达东侧练歌房")');
     if ((await (await visibleStoryRows(page)).count()) !== 2) {
       throw new Error('Expected 2 independent DeepSeek stories persisted in IndexedDB');
     }
 
     // Trigger next turn without API key -> guided setup wizard opens -> test 401 block & valid save & auto-continue
     await page.fill('#turn-input', '推开练歌房钢琴盖');
-    await page.click('button:has-text("发送行动")');
+    await page.getByRole('button', { name: '发送行动' }).click();
     await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
     const wizardText = await page.locator('[data-testid="deepseek-setup-wizard"]').textContent();
     if (!wizardText?.includes('新注册用户通常有免费额度')) {
@@ -1257,7 +1389,7 @@ async function main() {
     // Valid key verifies and resumes streaming automatically
     await page.fill('#byok-api-key', 'sk-e2e-inline');
     await page.click('[data-testid="wizard-verify-save-btn"]');
-    await page.waitForSelector('.turn-card.assistant:has-text("回执：推开练歌房钢琴盖")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：推开练歌房钢琴盖")');
     await openSettings(page);
     const maskText = await page.locator('[data-testid="connected-key-mask"]').textContent();
     if (!maskText?.includes('••••line')) {
@@ -1294,7 +1426,7 @@ async function main() {
       throw new Error(`Expected pending_key badge in receipt, got: ${keylessAmbigReceipt}`);
     }
     await page.click('button:has-text("继续这条故事")');
-    await page.waitForSelector('.turn-card.assistant:has-text("门后传来脚步声")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("门后传来脚步声")');
     await page.setViewportSize({ width: 390, height: 844 });
     let reviewSheet = await openStoryReview(page);
     await reviewSheet.getByTestId('summary-needed-indicator').waitFor({ state: 'visible' });
@@ -1358,14 +1490,14 @@ async function main() {
       throw new Error(`Expected compressed summary status in receipt, got: ${ambigReceipt}`);
     }
     await page.click('button:has-text("继续这条故事")');
-    await page.waitForSelector('.turn-card.assistant:has-text("门后传来脚步声")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("门后传来脚步声")');
     const ambigSummary = await readActivePlotSummary(page);
     if (!ambigSummary?.includes('【激活线压缩摘要】')) {
       throw new Error(`Expected compressed active summary in StoryReview, got: ${ambigSummary}`);
     }
     await page.fill('#turn-input', '推开船长室门');
-    await page.click('button:has-text("发送行动")');
-    await page.waitForSelector('.turn-card.assistant:has-text("回执：推开船长室门")');
+    await page.getByRole('button', { name: '发送行动' }).click();
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：推开船长室门")');
     if (
       !lastTurnSystemText.includes('【E2E模糊剧本】') ||
       !lastTurnSystemText.includes('【激活线压缩摘要】') ||
@@ -1413,9 +1545,73 @@ async function main() {
     await page.getByRole('button', { name: '保存蓝图微调' }).click();
     await page.getByRole('button', { name: '确认并开启第一幕' }).click();
 
-    // 3. Play 6 turns (including clicking A choice button & rendering HUD panel + separated reasoning)
+    // 3. Play turns and verify the immersive stage contract.
     await page.click('button:has-text("开启第一幕")');
-    await page.waitForSelector('.hud-panel');
+    await page.getByTestId('hud-panel').waitFor();
+    await page.getByRole('button', { name: '发送行动' }).waitFor();
+    const firstUserCard = page.getByTestId('turn-user').last();
+    const firstAssistantCard = page.getByTestId('turn-assistant').last();
+    const choiceToolbarOrder = await firstAssistantCard.evaluate((card) => {
+      const toolbar = card.querySelector('.turn-actions');
+      const choices = card.querySelector('[data-testid="choice-row"]');
+      return Boolean(toolbar && choices &&
+        (toolbar.compareDocumentPosition(choices) & Node.DOCUMENT_POSITION_FOLLOWING));
+    });
+    if (!choiceToolbarOrder) {
+      throw new Error('Quick choices should follow the narrative action toolbar.');
+    }
+    const bubbleAlignment = await firstUserCard.getByTestId('user-bubble').evaluate((bubble) =>
+      getComputedStyle(bubble.parentElement).justifyContent,
+    );
+    if (bubbleAlignment !== 'flex-end') {
+      throw new Error(`Player action bubble was not right aligned: ${bubbleAlignment}`);
+    }
+    const assistantSurface = await firstAssistantCard.evaluate((card) => ({
+      background: getComputedStyle(card).backgroundColor,
+      borderWidth: getComputedStyle(card).borderTopWidth,
+    }));
+    if (assistantSurface.background !== 'rgba(0, 0, 0, 0)' || assistantSurface.borderWidth !== '0px') {
+      throw new Error(`Narrative turn has a card surface: ${JSON.stringify(assistantSurface)}`);
+    }
+    await firstAssistantCard.getByRole('button', { name: '复制正文' }).click();
+    const copiedNarrative = await page.evaluate(() => navigator.clipboard.readText());
+    if (!copiedNarrative.includes('回执：开始故事')) {
+      throw new Error(`Copy action did not place the full narrative on the clipboard: ${copiedNarrative}`);
+    }
+
+    const firstReasoning = firstAssistantCard.getByTestId('reasoning-details');
+    if (await firstReasoning.evaluate((details) => details.open)) {
+      throw new Error('Completed reasoning should start collapsed.');
+    }
+    const reasoningLabel = await firstReasoning.getByTestId('reasoning-toggle').textContent();
+    if (!reasoningLabel?.match(/已思考\s+\d+\s+秒/)) {
+      throw new Error(`Missing measured reasoning duration: ${reasoningLabel}`);
+    }
+    await firstReasoning.getByTestId('reasoning-toggle').click();
+    await firstAssistantCard.locator('.reasoning-content').waitFor({ state: 'visible' });
+    await firstReasoning.getByTestId('reasoning-toggle').click();
+    await firstAssistantCard.locator('.reasoning-content').waitFor({ state: 'hidden' });
+
+    const firstHud = firstAssistantCard.getByTestId('hud-panel').first();
+    const grid = firstHud.getByTestId('hud-grid');
+    await grid.waitFor();
+    if ((await grid.locator('.hud-field-wide').count()) !== 1) {
+      throw new Error('Long HUD values should span both grid columns.');
+    }
+    await firstHud.getByRole('button', { name: '原始格式' }).click();
+    await firstHud.getByTestId('hud-raw-view').waitFor();
+    if (await firstHud.getByTestId('hud-grid').count()) {
+      throw new Error('Raw HUD view should replace the grid view.');
+    }
+    await firstHud.getByRole('button', { name: '网格视图' }).click();
+    await firstHud.getByTestId('hud-grid').waitFor();
+    await firstHud.getByTestId('hud-collapse-toggle').click();
+    if (await firstHud.getByTestId('hud-grid').count()) {
+      throw new Error('Collapsed HUD should hide its values.');
+    }
+    await firstHud.getByTestId('hud-collapse-toggle').click();
+    await firstAssistantCard.getByTestId('choice-row').getByRole('button', { name: 'A. 继续训练声乐' }).waitFor();
+
     const firstChoiceActions = [
       '第二轮黑市线索',
       '第三轮打探消息',
@@ -1424,11 +1620,109 @@ async function main() {
     ];
     for (const act of firstChoiceActions) {
       await page.fill('#turn-input', act);
-      await page.click('button:has-text("发送行动")');
-      await page.waitForSelector(`.turn-card.assistant:has-text("回执：${act}")`);
+      await page.getByRole('button', { name: '发送行动' }).click();
+      await page.waitForSelector(`[data-testid="turn-assistant"]:has-text("回执：${act}")`);
     }
-    await page.click('button.choice-btn:has-text("A. 继续训练声乐")');
-    await page.waitForSelector('.turn-card.assistant:has-text("回执：A. 继续训练声乐")');
+    await page.getByTestId('choice-row').getByRole('button', { name: 'A. 继续训练声乐' }).click();
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：A. 继续训练声乐")');
+
+    const stage = page.getByTestId('main-stage');
+    const userCountBeforeIme = await page.getByTestId('turn-user').count();
+    await page.fill('#turn-input', '组合输入候选');
+    await page.locator('#turn-input').evaluate((input) => {
+      input.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter',
+        keyCode: 229,
+        which: 229,
+        bubbles: true,
+      }));
+    });
+    if (await page.getByTestId('turn-user').count() !== userCountBeforeIme ||
+        await page.inputValue('#turn-input') !== '组合输入候选') {
+      throw new Error('IME composition Enter incorrectly submitted the player action.');
+    }
+    await page.locator('#turn-input').press('Shift+Enter');
+    if (!(await page.inputValue('#turn-input')).includes('\n')) {
+      throw new Error('Shift+Enter should insert a newline into the composer.');
+    }
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.fill('#turn-input', 'Enter键提交行动');
+    await page.locator('#turn-input').press('Enter');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：Enter键提交行动")');
+    try {
+      await page.waitForFunction(() => {
+        const element = document.querySelector('[data-testid="main-stage"]');
+        return element && element.scrollHeight - element.scrollTop - element.clientHeight <= 80;
+      }, undefined, { timeout: 5000 });
+    } catch {
+      const metrics = await stage.evaluate((element) => ({
+        scrollTop: element.scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+        documentScrollTop: document.documentElement.scrollTop,
+        documentScrollHeight: document.documentElement.scrollHeight,
+        documentClientHeight: document.documentElement.clientHeight,
+        display: getComputedStyle(element).display,
+        height: getComputedStyle(element).height,
+        overflowY: getComputedStyle(element).overflowY,
+      }));
+      throw new Error(`Stage did not follow to the bottom: ${JSON.stringify(metrics)}`);
+    }
+
+    await stage.hover({ position: { x: 80, y: 200 } });
+    await page.mouse.wheel(0, -1000);
+    await page.waitForFunction(() => {
+      const element = document.querySelector('[data-testid="main-stage"]');
+      return element && element.scrollHeight - element.scrollTop - element.clientHeight > 80;
+    });
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
+    await page.fill('#turn-input', Array(10).fill('仍在编辑的长草稿').join('\n'));
+    const returnButtonHitTest = await page.getByTestId('scroll-to-bottom').evaluate((button) => {
+      const rect = button.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return {
+        buttonTop: rect.top,
+        textareaTop: document.querySelector('#turn-input')?.getBoundingClientRect().top,
+        hitButton: Boolean(hit && button.contains(hit)),
+      };
+    });
+    if (!returnButtonHitTest.hitButton || returnButtonHitTest.buttonTop >= (returnButtonHitTest.textareaTop ?? Infinity)) {
+      throw new Error(`Return-to-bottom button is covered or below the composer input: ${JSON.stringify(returnButtonHitTest)}`);
+    }
+    await page.getByTestId('scroll-to-bottom').click();
+    await page.waitForFunction(() => {
+      const element = document.querySelector('[data-testid="main-stage"]');
+      return element && element.scrollHeight - element.scrollTop - element.clientHeight <= 80;
+    });
+    await stage.hover({ position: { x: 80, y: 200 } });
+    await page.mouse.wheel(0, -1000);
+    await page.waitForFunction(() => {
+      const element = document.querySelector('[data-testid="main-stage"]');
+      return element && element.scrollHeight - element.scrollTop - element.clientHeight > 80;
+    });
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
+    const gapAfterManualWheel = await stage.evaluate((element) =>
+      element.scrollHeight - element.scrollTop - element.clientHeight,
+    );
+    delayNextTurnMs = 1000;
+    await page.fill('#turn-input', '上滑后暂停跟随');
+    await page.locator('#turn-input').press('Enter');
+    await page.getByRole('button', { name: '停止生成' }).waitFor();
+    const pausedGap = await stage.evaluate((element) =>
+      element.scrollHeight - element.scrollTop - element.clientHeight,
+    );
+    if (pausedGap <= 80) {
+      throw new Error(`Timeline followed streaming output after manual scroll: gap ${gapAfterManualWheel}px -> ${pausedGap}px`);
+    }
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：上滑后暂停跟随")');
+    await page.getByTestId('scroll-to-bottom').click();
+    await page.waitForFunction(() => {
+      const element = document.querySelector('[data-testid="main-stage"]');
+      return element && element.scrollHeight - element.scrollTop - element.clientHeight <= 80;
+    });
+    await verifyScrollDetachAndResumeThreshold(page, () => { delayNextTurnMs = 10000; });
+    await page.setViewportSize({ width: 1280, height: 720 });
 
     // 4. Verify explicit Story Review (visible without opening <details>) & Branch A active
     reviewSheet = await openStoryReview(page);
@@ -1465,15 +1759,29 @@ async function main() {
     await closeCompanionSheet(page);
 
     // 5. Rewind & edit Turn 2 user node to fork Branch B -> verify Plot Summary rolled back & Story Tree fork appears
-    const turn2Card = page.locator('.turn-card.user').nth(1);
-    await turn2Card.locator('button:has-text("撤回并编辑重发")').click();
+    const turn2Card = page.getByTestId('turn-assistant').nth(1);
+    if (!(await page.getByTestId('turn-assistant').first().getByTestId('turn-history-toggle').isVisible())) {
+      throw new Error('Older narrative operation rows should start collapsed.');
+    }
+    if (!(await turn2Card.locator('.turn-body').first().isVisible()) || await turn2Card.locator('.turn-actions').count()) {
+      throw new Error('Historical narrative should stay visible while its operation row starts folded.');
+    }
+    await turn2Card.getByTestId('turn-history-toggle').click();
+    await turn2Card.getByRole('button', { name: '编辑并生成新分支' }).waitFor();
+    await turn2Card.getByRole('button', { name: '编辑并生成新分支' }).click();
     await turn2Card.locator('textarea').fill('第二轮改道休息');
-    await turn2Card.locator('button:has-text("提交并生成新分支")').click();
-    await page.waitForSelector('.turn-card.assistant:has-text("回执：第二轮改道休息")');
+    await turn2Card.getByRole('button', { name: '提交并生成新分支' }).click();
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：第二轮改道休息")');
+    const historicalEditPager = await page.getByTestId('turn-user').nth(1).getByTestId('branch-pager').textContent();
+    if (!historicalEditPager?.includes('2 / 2')) {
+      throw new Error(`Historical edit did not expose its sibling branch pager: ${historicalEditPager}`);
+    }
     const sumB = await readActivePlotSummary(page);
     if (sumB?.includes('黑市线索')) {
       throw new Error(`Branch A leaked into Branch B summary: ${sumB}`);
     }
+
+    await verifyBranchSwitchBlocksImmediateSend(page);
 
     // 5b. Story Tree: verify linear span folding, fork badge ⑂ 2, expand fork, rename Branch B, AI gist, switch back to Branch A
     const storyTreeSheet = await openStoryTree(page);
@@ -1513,7 +1821,7 @@ async function main() {
     // Switch back to Branch A via Story Tree sibling button
     const nonActiveSibling = storyTreeSheet.locator('[data-testid^="story-tree-branch-"][data-active="false"]').first();
     await nonActiveSibling.locator('button:has-text("切换至此分支")').click();
-    await page.waitForSelector('.turn-card.assistant:has-text("回执：A. 继续训练声乐")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：A. 继续训练声乐")');
     await closeStoryTree(page);
 
     await page.reload({ waitUntil: 'networkidle' });
@@ -1522,7 +1830,9 @@ async function main() {
     await page.waitForSelector('[data-testid="connected-key-mask"]');
     await closeSettings(page);
     const sumAfterReload = await readActivePlotSummary(page);
-    const pagerAfterReload = await page.locator('.turn-card.user').nth(1).locator('.branch-pager').textContent();
+    const reloadedSecondUser = page.getByTestId('turn-user').nth(1);
+    await reloadedSecondUser.getByTestId('turn-history-toggle').click();
+    const pagerAfterReload = await reloadedSecondUser.getByTestId('branch-pager').textContent();
     if (!sumAfterReload?.includes('【分支A摘要】含黑市线索') || !pagerAfterReload?.includes('1 / 2')) {
       throw new Error('IndexedDB reload did not restore branch tree & summary');
     }
@@ -1543,25 +1853,36 @@ async function main() {
     ]);
     const backupFile = path.join(tmpDir, download.suggestedFilename());
     await download.saveAs(backupFile);
+    const mainStage = page.getByTestId('main-stage');
+    await mainStage.hover({ position: { x: 80, y: 200 } });
+    await page.mouse.wheel(0, -1000);
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
     await backupRow.getByTestId('story-menu-trigger').click();
     await backupRow.getByRole('menuitem', { name: '删除故事' }).click();
     await page.waitForFunction((count) =>
       [...document.querySelectorAll('[data-testid="story-list-item"]')]
         .filter((item) => item.getClientRects().length > 0).length < count,
     backupRowCount);
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'hidden' });
     await openSettings(page);
     await page.setInputFiles('[data-testid="backup-import-input"]', backupFile);
     await page.waitForSelector('[data-testid="story-list-item"][data-active="true"]');
-    await page.waitForSelector('.turn-card.assistant:has-text("回执：A. 继续训练声乐")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：A. 继续训练声乐")');
+    await page.waitForFunction(() => {
+      const stage = document.querySelector('[data-testid="main-stage"]');
+      return stage && stage.scrollHeight - stage.scrollTop - stage.clientHeight <= 24;
+    });
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'hidden' });
 
     // 8. Collapsible reasoning panel rendering (.reasoning-content)
-    const firstAssistant = page.locator('.turn-card.assistant').first();
-    const reasoningDetails = firstAssistant.locator('.reasoning-details');
+    const firstAssistant = page.getByTestId('turn-assistant').first();
+    await firstAssistant.getByTestId('turn-history-toggle').click();
+    const reasoningDetails = firstAssistant.getByTestId('reasoning-details');
     const reasoningContent = firstAssistant.locator('.reasoning-content');
     if ((await reasoningDetails.evaluate((el) => el.open)) || (await reasoningContent.isVisible())) {
       throw new Error('Expected .reasoning-details to be collapsed by default');
     }
-    await reasoningDetails.locator('summary').click();
+    await reasoningDetails.getByTestId('reasoning-toggle').click();
     if (!(await reasoningDetails.evaluate((el) => el.open)) || !(await reasoningContent.isVisible())) {
       throw new Error('Expected .reasoning-content visible after expanding');
     }
@@ -1569,25 +1890,27 @@ async function main() {
     if (!reasoningText?.includes('推理(')) {
       throw new Error(`Unexpected reasoning content: ${reasoningText}`);
     }
-    await reasoningDetails.locator('summary').click();
+    await reasoningDetails.getByTestId('reasoning-toggle').click();
     if (await reasoningContent.isVisible()) {
       throw new Error('Expected .reasoning-content hidden after collapsing');
     }
 
     // 9. regenerateNode & rewindToNode UI actions
-    const lastAssistant = page.locator('.turn-card.assistant').last();
-    await lastAssistant.locator('button:has-text("重新生成分支")').click();
-    await page.waitForSelector('.turn-card.assistant:has-text("回执#2：A. 继续训练声乐")');
-    const regenPager = await page.locator('.turn-card.assistant').last().locator('.branch-pager').textContent();
+    const choiceAssistant = page.getByTestId('turn-assistant')
+      .filter({ hasText: '回执：A. 继续训练声乐' }).last();
+    await choiceAssistant.getByTestId('turn-history-toggle').click();
+    await choiceAssistant.getByRole('button', { name: '重新生成分支' }).click();
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执#2：A. 继续训练声乐")');
+    const regenPager = await page.getByTestId('turn-assistant').last().getByTestId('branch-pager').textContent();
     if (!regenPager?.includes('2 / 2')) {
       throw new Error(`Expected regenerated branch pager 2 / 2, got: ${regenPager}`);
     }
-    await page.locator('.turn-card.assistant').last().locator('button[aria-label="上一分支"]').click();
-    await page.waitForSelector('.turn-card.assistant:has-text("回执：A. 继续训练声乐")');
+    await page.getByTestId('turn-assistant').last().getByRole('button', { name: '上一分支' }).click();
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：A. 继续训练声乐")');
 
-    await firstAssistant.locator('button:has-text("回溯至此")').click();
-    await page.waitForFunction(() => document.querySelectorAll('.turn-card.assistant').length === 1);
-    if ((await firstAssistant.locator('button:has-text("回溯至此")').count()) !== 0) {
+    await firstAssistant.getByRole('button', { name: '回溯至此' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="turn-assistant"]').length === 1);
+    if ((await firstAssistant.getByRole('button', { name: '回溯至此' }).count()) !== 0) {
       throw new Error('Expected active rewound leaf not to show 回溯至此');
     }
     const blueprintAfterRewind = await openStoryBlueprint(page);
@@ -1634,12 +1957,14 @@ async function main() {
       throw new Error('Expected two saved stories after aborted stream recovery.');
     }
 
+    await verifyStoppedSendPreservesNewerDraft(page, () => { delayNextTurnMs = 3000; });
+
     // 10b. Mid-stream abort via 停止生成 must NOT re-submit the composer form
     delayNextTurnMs = 3000;
     await page.fill('#turn-input', '测试停止生成不重发');
-    await page.click('button:has-text("发送行动")');
-    await page.waitForSelector('button:has-text("停止生成")');
-    await page.click('button:has-text("停止生成")');
+    await page.getByRole('button', { name: '发送行动' }).click();
+    await page.getByRole('button', { name: '停止生成' }).waitFor();
+    await page.getByRole('button', { name: '停止生成' }).click();
     await page.getByTestId('main-error-banner').waitFor();
     const abortMsg = await page.getByTestId('main-error-banner').textContent();
     if (!abortMsg?.includes('已中止本次生成')) {
@@ -1648,7 +1973,7 @@ async function main() {
     if ((await page.inputValue('#turn-input')) !== '测试停止生成不重发') {
       throw new Error('Expected aborted input restored cleanly without re-submitting');
     }
-    if ((await page.locator('.turn-card.user, .turn-card.assistant').count()) !== 0) {
+    if ((await page.locator('[data-testid="turn-user"], [data-testid="turn-assistant"]').count()) !== 0) {
       throw new Error('Expected aborted turn not to commit any turn card');
     }
 
@@ -1952,7 +2277,7 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     await page.click('[data-testid="ds-confirm-import-btn"]');
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]:has-text("待配置密钥")');
     await page.click('button:has-text("继续这条故事")');
-    await page.waitForSelector('.turn-card.assistant:has-text("抵达东楼密室终点")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("抵达东楼密室终点")');
     await page.waitForSelector('[data-testid="turn-diagnostics"]:has-text("CONTENT_FILTER")');
     await assertNoOverflow('spec18 mobile main play');
 
@@ -1973,15 +2298,15 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     await branchBSibling.locator('button:has-text("保存名称")').click();
 
     await branchBSibling.locator('button:has-text("切换至此分支")').click();
-    await page.waitForSelector('.turn-card.assistant:has-text("抵达西塔终点")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("抵达西塔终点")');
     await closeStoryTree(page);
 
     await page.fill('#turn-input', '追查西塔温室');
-    await page.click('button:has-text("发送行动")');
+    await page.getByRole('button', { name: '发送行动' }).click();
     await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
     await page.fill('#byok-api-key', 'sk-spec18-mobile');
     await page.click('[data-testid="wizard-verify-save-btn"]');
-    await page.waitForSelector('.turn-card.assistant:has-text("窄屏续写：追查西塔温室")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("窄屏续写：追查西塔温室")');
 
     const promptForB = capturedTurns[capturedTurns.length - 1] ?? '';
     if (!promptForB.includes('事件Y_西塔毒药') || promptForB.includes('事件X_银钥匙') || promptForB.includes('CONTENT_FILTER')) {
@@ -1999,7 +2324,7 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
       await fork1AfterB.click();
     }
     await storyTreeSheet.locator('[data-testid^="story-tree-branch-"]', { hasText: '银钥东楼线' }).locator('button:has-text("切换至此分支")').click();
-    await page.waitForSelector('.turn-card.assistant:has-text("抵达东楼密室终点")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("抵达东楼密室终点")');
     const reviewSheetA = await openStoryReview(page);
     await reviewSheetA.getByTestId('active-plot-summary').getByText('事件X_银钥匙', { exact: false }).waitFor();
     const reviewA = await reviewSheetA.getByTestId('active-plot-summary').textContent();
@@ -2009,8 +2334,8 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     }
 
     await page.fill('#turn-input', '打开东楼密室');
-    await page.click('button:has-text("发送行动")');
-    await page.waitForSelector('.turn-card.assistant:has-text("窄屏续写：打开东楼密室")');
+    await page.getByRole('button', { name: '发送行动' }).click();
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("窄屏续写：打开东楼密室")');
 
     const promptForA = capturedTurns[capturedTurns.length - 1] ?? '';
     if (!promptForA.includes('事件X_银钥匙') || promptForA.includes('事件Y_西塔毒药')) {
@@ -2019,7 +2344,7 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
 
     // 4. Reload browser -> verify IndexedDB restores branch names, active branch A, StoryReview, diagnostics, and zero 390px overflow
     await page.reload({ waitUntil: 'networkidle' });
-    await page.waitForSelector('.turn-card.assistant:has-text("窄屏续写：打开东楼密室")');
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("窄屏续写：打开东楼密室")');
     const reviewSheetAfterReload = await openStoryReview(page);
     await reviewSheetAfterReload.getByTestId('story-review').getByText('银钥东楼线', { exact: false }).waitFor();
     await reviewSheetAfterReload.getByTestId('active-plot-summary').getByText('事件X_银钥匙', { exact: false }).waitFor();
@@ -2170,14 +2495,14 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     await page.getByTestId('ds-confirm-import-btn').click();
     await page.getByTestId('deepseek-import-receipt').waitFor();
     await page.getByRole('button', { name: '继续这条故事' }).click();
-    await page.locator('.turn-card.assistant', { hasText: '主线第 35 轮合成回执' }).waitFor();
+    await page.locator('[data-testid="turn-assistant"]', { hasText: '主线第 35 轮合成回执' }).waitFor();
     if (requests.length !== 0) throw new Error('Keyless long import made model requests');
 
     await page.fill('#turn-input', '继续当前主线');
     const submit = page.getByRole('button', { name: '发送行动' });
     await submit.click();
     await completePendingSetup(page, LONG_KEY);
-    await page.locator('.turn-card.assistant[data-node-id]', { hasText: LONG_REPLY }).waitFor();
+    await page.locator('[data-testid="turn-assistant"][data-node-id]', { hasText: LONG_REPLY }).waitFor();
     const generationAt = requests.findIndex(({ summary }) => !summary);
     const batches = requests.slice(0, generationAt).map(({ messages }) => messages.at(-1).content);
     const continuation = requests[generationAt]?.messages ?? [];
@@ -2259,7 +2584,7 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     await storyTreeSheet.getByRole('tab', { name: '剧情回顾' }).click();
     await storyTreeSheet.getByTestId('companion-summary-progress').waitFor({ state: 'visible' });
     await storyTreeSheet.getByRole('tab', { name: '剧情树' }).click();
-    await page.locator('.turn-card.assistant[data-node-id]', { hasText: '备用线第 35 轮合成回执' }).waitFor();
+    await page.locator('[data-testid="turn-assistant"][data-node-id]', { hasText: '备用线第 35 轮合成回执' }).waitFor();
     await closeStoryTree(page);
     await page.fill('#turn-input', '等待备用线补算');
     if (!(await submit.isDisabled())) throw new Error('Composer was enabled while branch summary was in flight');
@@ -2276,7 +2601,7 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
         alternateRequests.some(({ content }) => content.includes(EARLY_BRANCH_A) || content.includes(SUMMARY_A))) {
       throw new Error('Alternate branch catch-up did not use its own early history in isolation');
     }
-    await page.locator('button:enabled', { hasText: '发送行动' }).waitFor({ timeout: 5000 });
+    await page.locator('button[aria-label="发送行动"]:enabled').waitFor({ timeout: 5000 });
     await closeStoryTree(page);
     await page.reload({ waitUntil: 'networkidle' });
     const reviewSheetAfterReload = await openStoryReview(page);
@@ -2372,7 +2697,7 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
     // Model call fails after key setup. The error body includes a private relay URL to exercise redaction.
     await page.getByRole('button', { name: '继续这条故事' }).click();
     await page.fill('#turn-input', '绝密玩家行动_CANARY');
-    await page.click('button:has-text("发送行动")');
+    await page.getByRole('button', { name: '发送行动' }).click();
     await completePendingSetup(page, 'sk-e2e-canary-9988776655443322');
     await page.getByTestId('main-error-banner').waitFor();
 

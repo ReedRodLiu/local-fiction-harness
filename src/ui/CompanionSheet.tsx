@@ -31,6 +31,7 @@ interface CompanionSheetProps {
   isSummaryInProgress: boolean;
   isBlueprintReextracting: boolean;
   isBranchSwitchSummarizing: boolean;
+  isBranchSwitching: boolean;
   onSwitchBranch: (targetNodeId: string) => void;
   onRenameBranch: (branchEntryNodeId: string, name: string) => Promise<void> | void;
   onExtractBranchGist: (branchEntryNodeId: string) => Promise<void> | void;
@@ -51,6 +52,7 @@ export function CompanionSheet({
   isSummaryInProgress,
   isBlueprintReextracting,
   isBranchSwitchSummarizing,
+  isBranchSwitching,
   onSwitchBranch,
   onRenameBranch,
   onExtractBranchGist,
@@ -120,8 +122,8 @@ export function CompanionSheet({
         >
           <StoryTree
             story={story}
-            isBusy={isStreaming || isSummarizing}
-            isRenameBusy={isStreaming || (isSummarizing && !isBranchSwitchSummarizing)}
+            isBusy={isStreaming || isSummarizing || isBranchSwitching}
+            isRenameBusy={isStreaming || isBranchSwitching || (isSummarizing && !isBranchSwitchSummarizing)}
             collapsible={false}
             onSwitchBranch={onSwitchBranch}
             onRenameBranch={onRenameBranch}
@@ -143,7 +145,7 @@ export function CompanionSheet({
           <StoryReview
             story={story}
             metrics={metrics}
-            isBusy={isStreaming || isSummarizing}
+            isBusy={isStreaming || isSummarizing || isBranchSwitching}
             isSummarizing={isSummaryInProgress}
             onComputeSummary={() => {
               if (!hasCredentials) onClose();
@@ -164,7 +166,7 @@ export function CompanionSheet({
             story={story}
             summarySnapshot={summarySnapshot}
             metrics={metrics}
-            isStreaming={isStreaming || isSummarizing}
+            isStreaming={isStreaming || isSummarizing || isBranchSwitching}
             isReextracting={isBlueprintReextracting}
             onSaveBlueprintTweak={onSaveBlueprintTweak}
             onReextractBlueprint={() => {
