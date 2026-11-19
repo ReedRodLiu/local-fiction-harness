@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const shellCss = readFileSync(join(repoRoot, 'src', 'ui', 'styles', 'shell.css'), 'utf8');
+const importWizardCss = readFileSync(join(repoRoot, 'src', 'ui', 'styles', 'import-wizard.css'), 'utf8');
 const exitFallback = readFileSync(join(repoRoot, 'src', 'ui', 'primitives', 'waitForExitAnimation.ts'), 'utf8');
 
 describe('older WebView shell compatibility', () => {
@@ -23,5 +24,14 @@ describe('older WebView shell compatibility', () => {
     expect(shellCss).toContain('.library-dialog[data-closing="true"] .library-dialog-sheet');
     expect(exitFallback).toContain('element.getAnimations()');
     expect(exitFallback).toContain('setTimeout(finish, EXIT_FALLBACK_MS)');
+  });
+
+  it('provides a vh fallback before every dynamic viewport height in import wizards', () => {
+    expect(importWizardCss).toMatch(
+      /\.overlay-page-shell\[data-has-footer='true'\]\s*\{[^}]*height:\s*calc\(100vh - 32px - var\(--safe-area-bottom\)\);[^}]*height:\s*calc\(100dvh - 32px - var\(--safe-area-bottom\)\);/s,
+    );
+    expect(importWizardCss).toMatch(
+      /@media \(max-width: 560px\)\s*\{[^}]*\.overlay-page-shell\[data-has-footer='true'\]\s*\{[^}]*height:\s*calc\(100vh - 26px - var\(--safe-area-bottom\)\);[^}]*height:\s*calc\(100dvh - 26px - var\(--safe-area-bottom\)\);/s,
+    );
   });
 });

@@ -146,6 +146,7 @@ export function App({ runtime }: AppProps) {
   const [pendingByok, setPendingByok] = useState<{
     label: string;
     resume: (resolvedConfig: ModelConfig) => void;
+    onCancel?: () => void;
   } | null>(null);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -709,8 +710,9 @@ export function App({ runtime }: AppProps) {
   const openByokPrompt = (
     label: string,
     resume: (resolvedConfig: ModelConfig) => void,
+    onCancel?: () => void,
   ) => {
-    setPendingByok({ label, resume });
+    setPendingByok({ label, resume, onCancel });
     setWizardOpen(true);
   };
 
@@ -1262,6 +1264,7 @@ export function App({ runtime }: AppProps) {
               transport={runtime.transport}
               binaryDownloader={runtime.binaryDownloader}
               hasCredentials={hasCredentials}
+              byokOpen={wizardOpen}
               onRequireByok={openByokPrompt}
               extractBlueprint={(raw, cfg, title, signal) =>
                 harness.extractStoryBlueprint(raw, cfg, title, signal)
@@ -1488,8 +1491,10 @@ export function App({ runtime }: AppProps) {
                 if (resume) resume(nextCfg);
               }}
               onCancel={() => {
+                const cancel = pendingByok?.onCancel;
                 setPendingByok(null);
                 setWizardOpen(false);
+                cancel?.();
               }}
             />
           )}
