@@ -1,4 +1,5 @@
 import { useId, useMemo, useState } from 'react';
+import { GitBranch } from 'lucide-react';
 import {
   getActiveBranchNodes,
   getForkSiblingBranches,
@@ -236,7 +237,10 @@ export function StoryTree({
                       aria-expanded={isForkOpen}
                       onClick={() => toggleFork(item.id)}
                     >
-                      <span className="fork-badge">⑂ {item.branchCount}</span>
+                      <span className="fork-badge">
+                        <GitBranch size={14} strokeWidth={1.75} aria-hidden="true" />
+                        <span>{item.branchCount} 条岔路</span>
+                      </span>
                       <span>
                         {item.afterTurn === 0 ? '开局分叉' : `第 ${item.afterTurn} 轮分叉`} · 当前：
                         {item.activeBranchLabel}
@@ -265,7 +269,7 @@ export function StoryTree({
                             >
                               <div className="story-tree-row-top">
                                 <strong>{branch.label}</strong>
-                                {branch.isActive && <span className="badge">当前路线</span>}
+                                {branch.isActive && <span className="badge badge-structure">当前路线</span>}
                                 <span className="status-text">
                                   支线 {branch.branchTurnCount} 轮（总 {branch.totalTurnDepth} 轮）
                                 </span>

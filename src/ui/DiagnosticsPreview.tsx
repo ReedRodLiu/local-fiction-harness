@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Clipboard, Download, RotateCcw, ShieldCheck, X } from 'lucide-react';
 import type { DiagnosticBundle } from '../harness/index.ts';
+import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { ModalDialog } from './primitives/ModalDialog.tsx';
 import { toErrorMessage } from './textHelpers.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
@@ -137,7 +138,7 @@ export function DiagnosticsPreview({
         </pre>
 
         {notice && <div className="status-text" role="status">{notice}</div>}
-        {failure && <div className="error-banner" role="alert">{failure}</div>}
+        {failure && <BannerAlert tone="danger">{failure}</BannerAlert>}
       </div>
     </ModalDialog>
   );

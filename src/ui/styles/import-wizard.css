@@ -46,7 +46,7 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--accent-fiction);
+  background: var(--text-secondary);
   transition: width var(--motion-duration) var(--motion-easing);
 }
 
@@ -174,7 +174,7 @@
 .import-file-action {
   display: inline-flex;
   align-items: center;
-  min-height: 40px;
+  min-height: 44px;
   padding: 5px 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
@@ -445,6 +445,9 @@
 }
 
 .ds-session-chips .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   flex: 0 0 auto;
   max-width: 42%;
   overflow: hidden;

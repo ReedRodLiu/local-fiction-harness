@@ -3,11 +3,43 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { strToU8, zipSync } from 'fflate';
 
 const PACKAGE_NAME = 'io.localfiction.harness';
 const MAIN_ACTIVITY = `${PACKAGE_NAME}/.MainActivity`;
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const LAUNCHER_STABILITY_WINDOW_MS = 400;
+
+function buildAndroidPreviewZip() {
+  return zipSync({
+    'manifest.json': strToU8(JSON.stringify({ export_format_version: 3 })),
+    'chat_sessions/android-preview.json': strToU8(JSON.stringify({
+      id: 'android-preview',
+      title: '安卓返回预览层',
+      current_message_id: 2,
+      inserted_at: '2026-11-20T08:00:00Z',
+      updated_at: '2026-11-20T08:01:00Z',
+      messages: [
+        {
+          id: 1,
+          parent_id: null,
+          role: 'USER',
+          status: 'FINISHED',
+          inserted_at: '2026-11-20T08:00:00Z',
+          fragments: [{ type: 'REQUEST', content: '【安卓预览】主角：测试者。' }],
+        },
+        {
+          id: 2,
+          parent_id: 1,
+          role: 'ASSISTANT',
+          status: 'FINISHED',
+          inserted_at: '2026-11-20T08:01:00Z',
+          fragments: [{ type: 'RESPONSE', content: '预览层返回栈测试。' }],
+        },
+      ],
+    })),
+  });
+}
 
 function sha256(buffer) {
   return createHash('sha256').update(buffer).digest('hex');
@@ -610,6 +642,8 @@ async function readSnapshot(client) {
       mobileLibrarySheet: describeElement('[data-testid="mobile-library-sheet"]'),
       settings: describeElement('[data-testid="settings-page"]'),
       wizard: describeElement('[data-testid="deepseek-setup-wizard"]'),
+      importPanel: describeElement('[data-testid="deepseek-import-panel"]'),
+      importPreview: describeElement('[data-testid="deepseek-preview-sheet"]'),
       storyMenu: describeElement('[data-testid="story-overflow-menu"]'),
     });
   })()`);
@@ -812,7 +846,21 @@ async function createSyntheticStory(client) {
     () => client.evaluate(`!document.querySelector('[data-testid="import-panel"]')`),
     { description: 'script import panel close', timeoutMs: 10000 },
   );
-  return importFocus;
+  const setupWizard = await waitForStableView(
+    client,
+    (snapshot) => isStableDialog(snapshot.wizard),
+    'first-act BYOK wizard after direct story creation',
+  );
+  await clickSelector(
+    client,
+    '[data-testid="deepseek-setup-wizard"] button[aria-label="关闭引导"]',
+    'close first-act BYOK wizard',
+  );
+  await waitFor(
+    () => client.evaluate(`!document.querySelector('[data-testid="deepseek-setup-wizard"]')`),
+    { description: 'first-act BYOK wizard close', timeoutMs: 5000 },
+  );
+  return { importFocus, setupWizard };
 }
 
 async function launchCleanScenario(serial, artifactsDirectory, { clearData = false } = {}) {
@@ -1014,7 +1062,7 @@ async function main() {
 
     activeSession = await launchCleanScenario(serial, artifactsDirectory, { clearData: true });
     ({ client, artifacts } = activeSession);
-    const scriptImportFocus = await createSyntheticStory(client);
+    const { importFocus: scriptImportFocus, setupWizard } = await createSyntheticStory(client);
     const libraryOpen = await openDrawer(client);
     await clickSelector(
       client,
@@ -1100,6 +1148,68 @@ async function main() {
     artifacts.captureLogcat('11-after-drawer-back.logcat.txt');
     lastSnapshot = drawerClosed;
 
+    await openDrawer(client);
+    await clickSelector(
+      client,
+      '[data-testid="mobile-library-start-deepseek"]',
+      'mobile DeepSeek import entry',
+    );
+    await waitForStableView(
+      client,
+      (snapshot) => snapshot.importPanel.connected,
+      'DeepSeek import page',
+    );
+    const previewZipBase64 = Buffer.from(buildAndroidPreviewZip()).toString('base64');
+    await client.evaluate(`(() => {
+      const input = document.querySelector('#deepseek-zip-input');
+      if (!(input instanceof HTMLInputElement)) return false;
+      const bytes = Uint8Array.from(atob(${JSON.stringify(previewZipBase64)}), (char) => char.charCodeAt(0));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([bytes], 'android-preview.zip', { type: 'application/zip' }));
+      Object.defineProperty(input, 'files', { configurable: true, value: transfer.files });
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+    await waitFor(
+      () => client.evaluate(`Boolean(document.querySelector('[data-testid="ds-session-item"]'))`),
+      { description: 'DeepSeek preview session list', timeoutMs: 10000 },
+    );
+    await clickSelector(
+      client,
+      '[data-testid="ds-session-preview-trigger"]',
+      'DeepSeek preview trigger',
+    );
+    const importPreviewOpen = await captureStableView(
+      client,
+      artifacts,
+      '12-import-preview-open',
+      (snapshot) =>
+        isStableDialog(snapshot.importPreview) &&
+        snapshot.overlayDepth === 2,
+      'DeepSeek import preview over import page',
+    );
+    run('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK']);
+    const importPreviewClosed = await waitForStableView(
+      client,
+      (snapshot) =>
+        !snapshot.importPreview.dialogOpen &&
+        !snapshot.importPreview.visible &&
+        snapshot.importPanel.connected &&
+        snapshot.overlayDepth === 1,
+      'DeepSeek preview close while import page remains',
+    );
+    const importPreviewTopResumed = await waitForTopResumed(
+      serial,
+      true,
+      'import page remains resumed after closing preview',
+    );
+    artifacts.write('13-import-after-preview-back.json', `${JSON.stringify({
+      ...importPreviewClosed,
+      topResumed: importPreviewTopResumed,
+    }, null, 2)}\n`);
+    artifacts.captureScreenshot('13-import-after-preview-back.png');
+    lastSnapshot = importPreviewClosed;
+
     artifacts.write('result.json', `${JSON.stringify({
       status: 'passed',
       completedAt: new Date().toISOString(),
@@ -1115,7 +1225,10 @@ async function main() {
       storyMenuAfterDown,
       menuClosed,
       scriptImportFocus,
+      setupWizard,
       drawerClosed,
+      importPreviewOpen,
+      importPreviewClosed,
       launcher: {
         afterReloadBack: reloadLauncherEvidence,
         afterOrdinaryBack: ordinaryLauncherEvidence,

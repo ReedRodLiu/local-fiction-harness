@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { ChevronRight, FileUp, Link2 } from 'lucide-react';
+import { ChevronRight, FileUp, GitBranch, Link2 } from 'lucide-react';
 import {
   DEFAULT_ZIP_MAX_BYTES,
   UnsupportedDeepSeekExportVersionError,
@@ -23,6 +23,7 @@ import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
 import { toErrorMessage } from './textHelpers.ts';
+import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 
 const SUMMARY_STATUS_LABELS: Record<ImportSummaryStatus, string> = {
   compressed: '已压缩',
@@ -146,6 +147,12 @@ export function DeepSeekImportPanel({
   const aiPreviousFilterRef = useRef<DeepSeekFilterMode | null>(null);
   const aiByokPreviousFilterRef = useRef<DeepSeekFilterMode | null>(null);
   const pendingFilterTabFocusRef = useRef<DeepSeekFilterMode | null>(null);
+  useWebHistoryLayer(
+    'deepseek-preview',
+    60,
+    Boolean(previewSessionId && !receipt),
+    () => setPreviewSessionId(null),
+  );
 
   useEffect(() => {
     return () => {
@@ -976,7 +983,16 @@ export function DeepSeekImportPanel({
                         <p className="ds-session-latest">{session.latestSnippet || session.firstSnippet || '暂无剧情片段'}</p>
                         <div className="ds-session-chips">
                           <span className="badge">{session.turnCount} 轮</span>
-                          {session.forkCount > 0 && <span className="badge">⑂ {session.forkCount}</span>}
+                          {session.forkCount > 0 && (
+                            <span
+                              className="badge"
+                              data-testid="ds-session-fork-chip"
+                              aria-label={`${session.forkCount} 处分叉`}
+                            >
+                              <GitBranch size={12} strokeWidth={1.75} aria-hidden="true" />
+                              {session.forkCount}
+                            </span>
+                          )}
                           {(session.attachments.length > 0 || session.diagnosticCount > 0) && (
                             <span className={`badge ${session.diagnosticCount > 0 ? 'badge-warn' : ''}`}>
                               {session.attachments.length > 0 ? `${session.attachments.length} 附件` : ''}

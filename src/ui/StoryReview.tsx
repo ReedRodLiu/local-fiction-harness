@@ -32,7 +32,7 @@ export function StoryReview({
       <header className="story-review-header">
         <div>
           <h3>当前路线剧情回顾</h3>
-          <span className="badge">{review.activeBranchLabel}</span>
+          <span className="badge badge-structure">{review.activeBranchLabel}</span>
         </div>
         <p className="story-review-branch-note">分支记忆独立隔离 · 共 {review.totalTurns} 轮</p>
       </header>

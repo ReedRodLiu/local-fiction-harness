@@ -1,7 +1,20 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { DISPLAY_BOOT_CONFIG } from './src/ui/displayBootConfig.ts';
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+function displayBootConfigPlugin(): Plugin {
+  return {
+    name: 'display-boot-config',
+    transformIndexHtml(html) {
+      return html.replace(
+        '__LFH_DISPLAY_BOOT_CONFIG__',
+        JSON.stringify(DISPLAY_BOOT_CONFIG).replace(/</g, '\\u003c'),
+      );
+    },
+  };
+}
 
 function isLoopbackRequest(remoteAddress: string | undefined): boolean {
   return Boolean(remoteAddress && LOOPBACK_ADDRESSES.has(remoteAddress));
@@ -64,6 +77,7 @@ export default defineConfig(({ command, mode }) => {
   return {
     envPrefix: 'APP_',
     plugins: [
+      displayBootConfigPlugin(),
       react(),
       ...(command === 'serve'
         ? [

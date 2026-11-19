@@ -9,11 +9,12 @@ const settingsSource = readFileSync(join(repoRoot, 'src', 'ui', 'SettingsPage.ts
 
 describe('display preference boot and production pruning', () => {
   it('applies stored appearance before the React module can render', () => {
-    const bootScript = indexHtml.indexOf("localStorage.getItem('lfh.ui.theme')");
+    const bootScript = indexHtml.indexOf('lfh-display-boot-config');
     const moduleScript = indexHtml.indexOf('src="/src/main.tsx"');
     expect(bootScript).toBeGreaterThan(-1);
     expect(moduleScript).toBeGreaterThan(bootScript);
-    expect(indexHtml).toContain("localStorage.getItem('lfh.ui.font_size')");
+    expect(indexHtml).toContain('localStorage.getItem(config.themeStorageKey)');
+    expect(indexHtml).toContain('localStorage.getItem(config.fontSizeStorageKey)');
     expect(indexHtml).toContain("document.documentElement.dataset.theme = theme");
   });
 

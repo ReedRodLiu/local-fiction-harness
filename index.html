@@ -5,15 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="color-scheme" content="light dark" />
     <title>本地优先 AI 文游播放器</title>
+    <script id="lfh-display-boot-config" type="application/json">__LFH_DISPLAY_BOOT_CONFIG__</script>
     <script>
       (() => {
         try {
-          const storedTheme = localStorage.getItem('lfh.ui.theme');
-          const themePreference = ['system', 'light', 'dark', 'warm'].includes(storedTheme)
+          const config = JSON.parse(document.getElementById('lfh-display-boot-config').textContent);
+          const storedTheme = localStorage.getItem(config.themeStorageKey);
+          const themePreference = config.themePreferences.includes(storedTheme)
             ? storedTheme
-            : 'system';
-          const storedFontSize = Number(localStorage.getItem('lfh.ui.font_size'));
-          const fontSize = [14, 16, 18, 20].includes(storedFontSize) ? storedFontSize : 16;
+            : config.defaultThemePreference;
+          const storedFontSize = Number(localStorage.getItem(config.fontSizeStorageKey));
+          const fontSize = config.fontSizes.includes(storedFontSize)
+            ? storedFontSize
+            : config.defaultFontSize;
           const theme = themePreference === 'system'
             ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
             : themePreference;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, Square } from 'lucide-react';
+import { ArrowUp, Sparkles, Square } from 'lucide-react';
 import {
   DEFAULT_MODEL_CONFIG,
   computeActiveReviewState,
@@ -35,14 +35,6 @@ import {
   type DevTestConfigResponse,
 } from '../platform/runtime.ts';
 import { CompanionSheet } from './CompanionSheet.tsx';
-import {
-  applyDisplayPreferences,
-  persistDisplayPreferences,
-  readDisplayPreferences,
-  type DisplayFontSize,
-  type DisplayPreferences,
-  type DisplayThemePreference,
-} from './displayPreferences.ts';
 import { LibraryDrawer } from './LibraryDrawer.tsx';
 import { setCrashDiagnosticBundleBuilder } from './crashDiagnosticContext.ts';
 import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
@@ -59,19 +51,14 @@ import { SettingsPage } from './SettingsPage.tsx';
 import { TopBar } from './TopBar.tsx';
 import { TurnCard } from './TurnCard.tsx';
 import { toErrorMessage } from './textHelpers.ts';
-import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
+import { useEdgeSwipeToOpen } from './useEdgeSwipeToOpen.ts';
+import { useAppOverlayHistory } from './useAppOverlayHistory.ts';
+import { useDisplayPreferences } from './useDisplayPreferences.ts';
+import { useLibraryCollapsedPreference } from './useLibraryCollapsedPreference.ts';
+import { usePresentationOverlayState } from './usePresentationOverlayState.ts';
 import { WelcomeView } from './WelcomeView.tsx';
-import './styles/play-stage.css';
 
-const LIBRARY_COLLAPSED_PREFERENCE = 'lfh.ui.library_collapsed';
-
-function readLibraryCollapsedPreference(): boolean {
-  try {
-    return window.localStorage.getItem(LIBRARY_COLLAPSED_PREFERENCE) === 'true';
-  } catch {
-    return false;
-  }
-}
+const FIRST_ACT_PROMPT = '开始故事，请按照剧本开场规则生成第一幕与初始状态栏。';
 
 function hasModelCredentials(config: ModelConfig, useDevEnvKey: boolean): boolean {
   if (
@@ -144,13 +131,19 @@ export function App({ runtime }: AppProps) {
   const [devTestInfo, setDevTestInfo] = useState<DevTestConfigResponse | null>(null);
   const [stories, setStories] = useState<Story[]>([]);
   const [story, setStory] = useState<Story>(() => harness.createStory({ title: '新故事' }));
-  const [showImport, setShowImport] = useState(false);
+  const {
+    showImport,
+    setShowImport,
+    showSettings,
+    setShowSettings,
+    mobileLibraryOpen,
+    setMobileLibraryOpen,
+    storyTreeOpen,
+    setStoryTreeOpen,
+  } = usePresentationOverlayState();
   const [importMode, setImportMode] = useState<ImportMode>('deepseek');
   const [importResetKey, setImportResetKey] = useState(0);
-  const [showSettings, setShowSettings] = useState(false);
-  const [mobileLibraryOpen, setMobileLibraryOpen] = useState(false);
-  const [libraryCollapsed, setLibraryCollapsed] = useState(readLibraryCollapsedPreference);
-  const [storyTreeOpen, setStoryTreeOpen] = useState(false);
+  const [libraryCollapsed, setLibraryCollapsed] = useLibraryCollapsedPreference();
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardMounted, setWizardMounted] = useState(false);
   const [wizardVerifying, setWizardVerifying] = useState(false);
@@ -176,10 +169,11 @@ export function App({ runtime }: AppProps) {
   const [diagnosticsMounted, setDiagnosticsMounted] = useState(false);
   const [diagnosticsRevision, setDiagnosticsRevision] = useState(0);
   const [diagnosticTrigger, setDiagnosticTrigger] = useState<DiagnosticBundleTrigger>('settings_manual');
-  const [displayPreferences, setDisplayPreferences] = useState<DisplayPreferences>(readDisplayPreferences);
-  const [prefersDark, setPrefersDark] = useState(() =>
-    window.matchMedia('(prefers-color-scheme: dark)').matches,
-  );
+  const {
+    displayPreferences,
+    setThemePreference,
+    setDisplayFontSize,
+  } = useDisplayPreferences();
   const overlayReturnFocusRef = useRef<HTMLElement | null>(null);
   const wizardReturnFocusRef = useRef<HTMLElement | null>(null);
   const wizardCloseReasonRef = useRef<'success' | 'cancel' | null>(null);
@@ -204,6 +198,10 @@ export function App({ runtime }: AppProps) {
   const configSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const suppressedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet());
   const isSummaryInProgress = isBranchSwitchSummarizing || isSummaryComputationInProgress;
+  const edgeSwipeHandlers = useEdgeSwipeToOpen(
+    !showImport && !showSettings && !mobileLibraryOpen,
+    () => setMobileLibraryOpen(true),
+  );
 
   const captureOverlayTrigger = () => {
     overlayReturnFocusRef.current = document.activeElement instanceof HTMLElement
@@ -382,78 +380,26 @@ export function App({ runtime }: AppProps) {
     };
   }, [isWebDev]);
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(LIBRARY_COLLAPSED_PREFERENCE, String(libraryCollapsed));
-    } catch {
-      // A collapsed sidebar is a display preference and does not block the player.
-    }
-  }, [libraryCollapsed]);
-
-  useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const updatePreference = (event: MediaQueryListEvent) => setPrefersDark(event.matches);
-    setPrefersDark(media.matches);
-    media.addEventListener?.('change', updatePreference);
-    return () => media.removeEventListener?.('change', updatePreference);
-  }, []);
-
-  useEffect(() => {
-    applyDisplayPreferences(displayPreferences, prefersDark);
-    persistDisplayPreferences(displayPreferences);
-  }, [displayPreferences, prefersDark]);
-
-  useWebHistoryLayer(
-    'setup-wizard',
-    80,
+  useAppOverlayHistory({
     wizardOpen,
-    () => {
+    wizardVerifying,
+    onWizardBack: () => {
       const cancel = pendingByok?.onCancel;
       wizardCloseReasonRef.current = 'cancel';
       setPendingByok(null);
       setWizardOpen(false);
       cancel?.();
     },
-    !wizardVerifying,
-    () => !document.querySelector('[data-testid="deepseek-setup-wizard"] [data-verifying="true"]'),
-    () => null,
-  );
-  useWebHistoryLayer(
-    'companion-sheet',
-    40,
     storyTreeOpen,
-    () => setStoryTreeOpen(false),
-    true,
-    undefined,
-    () => document.querySelector<HTMLElement>('[data-testid="open-story-tree"]'),
-  );
-  useWebHistoryLayer('mobile-library', 30, mobileLibraryOpen, () => setMobileLibraryOpen(false));
-  useWebHistoryLayer(
-    'settings',
-    20,
+    onStoryTreeBack: () => setStoryTreeOpen(false),
+    mobileLibraryOpen,
+    onMobileLibraryBack: () => setMobileLibraryOpen(false),
     showSettings,
-    () => setShowSettings(false),
-    true,
-    undefined,
-    () => overlayReturnFocusRef.current,
-  );
-  useWebHistoryLayer(
-    'import-view',
-    20,
+    onSettingsBack: () => setShowSettings(false),
     showImport,
-    () => setShowImport(false),
-    true,
-    undefined,
-    () => overlayReturnFocusRef.current,
-  );
-
-  const setThemePreference = (theme: DisplayThemePreference) => {
-    setDisplayPreferences((current) => ({ ...current, theme }));
-  };
-
-  const setDisplayFontSize = (fontSize: DisplayFontSize) => {
-    setDisplayPreferences((current) => ({ ...current, fontSize }));
-  };
+    onImportBack: () => setShowImport(false),
+    returnFocus: () => overlayReturnFocusRef.current,
+  });
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -1139,6 +1085,18 @@ export function App({ runtime }: AppProps) {
     void sendAction(input, true);
   };
 
+  const startFirstAct = (targetStory: Story, overrideConfig?: ModelConfig) => {
+    withCredentials(
+      '开启第一幕',
+      (activeCfg) => {
+        void runStreamingExecution((callbacks) =>
+          harness.runTurn(targetStory, FIRST_ACT_PROMPT, activeCfg, callbacks),
+        );
+      },
+      overrideConfig,
+    );
+  };
+
   const handleConfirmImportedStory = async (imported: {
     title: string;
     rawScript: string;
@@ -1158,6 +1116,7 @@ export function App({ runtime }: AppProps) {
       await commitStoryState(created);
       setShowImport(false);
       setShowSettings(false);
+      startFirstAct(created);
     } catch (err) {
       if (storyOpSeqRef.current === opSeq) {
         setErrorMsg(toErrorMessage(err, '保存导入故事失败。'));
@@ -1359,7 +1318,7 @@ export function App({ runtime }: AppProps) {
           collapsed={libraryCollapsed}
           mobileOpen={mobileLibraryOpen && !showImport && !showSettings}
           hasCredentials={hasCredentials}
-          onCloseMobile={() => setMobileLibraryOpen(false)}
+          onClose={() => setMobileLibraryOpen(false)}
           onOpenSettings={openSettings}
           onStartDeepSeekImport={() => openImportView('deepseek')}
           onStartScriptImport={() => openImportView('script')}
@@ -1373,6 +1332,7 @@ export function App({ runtime }: AppProps) {
           ref={mainStageRef}
           className={`main-stage${storyExists && !showSettings && !showImport ? ' is-playing' : ''}`}
           data-testid="main-stage"
+          {...edgeSwipeHandlers}
           onScroll={handleMainStageScroll}
           onWheelCapture={(event) => {
             if (event.deltaY !== 0) markMainStageScrollIntent(event.target);
@@ -1482,11 +1442,7 @@ export function App({ runtime }: AppProps) {
                             <button
                               type="button"
                               className="btn btn-primary"
-                              onClick={() =>
-                                void sendAction(
-                                  '开始故事，请按照剧本开场规则生成第一幕与初始状态栏。',
-                                )
-                              }
+                              onClick={() => startFirstAct(story)}
                             >
                               开启第一幕
                             </button>
@@ -1528,7 +1484,10 @@ export function App({ runtime }: AppProps) {
                         <div className="turn-role">叙事 AI（生成中…）</div>
                         {streamReasoning && (
                           <details className="reasoning-details" data-testid="reasoning-details" open>
-                            <summary data-testid="reasoning-toggle">✦ 思考中…</summary>
+                            <summary data-testid="reasoning-toggle">
+                              <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
+                              <span>思考中…</span>
+                            </summary>
                             <div className="reasoning-content">{streamReasoning}</div>
                           </details>
                         )}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { type Story, type StoryBlueprint } from '../harness/index.ts';
 import { splitNonEmptyLines, toErrorMessage } from './textHelpers.ts';
-import './styles/story-blueprint-card.css';
+import { BannerAlert } from './primitives/BannerAlert.tsx';
 
 export interface StoryBlueprintCardProps {
   story: Story;
@@ -70,7 +70,7 @@ export function StoryBlueprintCard({
         )}
       </header>
 
-      {error && <div className="error-banner" role="alert">{error}</div>}
+      {error && <BannerAlert tone="danger">{error}</BannerAlert>}
 
       {editing ? (
         <div className="story-blueprint-editor">

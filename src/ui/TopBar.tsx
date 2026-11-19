@@ -58,7 +58,10 @@ export function TopBar({
             onClick={onOpenStoryTree}
             aria-label={`打开剧情树，当前分支 ${branchLabel}，${forkCount} 处分叉`}
           >
-            {branchLabel} · ⑂ {forkCount}
+            <span>{branchLabel}</span>
+            <span aria-hidden="true">·</span>
+            <GitBranch size={14} strokeWidth={1.75} aria-hidden="true" />
+            <span>{forkCount}</span>
           </button>
         )}
       </div>

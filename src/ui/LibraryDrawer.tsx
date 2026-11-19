@@ -1,8 +1,8 @@
-import { useEffect, useRef, type PointerEvent, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { BookOpen, Settings, X } from 'lucide-react';
 import type { Story } from '../harness/index.ts';
 import { StoryLibrary } from './StoryLibrary.tsx';
-import { waitForExitAnimation } from './primitives/waitForExitAnimation.ts';
+import { DrawerDialog } from './primitives/DrawerDialog.tsx';
 
 interface LibraryDrawerProps {
   stories: Story[];
@@ -10,7 +10,7 @@ interface LibraryDrawerProps {
   collapsed: boolean;
   mobileOpen: boolean;
   hasCredentials: boolean;
-  onCloseMobile: () => void;
+  onClose: () => void;
   onOpenSettings: () => void;
   onStartDeepSeekImport: () => void;
   onStartScriptImport: () => void;
@@ -26,7 +26,7 @@ export function LibraryDrawer({
   collapsed,
   mobileOpen,
   hasCredentials,
-  onCloseMobile,
+  onClose,
   onOpenSettings,
   onStartDeepSeekImport,
   onStartScriptImport,
@@ -35,35 +35,9 @@ export function LibraryDrawer({
   onDeleteStory,
   onExportStoryBackup,
 }: LibraryDrawerProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const suppressCloseEventRef = useRef(false);
-  const swipeStart = useRef<{ x: number; y: number } | null>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (mobileOpen) {
-      dialog.removeAttribute('data-closing');
-      if (!dialog.open) dialog.showModal();
-      return;
-    }
-    if (!dialog.open) return;
-
-    dialog.dataset.closing = 'true';
-    const sheet = dialog.querySelector<HTMLElement>('.library-dialog-sheet') ?? dialog;
-    return waitForExitAnimation(sheet, () => {
-      suppressCloseEventRef.current = true;
-      dialog.close();
-    });
-  }, [mobileOpen]);
-
-  const closeMobile = () => {
-    onCloseMobile();
-  };
-
   const selectStory = (id: string) => {
     onSelectStory(id);
-    if (mobileOpen) closeMobile();
+    if (mobileOpen) onClose();
   };
 
   const actions = (location: 'desktop' | 'mobile') => (
@@ -105,7 +79,7 @@ export function LibraryDrawer({
       data-testid={`${location}-settings-open`}
       aria-label="设置与模型密钥"
       onClick={() => {
-        if (mobileOpen) closeMobile();
+        if (mobileOpen) onClose();
         onOpenSettings();
       }}
     >
@@ -128,29 +102,16 @@ export function LibraryDrawer({
           <span className="library-brand-copy">本地文游</span>
         </div>
         {location === 'mobile' ? (
-          <button type="button" className="icon-button" aria-label="关闭书架" onClick={closeMobile}>
+          <button type="button" className="icon-button" aria-label="关闭书架" onClick={onClose}>
             <X size={18} strokeWidth={1.75} />
           </button>
         ) : null}
       </header>
       {actions(location)}
-      <div className="library-list-scroll">{storyList()}</div>
+      <div className="library-list-scroll" data-testid="library-list-scroll">{storyList()}</div>
       {settingsFooter(location)}
     </>
   );
-
-  const onSwipeStart = (event: PointerEvent<HTMLDivElement>) => {
-    swipeStart.current = { x: event.clientX, y: event.clientY };
-  };
-
-  const onSwipeEnd = (event: PointerEvent<HTMLDivElement>) => {
-    const start = swipeStart.current;
-    swipeStart.current = null;
-    if (!start) return;
-    const dx = event.clientX - start.x;
-    const dy = event.clientY - start.y;
-    if (dx < -56 && Math.abs(dx) > Math.abs(dy)) closeMobile();
-  };
 
   return (
     <>
@@ -161,35 +122,15 @@ export function LibraryDrawer({
       >
         {panel('desktop')}
       </aside>
-      <dialog
-        ref={dialogRef}
-        className="library-dialog"
-        aria-label="我的故事书架"
-        data-testid="mobile-library-dialog"
-        onCancel={(event) => {
-          event.preventDefault();
-          closeMobile();
-        }}
-        onClick={(event) => {
-          if (event.target === event.currentTarget) closeMobile();
-        }}
-        onClose={() => {
-          if (suppressCloseEventRef.current) {
-            suppressCloseEventRef.current = false;
-            return;
-          }
-          if (mobileOpen) onCloseMobile();
-        }}
+      <DrawerDialog
+        open={mobileOpen}
+        label="我的故事书架"
+        testId="mobile-library-dialog"
+        sheetTestId="mobile-library-sheet"
+        onClose={onClose}
       >
-        <div
-          className="library-dialog-sheet"
-          data-testid="mobile-library-sheet"
-          onPointerDown={onSwipeStart}
-          onPointerUp={onSwipeEnd}
-        >
-          {panel('mobile')}
-        </div>
-      </dialog>
+        {panel('mobile')}
+      </DrawerDialog>
     </>
   );
 }

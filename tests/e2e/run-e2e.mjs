@@ -1199,6 +1199,18 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     if (!(await previewSheet.getByTestId('ds-script-range-status').textContent())?.includes('已手动调整')) {
       throw new Error('Manual script-range edits were not reflected in the preview.');
     }
+    await page.waitForFunction(() => history.state?.lfhOverlayDepth === 2);
+    await page.goBack();
+    await previewSheet.waitFor({ state: 'hidden' });
+    if (
+      !(await page.getByTestId('deepseek-import-panel').isVisible()) ||
+      await page.getByTestId('deepseek-import-panel').getByRole('progressbar').getAttribute('aria-valuenow') !== '2'
+    ) {
+      throw new Error('Back from the DeepSeek preview did not leave the import wizard on its session step.');
+    }
+    await page.getByTestId('ds-session-item').filter({ hasText: '合成宫斗测试档' })
+      .getByTestId('ds-session-preview-trigger').click();
+    await previewSheet.waitFor({ state: 'visible' });
     await previewSheet.getByRole('button', { name: '关闭剧情面板' }).click();
     await page.getByTestId('ds-confirm-import-btn').click();
     await page.getByTestId('deepseek-import-receipt').waitFor();
@@ -1239,6 +1251,13 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.fill('#import-title', '无密钥开局测试');
     await page.getByRole('button', { name: '暂不拆解，直接开始' }).click();
     await page.getByTestId('import-panel').waitFor({ state: 'detached' });
+    const directStartWizard = page.getByTestId('deepseek-setup-wizard');
+    await directStartWizard.waitFor();
+    if (!(await directStartWizard.textContent())?.includes('完成连接后将自动继续：开启第一幕')) {
+      throw new Error('Direct start did not resume the first act after BYOK setup.');
+    }
+    await directStartWizard.getByRole('button', { name: '关闭引导' }).click();
+    await directStartWizard.waitFor({ state: 'detached' });
     await page.getByTestId('app-topbar').getByRole('heading', { name: '无密钥开局测试', exact: true }).waitFor();
     if (blueprintRequestCount !== 0) throw new Error('Direct start without extraction should not make a model request.');
 
@@ -1263,6 +1282,9 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     }
     await releaseHeldStoryStorageCommit(page);
     await page.getByTestId('import-panel').waitFor({ state: 'detached' });
+    await directStartWizard.waitFor();
+    await directStartWizard.getByRole('button', { name: '关闭引导' }).click();
+    await directStartWizard.waitFor({ state: 'detached' });
     await page.getByTestId('app-topbar').getByRole('heading', { name: '创建锁定直接开局', exact: true }).waitFor();
 
     await startScriptImport(page);
@@ -1308,6 +1330,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await releaseHeldStoryStorageCommit(page);
     await page.getByTestId('import-panel').waitFor({ state: 'detached' });
     await page.getByTestId('app-topbar').getByRole('heading', { name: '已微调的合成故事', exact: true }).waitFor();
+    await page.getByTestId('turn-assistant').last().waitFor();
 
     await startDeepSeekImport(page);
     await page.setInputFiles('#deepseek-zip-input', {
@@ -2030,7 +2053,7 @@ async function verifyDisplayPreferenceMatrix(page, port) {
     }
   }
   const forbiddenSettingsText = await settings.textContent();
-  for (const hiddenField of ['Base URL', 'memoryOnly', '模型名']) {
+  for (const hiddenField of ['Base URL', 'memoryOnly', '模型名', 'DeepSeek-Flash', 'deepseek-flash']) {
     if (forbiddenSettingsText?.includes(hiddenField)) {
       throw new Error(`Production settings exposed ${hiddenField}.`);
     }
@@ -2158,10 +2181,17 @@ async function runUiImpl05ProductionE2E(browser, port) {
     await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
     await page.setViewportSize({ width: 390, height: 844 });
     await openSettings(page);
+    const productionSettingsText = await page.getByTestId('settings-page').textContent();
     const settingsTrigger = page.getByTestId('open-setup-wizard-btn');
     await settingsTrigger.click();
     const wizard = page.getByTestId('deepseek-setup-wizard');
     await wizard.waitFor({ state: 'visible' });
+    const productionWizardText = await wizard.textContent();
+    for (const modelName of ['DeepSeek-Flash', 'deepseek-flash']) {
+      if (productionSettingsText?.includes(modelName) || productionWizardText?.includes(modelName)) {
+        throw new Error(`Production settings or BYOK wizard exposed model name ${modelName}.`);
+      }
+    }
     await expectControlledDialogExit(page, wizard, 'deepseek-setup-wizard', async () => {
       await wizard.getByRole('button', { name: '关闭引导' }).click();
     });
@@ -2655,6 +2685,7 @@ async function main() {
     const page = await context.newPage();
     const replyCounts = new Map();
     let failNextBlueprintWith401 = false;
+    let failNextTurnWith401 = false;
     let delayNextTurnMs = 0;
     let delayNextSummaryMs = 0;
     let delayNextBlueprintMs = 0;
@@ -2702,6 +2733,22 @@ async function main() {
           .filter((m) => m.role === 'system')
           .map((m) => m.content)
           .join('\n');
+      }
+
+      if (
+        failNextTurnWith401 &&
+        !sys.includes('严格只输出一个 JSON 对象') &&
+        !sys.includes('剧情摘要压缩') &&
+        !sys.includes('剧本边界定位') &&
+        !sys.includes('分支梗概助手')
+      ) {
+        failNextTurnWith401 = false;
+        await route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { message: 'Invalid API key' } }),
+        });
+        return;
       }
 
       if (delayNextTurnMs > 0 && !sys.includes('严格只输出一个 JSON 对象') && !sys.includes('剧情摘要压缩')) {
@@ -2918,7 +2965,7 @@ async function main() {
     if (
       !previewCardText?.includes('规则附件.docx') ||
       !previewCardText?.includes('另存为 .docx') ||
-      !previewCardText?.includes('⑂ 2')
+      !previewCardText?.includes('2 条岔路')
     ) {
       throw new Error(`DeepSeek preview missing attachment/branch cues: ${previewCardText}`);
     }
@@ -3109,8 +3156,11 @@ async function main() {
     // 1. Privacy note + clear key + network-error fallback save via wizard
     await openSettings(page);
     const cardText = await page.locator('[data-testid="deepseek-connection-card"]').textContent();
-    if (!cardText?.includes('不会上传到任何第三方服务器')) {
-      throw new Error(`Plain-language privacy note missing: ${cardText}`);
+    if (
+      !cardText?.includes('直接发送至 DeepSeek 官方 API') ||
+      !cardText.includes('不会交给项目方')
+    ) {
+      throw new Error(`Accurate direct-API privacy note missing: ${cardText}`);
     }
     await page.click('[data-testid="clear-key-btn"]');
     await page.waitForSelector('[data-testid="open-setup-wizard-btn"]');
@@ -3140,10 +3190,18 @@ async function main() {
     await page.getByTestId('import-panel').getByRole('button', { name: '微调' }).click();
     await page.fill('#bp-title', 'E2E训练营故事');
     await page.getByRole('button', { name: '保存蓝图微调' }).click();
+    failNextTurnWith401 = true;
     await page.getByRole('button', { name: '确认并开启第一幕' }).click();
 
-    // 3. Play turns and verify the immersive stage contract.
-    await page.click('button:has-text("开启第一幕")');
+    // 3. A failed first-act request surfaces on the stage; retry never repeats story creation.
+    await page.getByTestId('import-panel').waitFor({ state: 'detached' });
+    const firstActError = page.getByTestId('main-error-banner');
+    await firstActError.waitFor();
+    if (!(await firstActError.textContent())?.includes('HTTP 401')) {
+      throw new Error(`First-act failure did not surface the model error: ${await firstActError.textContent()}`);
+    }
+    await page.getByRole('button', { name: '开启第一幕' }).click();
+    await page.getByTestId('turn-assistant').last().waitFor();
     await page.getByTestId('hud-panel').waitFor();
     await page.getByRole('button', { name: '发送行动' }).waitFor();
     const firstUserCard = page.getByTestId('turn-user').last();
@@ -3184,12 +3242,16 @@ async function main() {
     if (!reasoningLabel?.match(/已思考\s+\d+\s+秒/)) {
       throw new Error(`Missing measured reasoning duration: ${reasoningLabel}`);
     }
-    await firstReasoning.getByTestId('reasoning-toggle').click();
+    const reasoningToggle = firstReasoning.getByTestId('reasoning-toggle');
+    await expectTouchTarget(reasoningToggle, 'reasoning summary');
+    await reasoningToggle.click();
     await firstAssistantCard.getByTestId('reasoning-content').waitFor({ state: 'visible' });
     await firstReasoning.getByTestId('reasoning-toggle').click();
     await firstAssistantCard.getByTestId('reasoning-content').waitFor({ state: 'hidden' });
 
     const firstHud = firstAssistantCard.getByTestId('hud-panel').first();
+    await expectTouchTarget(firstHud.getByTestId('hud-collapse-toggle'), 'HUD collapse toggle');
+    await expectTouchTarget(firstHud.locator('button', { hasText: '原始格式' }), 'HUD view toggle');
     const grid = firstHud.getByTestId('hud-grid');
     await grid.waitFor();
     if ((await grid.getByTestId('hud-field-wide').count()) !== 1) {
@@ -3380,7 +3442,7 @@ async function main() {
 
     await verifyBranchSwitchBlocksImmediateSend(page);
 
-    // 5b. Story Tree: verify linear span folding, fork badge ⑂ 2, expand fork, rename Branch B, AI gist, switch back to Branch A
+    // 5b. Story Tree: verify linear span folding, fork badge, expand fork, rename Branch B, AI gist, switch back to Branch A
     const storyTreeSheet = await openStoryTree(page);
     const spanText = await storyTreeSheet.locator('[data-testid="story-tree-span"]').first().textContent();
     if (!spanText?.includes('第 1–2 轮') && !spanText?.includes('第 1')) {
@@ -3388,8 +3450,8 @@ async function main() {
     }
     const forkBtn = storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first();
     const forkBtnText = await forkBtn.textContent();
-    if (!forkBtnText?.includes('⑂ 2')) {
-      throw new Error(`Expected fork badge ⑂ 2 in Story Tree, got: ${forkBtnText}`);
+    if (!forkBtnText?.includes('2 条岔路')) {
+      throw new Error(`Expected a two-branch Story Tree badge, got: ${forkBtnText}`);
     }
     await forkBtn.click();
     await storyTreeSheet.getByTestId('story-tree-branches').waitFor();
@@ -3553,10 +3615,14 @@ async function main() {
     if ((await (await visibleStoryRows(page)).count()) !== 2) {
       throw new Error('Expected two saved stories after aborted stream recovery.');
     }
+    await page.getByTestId('turn-assistant').last().waitFor();
 
     await verifyStoppedSendPreservesNewerDraft(page, () => { delayNextTurnMs = 3000; });
 
     // 10b. Mid-stream abort via 停止生成 must NOT re-submit the composer form
+    const turnCountBeforeAbort = await page.locator(
+      '[data-testid="turn-user"], [data-testid="turn-assistant"]',
+    ).count();
     delayNextTurnMs = 3000;
     await page.fill('#turn-input', '测试停止生成不重发');
     await page.getByRole('button', { name: '发送行动' }).click();
@@ -3570,7 +3636,7 @@ async function main() {
     if ((await page.inputValue('#turn-input')) !== '测试停止生成不重发') {
       throw new Error('Expected aborted input restored cleanly without re-submitting');
     }
-    if ((await page.locator('[data-testid="turn-user"], [data-testid="turn-assistant"]').count()) !== 0) {
+    if ((await page.locator('[data-testid="turn-user"], [data-testid="turn-assistant"]').count()) !== turnCountBeforeAbort) {
       throw new Error('Expected aborted turn not to commit any turn card');
     }
 
@@ -3602,6 +3668,75 @@ async function main() {
     if (!(await mobileLibraryDialog.getAttribute('data-closing'))) {
       throw new Error('Escape closed the mobile drawer without its exit state.');
     }
+    await mobileLibraryDialog.waitFor({ state: 'hidden' });
+    await page.evaluate(() => {
+      const stage = document.querySelector('[data-testid="main-stage"]');
+      if (!(stage instanceof HTMLElement)) throw new Error('Main stage missing for edge swipe');
+      stage.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        pointerId: 41,
+        clientX: 8,
+        clientY: 320,
+      }));
+      stage.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true,
+        button: 0,
+        pointerId: 41,
+        clientX: 96,
+        clientY: 322,
+      }));
+    });
+    await mobileLibraryDialog.waitFor({ state: 'visible' });
+    const drawerSnap = await page.getByTestId('mobile-library-sheet').getByTestId('library-list-scroll').evaluate(
+      (element) => getComputedStyle(element).scrollSnapType,
+    );
+    if (!drawerSnap.includes('y')) {
+      throw new Error(`Mobile library list is missing vertical scroll snap: ${drawerSnap}`);
+    }
+    const storySnap = await page.getByTestId('story-list-item').first().evaluate(
+      (element) => getComputedStyle(element).scrollSnapAlign,
+    );
+    if (storySnap !== 'start') {
+      throw new Error(`Mobile story row is missing scroll snap alignment: ${storySnap}`);
+    }
+    await page.getByTestId('mobile-library-sheet').evaluate((sheet) => {
+      sheet.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        pointerId: 42,
+        clientX: 300,
+        clientY: 320,
+      }));
+      sheet.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true,
+        button: 0,
+        pointerId: 42,
+        clientX: 220,
+        clientY: 322,
+      }));
+    });
+    await mobileLibraryDialog.waitFor({ state: 'hidden' });
+    await page.evaluate(() => {
+      const stage = document.querySelector('[data-testid="main-stage"]');
+      if (!(stage instanceof HTMLElement)) throw new Error('Main stage missing for edge swipe');
+      stage.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        pointerId: 43,
+        clientX: 8,
+        clientY: 320,
+      }));
+      stage.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true,
+        button: 0,
+        pointerId: 43,
+        clientX: 96,
+        clientY: 322,
+      }));
+    });
+    await mobileLibraryDialog.waitFor({ state: 'visible' });
+    await page.mouse.click(380, 420);
     await mobileLibraryDialog.waitFor({ state: 'hidden' });
     await expectTouchTarget(page.getByTestId('open-story-tree'), 'mobile branch badge');
     const checkNoHorizontalOverflow = async (label) => {

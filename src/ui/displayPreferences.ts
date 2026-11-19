@@ -1,9 +1,26 @@
-export const DISPLAY_THEME_STORAGE_KEY = 'lfh.ui.theme';
-export const DISPLAY_FONT_SIZE_STORAGE_KEY = 'lfh.ui.font_size';
+import {
+  DISPLAY_BOOT_CONFIG,
+  DISPLAY_FONT_SIZES,
+  DISPLAY_FONT_SIZE_STORAGE_KEY,
+  DISPLAY_THEMES,
+  DISPLAY_THEME_PREFERENCES,
+  DISPLAY_THEME_STORAGE_KEY,
+  type DisplayFontSize,
+  type DisplayTheme,
+  type DisplayThemePreference,
+} from './displayBootConfig.ts';
 
-export type DisplayThemePreference = 'system' | 'light' | 'dark' | 'warm';
-export type DisplayTheme = 'light' | 'dark' | 'warm';
-export type DisplayFontSize = 14 | 16 | 18 | 20;
+export {
+  DISPLAY_BOOT_CONFIG,
+  DISPLAY_FONT_SIZES,
+  DISPLAY_FONT_SIZE_STORAGE_KEY,
+  DISPLAY_THEMES,
+  DISPLAY_THEME_PREFERENCES,
+  DISPLAY_THEME_STORAGE_KEY,
+  type DisplayFontSize,
+  type DisplayTheme,
+  type DisplayThemePreference,
+};
 
 export interface DisplayPreferences {
   theme: DisplayThemePreference;
@@ -11,12 +28,12 @@ export interface DisplayPreferences {
 }
 
 export const DEFAULT_DISPLAY_PREFERENCES: DisplayPreferences = {
-  theme: 'system',
-  fontSize: 16,
+  theme: DISPLAY_BOOT_CONFIG.defaultThemePreference,
+  fontSize: DISPLAY_BOOT_CONFIG.defaultFontSize,
 };
 
-const SUPPORTED_THEMES = new Set<DisplayThemePreference>(['system', 'light', 'dark', 'warm']);
-const SUPPORTED_FONT_SIZES = new Set<DisplayFontSize>([14, 16, 18, 20]);
+const SUPPORTED_THEMES = new Set<DisplayThemePreference>(DISPLAY_THEME_PREFERENCES);
+const SUPPORTED_FONT_SIZES = new Set<DisplayFontSize>(DISPLAY_FONT_SIZES);
 
 export function parseDisplayPreferences(
   storedTheme: string | null,

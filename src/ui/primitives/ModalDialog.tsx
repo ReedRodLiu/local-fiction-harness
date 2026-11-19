@@ -18,6 +18,7 @@ interface ModalDialogProps {
   className?: string;
   testId?: string;
   closeDisabled?: boolean;
+  closeOnSurfaceClick?: boolean;
   children: ReactNode;
   onClose: () => void;
   onExitComplete?: () => void;
@@ -30,6 +31,7 @@ export function ModalDialog({
   className = 'modal-dialog',
   testId,
   closeDisabled = false,
+  closeOnSurfaceClick = false,
   children,
   onClose,
   onExitComplete,
@@ -77,7 +79,9 @@ export function ModalDialog({
         if (closeDisabled) return;
         backdropPointerRef.current = {
           pointerId: event.pointerId,
-          startedOnBackdrop: isBackdropPointer(event),
+          startedOnBackdrop: closeOnSurfaceClick
+            ? event.target === event.currentTarget
+            : isBackdropPointer(event),
         };
         backdropClickRef.current = false;
       }}
@@ -85,7 +89,11 @@ export function ModalDialog({
         if (closeDisabled) return;
         const pointer = backdropPointerRef.current;
         if (!pointer || pointer.pointerId !== event.pointerId) return;
-        backdropClickRef.current = pointer.startedOnBackdrop && isBackdropPointer(event);
+        backdropClickRef.current = pointer.startedOnBackdrop && (
+          closeOnSurfaceClick
+            ? event.target === event.currentTarget
+            : isBackdropPointer(event)
+        );
         backdropPointerRef.current = null;
       }}
       onPointerCancel={() => {

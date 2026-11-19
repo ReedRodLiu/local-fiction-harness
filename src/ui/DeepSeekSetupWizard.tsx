@@ -5,6 +5,7 @@ import {
   validateApiKeyFormat,
   verifyDeepSeekApiKey,
 } from '../harness/index.ts';
+import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { ModalDialog } from './primitives/ModalDialog.tsx';
 
 export interface DeepSeekSetupWizardProps {
@@ -128,7 +129,7 @@ export function DeepSeekSetupWizard({
       <div className="wizard-dialog-content" data-verifying={isVerifying ? 'true' : 'false'}>
         <div className="wizard-header">
           <div>
-            <h3 id="wizard-title">连接 DeepSeek 官方（DeepSeek-Flash）</h3>
+            <h3 id="wizard-title">连接 DeepSeek 官方</h3>
             <p className="wizard-subtitle">只需 3 步拿到你的专属钥匙，1 分钟内即可开始游玩</p>
           </div>
           <button
@@ -231,16 +232,12 @@ export function DeepSeekSetupWizard({
             </div>
 
             <p className="wizard-privacy-note">
-              密钥仅保存在你的手机本地，不会上传到任何第三方服务器。
+              模型请求会由你的设备直接发送至 DeepSeek 官方 API；API Key 只保存在本机，不会交给项目方。
             </p>
           </li>
         </ol>
 
-        {errorMsg && (
-          <div className="error-banner" role="alert" data-testid="wizard-error">
-            {errorMsg}
-          </div>
-        )}
+        {errorMsg && <BannerAlert tone="danger" testId="wizard-error">{errorMsg}</BannerAlert>}
 
         <div className="wizard-footer">
           <button

@@ -10,7 +10,6 @@ import { ContextOverview } from './ContextOverview.tsx';
 import { StoryReview } from './StoryReview.tsx';
 import { StoryTree } from './StoryTree.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
-import './styles/companion-sheet.css';
 
 type CompanionTab = 'tree' | 'review' | 'blueprint';
 

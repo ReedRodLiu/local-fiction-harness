@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Download, FileUp, LifeBuoy, ShieldCheck } from 'lucide-react';
 import { maskApiKey, type ModelConfig } from '../harness/index.ts';
-import type {
-  DisplayFontSize,
-  DisplayThemePreference,
+import {
+  DISPLAY_FONT_SIZES,
+  type DisplayFontSize,
+  type DisplayThemePreference,
 } from './displayPreferences.ts';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
-import './styles/settings.css';
 
 interface SettingsPageProps {
   appVersion: string;
@@ -41,7 +41,7 @@ const THEME_OPTIONS: Array<{
   { value: 'warm', label: '暖纸护眼', swatches: ['var(--bg-canvas)', 'var(--bg-user-bubble)'] },
 ];
 
-const FONT_SIZE_OPTIONS: DisplayFontSize[] = [14, 16, 18, 20];
+const FONT_SIZE_OPTIONS: readonly DisplayFontSize[] = DISPLAY_FONT_SIZES;
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '未知';
@@ -108,20 +108,20 @@ export function SettingsPage({
       >
         <section className="connected-key-card" data-testid="deepseek-connection-card" aria-label="DeepSeek 连接状态">
           <div className="connected-key-header">
-            <strong>{hasCredentials ? '已连接 DeepSeek 官方（DeepSeek-Flash）' : '未连接 DeepSeek 官方'}</strong>
+            <strong>{hasCredentials ? '已连接 DeepSeek 官方' : '未连接 DeepSeek 官方'}</strong>
             <span className={`badge ${hasCredentials ? 'badge-ok' : 'badge-pending'}`}>
               {hasCredentials
                 ? useDevEnvKey
                   ? '开发代理'
                   : maskApiKey(config.apiKey) || '本地已连接'
-                : 'DeepSeek-Flash'}
+                : '待配置'}
             </span>
           </div>
           {hasCredentials && !useDevEnvKey && config.apiKey && (
             <span className="key-mask" data-testid="connected-key-mask">{maskApiKey(config.apiKey)}</span>
           )}
           <p className="wizard-privacy-note">
-            密钥仅保存在你的手机本地，不会上传到任何第三方服务器。
+            模型请求会由你的设备直接发送至 DeepSeek 官方 API；API Key 只保存在本机，不会交给项目方。
           </p>
           {hasCredentials ? (
             <div className="settings-button-row">
