@@ -20,6 +20,7 @@ interface ModalDialogProps {
   closeDisabled?: boolean;
   children: ReactNode;
   onClose: () => void;
+  onExitComplete?: () => void;
   onCancel?: (event: React.SyntheticEvent<HTMLDialogElement>) => void;
 }
 
@@ -31,12 +32,15 @@ export function ModalDialog({
   closeDisabled = false,
   children,
   onClose,
+  onExitComplete,
   onCancel,
 }: ModalDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const suppressCloseEventRef = useRef(false);
   const backdropPointerRef = useRef<{ pointerId: number; startedOnBackdrop: boolean } | null>(null);
   const backdropClickRef = useRef(false);
+  const onExitCompleteRef = useRef(onExitComplete);
+  onExitCompleteRef.current = onExitComplete;
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -52,6 +56,7 @@ export function ModalDialog({
     return waitForExitAnimation(dialog, () => {
       suppressCloseEventRef.current = true;
       dialog.close();
+      onExitCompleteRef.current?.();
     });
   }, [open]);
 

@@ -251,9 +251,10 @@ summary:focus-visible {
   overflow: hidden;
   background: var(--bg-drawer);
   touch-action: pan-y;
-  animation: drawer-enter var(--motion-duration) var(--motion-easing) both;
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity var(--motion-duration) var(--motion-easing), transform var(--motion-duration) var(--motion-easing);
 }
-@keyframes drawer-enter { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 
 .main-stage {
   display: flex;
@@ -369,10 +370,13 @@ summary:focus-visible {
 @starting-style {
   .modal-dialog[open],
   .sheet-dialog[open] { opacity: 0; transform: translateY(12px); }
+  .library-dialog[open] .library-dialog-sheet { opacity: 0; transform: translateX(-100%); }
 }
 
-.library-dialog[data-closing="true"] .library-dialog-sheet { animation: drawer-exit var(--motion-duration) var(--motion-easing) both; }
-@keyframes drawer-exit { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+.library-dialog[data-closing="true"] .library-dialog-sheet {
+  opacity: 0;
+  transform: translateX(-100%);
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

@@ -152,6 +152,7 @@ export function App({ runtime }: AppProps) {
   const [libraryCollapsed, setLibraryCollapsed] = useState(readLibraryCollapsedPreference);
   const [storyTreeOpen, setStoryTreeOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardMounted, setWizardMounted] = useState(false);
   const [wizardVerifying, setWizardVerifying] = useState(false);
   const [pendingByok, setPendingByok] = useState<{
     label: string;
@@ -171,13 +172,17 @@ export function App({ runtime }: AppProps) {
   const [reasoningDurations, setReasoningDurations] = useState<Record<string, number>>({});
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [diagnosticsMounted, setDiagnosticsMounted] = useState(false);
+  const [diagnosticsRevision, setDiagnosticsRevision] = useState(0);
   const [diagnosticTrigger, setDiagnosticTrigger] = useState<DiagnosticBundleTrigger>('settings_manual');
   const [displayPreferences, setDisplayPreferences] = useState<DisplayPreferences>(readDisplayPreferences);
   const [prefersDark, setPrefersDark] = useState(() =>
     window.matchMedia('(prefers-color-scheme: dark)').matches,
   );
   const overlayReturnFocusRef = useRef<HTMLElement | null>(null);
+  const wizardReturnFocusRef = useRef<HTMLElement | null>(null);
+  const wizardCloseReasonRef = useRef<'success' | 'cancel' | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const streamSeqRef = useRef(0);
@@ -209,7 +214,18 @@ export function App({ runtime }: AppProps) {
   const openDiagnostics = (trigger: DiagnosticBundleTrigger = 'error_banner') => {
     captureOverlayTrigger();
     setDiagnosticTrigger(trigger);
-    setShowDiagnostics(true);
+    setDiagnosticsRevision((revision) => revision + 1);
+    setDiagnosticsMounted(true);
+    setDiagnosticsOpen(true);
+  };
+
+  const closeDiagnostics = () => {
+    setDiagnosticsOpen(false);
+  };
+
+  const finishDiagnosticsExit = () => {
+    setDiagnosticsMounted(false);
+    window.requestAnimationFrame(() => overlayReturnFocusRef.current?.focus());
   };
 
   const buildDiagnosticBundle = useCallback(
@@ -390,11 +406,11 @@ export function App({ runtime }: AppProps) {
   useWebHistoryLayer(
     'diagnostics',
     90,
-    showDiagnostics,
-    () => setShowDiagnostics(false),
+    diagnosticsOpen,
+    closeDiagnostics,
     true,
     undefined,
-    () => overlayReturnFocusRef.current,
+    () => null,
   );
   useWebHistoryLayer(
     'setup-wizard',
@@ -402,13 +418,14 @@ export function App({ runtime }: AppProps) {
     wizardOpen,
     () => {
       const cancel = pendingByok?.onCancel;
+      wizardCloseReasonRef.current = 'cancel';
       setPendingByok(null);
       setWizardOpen(false);
       cancel?.();
     },
     !wizardVerifying,
     () => !document.querySelector('[data-testid="deepseek-setup-wizard"] [data-verifying="true"]'),
-    () => overlayReturnFocusRef.current,
+    () => null,
   );
   useWebHistoryLayer(
     'companion-sheet',
@@ -453,7 +470,10 @@ export function App({ runtime }: AppProps) {
         (event.metaKey || event.ctrlKey) &&
         !event.altKey &&
         !event.shiftKey &&
-        event.key.toLowerCase() === 'b'
+        event.key.toLowerCase() === 'b' &&
+        window.matchMedia('(min-width: 960px)').matches &&
+        !showImport &&
+        !showSettings
       ) {
         event.preventDefault();
         setLibraryCollapsed((collapsed) => !collapsed);
@@ -461,7 +481,7 @@ export function App({ runtime }: AppProps) {
     };
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
-  }, []);
+  }, [showImport, showSettings]);
 
   const enqueueConfigSave = (task: () => Promise<void>) => {
     configSaveQueueRef.current = configSaveQueueRef.current
@@ -833,15 +853,33 @@ export function App({ runtime }: AppProps) {
     resume: (resolvedConfig: ModelConfig) => void,
     onCancel?: () => void,
   ) => {
-    captureOverlayTrigger();
+    wizardReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    wizardCloseReasonRef.current = null;
     setPendingByok({ label, resume, onCancel });
+    setWizardMounted(true);
     setWizardOpen(true);
   };
 
   const openSetupWizard = () => {
-    captureOverlayTrigger();
+    wizardReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    wizardCloseReasonRef.current = null;
     setPendingByok(null);
+    setWizardMounted(true);
     setWizardOpen(true);
+  };
+
+  const finishWizardExit = () => {
+    setWizardMounted(false);
+    const preferred = wizardCloseReasonRef.current === 'success'
+      ? document.querySelector<HTMLElement>('[data-testid="change-key-btn"]')
+      : wizardReturnFocusRef.current;
+    wizardCloseReasonRef.current = null;
+    wizardReturnFocusRef.current = null;
+    window.requestAnimationFrame(() => preferred?.focus());
   };
 
   const handleClearSavedKey = () => {
@@ -1606,8 +1644,9 @@ export function App({ runtime }: AppProps) {
             </>
           )}
 
-          {wizardOpen && (
+          {wizardMounted && (
             <DeepSeekSetupWizard
+              open={wizardOpen}
               initialKey={config.apiKey}
               pendingLabel={pendingByok?.label ?? null}
               verifyUrlBase={
@@ -1618,14 +1657,17 @@ export function App({ runtime }: AppProps) {
                   ? { ...config, apiKey: verifiedKey, memoryOnly: false }
                   : normalizeOfficialModelConfig({ ...config, apiKey: verifiedKey });
                 const resume = pendingByok?.resume;
+                wizardCloseReasonRef.current = 'success';
                 setPendingByok(null);
                 setWizardOpen(false);
                 updateConfig(nextCfg, false);
                 if (resume) resume(nextCfg);
               }}
               onVerifyingChange={setWizardVerifying}
+              onExitComplete={finishWizardExit}
               onCancel={() => {
                 const cancel = pendingByok?.onCancel;
+                wizardCloseReasonRef.current = 'cancel';
                 setPendingByok(null);
                 setWizardOpen(false);
                 cancel?.();
@@ -1635,12 +1677,15 @@ export function App({ runtime }: AppProps) {
         </main>
       </div>
 
-      {showDiagnostics && (
+      {diagnosticsMounted && (
         <DiagnosticsPreview
+          key={diagnosticsRevision}
+          open={diagnosticsOpen}
           buildBundle={() => buildDiagnosticBundle(diagnosticTrigger)}
           onExport={(fileName, json) => runtime.backupExporter.exportJsonFile(fileName, json)}
           onReload={() => window.location.reload()}
-          onClose={() => setShowDiagnostics(false)}
+          onClose={closeDiagnostics}
+          onExitComplete={finishDiagnosticsExit}
         />
       )}
 

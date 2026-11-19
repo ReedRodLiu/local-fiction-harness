@@ -8,20 +8,24 @@ import {
 import { ModalDialog } from './primitives/ModalDialog.tsx';
 
 export interface DeepSeekSetupWizardProps {
+  open: boolean;
   initialKey?: string;
   pendingLabel?: string | null;
   verifyUrlBase: string;
   onComplete: (apiKey: string) => void;
   onCancel: () => void;
+  onExitComplete: () => void;
   onVerifyingChange?: (isVerifying: boolean) => void;
 }
 
 export function DeepSeekSetupWizard({
+  open,
   initialKey = '',
   pendingLabel,
   verifyUrlBase,
   onComplete,
   onCancel,
+  onExitComplete,
   onVerifyingChange,
 }: DeepSeekSetupWizardProps) {
   const [keyDraft, setKeyDraft] = useState(initialKey);
@@ -110,12 +114,13 @@ export function DeepSeekSetupWizard({
 
   return (
     <ModalDialog
-      open
+      open={open}
       label="连接 DeepSeek 官方"
       className="modal-dialog wizard-dialog"
       testId="deepseek-setup-wizard"
       closeDisabled={isVerifying}
       onClose={onCancel}
+      onExitComplete={onExitComplete}
       onCancel={(event) => {
         if (isVerifying) event.preventDefault();
       }}

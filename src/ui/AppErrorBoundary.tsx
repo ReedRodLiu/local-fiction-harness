@@ -11,14 +11,20 @@ interface AppErrorBoundaryProps {
 
 interface AppErrorBoundaryState {
   hasError: boolean;
-  showDiagnostics: boolean;
+  diagnosticsMounted: boolean;
+  diagnosticsOpen: boolean;
+  diagnosticsRevision: number;
 }
 
 export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundaryState> {
   state: AppErrorBoundaryState = {
     hasError: false,
-    showDiagnostics: false,
+    diagnosticsMounted: false,
+    diagnosticsOpen: false,
+    diagnosticsRevision: 0,
   };
+
+  private diagnosticsTriggerRef: HTMLButtonElement | null = null;
 
   static getDerivedStateFromError(): Partial<AppErrorBoundaryState> {
     return { hasError: true };
@@ -36,17 +42,36 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
 
   componentDidCatch(error: Error, _info: ErrorInfo): void {
     this.recordCrash('unhandled_render_crash', error);
-    this.setState({ showDiagnostics: true });
+    this.openDiagnostics();
   }
 
   private readonly handleWindowError = (event: ErrorEvent): void => {
     this.recordCrash('unhandled_window_error', event.error ?? new Error('Unhandled window error'));
-    this.setState({ hasError: true, showDiagnostics: true });
+    this.setState({ hasError: true });
+    this.openDiagnostics();
   };
 
   private readonly handleUnhandledRejection = (event: PromiseRejectionEvent): void => {
     this.recordCrash('unhandled_rejection', event.reason);
-    this.setState({ hasError: true, showDiagnostics: true });
+    this.setState({ hasError: true });
+    this.openDiagnostics();
+  };
+
+  private readonly openDiagnostics = (): void => {
+    this.setState((state) => ({
+      diagnosticsMounted: true,
+      diagnosticsOpen: true,
+      diagnosticsRevision: state.diagnosticsRevision + 1,
+    }));
+  };
+
+  private readonly closeDiagnostics = (): void => {
+    this.setState({ diagnosticsOpen: false });
+  };
+
+  private readonly finishDiagnosticsExit = (): void => {
+    this.setState({ diagnosticsMounted: false });
+    window.requestAnimationFrame(() => this.diagnosticsTriggerRef?.focus());
   };
 
   private recordCrash(action: 'unhandled_render_crash' | 'unhandled_window_error' | 'unhandled_rejection', error: unknown): void {
@@ -86,21 +111,27 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
               type="button"
               className="btn"
               data-testid="crash-open-diagnostics"
-              onClick={() => this.setState({ showDiagnostics: true })}
+              onClick={(event) => {
+                this.diagnosticsTriggerRef = event.currentTarget;
+                this.openDiagnostics();
+              }}
             >
               预览并导出脱敏诊断包
             </button>
           </div>
         </section>
-        {this.state.showDiagnostics && (
+        {this.state.diagnosticsMounted && (
           <DiagnosticsPreview
+            key={this.state.diagnosticsRevision}
+            open={this.state.diagnosticsOpen}
             buildBundle={this.buildBundle}
             reassurance="本地故事存档保存在设备上，重新载入界面不会删除已保存的故事。"
             onReload={() => window.location.reload()}
             onExport={(fileName, json) =>
               this.props.runtime.backupExporter.exportJsonFile(fileName, json)
             }
-            onClose={() => this.setState({ showDiagnostics: false })}
+            onClose={this.closeDiagnostics}
+            onExitComplete={this.finishDiagnosticsExit}
           />
         )}
       </main>

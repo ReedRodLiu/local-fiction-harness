@@ -5,17 +5,21 @@ import { ModalDialog } from './primitives/ModalDialog.tsx';
 import { toErrorMessage } from './textHelpers.ts';
 
 interface DiagnosticsPreviewProps {
+  open: boolean;
   buildBundle: () => DiagnosticBundle;
   onExport: (fileName: string, jsonContent: string) => Promise<void>;
   onClose: () => void;
+  onExitComplete: () => void;
   reassurance?: string;
   onReload?: () => void;
 }
 
 export function DiagnosticsPreview({
+  open,
   buildBundle,
   onExport,
   onClose,
+  onExitComplete,
   reassurance,
   onReload,
 }: DiagnosticsPreviewProps) {
@@ -55,11 +59,12 @@ export function DiagnosticsPreview({
 
   return (
     <ModalDialog
-      open
+      open={open}
       label="脱敏诊断包预览"
       className="modal-dialog diagnostics-dialog"
       testId="diagnostics-preview"
       onClose={onClose}
+      onExitComplete={onExitComplete}
     >
       <div className="diagnostics-content">
         <header className="diagnostics-header">

@@ -132,9 +132,9 @@ export function useWebHistoryLayer(
 
   useEffect(() => {
     if (!open) return;
-    restoreFocusRef.current = restoreFocus?.() ?? (
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
-    );
+    restoreFocusRef.current = restoreFocus === undefined
+      ? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+      : restoreFocus();
 
     const close = () => {
       if (!closeEnabledRef.current || (canCloseRef.current && !canCloseRef.current())) return false;

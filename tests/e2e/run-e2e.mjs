@@ -242,7 +242,10 @@ function buildAmbiguousOverWindowZipE2E() {
 }
 
 async function startViteServer(port) {
-  const srv = spawn('npx', ['vite', '--port', String(port), '--strictPort'], {
+  const viteArguments = process.env.LFH_E2E_PRODUCTION === '1'
+    ? ['vite', 'preview', '--port', String(port), '--strictPort']
+    : ['vite', '--port', String(port), '--strictPort'];
+  const srv = spawn('npx', viteArguments, {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   await new Promise((resolve, reject) => {
@@ -285,6 +288,47 @@ async function completePendingSetup(page, key) {
   await wizard.locator('#byok-api-key').fill(key);
   await wizard.getByTestId('wizard-verify-save-btn').click();
   await wizard.waitFor({ state: 'detached' });
+}
+
+async function expectControlledDialogExit(page, dialog, testId, trigger, options = {}) {
+  const { reducedMotion = false } = options;
+  const startedAt = Date.now();
+  await trigger();
+  await page.waitForFunction((expectedTestId) => {
+    const element = document.querySelector(`[data-testid="${expectedTestId}"]`);
+    return element instanceof HTMLDialogElement &&
+      element.open &&
+      element.dataset.closing === 'true';
+  }, testId);
+  const closingStyle = await dialog.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      opacity: style.opacity,
+      transform: style.transform,
+      transitionDuration: style.transitionDuration,
+      transitionProperty: style.transitionProperty,
+    };
+  });
+  if (reducedMotion) {
+    if (
+      !closingStyle.transitionDuration.split(',').some((duration) => duration.trim() === '0.1s') ||
+      closingStyle.transform !== 'none' ||
+      !closingStyle.transitionProperty.split(',').every((property) => property.trim() === 'opacity')
+    ) {
+      throw new Error(`Reduced-motion dialog exit was not a 100ms opacity fade: ${JSON.stringify(closingStyle)}`);
+    }
+  } else if (
+    !closingStyle.transitionDuration.split(',').some((duration) => duration.trim() === '0.22s') ||
+    closingStyle.transform === 'none'
+  ) {
+    throw new Error(`Production dialog exit did not use the 220ms motion treatment: ${JSON.stringify(closingStyle)}`);
+  }
+  await dialog.waitFor({ state: 'detached' });
+  const elapsed = Date.now() - startedAt;
+  const minimumElapsed = reducedMotion ? 80 : 180;
+  if (elapsed < minimumElapsed) {
+    throw new Error(`${testId} unmounted before its exit animation completed (${elapsed}ms).`);
+  }
 }
 
 async function expectTouchTarget(locator, label) {
@@ -1444,11 +1488,30 @@ async function verifyByokDialogProtection(page, port) {
 
   await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
   await page.setViewportSize({ width: 390, height: 844 });
-  await openWizardFromSettings(page);
+  await openSettings(page);
+  const unconnectedTrigger = page.getByTestId('open-setup-wizard-btn');
+  await unconnectedTrigger.click();
   const wizard = page.getByTestId('deepseek-setup-wizard');
+  await wizard.waitFor({ state: 'visible' });
   if ((await wizard.evaluate((element) => element.tagName)) !== 'DIALOG') {
     throw new Error('BYOK wizard must use a native <dialog>.');
   }
+  await expectControlledDialogExit(page, wizard, 'deepseek-setup-wizard', async () => {
+    await wizard.getByRole('button', { name: '关闭引导' }).click();
+  });
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'open-setup-wizard-btn');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await unconnectedTrigger.click();
+  await wizard.waitFor({ state: 'visible' });
+  await expectControlledDialogExit(page, wizard, 'deepseek-setup-wizard', async () => {
+    await wizard.getByRole('button', { name: '关闭引导' }).click();
+  }, { reducedMotion: true });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'open-setup-wizard-btn');
+
+  await unconnectedTrigger.click();
+  await wizard.waitFor({ state: 'visible' });
   for (const testId of [
     'wizard-open-platform-btn',
     'wizard-paste-btn',
@@ -1501,12 +1564,20 @@ async function verifyByokDialogProtection(page, port) {
   }
   releaseVerification();
   await wizard.waitFor({ state: 'detached' });
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'change-key-btn');
+  await page.getByTestId('change-key-btn').click();
+  await wizard.waitFor({ state: 'visible' });
+  await expectControlledDialogExit(page, wizard, 'deepseek-setup-wizard', async () => {
+    await wizard.getByRole('button', { name: '关闭引导' }).click();
+  });
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'change-key-btn');
   await page.unroute('https://api.deepseek.com/models');
 }
 
 async function verifyDiagnosticsDialog(page, port) {
   await openSettings(page);
-  await page.getByTestId('open-diagnostics').click();
+  const diagnosticsTrigger = page.getByTestId('open-diagnostics');
+  await diagnosticsTrigger.click();
   const diagnostics = page.getByTestId('diagnostics-preview');
   await diagnostics.waitFor({ state: 'visible' });
   if ((await diagnostics.evaluate((element) => element.tagName)) !== 'DIALOG') {
@@ -1522,8 +1593,9 @@ async function verifyDiagnosticsDialog(page, port) {
   for (const name of ['重新载入界面', '导出 .json', '复制到剪贴板']) {
     await diagnostics.getByRole('button', { name }).waitFor();
   }
-  await page.keyboard.press('Escape');
-  await diagnostics.waitFor({ state: 'detached' });
+  await expectControlledDialogExit(page, diagnostics, 'diagnostics-preview', async () => {
+    await page.keyboard.press('Escape');
+  });
   await page.waitForFunction(() =>
     document.activeElement?.getAttribute('data-testid') === 'open-diagnostics',
   );
@@ -1540,7 +1612,14 @@ async function verifyDiagnosticsDialog(page, port) {
     throw new Error(`Crash recovery card copy is not reassuring: ${crashText}`);
   }
   await crashCard.getByRole('button', { name: '重新载入界面' }).waitFor();
-  await crashCard.getByRole('button', { name: '预览并导出脱敏诊断包' }).waitFor();
+  const crashDiagnosticsTrigger = crashCard.getByTestId('crash-open-diagnostics');
+  await crashDiagnosticsTrigger.waitFor();
+  await crashDiagnosticsTrigger.click();
+  await crashDiagnostics.waitFor({ state: 'visible' });
+  await expectControlledDialogExit(page, crashDiagnostics, 'diagnostics-preview', async () => {
+    await page.keyboard.press('Escape');
+  });
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'crash-open-diagnostics');
 }
 
 async function importSyntheticStoryWithoutKey(page, port) {
@@ -1650,9 +1729,39 @@ async function verifyOverlayHistoryAndShortcuts(page, port) {
   collapsed);
 
   await page.setViewportSize({ width: 390, height: 844 });
+  const mobileCollapseBefore = await toggle.getAttribute('aria-pressed');
+  const mobileStoredBefore = await page.evaluate(() => localStorage.getItem('lfh.ui.library_collapsed'));
+  await page.keyboard.press('Meta+b');
+  await page.waitForTimeout(100);
+  if (
+    await toggle.getAttribute('aria-pressed') !== mobileCollapseBefore ||
+    await page.evaluate(() => localStorage.getItem('lfh.ui.library_collapsed')) !== mobileStoredBefore
+  ) {
+    throw new Error('Cmd+B changed and persisted the desktop sidebar preference at a mobile viewport.');
+  }
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const overlayCollapseBefore = await toggle.getAttribute('aria-pressed');
+  const overlayStoredBefore = await page.evaluate(() => localStorage.getItem('lfh.ui.library_collapsed'));
+  await openSettings(page);
+  await page.keyboard.press('Control+b');
+  await page.waitForTimeout(100);
+  const overlayCollapseWhileOpen = await page.evaluate(() =>
+    localStorage.getItem('lfh.ui.library_collapsed'),
+  );
+  await closeSettings(page);
+  if (
+    await toggle.getAttribute('aria-pressed') !== overlayCollapseBefore ||
+    overlayCollapseWhileOpen !== overlayStoredBefore
+  ) {
+    throw new Error('Cmd/Ctrl+B changed the desktop sidebar preference while a full-screen page was open.');
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.getByTestId('library-drawer-trigger').click();
   await drawer.waitFor({ state: 'visible' });
+  await page.waitForTimeout(150);
   const reducedMotionStyle = await drawer.getByTestId('mobile-library-sheet').evaluate((element) => {
     const style = getComputedStyle(element);
     return {
@@ -1661,10 +1770,46 @@ async function verifyOverlayHistoryAndShortcuts(page, port) {
       transform: style.transform,
     };
   });
-  if (reducedMotionStyle.animationDuration !== '0.1s' || reducedMotionStyle.transform !== 'none') {
+  if (reducedMotionStyle.transitionDuration !== '0.1s' || reducedMotionStyle.transform !== 'none') {
     throw new Error(`Reduced-motion drawer still displaces content: ${JSON.stringify(reducedMotionStyle)}`);
   }
+  const closingOpacityFramesPromise = drawer.evaluate((dialog) =>
+    new Promise((resolve) => {
+      const frames = [];
+      const startedAt = performance.now();
+      const sample = () => {
+        if (dialog.dataset.closing === 'true') {
+          const sheet = dialog.querySelector('[data-testid="mobile-library-sheet"]');
+          if (sheet) {
+            const style = getComputedStyle(sheet);
+            frames.push({
+              opacity: Number.parseFloat(style.opacity),
+              transform: style.transform,
+            });
+          }
+        }
+        if (frames.length >= 3 || performance.now() - startedAt > 350) {
+          resolve(frames);
+          return;
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    }),
+  );
   await page.evaluate(() => history.back());
+  const closingOpacityFrames = await closingOpacityFramesPromise;
+  const opacityDecreased = closingOpacityFrames.some((frame, index) => {
+    if (index === 0) return false;
+    const previous = closingOpacityFrames[index - 1].opacity;
+    return frame.opacity < previous && frame.opacity < 1;
+  });
+  if (
+    !opacityDecreased ||
+    closingOpacityFrames.some((frame) => frame.transform !== 'none')
+  ) {
+    throw new Error(`Reduced-motion drawer close was not an opacity fade: ${JSON.stringify(closingOpacityFrames)}`);
+  }
   await drawer.waitFor({ state: 'hidden' });
   await page.emulateMedia({ reducedMotion: 'no-preference' });
 
@@ -1858,6 +2003,70 @@ async function runUiImpl05E2E(browser, port) {
     await verifyDiagnosticsDialog(page, port);
     await verifyDisplayPreferenceMatrix(page, port);
     await verifyOverlayHistoryAndShortcuts(page, port);
+  } finally {
+    await context.close();
+  }
+}
+
+async function runUiImpl05ProductionE2E(browser, port) {
+  const context = await newOfflineContext(browser, port);
+  const page = await context.newPage();
+  await page.route('https://api.deepseek.com/models', (route) =>
+    route.fulfill({ status: 200, json: { data: [{ id: 'deepseek-flash' }] } }),
+  );
+  try {
+    await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openSettings(page);
+    const settingsTrigger = page.getByTestId('open-setup-wizard-btn');
+    await settingsTrigger.click();
+    const wizard = page.getByTestId('deepseek-setup-wizard');
+    await wizard.waitFor({ state: 'visible' });
+    await expectControlledDialogExit(page, wizard, 'deepseek-setup-wizard', async () => {
+      await wizard.getByRole('button', { name: '关闭引导' }).click();
+    });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'open-setup-wizard-btn');
+
+    await settingsTrigger.click();
+    await wizard.waitFor({ state: 'visible' });
+    await wizard.locator('#byok-api-key').fill('sk-production-focus');
+    await wizard.getByTestId('wizard-verify-save-btn').click();
+    await wizard.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'change-key-btn');
+    await page.getByTestId('change-key-btn').click();
+    await wizard.waitFor({ state: 'visible' });
+    await expectControlledDialogExit(page, wizard, 'deepseek-setup-wizard', async () => {
+      await wizard.getByRole('button', { name: '关闭引导' }).click();
+    });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'change-key-btn');
+
+    await page.getByTestId('open-diagnostics').click();
+    const diagnostics = page.getByTestId('diagnostics-preview');
+    await diagnostics.waitFor({ state: 'visible' });
+    await expectControlledDialogExit(page, diagnostics, 'diagnostics-preview', async () => {
+      await diagnostics.getByTestId('diagnostics-close').click();
+    });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'open-diagnostics');
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new ErrorEvent('error', {
+        error: new Error('production crash focus probe'),
+        message: 'production crash focus probe',
+      }));
+    });
+    const crashDiagnostics = page.getByTestId('diagnostics-preview');
+    await crashDiagnostics.waitFor({ state: 'visible' });
+    await expectControlledDialogExit(page, crashDiagnostics, 'diagnostics-preview', async () => {
+      await page.keyboard.press('Escape');
+    });
+    const crashTrigger = page.getByTestId('crash-open-diagnostics');
+    await crashTrigger.waitFor();
+    await crashTrigger.click();
+    await crashDiagnostics.waitFor({ state: 'visible' });
+    await expectControlledDialogExit(page, crashDiagnostics, 'diagnostics-preview', async () => {
+      await page.keyboard.press('Escape');
+    });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'crash-open-diagnostics');
   } finally {
     await context.close();
   }
@@ -2270,6 +2479,12 @@ async function main() {
   });
 
   try {
+    if (process.env.LFH_UI_IMPL_05_PRODUCTION_ONLY === '1') {
+      await runUiImpl05ProductionE2E(browser, port);
+      console.log('UI_IMPL_05_PRODUCTION_E2E_PASSED');
+      return;
+    }
+
     const context = await newOfflineContext(browser, port, { acceptDownloads: true });
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
       origin: `http://localhost:${port}`,
@@ -4073,6 +4288,7 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
     assertZeroLeak('recovered crash export', recoveredExport);
     if (recoveredExport !== recoveredText) throw new Error('Post-reload export differs from preview');
     await page.keyboard.press('Escape');
+    await page.getByTestId('diagnostics-preview').waitFor({ state: 'detached' });
 
     for (const [index, kind] of ['error', 'rejection'].entries()) {
       await page.evaluate((type) => {
@@ -4082,6 +4298,15 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
           void Promise.reject(new Error('SYNTHETIC_REJECTION_BODY'));
         }
       }, kind);
+      await page.waitForFunction(() => {
+        const text = document.querySelector('[data-testid="diagnostics-json"]')?.textContent;
+        if (!text) return false;
+        try {
+          return JSON.parse(text).trigger === 'crash_boundary';
+        } catch {
+          return false;
+        }
+      });
       const text = await page.getByTestId('diagnostics-json').textContent({ timeout: 5000 });
       assertZeroLeak(`global ${kind} preview`, text);
       const bundle = JSON.parse(text);
