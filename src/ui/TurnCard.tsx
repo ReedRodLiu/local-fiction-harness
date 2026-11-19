@@ -12,6 +12,7 @@ interface TurnCardProps {
   turnNumber: number;
   reasoningDurationSeconds?: number;
   editableUserNode?: TurnNode;
+  isBusy: boolean;
   isStreaming: boolean;
   siblings: SiblingBranchInfo;
   onSelectChoice: (choiceText: string) => void;
@@ -29,6 +30,7 @@ export function TurnCard({
   turnNumber,
   reasoningDurationSeconds,
   editableUserNode,
+  isBusy,
   isStreaming,
   siblings,
   onSelectChoice,
@@ -67,7 +69,7 @@ export function TurnCard({
           <button
             type="button"
             className="btn turn-action-button"
-            disabled={isStreaming || !prevSiblingId}
+            disabled={isBusy || !prevSiblingId}
             aria-label="上一分支"
             onClick={() => prevSiblingId && onSwitchBranch(prevSiblingId)}
           >
@@ -77,7 +79,7 @@ export function TurnCard({
           <button
             type="button"
             className="btn turn-action-button"
-            disabled={isStreaming || !nextSiblingId}
+            disabled={isBusy || !nextSiblingId}
             aria-label="下一分支"
             onClick={() => nextSiblingId && onSwitchBranch(nextSiblingId)}
           >
@@ -91,7 +93,7 @@ export function TurnCard({
           <button
             type="button"
             className="btn turn-action-button"
-            disabled={isStreaming}
+            disabled={isBusy}
             aria-label="复制正文"
             title="复制正文"
             onClick={() => void handleCopy()}
@@ -101,7 +103,7 @@ export function TurnCard({
           <button
             type="button"
             className="btn turn-action-button"
-            disabled={isStreaming}
+            disabled={isBusy}
             aria-label="重新生成分支"
             title="重新生成分支"
             onClick={() => onRegenerate(node.id)}
@@ -112,7 +114,7 @@ export function TurnCard({
             <button
               type="button"
               className="btn turn-action-button"
-              disabled={isStreaming}
+              disabled={isBusy}
               aria-label="回溯至此"
               title="回溯至此"
               onClick={() => onRewindToNode(node.id)}
@@ -124,7 +126,7 @@ export function TurnCard({
             <button
               type="button"
               className="btn turn-action-button"
-              disabled={isStreaming}
+              disabled={isBusy}
               aria-label="编辑并生成新分支"
               title="编辑并生成新分支"
               onClick={() => {
@@ -219,7 +221,7 @@ export function TurnCard({
               <button
                 type="button"
                 className="btn turn-action-button"
-                disabled={!editDraft.trim() || isStreaming}
+                disabled={!editDraft.trim() || isBusy}
                 onClick={() => {
                   setIsEditing(false);
                   onEditAndBranch(editableUserNode.id, editDraft);
@@ -255,7 +257,7 @@ export function TurnCard({
               <MessageContent
                 content={node.content}
                 showChoices={isActiveLeaf}
-                disabled={isStreaming}
+                disabled={isBusy}
                 onSelectChoice={onSelectChoice}
                 afterContent={contentActions}
               />

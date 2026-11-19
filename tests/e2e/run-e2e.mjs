@@ -705,6 +705,15 @@ async function verifyBranchSwitchBlocksImmediateSend(page) {
     throw new Error(`Expected Branch B active before switch-lock check, got: ${initialPager}`);
   }
 
+  const stage = page.getByTestId('main-stage');
+  const scrollTopBeforeSwitch = await stage.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: -1, bubbles: true }));
+    element.scrollTop = Math.min(200, element.scrollHeight - element.clientHeight - 100);
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    return element.scrollTop;
+  });
+  await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
+
   const prompt = '分支切换期间不应发送';
   await page.fill('#turn-input', prompt);
   const racedRequests = [];
@@ -729,14 +738,16 @@ async function verifyBranchSwitchBlocksImmediateSend(page) {
     throw new Error('A send during branch switching started or cleared the composer draft.');
   }
   const switchedUser = page.getByTestId('turn-user').nth(1);
-  if (!(await switchedUser.getByTestId('branch-pager').count())) {
-    await switchedUser.getByTestId('turn-history-toggle').click();
+  const switchedLabel = await switchedUser.getByTestId('turn-history-toggle').textContent();
+  if (!switchedLabel?.includes('分支 1/2')) {
+    throw new Error(`Branch switch did not settle on the requested sibling: ${switchedLabel}`);
   }
-  const switchedPager = await switchedUser.getByTestId('branch-pager').textContent();
-  if (!switchedPager?.includes('1 / 2')) {
-    throw new Error(`Branch switch did not settle on the requested sibling: ${switchedPager}`);
+  const scrollTopAfterSwitch = await stage.evaluate((element) => element.scrollTop);
+  if (Math.abs(scrollTopAfterSwitch - scrollTopBeforeSwitch) > 1) {
+    throw new Error(`Same-story branch switching changed the paused scroll position: ${scrollTopBeforeSwitch}px -> ${scrollTopAfterSwitch}px.`);
   }
 
+  await switchedUser.getByTestId('turn-history-toggle').click();
   await switchedUser.getByRole('button', { name: '下一分支' }).click();
   await page.waitForFunction(() =>
     document.querySelectorAll('[data-testid="turn-user"]')[1]
@@ -759,6 +770,50 @@ async function verifyStoppedSendPreservesNewerDraft(page, delayNextTurn) {
     throw new Error('Stopping a turn replaced a newer composer draft with the submitted action.');
   }
   await page.fill('#turn-input', '');
+}
+
+async function verifyScrollDetachAndResumeThreshold(page, delayNextTurn) {
+  const stage = page.getByTestId('main-stage');
+  await stage.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+  await stage.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: -1, bubbles: true }));
+    element.scrollTop = element.scrollHeight - element.clientHeight - 100;
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+  await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
+  await stage.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: 1, bubbles: true }));
+    element.scrollTop = element.scrollHeight - element.clientHeight - 40;
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+  await page.waitForTimeout(50);
+  if (!(await page.getByTestId('scroll-to-bottom').isVisible().catch(() => false))) {
+    throw new Error('Manual scrolling back to 40px from the bottom should remain paused until 24px or closer.');
+  }
+
+  delayNextTurn();
+  await page.fill('#turn-input', '验证滚动暂停阈值');
+  await page.locator('#turn-input').press('Enter');
+  await page.getByRole('button', { name: '停止生成' }).waitFor();
+  const gapWhileStreaming = await stage.evaluate((element) =>
+    element.scrollHeight - element.scrollTop - element.clientHeight,
+  );
+  if (gapWhileStreaming <= 24) {
+    throw new Error(`Streaming output resumed follow above the 24px threshold: ${gapWhileStreaming}px.`);
+  }
+  await page.getByRole('button', { name: '停止生成' }).click();
+  await page.getByTestId('main-error-banner').waitFor();
+  await page.fill('#turn-input', '');
+
+  await stage.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: 1, bubbles: true }));
+    element.scrollTop = element.scrollHeight - element.clientHeight - 20;
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+  await page.getByTestId('scroll-to-bottom').waitFor({ state: 'hidden' });
 }
 
 async function main() {
@@ -1409,7 +1464,7 @@ async function main() {
     const pausedGap = await stage.evaluate((element) =>
       element.scrollHeight - element.scrollTop - element.clientHeight,
     );
-    if (pausedGap <= 80 || pausedGap < gapAfterManualWheel) {
+    if (pausedGap <= 80) {
       throw new Error(`Timeline followed streaming output after manual scroll: gap ${gapAfterManualWheel}px -> ${pausedGap}px`);
     }
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：上滑后暂停跟随")');
@@ -1418,6 +1473,7 @@ async function main() {
       const element = document.querySelector('[data-testid="main-stage"]');
       return element && element.scrollHeight - element.scrollTop - element.clientHeight <= 80;
     });
+    await verifyScrollDetachAndResumeThreshold(page, () => { delayNextTurnMs = 10000; });
     await page.setViewportSize({ width: 1280, height: 720 });
 
     // 4. Verify explicit Story Review (visible without opening <details>) & Branch A active
@@ -1549,16 +1605,26 @@ async function main() {
     ]);
     const backupFile = path.join(tmpDir, download.suggestedFilename());
     await download.saveAs(backupFile);
+    const mainStage = page.getByTestId('main-stage');
+    await mainStage.hover({ position: { x: 80, y: 200 } });
+    await page.mouse.wheel(0, -1000);
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
     await backupRow.getByTestId('story-menu-trigger').click();
     await backupRow.getByRole('menuitem', { name: '删除故事' }).click();
     await page.waitForFunction((count) =>
       [...document.querySelectorAll('[data-testid="story-list-item"]')]
         .filter((item) => item.getClientRects().length > 0).length < count,
     backupRowCount);
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'hidden' });
     await openSettings(page);
     await page.setInputFiles('[data-testid="backup-import-input"]', backupFile);
     await page.waitForSelector('[data-testid="story-list-item"][data-active="true"]');
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：A. 继续训练声乐")');
+    await page.waitForFunction(() => {
+      const stage = document.querySelector('[data-testid="main-stage"]');
+      return stage && stage.scrollHeight - stage.scrollTop - stage.clientHeight <= 24;
+    });
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'hidden' });
 
     // 8. Collapsible reasoning panel rendering (.reasoning-content)
     const firstAssistant = page.getByTestId('turn-assistant').first();

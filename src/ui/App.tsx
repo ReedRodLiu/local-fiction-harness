@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Square } from 'lucide-react';
 import {
   DEFAULT_MODEL_CONFIG,
@@ -156,6 +156,7 @@ export function App({ runtime }: AppProps) {
   const [isBranchSwitching, setIsBranchSwitching] = useState(false);
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamContent, setStreamContent] = useState('');
+  const [streamingNodeId, setStreamingNodeId] = useState<string | null>(null);
   const [reasoningDurations, setReasoningDurations] = useState<Record<string, number>>({});
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -172,6 +173,8 @@ export function App({ runtime }: AppProps) {
   const branchSwitchBusyRef = useRef(false);
   const branchSwitchTransitionRef = useRef(false);
   const mainStageRef = useRef<HTMLElement | null>(null);
+  const mainStageStoryIdRef = useRef(story.id);
+  const mainStageLeafIdRef = useRef(story.activeLeafNodeId);
   const shouldFollowMainStageRef = useRef(true);
   const userPausedMainStageRef = useRef(false);
   const userScrollIntentUntilRef = useRef(0);
@@ -223,6 +226,7 @@ export function App({ runtime }: AppProps) {
     setIsStreaming(false);
     setStreamReasoning('');
     setStreamContent('');
+    setStreamingNodeId(null);
   }, []);
 
   const refreshStories = useCallback(async () => {
@@ -412,12 +416,54 @@ export function App({ runtime }: AppProps) {
     [harness, story],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const stage = mainStageRef.current;
+    const storyChanged = mainStageStoryIdRef.current !== story.id;
+    if (storyChanged) {
+      mainStageStoryIdRef.current = story.id;
+      mainStageLeafIdRef.current = story.activeLeafNodeId;
+      shouldFollowMainStageRef.current = true;
+      userPausedMainStageRef.current = false;
+      userScrollIntentUntilRef.current = 0;
+      setShowScrollToBottom(false);
+      if (stage) {
+        const frame = window.requestAnimationFrame(() => {
+          const currentStage = mainStageRef.current;
+          if (!currentStage || mainStageStoryIdRef.current !== story.id) return;
+          currentStage.scrollTop = currentStage.scrollHeight;
+          lastMainStageMetricsRef.current = {
+            scrollTop: currentStage.scrollTop,
+            scrollHeight: currentStage.scrollHeight,
+            clientHeight: currentStage.clientHeight,
+          };
+        });
+        return () => window.cancelAnimationFrame(frame);
+      }
+      return;
+    }
+    const activeLeafChanged = mainStageLeafIdRef.current !== story.activeLeafNodeId;
+    mainStageLeafIdRef.current = story.activeLeafNodeId;
+    if (activeLeafChanged && userPausedMainStageRef.current && stage) {
+      stage.scrollTop = Math.min(
+        lastMainStageMetricsRef.current.scrollTop,
+        Math.max(0, stage.scrollHeight - stage.clientHeight),
+      );
+      lastMainStageMetricsRef.current = {
+        scrollTop: stage.scrollTop,
+        scrollHeight: stage.scrollHeight,
+        clientHeight: stage.clientHeight,
+      };
+      return;
+    }
     if (!stage || !shouldFollowMainStageRef.current) return;
     const frame = window.requestAnimationFrame(() => {
       if (shouldFollowMainStageRef.current) {
         stage.scrollTop = stage.scrollHeight;
+        lastMainStageMetricsRef.current = {
+          scrollTop: stage.scrollTop,
+          scrollHeight: stage.scrollHeight,
+          clientHeight: stage.clientHeight,
+        };
       }
     });
     return () => window.cancelAnimationFrame(frame);
@@ -445,52 +491,70 @@ export function App({ runtime }: AppProps) {
       previousMetrics.scrollHeight !== stage.scrollHeight ||
       previousMetrics.clientHeight !== stage.clientHeight;
     const scrolledUp = stage.scrollTop < previousMetrics.scrollTop - 1;
+    const scrolledDown = stage.scrollTop > previousMetrics.scrollTop + 1;
     lastMainStageMetricsRef.current = {
       scrollTop: stage.scrollTop,
       scrollHeight: stage.scrollHeight,
       clientHeight: stage.clientHeight,
     };
-    const shouldFollow = stage.scrollHeight - stage.scrollTop - stage.clientHeight <= 80;
-    const isManualScrollUp = scrolledUp && Date.now() < userScrollIntentUntilRef.current;
-    if (isManualScrollUp && !shouldFollow) {
+    const distanceFromBottom = stage.scrollHeight - stage.scrollTop - stage.clientHeight;
+    const withinFollowRange = distanceFromBottom <= 80;
+    const withinResumeRange = distanceFromBottom <= 24;
+    const hasRecentScrollIntent = Date.now() < userScrollIntentUntilRef.current;
+    const isManualScrollUp = scrolledUp && hasRecentScrollIntent;
+    const isManualScrollDown = scrolledDown && hasRecentScrollIntent;
+    if (isManualScrollUp && !withinFollowRange) {
       shouldFollowMainStageRef.current = false;
       userPausedMainStageRef.current = true;
       setShowScrollToBottom(true);
       return;
     }
-    if (shouldFollow && !(layoutChanged && userPausedMainStageRef.current)) {
-      shouldFollowMainStageRef.current = true;
-      userPausedMainStageRef.current = false;
-      setShowScrollToBottom(false);
-      return;
-    }
     if (userPausedMainStageRef.current) {
+      if (isManualScrollDown && withinResumeRange) {
+        shouldFollowMainStageRef.current = true;
+        userPausedMainStageRef.current = false;
+        setShowScrollToBottom(false);
+        return;
+      }
       shouldFollowMainStageRef.current = false;
       setShowScrollToBottom(true);
       return;
     }
-    if (layoutChanged && !userPausedMainStageRef.current) {
+    if (layoutChanged && shouldFollowMainStageRef.current) {
       shouldFollowMainStageRef.current = true;
       window.requestAnimationFrame(() => {
         const currentStage = mainStageRef.current;
-        if (currentStage) currentStage.scrollTop = currentStage.scrollHeight;
+        if (currentStage) {
+          currentStage.scrollTop = currentStage.scrollHeight;
+          lastMainStageMetricsRef.current = {
+            scrollTop: currentStage.scrollTop,
+            scrollHeight: currentStage.scrollHeight,
+            clientHeight: currentStage.clientHeight,
+          };
+        }
       });
       return;
     }
-    if (!isManualScrollUp && !userPausedMainStageRef.current) {
+    if (withinFollowRange) {
       shouldFollowMainStageRef.current = true;
       setShowScrollToBottom(false);
-      if (scrolledUp) {
-        window.requestAnimationFrame(() => {
-          const currentStage = mainStageRef.current;
-          if (currentStage) currentStage.scrollTop = currentStage.scrollHeight;
-        });
-      }
       return;
     }
-    shouldFollowMainStageRef.current = false;
-    userPausedMainStageRef.current = true;
-    setShowScrollToBottom(true);
+    shouldFollowMainStageRef.current = true;
+    setShowScrollToBottom(false);
+    if (scrolledUp) {
+      window.requestAnimationFrame(() => {
+        const currentStage = mainStageRef.current;
+        if (currentStage) {
+          currentStage.scrollTop = currentStage.scrollHeight;
+          lastMainStageMetricsRef.current = {
+            scrollTop: currentStage.scrollTop,
+            scrollHeight: currentStage.scrollHeight,
+            clientHeight: currentStage.clientHeight,
+          };
+        }
+      });
+    }
   };
 
   const isEditableScrollTarget = (target: EventTarget | null) =>
@@ -522,6 +586,7 @@ export function App({ runtime }: AppProps) {
     setIsStreaming(true);
     setStreamReasoning('');
     setStreamContent('');
+    setStreamingNodeId(null);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -555,6 +620,7 @@ export function App({ runtime }: AppProps) {
         ...durations,
         [result.assistantNode.id]: Math.max(1, Math.round((performance.now() - streamStartedAt) / 1000)),
       }));
+      setStreamingNodeId(result.assistantNode.id);
       setStory(result.story);
       await refreshStories();
       if (!isStale()) {
@@ -575,6 +641,7 @@ export function App({ runtime }: AppProps) {
       if (abortRef.current === controller) {
         abortRef.current = null;
         setIsStreaming(false);
+        setStreamingNodeId(null);
       }
     }
   };
@@ -1151,7 +1218,7 @@ export function App({ runtime }: AppProps) {
           data-testid="main-stage"
           onScroll={handleMainStageScroll}
           onWheelCapture={(event) => {
-            if (event.deltaY < 0) markMainStageScrollIntent(event.target);
+            if (event.deltaY !== 0) markMainStageScrollIntent(event.target);
           }}
           onTouchMoveCapture={(event) => markMainStageScrollIntent(event.target)}
           onKeyDownCapture={(event) => {
@@ -1279,7 +1346,8 @@ export function App({ runtime }: AppProps) {
                           turnNumber={Math.max(1, Math.ceil((index + 1) / 2))}
                           reasoningDurationSeconds={reasoningDurations[node.id]}
                           editableUserNode={editableUserNode}
-                          isStreaming={isStreaming || isSummarizing || isBranchSwitching}
+                          isBusy={isStreaming || isSummarizing || isBranchSwitching}
+                          isStreaming={streamingNodeId === node.id}
                           siblings={getSiblingBranchInfo(story, node.id)}
                           onSelectChoice={(choiceText) => void sendAction(choiceText)}
                           onSwitchBranch={(targetId) => void handleSwitchBranch(targetId)}

@@ -30,6 +30,7 @@ function renderCard(overrides: Partial<Parameters<typeof TurnCard>[0]> = {}) {
     isSetupNode: false,
     turnNumber: 2,
     reasoningDurationSeconds: 4,
+    isBusy: false,
     isStreaming: false,
     siblings: oneSibling,
     onSelectChoice: () => undefined,
@@ -74,6 +75,18 @@ describe('TurnCard', () => {
     expect(markup).toContain('data-testid="reasoning-toggle"');
     expect(markup).toContain('已思考 4 秒');
     expect(markup).not.toMatch(/<details[^>]* open=/);
+  });
+
+  it('keeps completed reasoning collapsed when another operation is busy', () => {
+    const markup = renderCard({
+      isLatestTurn: true,
+      isBusy: true,
+      isStreaming: false,
+    });
+
+    expect(markup).not.toMatch(/<details[^>]* open=/);
+    expect(markup).toContain('disabled=""');
+    expect(markup).toContain('data-testid="reasoning-toggle"');
   });
 
   it('uses the stable branch pager contract for sibling nodes', () => {
