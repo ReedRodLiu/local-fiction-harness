@@ -253,17 +253,41 @@ summary:focus-visible {
 .crash-recovery-card {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 0.75rem;
   width: min(520px, 100%);
-  padding: 1.25rem;
+  padding: 1.5rem;
   border: 1px solid var(--border-hairline);
-  border-radius: 12px;
-  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface-elevated);
+  box-shadow: var(--shadow-floating);
+  text-align: center;
 }
 
 .crash-recovery-card h2,
 .crash-recovery-card p {
   margin: 0;
+}
+
+.crash-recovery-card p {
+  max-width: 36rem;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.crash-recovery-mark {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  background: var(--accent-fiction-soft);
+  color: var(--accent-fiction);
+}
+
+.crash-recovery-card .btn-group {
+  justify-content: center;
+  margin-top: 4px;
 }
 
 .import-panel,
@@ -822,38 +846,6 @@ summary:focus-visible {
   gap: 0.35rem 0.5rem;
 }
 
-.modal-card::backdrop {
-  background: var(--bg-scrim);
-}
-
-.modal-card[open] {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: min(720px, calc(100% - 24px));
-  max-height: 90dvh;
-  padding: 14px;
-  overflow: auto;
-  border: 1px solid var(--border-hairline);
-  border-radius: 10px;
-  color: var(--text-primary);
-  background: var(--bg-surface);
-}
-
-.diagnostics-json {
-  flex: 0 1 38dvh;
-  max-height: 38dvh;
-  min-height: 120px;
-  margin: 0;
-  padding: 8px;
-  overflow: auto;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-all;
-  border-radius: 6px;
-  background: var(--bg-surface-hover);
-}
-
 .connected-key-card {
   display: flex;
   flex-direction: column;
@@ -873,30 +865,40 @@ summary:focus-visible {
   font-size: 0.9rem;
 }
 
-.wizard-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: var(--bg-scrim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  overflow-y: auto;
+.wizard-dialog {
+  width: min(480px, calc(100% - 24px));
+  max-width: 480px;
+  max-height: 90vh;
+  max-height: 90dvh;
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-overlay);
 }
 
-.wizard-dialog {
-  width: min(560px, 100%);
-  max-height: 92vh;
-  overflow-y: auto;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-hairline);
-  border-radius: 14px;
-  padding: 1.1rem 1.2rem;
+.wizard-dialog[open] {
+  display: flex;
+}
+
+.wizard-dialog-content {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
-  box-shadow: var(--shadow-overlay);
+  width: 100%;
+  max-height: 90vh;
+  max-height: 90dvh;
+  padding: 1.1rem 1.2rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.wizard-dialog-content > * {
+  min-width: 0;
+  flex-shrink: 0;
 }
 
 .wizard-header {
@@ -1008,15 +1010,19 @@ summary:focus-visible {
 }
 
 @media (max-width: 760px) {
-  .wizard-backdrop {
-    align-items: flex-end;
-    padding: 0;
+  .wizard-dialog {
+    inset: auto 0 0;
+    width: 100%;
+    max-width: none;
+    max-height: 92vh;
+    max-height: 92dvh;
+    margin: auto 0 0;
+    border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
   }
 
-  .wizard-dialog {
-    width: 100%;
+  .wizard-dialog-content {
     max-height: 92vh;
-    border-radius: 16px 16px 0 0;
-    padding: 1rem;
+    max-height: 92dvh;
+    padding: 1rem 1rem max(1rem, var(--safe-area-bottom));
   }
 }

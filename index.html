@@ -5,6 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="color-scheme" content="light dark" />
     <title>本地优先 AI 文游播放器</title>
+    <script>
+      (() => {
+        try {
+          const storedTheme = localStorage.getItem('lfh.ui.theme');
+          const themePreference = ['system', 'light', 'dark', 'warm'].includes(storedTheme)
+            ? storedTheme
+            : 'system';
+          const storedFontSize = Number(localStorage.getItem('lfh.ui.font_size'));
+          const fontSize = [14, 16, 18, 20].includes(storedFontSize) ? storedFontSize : 16;
+          const theme = themePreference === 'system'
+            ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : themePreference;
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.dataset.themePreference = themePreference;
+          document.documentElement.dataset.fontSize = String(fontSize);
+          document.documentElement.style.setProperty('--font-size', `${fontSize}px`);
+        } catch {
+          document.documentElement.dataset.theme = 'light';
+          document.documentElement.dataset.themePreference = 'system';
+          document.documentElement.dataset.fontSize = '16';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

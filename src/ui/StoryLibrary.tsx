@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { getActiveBranchNodes, projectStoryTreeSpine, type Story } from '../harness/index.ts';
+import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 
 interface StoryLibraryProps {
   stories: Story[];
@@ -22,6 +23,20 @@ export function StoryLibrary({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const closeMenuRef = useRef(() => setOpenMenuId(null));
+  closeMenuRef.current = () => setOpenMenuId(null);
+  useWebHistoryLayer('story-menu', 100, Boolean(openMenuId), closeMenuRef.current);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.closest('.story-menu-container')) setOpenMenuId(null);
+    };
+    window.addEventListener('pointerdown', closeOnOutsidePointer, true);
+    return () => window.removeEventListener('pointerdown', closeOnOutsidePointer, true);
+  }, [openMenuId]);
 
   const commitRename = (id: string) => {
     const trimmed = renameDraft.trim();
@@ -109,7 +124,12 @@ export function StoryLibrary({
                         <MoreHorizontal size={18} strokeWidth={1.75} />
                       </button>
                       {openMenuId === item.id && (
-                        <div className="story-overflow-menu" role="menu" aria-label={`${item.title} 的操作`}>
+                        <div
+                          className="story-overflow-menu"
+                          role="menu"
+                          aria-label={`${item.title} 的操作`}
+                          data-testid="story-overflow-menu"
+                        >
                           <button
                             type="button"
                             role="menuitem"

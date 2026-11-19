@@ -126,6 +126,7 @@ export function StoryTree({
           <button
             type="button"
             className="btn btn-sm"
+            data-testid="story-tree-action"
             aria-expanded={isPanelOpen}
             onClick={() => setIsPanelOpen((prev) => !prev)}
           >
@@ -166,7 +167,7 @@ export function StoryTree({
                         data-testid="story-tree-span-toggle"
                         onClick={() => toggleSpan(item)}
                       >
-                        <span className="badge">{turnLabel}</span>
+                        <span className="badge" data-testid="story-tree-span-label">{turnLabel}</span>
                         <span className="status-text">
                           {isExpanded ? '收起连续区间' : '展开连续区间'}
                         </span>
@@ -313,6 +314,7 @@ export function StoryTree({
                                   <button
                                     type="button"
                                     className="btn btn-sm btn-primary"
+                                    data-testid="story-tree-action"
                                     disabled={renameBusy}
                                     onClick={() => void commitRename(branch.entryNodeId)}
                                   >
@@ -321,6 +323,7 @@ export function StoryTree({
                                   <button
                                     type="button"
                                     className="btn btn-sm"
+                                    data-testid="story-tree-action"
                                     onClick={() => setRenamingEntryId(null)}
                                   >
                                     取消
@@ -332,6 +335,7 @@ export function StoryTree({
                                     <button
                                       type="button"
                                       className="btn btn-sm btn-primary"
+                                      data-testid="story-tree-action"
                                       disabled={isBusy}
                                       onClick={() => onSwitchBranch(branch.entryNodeId)}
                                     >
@@ -342,6 +346,7 @@ export function StoryTree({
                                     <button
                                       type="button"
                                       className="btn btn-sm"
+                                      data-testid="story-tree-action"
                                       disabled={renameBusy}
                                       onClick={() => startRename(branch)}
                                     >
@@ -352,6 +357,7 @@ export function StoryTree({
                                     <button
                                       type="button"
                                       className="btn btn-sm"
+                                      data-testid="story-tree-action"
                                       disabled={isBusy || extractingGistId === branch.entryNodeId}
                                       onClick={() => void triggerGist(branch.entryNodeId)}
                                     >

@@ -1,4 +1,4 @@
-const EXIT_FALLBACK_MS = 180;
+const EXIT_FALLBACK_MS = 220;
 
 export function waitForExitAnimation(element: HTMLElement, onFinish: () => void) {
   let cancelled = false;

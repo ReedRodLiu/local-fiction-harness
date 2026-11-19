@@ -181,7 +181,12 @@ export function LibraryDrawer({
           if (mobileOpen) onCloseMobile();
         }}
       >
-        <div className="library-dialog-sheet" onPointerDown={onSwipeStart} onPointerUp={onSwipeEnd}>
+        <div
+          className="library-dialog-sheet"
+          data-testid="mobile-library-sheet"
+          onPointerDown={onSwipeStart}
+          onPointerUp={onSwipeEnd}
+        >
           {panel('mobile')}
         </div>
       </dialog>

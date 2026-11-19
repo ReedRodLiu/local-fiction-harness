@@ -492,7 +492,7 @@ async function verifySliceOneViewportMatrix(page) {
       await openSettings(page);
       const settingsLayout = await page.evaluate(() => {
         const pageShell = document.querySelector('[data-testid="settings-page"]');
-        const workspace = document.querySelector('.app-workspace');
+        const workspace = document.querySelector('[data-testid="app-workspace"]');
         const sheet = document.querySelector('[data-testid="story-tree-sheet"]');
         return {
           width: pageShell?.getBoundingClientRect().width ?? 0,
@@ -588,7 +588,7 @@ async function assertImportWizardLayout(page, testId, step, viewport) {
   const layout = await shell.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     const progress = element.querySelector('[role="progressbar"]');
-    const footer = element.querySelector('.overlay-page-footer');
+    const footer = element.querySelector('[data-testid="overlay-page-footer"]');
     const footerBounds = footer?.getBoundingClientRect();
     return {
       width: bounds.width,
@@ -978,16 +978,16 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.keyboard.press('End');
     const aiByokWizard = page.getByTestId('deepseek-setup-wizard');
     await aiByokWizard.waitFor();
-    if (
-      await aiFilterTabAtMobile.getAttribute('aria-selected') !== 'true' ||
-      await aiFilterTabAtMobile.getAttribute('tabindex') !== '0' ||
-      await allFilterTab.getAttribute('tabindex') !== '-1' ||
-      await page.evaluate(() => document.activeElement?.id) !== await aiFilterTabAtMobile.getAttribute('id')
-    ) {
-      throw new Error('Opening AI filter BYOK did not select and focus the AI tab.');
-    }
     await aiByokWizard.getByRole('button', { name: '取消' }).click();
     await aiByokWizard.waitFor({ state: 'detached' });
+    if (
+      await allFilterTab.getAttribute('aria-selected') !== 'true' ||
+      await allFilterTab.getAttribute('tabindex') !== '0' ||
+      await aiFilterTabAtMobile.getAttribute('tabindex') !== '-1' ||
+      await page.evaluate(() => document.activeElement?.id) !== await allFilterTab.getAttribute('id')
+    ) {
+      throw new Error('Cancelling AI filter BYOK did not restore the prior filter tab and focus.');
+    }
     const allFilterTabId = await allFilterTab.getAttribute('id');
     await assertSessionFilterTabState(
       page,
@@ -1006,14 +1006,6 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     }
     await page.keyboard.press('ArrowRight');
     await aiByokWizard.waitFor();
-    if (
-      await aiFilterTabAtMobile.getAttribute('aria-selected') !== 'true' ||
-      await aiFilterTabAtMobile.getAttribute('tabindex') !== '0' ||
-      await likelyFilterTab.getAttribute('tabindex') !== '-1' ||
-      await page.evaluate(() => document.activeElement?.id) !== await aiFilterTabAtMobile.getAttribute('id')
-    ) {
-      throw new Error('Opening AI filter BYOK from the Likely tab did not select and focus the AI tab.');
-    }
     await aiByokWizard.getByRole('button', { name: '取消' }).click();
     await aiByokWizard.waitFor({ state: 'detached' });
     const likelyFilterTabId = await likelyFilterTab.getAttribute('id');
@@ -1098,7 +1090,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     const directStartBack = page.getByTestId('import-panel').getByRole('button', { name: '返回' });
     if (
       !(await directStartBack.isDisabled()) ||
-      !(await page.getByTestId('import-panel').locator('.import-step-content').evaluate((element) => element.inert))
+      !(await page.getByTestId('import-step-content').evaluate((element) => element.inert))
     ) {
       throw new Error('Direct story creation left wizard exit controls enabled.');
     }
@@ -1142,7 +1134,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     const confirmBack = page.getByTestId('import-panel').getByRole('button', { name: '返回' });
     if (
       !(await confirmBack.isDisabled()) ||
-      !(await page.getByTestId('import-panel').locator('.import-step-content').evaluate((element) => element.inert))
+      !(await page.getByTestId('import-step-content').evaluate((element) => element.inert))
     ) {
       throw new Error('Blueprint confirmation left the wizard Back action enabled.');
     }
@@ -1204,7 +1196,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     releaseHeldAllRequest();
     await heldAllRequestDone;
     await page.waitForFunction(() =>
-      document.querySelector('.ds-filter-tabs [aria-selected="true"]')?.textContent?.trim() === '全部' &&
+      document.querySelector('[role="tablist"][aria-label="筛选会话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === '全部' &&
       document.querySelectorAll('[data-testid="ds-session-item"]').length === 2,
     );
 
@@ -1233,7 +1225,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     releaseHeldLikelyRequest();
     await heldLikelyRequestDone;
     await page.waitForFunction(() =>
-      document.querySelector('.ds-filter-tabs [aria-selected="true"]')?.textContent?.trim() === '疑似文游' &&
+      document.querySelector('[role="tablist"][aria-label="筛选会话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === '疑似文游' &&
       document.querySelectorAll('[data-testid="ds-session-item"]').length === 1,
     );
 
@@ -1266,14 +1258,14 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     releaseHeldAiRequest();
     await heldAiRequestDone;
     await page.waitForFunction(() =>
-      document.querySelector('.ds-filter-tabs [aria-selected="true"]')?.textContent?.trim() === '全部' &&
+      document.querySelector('[role="tablist"][aria-label="筛选会话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === '全部' &&
       document.querySelector('[data-testid="ds-session-item"]')?.textContent?.includes('模糊开局超窗长档'),
     );
     const aiFilterTab = page.getByRole('tab', { name: 'AI 辅助筛选' });
     await allFilterTab.focus();
     await page.keyboard.press('End');
     await page.waitForFunction(() =>
-      document.querySelector('.ds-filter-tabs [aria-selected="true"]')?.textContent?.trim() === 'AI 辅助筛选',
+      document.querySelector('[role="tablist"][aria-label="筛选会话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === 'AI 辅助筛选',
     );
     if (
       await aiFilterTab.getAttribute('tabindex') !== '0' ||
@@ -1420,6 +1412,454 @@ async function closeSettings(page) {
   if (await settings.isVisible().catch(() => false)) {
     await settings.getByRole('button', { name: '返回' }).click();
     await settings.waitFor({ state: 'detached' });
+  }
+}
+
+async function openWizardFromSettings(page) {
+  await openSettings(page);
+  const settings = page.getByTestId('settings-page');
+  const unconnected = settings.getByTestId('open-setup-wizard-btn');
+  if (await unconnected.isVisible().catch(() => false)) {
+    await unconnected.click();
+  } else {
+    await settings.getByTestId('change-key-btn').click();
+  }
+  await page.getByTestId('deepseek-setup-wizard').waitFor({ state: 'visible' });
+}
+
+async function verifyByokDialogProtection(page, port) {
+  let releaseVerification;
+  const verificationReleased = new Promise((resolve) => {
+    releaseVerification = resolve;
+  });
+  let verificationStarted;
+  const verificationRequested = new Promise((resolve) => {
+    verificationStarted = resolve;
+  });
+  await page.route('https://api.deepseek.com/models', async (route) => {
+    verificationStarted();
+    await verificationReleased;
+    await route.fulfill({ status: 200, json: { data: [{ id: 'deepseek-flash' }] } });
+  });
+
+  await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openWizardFromSettings(page);
+  const wizard = page.getByTestId('deepseek-setup-wizard');
+  if ((await wizard.evaluate((element) => element.tagName)) !== 'DIALOG') {
+    throw new Error('BYOK wizard must use a native <dialog>.');
+  }
+  for (const testId of [
+    'wizard-open-platform-btn',
+    'wizard-paste-btn',
+    'wizard-verify-save-btn',
+  ]) {
+    await wizard.getByTestId(testId).waitFor();
+  }
+  await page.waitForTimeout(250);
+  const mobileBounds = await wizard.boundingBox();
+  const mobileViewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  if (
+    !mobileBounds ||
+    mobileBounds.width < mobileViewport.width - 1 ||
+    Math.abs(mobileBounds.y + mobileBounds.height - mobileViewport.height) > 2
+  ) {
+    throw new Error(`Mobile BYOK dialog is not anchored to the bottom: ${JSON.stringify({ mobileBounds, mobileViewport })}`);
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.waitForFunction(() => window.innerWidth === 1280);
+  await page.waitForTimeout(250);
+  const desktopBounds = await wizard.boundingBox();
+  const desktopViewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  if (
+    !desktopBounds ||
+    Math.abs(desktopBounds.width - 480) > 1 ||
+    Math.abs(desktopBounds.x + desktopBounds.width / 2 - desktopViewport.width / 2) > 1
+  ) {
+    throw new Error(`Desktop BYOK dialog is not centered at 480px: ${JSON.stringify(desktopBounds)}`);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => window.innerWidth === 390);
+  await wizard.locator('#byok-api-key').fill('sk-ui-impl-05-protected');
+  await wizard.getByTestId('wizard-verify-save-btn').click();
+  await verificationRequested;
+  if (!(await wizard.getByRole('button', { name: '关闭引导' }).isDisabled())) {
+    throw new Error('BYOK close control remained enabled during verification.');
+  }
+  await page.keyboard.press('Escape');
+  if (!(await wizard.isVisible()) || !(await wizard.evaluate((dialog) => dialog.open))) {
+    throw new Error('BYOK wizard closed on Escape during verification.');
+  }
+  await page.mouse.click(2, 2);
+  if (!(await wizard.isVisible()) || !(await wizard.evaluate((dialog) => dialog.open))) {
+    const state = await wizard.evaluate((dialog) => ({
+      open: dialog.open,
+      display: getComputedStyle(dialog).display,
+      verifyLabel: dialog.querySelector('[data-testid="wizard-verify-save-btn"]')?.textContent,
+    })).catch(() => null);
+    throw new Error(`BYOK wizard closed during verification: ${JSON.stringify(state)}`);
+  }
+  releaseVerification();
+  await wizard.waitFor({ state: 'detached' });
+  await page.unroute('https://api.deepseek.com/models');
+}
+
+async function verifyDiagnosticsDialog(page, port) {
+  await openSettings(page);
+  await page.getByTestId('open-diagnostics').click();
+  const diagnostics = page.getByTestId('diagnostics-preview');
+  await diagnostics.waitFor({ state: 'visible' });
+  if ((await diagnostics.evaluate((element) => element.tagName)) !== 'DIALOG') {
+    throw new Error('Diagnostics preview must use a native <dialog>.');
+  }
+  const text = await diagnostics.textContent();
+  for (const phrase of ['零正文', '零剧本', '零密钥']) {
+    if (!text?.includes(phrase)) throw new Error(`Diagnostics safety bar omitted ${phrase}.`);
+  }
+  if (!(await diagnostics.locator('#diagnostics-active-story').isChecked())) {
+    throw new Error('Diagnostics active-story skeleton must default to checked.');
+  }
+  for (const name of ['重新载入界面', '导出 .json', '复制到剪贴板']) {
+    await diagnostics.getByRole('button', { name }).waitFor();
+  }
+  await page.keyboard.press('Escape');
+  await diagnostics.waitFor({ state: 'detached' });
+  await page.waitForFunction(() =>
+    document.activeElement?.getAttribute('data-testid') === 'open-diagnostics',
+  );
+  await page.goto(`http://localhost:${port}/tests/e2e/crash-fixture.html`);
+  await page.getByRole('button', { name: '触发测试渲染崩溃' }).click();
+  const crashDiagnostics = page.getByTestId('diagnostics-preview');
+  await crashDiagnostics.waitFor({ state: 'visible' });
+  await crashDiagnostics.getByTestId('diagnostics-close').click();
+  await crashDiagnostics.waitFor({ state: 'detached' });
+  const crashCard = page.getByTestId('crash-recovery-card');
+  await crashCard.waitFor({ state: 'visible' });
+  const crashText = await crashCard.textContent();
+  if (!crashText?.includes('界面遇到意外波动') || !crashText.includes('本地故事存档未受损')) {
+    throw new Error(`Crash recovery card copy is not reassuring: ${crashText}`);
+  }
+  await crashCard.getByRole('button', { name: '重新载入界面' }).waitFor();
+  await crashCard.getByRole('button', { name: '预览并导出脱敏诊断包' }).waitFor();
+}
+
+async function importSyntheticStoryWithoutKey(page, port) {
+  await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+  await startDeepSeekImport(page);
+  await page.setInputFiles('#deepseek-zip-input', {
+    name: 'ui-impl-05.zip',
+    mimeType: 'application/zip',
+    buffer: Buffer.from(buildSyntheticDeepSeekZipE2E()),
+  });
+  await page.getByTestId('ds-session-list').waitFor();
+  await page.getByTestId('ds-session-item').filter({ hasText: '合成宫斗测试档' }).first()
+    .getByTestId('ds-session-preview-trigger').waitFor();
+  await page.getByTestId('ds-session-item').filter({ hasText: '解释一下 Promise.all 的用法' }).first()
+    .locator('input[type="checkbox"]')
+    .uncheck();
+  await page.getByTestId('ds-confirm-import-btn').click();
+  await page.getByTestId('deepseek-import-receipt').waitFor();
+  await page.getByRole('button', { name: '继续这条故事' }).click();
+  await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
+}
+
+async function verifyOverlayHistoryAndShortcuts(page, port) {
+  await importSyntheticStoryWithoutKey(page, port);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openSettings(page);
+  await page.getByTestId('settings-backup-group').getByTestId('export-current-story').waitFor();
+  if (await page.getByTestId('export-current-story').isDisabled()) {
+    throw new Error('Current-story backup remained disabled after opening a story.');
+  }
+  const [currentStoryDownload] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByTestId('export-current-story').click(),
+  ]);
+  const exportedBackup = {
+    name: currentStoryDownload.suggestedFilename(),
+    buffer: fs.readFileSync(await currentStoryDownload.path()),
+  };
+  const exportedStory = JSON.parse(exportedBackup.buffer.toString('utf8'));
+  if (exportedStory.story?.title !== '合成宫斗测试档' || !exportedStory.story?.nodes) {
+    throw new Error('Settings current-story export was not an .lfh.json story backup.');
+  }
+  await closeSettings(page);
+
+  await page.getByTestId('library-drawer-trigger').click();
+  const drawer = page.getByTestId('mobile-library-dialog');
+  await drawer.waitFor({ state: 'visible' });
+  const menuTrigger = page.locator('[data-testid="story-menu-trigger"]:visible').first();
+  await menuTrigger.click();
+  const storyMenu = page.getByTestId('story-overflow-menu');
+  await storyMenu.waitFor({ state: 'visible' });
+  await page.keyboard.press('Escape');
+  await storyMenu.waitFor({ state: 'detached' });
+  await page.waitForFunction(() =>
+    document.activeElement?.getAttribute('data-testid') === 'story-menu-trigger',
+  );
+  if (!(await drawer.evaluate((dialog) => dialog.open))) {
+    throw new Error('Escape on the story menu also closed the underlying drawer.');
+  }
+
+  await menuTrigger.click();
+  await storyMenu.waitFor({ state: 'visible' });
+  await page.evaluate(() => history.back());
+  await storyMenu.waitFor({ state: 'detached' });
+  if (!(await drawer.evaluate((dialog) => dialog.open))) {
+    throw new Error('Browser Back closed the drawer before the top story menu.');
+  }
+
+  await page.evaluate(() => history.back());
+  await drawer.waitFor({ state: 'hidden' });
+  await page.evaluate(() => history.pushState({ uiImpl05HistoryBase: true }, '', '#ui-impl-05-base'));
+  await page.getByTestId('library-drawer-trigger').click();
+  await drawer.waitFor({ state: 'visible' });
+  await page.evaluate(() => history.back());
+  await drawer.waitFor({ state: 'hidden' });
+  if ((await page.evaluate(() => location.hash)) !== '#ui-impl-05-base') {
+    throw new Error('Closing the final overlay consumed the page history entry.');
+  }
+  await page.evaluate(() => history.back());
+  await page.waitForFunction(() => location.hash !== '#ui-impl-05-base');
+
+  await page.getByTestId('library-drawer-trigger').click();
+  await page.getByTestId('mobile-settings-open').click();
+  await page.getByTestId('settings-page').waitFor({ state: 'visible' });
+  await openWizardFromSettings(page);
+  const wizard = page.getByTestId('deepseek-setup-wizard');
+  await page.evaluate(() => history.back());
+  await wizard.waitFor({ state: 'detached' });
+  await page.getByTestId('settings-page').waitFor({ state: 'visible' });
+  await page.evaluate(() => history.back());
+  await page.getByTestId('settings-page').waitFor({ state: 'detached' });
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const toggle = page.getByTestId('desktop-library-toggle');
+  const before = await toggle.getAttribute('aria-pressed');
+  await page.keyboard.press('Meta+b');
+  await page.waitForFunction((previous) =>
+    document.querySelector('[data-testid="desktop-library-toggle"]')?.getAttribute('aria-pressed') !== previous,
+  before);
+  const collapsed = await toggle.getAttribute('aria-pressed');
+  if (await page.evaluate(() => localStorage.getItem('lfh.ui.library_collapsed')) !== collapsed) {
+    throw new Error('Cmd+B did not persist the desktop library collapse preference.');
+  }
+  await page.keyboard.press('Control+b');
+  await page.waitForFunction((previous) =>
+    document.querySelector('[data-testid="desktop-library-toggle"]')?.getAttribute('aria-pressed') !== previous,
+  collapsed);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.getByTestId('library-drawer-trigger').click();
+  await drawer.waitFor({ state: 'visible' });
+  const reducedMotionStyle = await drawer.getByTestId('mobile-library-sheet').evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      animationDuration: style.animationDuration,
+      transitionDuration: style.transitionDuration,
+      transform: style.transform,
+    };
+  });
+  if (reducedMotionStyle.animationDuration !== '0.1s' || reducedMotionStyle.transform !== 'none') {
+    throw new Error(`Reduced-motion drawer still displaces content: ${JSON.stringify(reducedMotionStyle)}`);
+  }
+  await page.evaluate(() => history.back());
+  await drawer.waitFor({ state: 'hidden' });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+
+  await page.getByTestId('library-drawer-trigger').click();
+  const finalMenuTrigger = page.locator('[data-testid="story-menu-trigger"]:visible').first();
+  await finalMenuTrigger.click();
+  await page.getByTestId('story-overflow-menu').getByRole('menuitem', { name: '删除故事' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="story-list-item"]').length === 0);
+  await page.getByTestId('mobile-settings-open').click();
+  await page.getByTestId('settings-page').waitFor({ state: 'visible' });
+  await page.setInputFiles('[data-testid="backup-import-input"]', exportedBackup);
+  await page.getByTestId('settings-page').waitFor({ state: 'detached' });
+  await page.getByTestId('app-topbar').getByRole('heading', { name: '合成宫斗测试档', exact: true }).waitFor();
+}
+
+function parseCssColor(value) {
+  const probe = value.match(/[\d.]+/g)?.map(Number) ?? [0, 0, 0, 1];
+  if (value.startsWith('#')) {
+    const hex = value.slice(1);
+    const expanded = hex.length === 3
+      ? [...hex].map((channel) => `${channel}${channel}`).join('')
+      : hex.slice(0, 6);
+    return [0, 2, 4].map((index) => parseInt(expanded.slice(index, index + 2), 16));
+  }
+  return probe.slice(0, 3);
+}
+
+function contrastRatio(foreground, background) {
+  const luminance = (color) => {
+    const channels = parseCssColor(color).map((channel) => channel / 255);
+    const [red, green, blue] = channels.map((channel) =>
+      channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+    );
+    return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  };
+  const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+async function verifyDisplayPreferenceMatrix(page, port) {
+  await page.route(`http://localhost:${port}/__dev_test_config`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        available: true,
+        proxyBaseUrl: '/__dev_llm_proxy',
+        model: 'deepseek-flash',
+        hasEnvKey: false,
+      }),
+    }),
+  );
+  await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openSettings(page);
+  const settings = page.getByTestId('settings-page');
+  for (const group of [
+    'settings-connection-group',
+    'settings-appearance-group',
+    'settings-backup-group',
+    'settings-diagnostics-group',
+  ]) {
+    await settings.getByTestId(group).waitFor();
+  }
+  await settings.getByTestId('settings-appearance-preview').waitFor();
+  await settings.getByTestId('dev-proxy-toggle').waitFor();
+  const versionText = await settings.getByTestId('settings-app-version').textContent();
+  if (!versionText?.includes('APP_VERSION') || !versionText.match(/\d+\.\d+\.\d+/)) {
+    throw new Error(`Settings did not expose APP_VERSION: ${versionText}`);
+  }
+  for (const [label, value] of [['14px', 14], ['16px', 16], ['18px', 18], ['20px', 20]]) {
+    await settings.getByRole('button', { name: label }).click();
+    const previewSize = await settings.getByTestId('appearance-narrative-preview').evaluate(
+      (element) => getComputedStyle(element).fontSize,
+    );
+    if (previewSize !== `${value}px`) {
+      throw new Error(`Font preview did not update to ${label}: ${previewSize}`);
+    }
+  }
+  const forbiddenSettingsText = await settings.textContent();
+  for (const hiddenField of ['Base URL', 'memoryOnly', '模型名']) {
+    if (forbiddenSettingsText?.includes(hiddenField)) {
+      throw new Error(`Production settings exposed ${hiddenField}.`);
+    }
+  }
+
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await settings.getByTestId('theme-option-system').click();
+  if (await page.evaluate(() => document.documentElement.dataset.theme) !== 'dark') {
+    throw new Error('Follow-system theme did not resolve the dark system preference.');
+  }
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
+
+  for (const theme of ['light', 'dark', 'warm']) {
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 1280, height: 800 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await settings.getByTestId(`theme-option-${theme}`).click();
+      await settings.getByTestId(`theme-option-${theme}`).scrollIntoViewIfNeeded();
+      const layout = await settings.evaluate((element) => {
+        const root = document.documentElement;
+        const option = element.querySelector('[data-testid="theme-option-warm"]');
+        const optionStyle = option ? getComputedStyle(option) : null;
+        const rootStyle = getComputedStyle(root);
+        return {
+          theme: root.dataset.theme,
+          themePreference: root.dataset.themePreference,
+          scrollWidth: root.scrollWidth,
+          clientWidth: root.clientWidth,
+          optionCount: element.querySelectorAll('[data-testid^="theme-option-"]').length,
+          textColor: optionStyle?.color,
+          optionBackground: optionStyle?.backgroundColor,
+          canvasBackground: rootStyle.getPropertyValue('--bg-canvas').trim(),
+          settingsRect: element.getBoundingClientRect().toJSON(),
+        };
+      });
+      if (
+        layout.theme !== theme ||
+        layout.themePreference !== theme ||
+        layout.optionCount !== 4 ||
+        layout.scrollWidth > layout.clientWidth
+      ) {
+        throw new Error(`Display matrix failed for ${theme} ${viewport.width}x${viewport.height}: ${JSON.stringify(layout)}`);
+      }
+      const contrast = contrastRatio(layout.textColor, layout.optionBackground);
+      if (contrast < 4.5) {
+        throw new Error(`Settings text contrast is too low for ${theme}: ${contrast.toFixed(2)}`);
+      }
+    }
+  }
+
+  await settings.getByTestId('theme-option-warm').click();
+  await settings.getByTestId('font-size-option-20').click();
+  await page.reload({ waitUntil: 'networkidle' });
+  if (
+    await page.evaluate(() => document.documentElement.dataset.theme) !== 'warm' ||
+    await page.evaluate(() => document.documentElement.dataset.fontSize) !== '20'
+  ) {
+    throw new Error('Display preferences did not survive reload.');
+  }
+  await openSettings(page);
+  if (
+    await page.getByTestId('theme-option-warm').getAttribute('aria-pressed') !== 'true' ||
+    await page.getByTestId('font-size-option-20').getAttribute('aria-pressed') !== 'true'
+  ) {
+    throw new Error('Settings controls did not restore persisted preferences.');
+  }
+  await page.getByTestId('open-diagnostics').click();
+  const diagnosticBundle = JSON.parse(await page.getByTestId('diagnostics-json').textContent());
+  if (!['story', 'unknown'].includes(diagnosticBundle.appEnv?.activeView)) {
+    throw new Error(`Settings diagnostics exposed activeView=${diagnosticBundle.appEnv?.activeView}`);
+  }
+  await page.keyboard.press('Escape');
+  await page.getByTestId('diagnostics-preview').waitFor({ state: 'detached' });
+  await page.getByTestId('settings-page').getByRole('button', { name: '返回' }).click();
+  await page.getByTestId('settings-page').waitFor({ state: 'detached' });
+
+  await page.evaluate(() => {
+    localStorage.setItem('lfh.ui.theme', 'neon');
+    localStorage.setItem('lfh.ui.font_size', '13');
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  const fallback = await page.evaluate(() => ({
+    theme: document.documentElement.dataset.theme,
+    themePreference: document.documentElement.dataset.themePreference,
+    fontSize: document.documentElement.dataset.fontSize,
+    storedTheme: localStorage.getItem('lfh.ui.theme'),
+    storedFontSize: localStorage.getItem('lfh.ui.font_size'),
+  }));
+  if (
+    fallback.theme !== 'light' ||
+    fallback.themePreference !== 'system' ||
+    fallback.fontSize !== '16'
+  ) {
+    throw new Error(`Invalid legacy display preferences did not fall back safely: ${JSON.stringify(fallback)}`);
+  }
+  await page.unroute(`http://localhost:${port}/__dev_test_config`);
+}
+
+async function runUiImpl05E2E(browser, port) {
+  const context = await newOfflineContext(browser, port, { acceptDownloads: true });
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: `http://localhost:${port}`,
+  });
+  const page = await context.newPage();
+  try {
+    await verifyByokDialogProtection(page, port);
+    await verifyDiagnosticsDialog(page, port);
+    await verifyDisplayPreferenceMatrix(page, port);
+    await verifyOverlayHistoryAndShortcuts(page, port);
+  } finally {
+    await context.close();
   }
 }
 
@@ -1614,7 +2054,7 @@ async function openStoryBlueprint(page) {
 
 async function assertNoSummaryProgress(page, sheet, label) {
   const statuses = [
-    page.locator('[data-testid="app-topbar"] .summary-progress'),
+    page.getByTestId('summary-progress'),
     sheet.getByTestId('companion-summary-progress'),
   ];
   if (await Promise.all(statuses.map((status) => status.isVisible())).then((visible) => visible.some(Boolean))) {
@@ -2048,6 +2488,12 @@ async function main() {
       return;
     }
 
+    if (process.env.LFH_UI_IMPL_05_ONLY === '1') {
+      await runUiImpl05E2E(browser, port);
+      console.log('UI_IMPL_05_E2E_PASSED');
+      return;
+    }
+
     await runImportWizardE2E(browser, port, tmpDir);
     console.log('IMPORT_WIZARD_E2E_PASSED');
 
@@ -2211,11 +2657,11 @@ async function main() {
     await page.click('[data-testid="wizard-verify-save-btn"]');
     await page.getByTestId('deepseek-setup-wizard').waitFor({ state: 'hidden' });
     await reviewSheet.waitFor({ state: 'hidden' });
-    const progress = page.locator('[data-testid="app-topbar"] .summary-progress');
+    const progress = page.getByTestId('summary-progress');
     await progress.waitFor({ state: 'visible' });
     const progressLayout = await page.evaluate(() => {
       const topbar = document.querySelector('[data-testid="app-topbar"]');
-      const status = topbar?.querySelector('.summary-progress');
+      const status = topbar?.querySelector('[data-testid="summary-progress"]');
       const statusRect = status?.getBoundingClientRect();
       const topbarRect = topbar?.getBoundingClientRect();
       return {
@@ -2326,7 +2772,7 @@ async function main() {
     const firstUserCard = page.getByTestId('turn-user').last();
     const firstAssistantCard = page.getByTestId('turn-assistant').last();
     const choiceToolbarOrder = await firstAssistantCard.evaluate((card) => {
-      const toolbar = card.querySelector('.turn-actions');
+      const toolbar = card.querySelector('[data-testid="turn-actions"]');
       const choices = card.querySelector('[data-testid="choice-row"]');
       return Boolean(toolbar && choices &&
         (toolbar.compareDocumentPosition(choices) & Node.DOCUMENT_POSITION_FOLLOWING));
@@ -2362,14 +2808,14 @@ async function main() {
       throw new Error(`Missing measured reasoning duration: ${reasoningLabel}`);
     }
     await firstReasoning.getByTestId('reasoning-toggle').click();
-    await firstAssistantCard.locator('.reasoning-content').waitFor({ state: 'visible' });
+    await firstAssistantCard.getByTestId('reasoning-content').waitFor({ state: 'visible' });
     await firstReasoning.getByTestId('reasoning-toggle').click();
-    await firstAssistantCard.locator('.reasoning-content').waitFor({ state: 'hidden' });
+    await firstAssistantCard.getByTestId('reasoning-content').waitFor({ state: 'hidden' });
 
     const firstHud = firstAssistantCard.getByTestId('hud-panel').first();
     const grid = firstHud.getByTestId('hud-grid');
     await grid.waitFor();
-    if ((await grid.locator('.hud-field-wide').count()) !== 1) {
+    if ((await grid.getByTestId('hud-field-wide').count()) !== 1) {
       throw new Error('Long HUD values should span both grid columns.');
     }
     await firstHud.getByRole('button', { name: '原始格式' }).click();
@@ -2537,7 +2983,7 @@ async function main() {
     if (!(await page.getByTestId('turn-assistant').first().getByTestId('turn-history-toggle').isVisible())) {
       throw new Error('Older narrative operation rows should start collapsed.');
     }
-    if (!(await turn2Card.locator('.turn-body').first().isVisible()) || await turn2Card.locator('.turn-actions').count()) {
+    if (!(await turn2Card.getByTestId('turn-body').first().isVisible()) || await turn2Card.getByTestId('turn-actions').count()) {
       throw new Error('Historical narrative should stay visible while its operation row starts folded.');
     }
     await turn2Card.getByTestId('turn-history-toggle').click();
@@ -2648,17 +3094,17 @@ async function main() {
     });
     await page.getByTestId('scroll-to-bottom').waitFor({ state: 'hidden' });
 
-    // 8. Collapsible reasoning panel rendering (.reasoning-content)
+    // 8. Collapsible reasoning panel rendering
     const firstAssistant = page.getByTestId('turn-assistant').first();
     await firstAssistant.getByTestId('turn-history-toggle').click();
     const reasoningDetails = firstAssistant.getByTestId('reasoning-details');
-    const reasoningContent = firstAssistant.locator('.reasoning-content');
+    const reasoningContent = firstAssistant.getByTestId('reasoning-content');
     if ((await reasoningDetails.evaluate((el) => el.open)) || (await reasoningContent.isVisible())) {
-      throw new Error('Expected .reasoning-details to be collapsed by default');
+      throw new Error('Expected reasoning details to be collapsed by default');
     }
     await reasoningDetails.getByTestId('reasoning-toggle').click();
     if (!(await reasoningDetails.evaluate((el) => el.open)) || !(await reasoningContent.isVisible())) {
-      throw new Error('Expected .reasoning-content visible after expanding');
+      throw new Error('Expected reasoning content visible after expanding');
     }
     const reasoningText = await reasoningContent.textContent();
     if (!reasoningText?.includes('推理(')) {
@@ -2666,7 +3112,7 @@ async function main() {
     }
     await reasoningDetails.getByTestId('reasoning-toggle').click();
     if (await reasoningContent.isVisible()) {
-      throw new Error('Expected .reasoning-content hidden after collapsing');
+      throw new Error('Expected reasoning content hidden after collapsing');
     }
 
     // 9. regenerateNode & rewindToNode UI actions
@@ -2766,6 +3212,11 @@ async function main() {
       await expectTouchTarget(storyMenuItems.nth(index), `mobile story menu item ${index + 1}`);
     }
     await page.keyboard.press('Escape');
+    await page.getByTestId('story-overflow-menu').waitFor({ state: 'detached' });
+    if (!(await page.getByTestId('mobile-library-dialog').evaluate((dialog) => dialog.open))) {
+      throw new Error('Escape closed the mobile drawer before the top story menu.');
+    }
+    await page.keyboard.press('Escape');
     const mobileLibraryDialog = page.getByTestId('mobile-library-dialog');
     await page.waitForFunction(() => {
       const dialog = document.querySelector('[data-testid="mobile-library-dialog"]');
@@ -2790,7 +3241,9 @@ async function main() {
     await checkNoHorizontalOverflow('mobile main view');
     await closeCompanionSheet(page);
     const mobileTree = await openStoryTree(page);
-    const smallStoryActions = mobileTree.locator('.btn-sm:visible');
+    const smallStoryActions = mobileTree.locator(
+      '[data-testid="story-tree-action"]:visible, [data-testid^="story-tree-fork-"]:visible',
+    );
     for (let index = 0; index < await smallStoryActions.count(); index += 1) {
       await expectTouchTarget(smallStoryActions.nth(index), `mobile story action ${index + 1}`);
     }
@@ -3308,7 +3761,7 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     const longSpan = spans.nth(1);
     const longSpanToggle = longSpan.getByTestId('story-tree-span-toggle');
     await longSpanToggle.waitFor({ state: 'visible' });
-    const spanRange = await longSpan.locator('.badge').textContent();
+    const spanRange = await longSpan.getByTestId('story-tree-span-label').textContent();
     const spanRangeMatch = /^第 (\d+)–(\d+) 轮$/.exec(spanRange?.trim() ?? '');
     if (!spanRangeMatch || Number(spanRangeMatch[2]) <= Number(spanRangeMatch[1])) {
       throw new Error(`Expected a multi-turn linear span, got: ${spanRange}`);

@@ -251,7 +251,7 @@ summary:focus-visible {
   overflow: hidden;
   background: var(--bg-drawer);
   touch-action: pan-y;
-  animation: drawer-enter 180ms ease-out both;
+  animation: drawer-enter var(--motion-duration) var(--motion-easing) both;
 }
 @keyframes drawer-enter { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 
@@ -336,11 +336,11 @@ summary:focus-visible {
   color: var(--text-primary);
   opacity: 1;
   transform: translateY(0);
-  transition: opacity 180ms ease, transform 180ms ease, height 180ms ease;
+  transition: opacity var(--motion-duration) var(--motion-easing), transform var(--motion-duration) var(--motion-easing), height var(--motion-duration) var(--motion-easing);
 }
 @supports (transition-behavior: allow-discrete) {
   .modal-dialog,
-  .sheet-dialog { transition: opacity 180ms ease, transform 180ms ease, height 180ms ease, display 180ms allow-discrete, overlay 180ms allow-discrete; }
+  .sheet-dialog { transition: opacity var(--motion-duration) var(--motion-easing), transform var(--motion-duration) var(--motion-easing), height var(--motion-duration) var(--motion-easing), display var(--motion-duration) allow-discrete, overlay var(--motion-duration) allow-discrete; }
 }
 .modal-dialog[data-closing="true"],
 .sheet-dialog[data-closing="true"] { opacity: 0; transform: translateY(12px); }
@@ -371,12 +371,35 @@ summary:focus-visible {
   .sheet-dialog[open] { opacity: 0; transform: translateY(12px); }
 }
 
-.library-dialog[data-closing="true"] .library-dialog-sheet { animation: drawer-exit 180ms ease-in both; }
+.library-dialog[data-closing="true"] .library-dialog-sheet { animation: drawer-exit var(--motion-duration) var(--motion-easing) both; }
 @keyframes drawer-exit { from { transform: translateX(0); } to { transform: translateX(-100%); } }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 100ms !important;
+    transition-duration: 100ms !important;
+    transition-property: opacity !important;
+  }
+  .modal-dialog,
+  .sheet-dialog,
+  .library-dialog-sheet,
+  .diagnostics-dialog,
+  .wizard-dialog {
+    transform: none !important;
+  }
   .sheet-dialog[data-dragging="true"] { transition: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @starting-style {
+    .modal-dialog[open],
+    .sheet-dialog[open],
+    .library-dialog[open] .library-dialog-sheet {
+      opacity: 0;
+      transform: none;
+    }
+  }
 }
 
 @media (min-width: 768px) {

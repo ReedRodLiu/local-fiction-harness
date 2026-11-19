@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { ShieldCheck } from 'lucide-react';
 import type { DiagnosticBundle, PlatformRuntime } from '../harness/index.ts';
 import { buildCrashDiagnosticBundle } from './crashDiagnosticContext.ts';
 import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
@@ -66,20 +67,28 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     if (!this.state.hasError) return this.props.children;
 
     return (
-      <main className="crash-recovery" role="alertdialog" aria-modal="true" aria-labelledby="crash-title">
-        <section className="crash-recovery-card">
-          <h2 id="crash-title">应用发生严重错误</h2>
-          <p>本地故事存档保存在设备上，重新载入界面不会删除已保存的故事。</p>
+      <main className="crash-recovery" role="alert" aria-labelledby="crash-title" data-testid="crash-recovery">
+        <section className="crash-recovery-card" data-testid="crash-recovery-card">
+          <span className="crash-recovery-mark" aria-hidden="true">
+            <ShieldCheck size={26} strokeWidth={1.75} />
+          </span>
+          <h2 id="crash-title">界面遇到意外波动</h2>
+          <p>本地故事存档未受损。你可以重新载入界面，或先预览并导出脱敏诊断包。</p>
           <div className="btn-group">
             <button
               type="button"
               className="btn btn-primary"
+              onClick={() => window.location.reload()}
+            >
+              重新载入界面
+            </button>
+            <button
+              type="button"
+              className="btn"
+              data-testid="crash-open-diagnostics"
               onClick={() => this.setState({ showDiagnostics: true })}
             >
-              重新打开诊断预览
-            </button>
-            <button type="button" className="btn" onClick={() => window.location.reload()}>
-              重新载入界面
+              预览并导出脱敏诊断包
             </button>
           </div>
         </section>

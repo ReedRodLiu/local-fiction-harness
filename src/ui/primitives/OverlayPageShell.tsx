@@ -55,7 +55,7 @@ export function OverlayPageShell({
         </div>
       )}
       <div className="overlay-page-content">{children}</div>
-      {footer && <footer className="overlay-page-footer">{footer}</footer>}
+      {footer && <footer className="overlay-page-footer" data-testid="overlay-page-footer">{footer}</footer>}
     </section>
   );
 }

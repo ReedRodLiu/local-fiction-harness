@@ -130,6 +130,7 @@ function HudPanel({ code }: { code: string }) {
                 <div
                   key={`${field.key}-${index}`}
                   className={`hud-field${field.isWide ? ' hud-field-wide' : ''}`}
+                  data-testid={field.isWide ? 'hud-field-wide' : undefined}
                 >
                   <dt>{field.key}</dt>
                   <dd>{field.value}</dd>
@@ -167,7 +168,7 @@ export function MessageContent({
         seg.type === 'codeblock' ? (
           <HudPanel key={`code-${idx}`} code={seg.code} />
         ) : (
-          <div key={`text-${idx}`} className="turn-body">
+          <div key={`text-${idx}`} className="turn-body" data-testid="turn-body">
             {idx === finalTextSegment
               ? stripTrailingChoices(seg.content, visibleChoices)
               : seg.content}
