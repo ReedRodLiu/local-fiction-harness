@@ -83,7 +83,7 @@
   max-width: 80%;
   padding: 10px 14px;
   border: 1px solid var(--border-user-bubble);
-  border-radius: 20px 20px 6px 20px;
+  border-radius: var(--radius-lg) var(--radius-lg) 6px var(--radius-lg);
   background: var(--bg-user-bubble);
   color: var(--text-user-bubble);
   font-weight: 500;
@@ -100,7 +100,7 @@
   min-height: 44px;
   padding: 11px 14px;
   border: 1px solid var(--border-user-bubble);
-  border-radius: 20px 20px 6px 20px;
+  border-radius: var(--radius-lg) var(--radius-lg) 6px var(--radius-lg);
   background: var(--bg-user-bubble);
   color: var(--text-user-bubble);
   font-size: 13px;

@@ -996,7 +996,20 @@ async function runImportWizardE2E(browser, port, tmpDir) {
         IDBObjectStore.prototype.put = originalPut;
       };
     });
+    await holdNextStoryStorageCommit(page);
     await page.getByTestId('ds-confirm-import-btn').click();
+    await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
+    await page.waitForFunction(() => history.state?.lfhOverlayDepth === 1);
+    try {
+      await page.goBack();
+      await page.waitForFunction(() => history.state?.lfhOverlayDepth === 1, null, { timeout: 3000 });
+      const wizard = page.getByTestId('deepseek-import-panel');
+      if (!(await wizard.isVisible()) || !(await wizard.getByRole('button', { name: '返回' }).isDisabled())) {
+        throw new Error('History Back left the DeepSeek import wizard while storage was committing.');
+      }
+    } finally {
+      await releaseHeldStoryStorageCommit(page);
+    }
     const importError = page.getByTestId('import-error');
     const retryImport = importError.getByRole('button', { name: /重试.*未完成/ });
     await retryImport.waitFor();

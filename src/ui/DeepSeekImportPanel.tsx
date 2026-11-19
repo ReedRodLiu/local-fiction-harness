@@ -100,6 +100,7 @@ interface DeepSeekImportPanelProps {
     selectedSessionIds: readonly string[],
     scriptRangeOverrides: Record<string, ScriptTurnRange>,
   ) => Promise<DeepSeekImportBatchResult>;
+  onImportBusyChange: (busy: boolean) => void;
   onContinueStory: (storyId: string) => void;
   diagnostics: DiagnosticCollector;
   onPackageDiagnostics: () => void;
@@ -114,6 +115,7 @@ export function DeepSeekImportPanel({
   byokOpen,
   onRequireByok,
   onImportBatch,
+  onImportBusyChange,
   onContinueStory,
   diagnostics,
   onPackageDiagnostics,
@@ -511,6 +513,7 @@ export function DeepSeekImportPanel({
     const startedAt = Date.now();
     setImportError(null);
     setIsImporting(true);
+    onImportBusyChange(true);
     try {
       for (const sessionId of pendingSessionIds) {
         const result = await onImportBatch(zipBytes, [sessionId], scriptRangeOverrides);
@@ -549,6 +552,7 @@ export function DeepSeekImportPanel({
       });
     } finally {
       setIsImporting(false);
+      onImportBusyChange(false);
     }
   };
 

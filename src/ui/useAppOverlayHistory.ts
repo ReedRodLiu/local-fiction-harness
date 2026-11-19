@@ -12,6 +12,7 @@ interface AppOverlayHistoryOptions {
   onSettingsBack: () => void;
   showImport: boolean;
   onImportBack: () => void;
+  canCloseImport: () => boolean;
   returnFocus: () => HTMLElement | null;
 }
 
@@ -27,6 +28,7 @@ export function useAppOverlayHistory({
   onSettingsBack,
   showImport,
   onImportBack,
+  canCloseImport,
   returnFocus,
 }: AppOverlayHistoryOptions) {
   useWebHistoryLayer(
@@ -49,5 +51,5 @@ export function useAppOverlayHistory({
   );
   useWebHistoryLayer('mobile-library', 30, mobileLibraryOpen, onMobileLibraryBack);
   useWebHistoryLayer('settings', 20, showSettings, onSettingsBack, true, undefined, returnFocus);
-  useWebHistoryLayer('import-view', 20, showImport, onImportBack, true, undefined, returnFocus);
+  useWebHistoryLayer('import-view', 20, showImport, onImportBack, true, canCloseImport, returnFocus);
 }

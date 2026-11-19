@@ -50,6 +50,7 @@ interface ImportPanelProps {
     selectedSessionIds: readonly string[],
     scriptRangeOverrides: Record<string, ScriptTurnRange>,
   ) => Promise<DeepSeekImportBatchResult>;
+  onDeepSeekImportBusyChange: (busy: boolean) => void;
   onContinueStory: (storyId: string) => void;
   diagnostics: DiagnosticCollector;
   onPackageDiagnostics: () => void;
@@ -87,6 +88,7 @@ export function ImportPanel({
   extractBlueprint,
   onConfirmStory,
   onImportDeepSeekBatch,
+  onDeepSeekImportBusyChange,
   onContinueStory,
   diagnostics,
   onPackageDiagnostics,
@@ -292,6 +294,7 @@ export function ImportPanel({
         byokOpen={byokOpen}
         onRequireByok={onRequireByok}
         onImportBatch={onImportDeepSeekBatch}
+        onImportBusyChange={onDeepSeekImportBusyChange}
         onContinueStory={onContinueStory}
         diagnostics={diagnostics}
         onPackageDiagnostics={onPackageDiagnostics}

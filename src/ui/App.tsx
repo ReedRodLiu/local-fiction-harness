@@ -143,6 +143,7 @@ export function App({ runtime }: AppProps) {
   } = usePresentationOverlayState();
   const [importMode, setImportMode] = useState<ImportMode>('deepseek');
   const [importResetKey, setImportResetKey] = useState(0);
+  const deepSeekImportBusyRef = useRef(false);
   const [libraryCollapsed, setLibraryCollapsed] = useLibraryCollapsedPreference();
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardMounted, setWizardMounted] = useState(false);
@@ -398,6 +399,7 @@ export function App({ runtime }: AppProps) {
     onSettingsBack: () => setShowSettings(false),
     showImport,
     onImportBack: () => setShowImport(false),
+    canCloseImport: () => !deepSeekImportBusyRef.current,
     returnFocus: () => overlayReturnFocusRef.current,
   });
 
@@ -1393,6 +1395,7 @@ export function App({ runtime }: AppProps) {
               }
               onConfirmStory={handleConfirmImportedStory}
               onImportDeepSeekBatch={handleImportDeepSeekBatch}
+              onDeepSeekImportBusyChange={(busy) => { deepSeekImportBusyRef.current = busy; }}
               diagnostics={runtime.diagnostics}
               onPackageDiagnostics={() => openDiagnostics('error_banner')}
               onContinueStory={(storyId) => void handleContinueImportedStory(storyId)}
