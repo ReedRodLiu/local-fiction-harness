@@ -449,30 +449,181 @@ async function selectStoryByTitle(page, title) {
   await row.getByTestId('story-select-button').click();
 }
 
-async function openStoryTree(page) {
+const verifiedMobileSheetInteractions = new WeakSet();
+
+async function openCompanionSheet(page) {
   const sheet = page.getByTestId('story-tree-sheet');
   if (!(await sheet.isVisible().catch(() => false))) {
     await page.getByTestId('open-story-tree').click();
     await sheet.waitFor({ state: 'visible' });
+    const bounds = await sheet.evaluate((dialog) => dialog.getBoundingClientRect().toJSON());
+    if ((await page.evaluate(() => window.innerWidth)) < 768) {
+      const expectedHeight = await page.evaluate(() => window.innerHeight * 0.74);
+      if (Math.abs(bounds.height - expectedHeight) > 8) {
+        throw new Error(`Mobile companion sheet should open at 74dvh: ${bounds.height}px vs ${expectedHeight}px.`);
+      }
+    } else {
+      const viewportWidth = await page.evaluate(() => window.innerWidth);
+      const expectedWidth = Math.min(440, viewportWidth);
+      if (Math.abs(bounds.width - expectedWidth) > 1 || Math.abs(bounds.right - viewportWidth) > 1) {
+        throw new Error(`Desktop companion sheet should occupy a 440px right rail: ${JSON.stringify(bounds)}.`);
+      }
+    }
   }
+  const tablist = sheet.getByRole('tablist', { name: '故事信息' });
+  const companionTabs = await Promise.all(
+    ['剧情树', '剧情回顾', '故事蓝图'].map((name) =>
+      sheet.getByRole('tab', { name }).count(),
+    ),
+  );
+  if ((await tablist.count()) !== 1 || companionTabs.some((count) => count !== 1)) {
+    throw new Error('The companion sheet must expose its story tree, review, and blueprint tabs');
+  }
+  return sheet;
+}
+
+async function openCompanionTab(page, name) {
+  const sheet = await openCompanionSheet(page);
+  const tab = sheet.getByRole('tab', { name });
+  if ((await tab.getAttribute('aria-selected')) !== 'true') await tab.click();
+  return sheet;
+}
+
+async function openStoryTree(page) {
+  let sheet = await openCompanionTab(page, '剧情树');
   if ((await page.evaluate(() => window.innerWidth)) < 768) {
-    const expand = sheet.getByRole('button', { name: '展开剧情面板' });
-    await expectTouchTarget(expand, 'mobile sheet size toggle');
+    const dragHandle = sheet.getByTestId('sheet-drag-handle');
+    await expectTouchTarget(dragHandle, 'mobile sheet drag handle');
     await expectTouchTarget(sheet.getByRole('button', { name: '关闭剧情面板' }), 'mobile sheet close');
-    await expand.click();
+    if (!(await sheet.evaluate((dialog) => dialog.classList.contains('is-expanded')))) {
+      await dragHandle.click();
+    }
     await page.waitForFunction(() => document.querySelector('[data-testid="story-tree-sheet"]')?.classList.contains('is-expanded'));
     await page.waitForTimeout(200);
     const height = await sheet.evaluate((dialog) => dialog.getBoundingClientRect().height);
     if (height < await page.evaluate(() => window.innerHeight * 0.9)) {
       throw new Error(`Expanded mobile story sheet is shorter than 90vh: ${height}px.`);
     }
-    await sheet.getByRole('button', { name: '收起剧情面板' }).click();
-    await page.waitForFunction(() => !document.querySelector('[data-testid="story-tree-sheet"]')?.classList.contains('is-expanded'));
+    if (!verifiedMobileSheetInteractions.has(page)) {
+      const waitUntilSheetCollapsed = () => page.waitForFunction(() => {
+        const dialog = document.querySelector('[data-testid="story-tree-sheet"]');
+        return Boolean(
+          dialog &&
+          !dialog.classList.contains('is-expanded') &&
+          dialog.getBoundingClientRect().height < window.innerHeight * 0.8,
+        );
+      });
+      await dragHandle.focus();
+      await page.keyboard.press('ArrowDown');
+      await waitUntilSheetCollapsed();
+      await page.keyboard.press('ArrowUp');
+      await page.waitForFunction(() => document.querySelector('[data-testid="story-tree-sheet"]')?.classList.contains('is-expanded'));
+      await page.keyboard.press('ArrowDown');
+      await waitUntilSheetCollapsed();
+      const fallbackStartHeight = await sheet.evaluate((dialog) => dialog.getBoundingClientRect().height);
+      await dragHandle.dispatchEvent('pointerdown', {
+        bubbles: true,
+        pointerId: 91,
+        pointerType: 'mouse',
+        isPrimary: true,
+        button: 0,
+        clientY: 500,
+      });
+      await dragHandle.dispatchEvent('pointermove', {
+        bubbles: true,
+        pointerId: 91,
+        pointerType: 'mouse',
+        isPrimary: true,
+        clientY: 440,
+      });
+      const fallbackDrag = await sheet.evaluate((dialog) => ({
+        dragging: dialog.dataset.dragging,
+        growth: Number.parseFloat(dialog.style.getPropertyValue('--sheet-grow-by')),
+      }));
+      if (fallbackDrag.dragging !== 'true' || fallbackDrag.growth < 40) {
+        throw new Error(`Pointer event fallback did not track the drag: ${JSON.stringify({ fallbackStartHeight, ...fallbackDrag })}.`);
+      }
+      await dragHandle.dispatchEvent('pointercancel', {
+        bubbles: true,
+        pointerId: 91,
+        pointerType: 'mouse',
+        isPrimary: true,
+      });
+      await page.waitForFunction(() => !document.querySelector('[data-testid="story-tree-sheet"]')?.dataset.dragging);
+      await waitUntilSheetCollapsed();
+      if (await sheet.evaluate((dialog) => dialog.classList.contains('is-expanded'))) {
+        throw new Error('Cancelling a sheet drag should restore the collapsed height.');
+      }
+
+      const handleBounds = await dragHandle.boundingBox();
+      if (!handleBounds) throw new Error('The sheet drag handle has no visible bounds.');
+      const startX = handleBounds.x + handleBounds.width / 2;
+      const startY = handleBounds.y + handleBounds.height / 2;
+      await page.mouse.move(startX, startY);
+      await page.mouse.down();
+      await page.mouse.move(startX, startY - 60, { steps: 4 });
+      const liveDrag = await sheet.evaluate((dialog) => ({
+        dragging: dialog.dataset.dragging,
+        growth: Number.parseFloat(dialog.style.getPropertyValue('--sheet-grow-by')),
+      }));
+      if (liveDrag.dragging !== 'true' || liveDrag.growth < 45) {
+        throw new Error(`Dragging should update the sheet height before release: ${JSON.stringify(liveDrag)}.`);
+      }
+      await page.mouse.up();
+      await page.waitForFunction(() => {
+        const dialog = document.querySelector('[data-testid="story-tree-sheet"]');
+        return Boolean(
+          dialog?.classList.contains('is-expanded') &&
+          Math.abs(dialog.getBoundingClientRect().height - window.innerHeight * 0.92) < 12,
+        );
+      });
+
+      const expandedBounds = await dragHandle.boundingBox();
+      if (!expandedBounds) throw new Error('The expanded sheet drag handle has no visible bounds.');
+      const closeX = expandedBounds.x + expandedBounds.width / 2;
+      const closeY = expandedBounds.y + expandedBounds.height / 2;
+      await page.mouse.move(closeX, closeY);
+      await page.mouse.down();
+      await page.mouse.move(closeX, closeY + 90, { steps: 4 });
+      await page.mouse.up();
+      await sheet.waitFor({ state: 'hidden' });
+
+      sheet = await openCompanionTab(page, '剧情树');
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.mouse.click(10, 10);
+      await sheet.waitFor({ state: 'hidden' });
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+      sheet = await openCompanionTab(page, '剧情树');
+      verifiedMobileSheetInteractions.add(page);
+    }
   }
   return sheet;
 }
 
-async function closeStoryTree(page) {
+async function openStoryReview(page) {
+  return openCompanionTab(page, '剧情回顾');
+}
+
+async function openStoryBlueprint(page) {
+  return openCompanionTab(page, '故事蓝图');
+}
+
+async function readActivePlotSummary(page) {
+  const sheet = await openStoryReview(page);
+  const text = await sheet.getByTestId('active-plot-summary').textContent();
+  await closeCompanionSheet(page);
+  return text;
+}
+
+async function waitForActivePlotSummary(page, text) {
+  const sheet = await openStoryReview(page);
+  await sheet.getByTestId('active-plot-summary').getByText(text, { exact: false }).waitFor();
+  const summary = await sheet.getByTestId('active-plot-summary').textContent();
+  await closeCompanionSheet(page);
+  return summary;
+}
+
+async function closeCompanionSheet(page) {
   const sheet = page.getByTestId('story-tree-sheet');
   if (await sheet.isVisible().catch(() => false)) {
     await sheet.getByRole('button', { name: '关闭剧情面板' }).click();
@@ -482,6 +633,10 @@ async function closeStoryTree(page) {
     });
     await sheet.waitFor({ state: 'hidden' });
   }
+}
+
+async function closeStoryTree(page) {
+  await closeCompanionSheet(page);
 }
 
 async function verifyModalDialogLifecycle(context, port) {
@@ -855,11 +1010,15 @@ async function main() {
     await page.click('button:has-text("继续这条故事")');
     await page.waitForSelector('.turn-card.assistant:has-text("门后传来脚步声")');
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.click('button:has-text("补算剧情摘要")');
+    let reviewSheet = await openStoryReview(page);
+    await reviewSheet.getByTestId('summary-needed-indicator').waitFor({ state: 'visible' });
+    await reviewSheet.getByRole('button', { name: '立即补算剧情摘要' }).click();
     await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
     await page.fill('#byok-api-key', 'sk-e2e-inline');
     delayNextSummaryMs = 1200;
     await page.click('[data-testid="wizard-verify-save-btn"]');
+    await page.getByTestId('deepseek-setup-wizard').waitFor({ state: 'hidden' });
+    await reviewSheet.waitFor({ state: 'hidden' });
     const progress = page.locator('[data-testid="app-topbar"] .summary-progress');
     await progress.waitFor({ state: 'visible' });
     const progressLayout = await page.evaluate(() => {
@@ -877,11 +1036,12 @@ async function main() {
     if (progressLayout.display === 'none' || progressLayout.statusWidth <= 0 || !progressLayout.insideTopbar || progressLayout.storySheetOpen) {
       throw new Error(`Mobile summary progress is not visible in the top bar while the sheet is closed: ${JSON.stringify(progressLayout)}`);
     }
-    await page.waitForSelector('[data-testid="active-plot-summary"]:has-text("【激活线压缩摘要】")');
+    await waitForActivePlotSummary(page, '【激活线压缩摘要】');
     await page.setViewportSize({ width: 1280, height: 720 });
-    await page.locator('details summary:has-text("故事蓝图与原始剧本锚定")').click();
-    await page.click('button:has-text("补拆蓝图")');
-    await page.waitForSelector('button:has-text("补拆蓝图")', { state: 'detached' });
+    const blueprintSheet = await openStoryBlueprint(page);
+    await blueprintSheet.getByTestId('story-blueprint-card').getByRole('button', { name: '补拆完整故事蓝图' }).click();
+    await blueprintSheet.getByRole('button', { name: '补拆蓝图中…' }).waitFor({ state: 'detached' });
+    await closeCompanionSheet(page);
 
     // 0b. Keyed imports: strong turn-1 skips boundary locator; ambiguous runs boundary locator once + compresses + carries both on continuation
     boundaryCallCount = 0;
@@ -910,7 +1070,7 @@ async function main() {
     }
     await page.click('button:has-text("继续这条故事")');
     await page.waitForSelector('.turn-card.assistant:has-text("门后传来脚步声")');
-    const ambigSummary = await page.locator('[data-testid="active-plot-summary"]').textContent();
+    const ambigSummary = await readActivePlotSummary(page);
     if (!ambigSummary?.includes('【激活线压缩摘要】')) {
       throw new Error(`Expected compressed active summary in StoryReview, got: ${ambigSummary}`);
     }
@@ -979,14 +1139,38 @@ async function main() {
     await page.waitForSelector('.turn-card.assistant:has-text("回执：A. 继续训练声乐")');
 
     // 4. Verify explicit Story Review (visible without opening <details>) & Branch A active
-    const reviewVisible = await page.locator('[data-testid="story-review"]').isVisible();
+    reviewSheet = await openStoryReview(page);
+    const reviewVisible = await reviewSheet.getByTestId('story-review').isVisible();
     if (!reviewVisible) {
       throw new Error('Expected Story Review panel to be explicitly visible');
     }
-    const sumA = await page.locator('[data-testid="active-plot-summary"]').textContent();
+    const sumA = await reviewSheet.getByTestId('active-plot-summary').textContent();
     if (!sumA?.includes('【分支A摘要】含黑市线索')) {
       throw new Error(`Expected Branch A summary, got: ${sumA}`);
     }
+    await closeCompanionSheet(page);
+
+    const savedBlueprintSheet = await openStoryBlueprint(page);
+    const blueprintCard = savedBlueprintSheet.getByTestId('story-blueprint-card');
+    await blueprintCard.getByRole('heading', { name: 'E2E训练营故事' }).waitFor();
+    await blueprintCard.getByText('每轮输出状态面板', { exact: true }).waitFor();
+    await blueprintCard.getByText('导师林（声乐导师）', { exact: true }).waitFor();
+    await blueprintCard.getByText('不可缺席公演', { exact: true }).waitFor();
+    const contextDetails = savedBlueprintSheet.getByTestId('context-overview');
+    if (await contextDetails.evaluate((element) => element.open)) {
+      throw new Error('Three-zone context details should be collapsed by default.');
+    }
+    await blueprintCard.getByRole('button', { name: '微调蓝图' }).click();
+    await page.fill('#tweak-protagonist', '练习生甲（已微调）');
+    await page.fill('#tweak-taboos', '不可缺席公演\n未经同意不离开训练营');
+    await blueprintCard.getByRole('button', { name: '保存蓝图微调' }).click();
+    await blueprintCard.getByText('练习生甲（已微调）', { exact: true }).waitFor();
+    await blueprintCard.getByText('未经同意不离开训练营', { exact: true }).waitFor();
+    await contextDetails.locator('summary').click();
+    if (!(await contextDetails.evaluate((element) => element.open))) {
+      throw new Error('Three-zone context details did not open on request.');
+    }
+    await closeCompanionSheet(page);
 
     // 5. Rewind & edit Turn 2 user node to fork Branch B -> verify Plot Summary rolled back & Story Tree fork appears
     const turn2Card = page.locator('.turn-card.user').nth(1);
@@ -994,7 +1178,7 @@ async function main() {
     await turn2Card.locator('textarea').fill('第二轮改道休息');
     await turn2Card.locator('button:has-text("提交并生成新分支")').click();
     await page.waitForSelector('.turn-card.assistant:has-text("回执：第二轮改道休息")');
-    const sumB = await page.locator('[data-testid="active-plot-summary"]').textContent();
+    const sumB = await readActivePlotSummary(page);
     if (sumB?.includes('黑市线索')) {
       throw new Error(`Branch A leaked into Branch B summary: ${sumB}`);
     }
@@ -1011,19 +1195,21 @@ async function main() {
       throw new Error(`Expected fork badge ⑂ 2 in Story Tree, got: ${forkBtnText}`);
     }
     await forkBtn.click();
-    await storyTreeSheet.locator('.story-tree-siblings').waitFor();
-    const siblingB = storyTreeSheet.locator('.story-tree-sibling.active');
+    await storyTreeSheet.getByTestId('story-tree-branches').waitFor();
+    const siblingB = storyTreeSheet.locator('[data-testid^="story-tree-branch-"][data-active="true"]');
     await siblingB.locator('button:has-text("重命名")').click();
     await siblingB.locator('input[aria-label="分支名称"]').fill('休息支线');
     await siblingB.locator('button:has-text("保存名称")').click();
-    await page.waitForSelector('[data-testid="story-review"]:has-text("休息支线")');
+    await storyTreeSheet.getByRole('tab', { name: '剧情回顾' }).click();
+    await storyTreeSheet.getByTestId('story-review').getByText('休息支线', { exact: false }).waitFor();
+    await storyTreeSheet.getByRole('tab', { name: '剧情树' }).click();
 
     // On-demand AI gist on active sibling branch
     await siblingB.locator('button:has-text("AI 提炼梗概")').click();
-    await storyTreeSheet.locator('.story-tree-gist:has-text("AI提炼：改道休息线稳妥推进")').waitFor();
+    await siblingB.getByText('AI 梗概：AI提炼：改道休息线稳妥推进', { exact: false }).waitFor();
 
     // Switch back to Branch A via Story Tree sibling button
-    const nonActiveSibling = storyTreeSheet.locator('.story-tree-sibling:not(.active)').first();
+    const nonActiveSibling = storyTreeSheet.locator('[data-testid^="story-tree-branch-"][data-active="false"]').first();
     await nonActiveSibling.locator('button:has-text("切换至此分支")').click();
     await page.waitForSelector('.turn-card.assistant:has-text("回执：A. 继续训练声乐")');
     await closeStoryTree(page);
@@ -1033,7 +1219,7 @@ async function main() {
     await openSettings(page);
     await page.waitForSelector('[data-testid="connected-key-mask"]');
     await closeSettings(page);
-    const sumAfterReload = await page.locator('[data-testid="active-plot-summary"]').textContent();
+    const sumAfterReload = await readActivePlotSummary(page);
     const pagerAfterReload = await page.locator('.turn-card.user').nth(1).locator('.branch-pager').textContent();
     if (!sumAfterReload?.includes('【分支A摘要】含黑市线索') || !pagerAfterReload?.includes('1 / 2')) {
       throw new Error('IndexedDB reload did not restore branch tree & summary');
@@ -1041,7 +1227,7 @@ async function main() {
     // Verify renamed Branch B survived reload in Story Tree
     const reloadedTree = await openStoryTree(page);
     await reloadedTree.locator('[data-testid^="story-tree-fork-"]').first().click();
-    await reloadedTree.locator('.story-tree-siblings:has-text("休息支线")').waitFor();
+    await reloadedTree.getByTestId('story-tree-branches').getByText('休息支线', { exact: false }).waitFor();
     await closeStoryTree(page);
 
     // 7. Export JSON backup -> delete story -> re-import JSON backup
@@ -1102,8 +1288,10 @@ async function main() {
     if ((await firstAssistant.locator('button:has-text("回溯至此")').count()) !== 0) {
       throw new Error('Expected active rewound leaf not to show 回溯至此');
     }
-    await page.click('[data-testid="context-overview"] summary');
-    const rewoundSummary = await page.locator('[data-testid="active-plot-summary"]').textContent();
+    const blueprintAfterRewind = await openStoryBlueprint(page);
+    await blueprintAfterRewind.getByTestId('context-overview').locator('summary').click();
+    await closeCompanionSheet(page);
+    const rewoundSummary = await readActivePlotSummary(page);
     if (!rewoundSummary?.includes('尚未触发压缩')) {
       throw new Error(`Expected rewound summary reset, got: ${rewoundSummary}`);
     }
@@ -1198,8 +1386,10 @@ async function main() {
         throw new Error(`Horizontal overflow on ${label} (${scrollWidth} > ${clientWidth})`);
       }
     };
-    await page.locator('[data-testid="story-review"]').scrollIntoViewIfNeeded();
+    reviewSheet = await openStoryReview(page);
+    await reviewSheet.getByTestId('story-review').scrollIntoViewIfNeeded();
     await checkNoHorizontalOverflow('mobile main view');
+    await closeCompanionSheet(page);
     const mobileTree = await openStoryTree(page);
     const smallStoryActions = mobileTree.locator('.btn-sm:visible');
     for (let index = 0; index < await smallStoryActions.count(); index += 1) {
@@ -1207,7 +1397,7 @@ async function main() {
     }
     const treeForkMobile = mobileTree.locator('[data-testid^="story-tree-fork-"]').first();
     if ((await treeForkMobile.getAttribute('aria-expanded')) !== 'true') await treeForkMobile.click();
-    await mobileTree.locator('.story-tree-siblings').waitFor();
+    await mobileTree.getByTestId('story-tree-branches').waitFor();
     await checkNoHorizontalOverflow('mobile story tree expanded');
     await closeStoryTree(page);
     await startScriptImport(page);
@@ -1468,14 +1658,14 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     let storyTreeSheet = await openStoryTree(page);
     const fork1Btn = storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first();
     await fork1Btn.click();
-    await storyTreeSheet.locator('.story-tree-siblings').waitFor();
+    await storyTreeSheet.getByTestId('story-tree-branches').waitFor();
 
-    const branchASibling = storyTreeSheet.locator('.story-tree-sibling', { hasText: '东楼' }).first();
+    const branchASibling = storyTreeSheet.locator('[data-testid^="story-tree-branch-"]', { hasText: '东楼' }).first();
     await branchASibling.locator('button:has-text("重命名")').click();
     await branchASibling.locator('input[aria-label="分支名称"]').fill('银钥东楼线');
     await branchASibling.locator('button:has-text("保存名称")').click();
 
-    const branchBSibling = storyTreeSheet.locator('.story-tree-sibling', { hasText: '西塔' }).first();
+    const branchBSibling = storyTreeSheet.locator('[data-testid^="story-tree-branch-"]', { hasText: '西塔' }).first();
     await branchBSibling.locator('button:has-text("重命名")').click();
     await branchBSibling.locator('input[aria-label="分支名称"]').fill('毒药西塔线');
     await branchBSibling.locator('button:has-text("保存名称")').click();
@@ -1495,7 +1685,7 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     if (!promptForB.includes('事件Y_西塔毒药') || promptForB.includes('事件X_银钥匙') || promptForB.includes('CONTENT_FILTER')) {
       throw new Error(`Branch B prompt contaminated: ${promptForB}`);
     }
-    const reviewB = await page.locator('[data-testid="active-plot-summary"]').textContent();
+    const reviewB = await readActivePlotSummary(page);
     if (!reviewB?.includes('事件Y_西塔毒药') || reviewB.includes('事件X_银钥匙')) {
       throw new Error(`StoryReview on Branch B not isolated: ${reviewB}`);
     }
@@ -1506,11 +1696,12 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     if ((await fork1AfterB.getAttribute('aria-expanded')) !== 'true') {
       await fork1AfterB.click();
     }
-    await storyTreeSheet.locator('.story-tree-sibling', { hasText: '银钥东楼线' }).locator('button:has-text("切换至此分支")').click();
+    await storyTreeSheet.locator('[data-testid^="story-tree-branch-"]', { hasText: '银钥东楼线' }).locator('button:has-text("切换至此分支")').click();
     await page.waitForSelector('.turn-card.assistant:has-text("抵达东楼密室终点")');
-    await page.waitForSelector('[data-testid="active-plot-summary"]:has-text("事件X_银钥匙")');
-    await closeStoryTree(page);
-    const reviewA = await page.locator('[data-testid="active-plot-summary"]').textContent();
+    const reviewSheetA = await openStoryReview(page);
+    await reviewSheetA.getByTestId('active-plot-summary').getByText('事件X_银钥匙', { exact: false }).waitFor();
+    const reviewA = await reviewSheetA.getByTestId('active-plot-summary').textContent();
+    await closeCompanionSheet(page);
     if (!reviewA?.includes('事件X_银钥匙') || reviewA.includes('事件Y_西塔毒药')) {
       throw new Error(`StoryReview on Branch A not isolated: ${reviewA}`);
     }
@@ -1527,12 +1718,14 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     // 4. Reload browser -> verify IndexedDB restores branch names, active branch A, StoryReview, diagnostics, and zero 390px overflow
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForSelector('.turn-card.assistant:has-text("窄屏续写：打开东楼密室")');
-    await page.waitForSelector('[data-testid="story-review"]:has-text("银钥东楼线")');
-    await page.waitForSelector('[data-testid="active-plot-summary"]:has-text("事件X_银钥匙")');
+    const reviewSheetAfterReload = await openStoryReview(page);
+    await reviewSheetAfterReload.getByTestId('story-review').getByText('银钥东楼线', { exact: false }).waitFor();
+    await reviewSheetAfterReload.getByTestId('active-plot-summary').getByText('事件X_银钥匙', { exact: false }).waitFor();
+    await closeCompanionSheet(page);
     await page.waitForSelector('[data-testid="turn-diagnostics"]:has-text("CONTENT_FILTER")');
     storyTreeSheet = await openStoryTree(page);
     await storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first().click();
-    await storyTreeSheet.locator('.story-tree-siblings:has-text("毒药西塔线")').waitFor();
+    await storyTreeSheet.getByTestId('story-tree-branches').getByText('毒药西塔线', { exact: false }).waitFor();
     await assertNoOverflow('spec18 mobile post-reload');
   } finally {
     await mobileCtx.close();
@@ -1709,7 +1902,7 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     let storyTreeSheet = await openStoryTree(page);
     let fork = storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first();
     if ((await fork.getAttribute('aria-expanded')) !== 'true') await fork.click();
-    const alternateId = await storyTreeSheet.locator('.story-tree-sibling', {
+    const alternateId = await storyTreeSheet.locator('[data-testid^="story-tree-branch-"]', {
       hasText: '备用线第 35 轮合成回执',
     }).getAttribute('data-testid', { timeout: 5000 });
     let alternate = storyTreeSheet.getByTestId(alternateId);
@@ -1723,7 +1916,10 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
       }, { timeout: 10000 }),
       alternate.getByRole('button', { name: '切换至此分支' }).click(),
     ]);
-    await storyTreeSheet.getByRole('status').filter({ hasText: '补算摘要中…' }).waitFor();
+    await storyTreeSheet.getByTestId('companion-summary-progress').waitFor();
+    await storyTreeSheet.getByRole('tab', { name: '剧情回顾' }).click();
+    await storyTreeSheet.getByTestId('companion-summary-progress').waitFor({ state: 'visible' });
+    await storyTreeSheet.getByRole('tab', { name: '剧情树' }).click();
     await page.locator('.turn-card.assistant[data-node-id]', { hasText: '备用线第 35 轮合成回执' }).waitFor();
     await closeStoryTree(page);
     await page.fill('#turn-input', '等待备用线补算');
@@ -1735,7 +1931,7 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     await alternate.getByRole('button', { name: '保存名称' }).click();
     await page.getByText(LONG_BRANCH_NAME, { exact: true }).first().waitFor();
     releaseBranch();
-    await page.getByTestId('active-plot-summary').getByText(SUMMARY_B, { exact: false }).waitFor();
+    await waitForActivePlotSummary(page, SUMMARY_B);
     const alternateRequests = requests.slice(alternateRequestStart).flatMap(({ messages }) => messages);
     if (!alternateRequests.some(({ content }) => content.includes(EARLY_BRANCH_B)) ||
         alternateRequests.some(({ content }) => content.includes(EARLY_BRANCH_A) || content.includes(SUMMARY_A))) {
@@ -1744,12 +1940,14 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     await page.locator('button:enabled', { hasText: '发送行动' }).waitFor({ timeout: 5000 });
     await closeStoryTree(page);
     await page.reload({ waitUntil: 'networkidle' });
-    await page.getByTestId('story-review').getByText(LONG_BRANCH_NAME, { exact: false }).waitFor();
-    await page.getByTestId('active-plot-summary').getByText(SUMMARY_B, { exact: false }).waitFor();
+    const reviewSheetAfterReload = await openStoryReview(page);
+    await reviewSheetAfterReload.getByTestId('story-review').getByText(LONG_BRANCH_NAME, { exact: false }).waitFor();
+    await reviewSheetAfterReload.getByTestId('active-plot-summary').getByText(SUMMARY_B, { exact: false }).waitFor();
+    await closeCompanionSheet(page);
     storyTreeSheet = await openStoryTree(page);
     fork = storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first();
     if ((await fork.getAttribute('aria-expanded')) !== 'true') await fork.click();
-    const renamed = storyTreeSheet.locator('.story-tree-sibling', { hasText: LONG_BRANCH_NAME });
+    const renamed = storyTreeSheet.locator('[data-testid^="story-tree-branch-"]', { hasText: LONG_BRANCH_NAME });
     await renamed.getByRole('button', { name: 'AI 提炼梗概' }).click();
     await renamed.getByText(LONG_BRANCH_GIST, { exact: false }).waitFor();
     await closeStoryTree(page);

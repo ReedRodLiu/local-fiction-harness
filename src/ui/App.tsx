@@ -33,7 +33,7 @@ import {
   writeDevSessionProxy,
   type DevTestConfigResponse,
 } from '../platform/runtime.ts';
-import { ContextOverview } from './ContextOverview.tsx';
+import { CompanionSheet } from './CompanionSheet.tsx';
 import { LibraryDrawer } from './LibraryDrawer.tsx';
 import { setCrashDiagnosticBundleBuilder } from './crashDiagnosticContext.ts';
 import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
@@ -45,10 +45,7 @@ import { DeepSeekSetupWizard } from './DeepSeekSetupWizard.tsx';
 import { ImportPanel, type ImportMode } from './ImportPanel.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { StoryLibrary } from './StoryLibrary.tsx';
-import { StoryReview } from './StoryReview.tsx';
-import { StoryTree } from './StoryTree.tsx';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
-import { SheetDialog } from './primitives/SheetDialog.tsx';
 import { SettingsPage } from './SettingsPage.tsx';
 import { TopBar } from './TopBar.tsx';
 import { TurnCard } from './TurnCard.tsx';
@@ -1024,24 +1021,6 @@ export function App({ runtime }: AppProps) {
                 />
               ) : (
                 <>
-                  <StoryReview
-                    story={story}
-                    metrics={contextPreview.metrics}
-                    isBusy={isStreaming}
-                    isSummarizing={isSummarizing}
-                    onComputeSummary={() => void handleComputeActiveSummary()}
-                  />
-
-                  <ContextOverview
-                    story={story}
-                    summarySnapshot={activeSummary}
-                    metrics={contextPreview.metrics}
-                    isStreaming={isStreaming || isSummarizing}
-                    isReextracting={isSummarizing}
-                    onSaveBlueprintTweak={handleSaveBlueprintTweak}
-                    onReextractBlueprint={() => handleReextractBlueprint()}
-                  />
-
                   <section className="timeline" aria-label="故事对话记录">
                     {activeNodes.length === 0 && !isStreaming && (
                       <div className="turn-card empty-story-card">
@@ -1212,23 +1191,23 @@ export function App({ runtime }: AppProps) {
         />
       )}
 
-      <SheetDialog
+      <CompanionSheet
         open={storyTreeOpen && storyExists && !showImport && !showSettings}
-        title="剧情树"
-        label="剧情树伴生面板"
-        testId="story-tree-sheet"
-        status={isSummarizing ? '补算摘要中…' : undefined}
+        story={story}
+        summarySnapshot={activeSummary}
+        metrics={contextPreview.metrics}
+        hasCredentials={hasCredentials}
+        isStreaming={isStreaming}
+        isSummarizing={isSummarizing}
+        isBranchSwitchSummarizing={isBranchSwitchSummarizing}
+        onSwitchBranch={(id) => void handleSwitchBranch(id)}
+        onRenameBranch={handleRenameBranch}
+        onExtractBranchGist={handleExtractBranchGist}
+        onComputeSummary={() => void handleComputeActiveSummary()}
+        onSaveBlueprintTweak={handleSaveBlueprintTweak}
+        onReextractBlueprint={() => handleReextractBlueprint()}
         onClose={() => setStoryTreeOpen(false)}
-      >
-        <StoryTree
-          story={story}
-          isBusy={isStreaming || isSummarizing}
-          isRenameBusy={isStreaming || (isSummarizing && !isBranchSwitchSummarizing)}
-          onSwitchBranch={(id) => void handleSwitchBranch(id)}
-          onRenameBranch={handleRenameBranch}
-          onExtractBranchGist={handleExtractBranchGist}
-        />
-      </SheetDialog>
+      />
     </div>
   );
 }

@@ -1,0 +1,161 @@
+import { useEffect, useState } from 'react';
+import { type Story, type StoryBlueprint } from '../harness/index.ts';
+import { splitNonEmptyLines, toErrorMessage } from './textHelpers.ts';
+import './styles/story-blueprint-card.css';
+
+export interface StoryBlueprintCardProps {
+  story: Story;
+  isBusy?: boolean;
+  isReextracting?: boolean;
+  onSaveBlueprintTweak?: (updatedBlueprint: StoryBlueprint) => Promise<boolean | void>;
+  onReextractBlueprint?: () => void;
+}
+
+export function StoryBlueprintCard({
+  story,
+  isBusy = false,
+  isReextracting = false,
+  onSaveBlueprintTweak,
+  onReextractBlueprint,
+}: StoryBlueprintCardProps) {
+  const [editing, setEditing] = useState(false);
+  const [protagonistDraft, setProtagonistDraft] = useState('');
+  const [taboosDraft, setTaboosDraft] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEditing(false);
+    setError(null);
+  }, [story.id]);
+
+  const saveTweak = async () => {
+    if (!onSaveBlueprintTweak || isSaving || isBusy) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const saved = await onSaveBlueprintTweak({
+        ...story.blueprint,
+        protagonist: protagonistDraft.trim(),
+        taboos: splitNonEmptyLines(taboosDraft),
+      });
+      if (saved !== false) setEditing(false);
+    } catch (err) {
+      setError(toErrorMessage(err, '保存蓝图微调失败。'));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <section className="story-blueprint-card" data-testid="story-blueprint-card" aria-label="故事蓝图">
+      <header className="story-blueprint-header">
+        <div>
+          <h3>{story.title}</h3>
+          <p>原始剧本锚定 {story.rawScript.length} 字</p>
+        </div>
+        {onSaveBlueprintTweak && !editing && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={isBusy}
+            onClick={() => {
+              setProtagonistDraft(story.blueprint.protagonist);
+              setTaboosDraft(story.blueprint.taboos.join('\n'));
+              setEditing(true);
+            }}
+          >
+            微调蓝图
+          </button>
+        )}
+      </header>
+
+      {error && <div className="error-banner" role="alert">{error}</div>}
+
+      {editing ? (
+        <div className="story-blueprint-editor">
+          <div className="field">
+            <label htmlFor="tweak-protagonist">微调主角设定</label>
+            <input
+              id="tweak-protagonist"
+              type="text"
+              value={protagonistDraft}
+              onChange={(event) => setProtagonistDraft(event.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="tweak-taboos">微调禁忌条款（每行一条）</label>
+            <textarea
+              id="tweak-taboos"
+              rows={2}
+              value={taboosDraft}
+              onChange={(event) => setTaboosDraft(event.target.value)}
+            />
+          </div>
+          <div className="btn-group">
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              disabled={isSaving || isBusy}
+              onClick={() => void saveTweak()}
+            >
+              保存蓝图微调
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={isSaving}
+              onClick={() => {
+                setError(null);
+                setEditing(false);
+              }}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="story-blueprint-fields">
+          <div className="story-blueprint-field">
+            <h4>主角设定</h4>
+            <p>{story.blueprint.protagonist || '暂无主角设定'}</p>
+          </div>
+          <div className="story-blueprint-field">
+            <h4>背景规则</h4>
+            {story.blueprint.worldRules.length > 0 ? (
+              <ul>{story.blueprint.worldRules.map((rule) => <li key={rule}>{rule}</li>)}</ul>
+            ) : <p>暂无背景规则</p>}
+          </div>
+          <div className="story-blueprint-field">
+            <h4>核心角色</h4>
+            {story.blueprint.npcs.length > 0 ? (
+              <ul>
+                {story.blueprint.npcs.map((npc) => (
+                  <li key={`${npc.name}-${npc.role}`}>{npc.name}{npc.role ? `（${npc.role}）` : ''}</li>
+                ))}
+              </ul>
+            ) : <p>暂无角色档案</p>}
+          </div>
+          <div className="story-blueprint-field">
+            <h4>禁忌条款</h4>
+            {story.blueprint.taboos.length > 0 ? (
+              <ul>{story.blueprint.taboos.map((taboo) => <li key={taboo}>{taboo}</li>)}</ul>
+            ) : <p>暂无禁忌条款</p>}
+          </div>
+        </div>
+      )}
+
+      {!editing && story.rawScript.trim() &&
+        story.blueprint.extractionStatus === 'partial_fallback' && onReextractBlueprint && (
+          <button
+            type="button"
+            className="btn btn-sm btn-primary story-blueprint-reextract"
+            disabled={isBusy || isReextracting}
+            onClick={onReextractBlueprint}
+          >
+            {isReextracting ? '补拆蓝图中…' : '补拆完整故事蓝图'}
+          </button>
+        )}
+    </section>
+  );
+}

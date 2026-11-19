@@ -15,6 +15,7 @@ export interface StoryTreeProps {
   onRenameBranch?: (branchEntryNodeId: string, name: string) => Promise<void> | void;
   onExtractBranchGist?: (branchEntryNodeId: string) => Promise<void> | void;
   defaultExpanded?: boolean;
+  collapsible?: boolean;
 }
 
 const DIAGNOSTIC_LABELS: Record<NodeDiagnosticStatus, string> = {
@@ -42,6 +43,7 @@ export function StoryTree({
   onRenameBranch,
   onExtractBranchGist,
   defaultExpanded = true,
+  collapsible = true,
 }: StoryTreeProps) {
   const [isPanelOpen, setIsPanelOpen] = useState(defaultExpanded);
   const [expandedForkIds, setExpandedForkIds] = useState<Record<string, boolean>>({});
@@ -49,6 +51,7 @@ export function StoryTree({
   const [renameDraft, setRenameDraft] = useState('');
   const [extractingGistId, setExtractingGistId] = useState<string | null>(null);
   const renameBusy = isRenameBusy ?? isBusy;
+  const treeOpen = !collapsible || isPanelOpen;
 
   const spine = useMemo(() => projectStoryTreeSpine(story), [story]);
 
@@ -87,17 +90,19 @@ export function StoryTree({
             主干 {spine.totalActiveTurns} 轮 · {spine.forkCount} 处分叉
           </span>
         </div>
-        <button
-          type="button"
-          className="btn btn-sm"
-          aria-expanded={isPanelOpen}
-          onClick={() => setIsPanelOpen((prev) => !prev)}
-        >
-          {isPanelOpen ? '收起剧情树' : '展开剧情树'}
-        </button>
+        {collapsible && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            aria-expanded={isPanelOpen}
+            onClick={() => setIsPanelOpen((prev) => !prev)}
+          >
+            {isPanelOpen ? '收起剧情树' : '展开剧情树'}
+          </button>
+        )}
       </div>
 
-      {isPanelOpen && (
+      {treeOpen && (
         <div className="story-tree-body">
           {spine.items.length === 0 ? (
             <p className="status-text" style={{ margin: 0 }}>
@@ -154,7 +159,11 @@ export function StoryTree({
                     </button>
 
                     {isForkOpen && (
-                      <ul className="story-tree-siblings" aria-label="分支列表">
+                      <ul
+                        className="story-tree-siblings"
+                        aria-label="分支列表"
+                        data-testid="story-tree-branches"
+                      >
                         {siblings.map((branch) => {
                           const diagTags = formatDiagnosticTags(
                             branch.diagnostics,
@@ -166,6 +175,7 @@ export function StoryTree({
                               key={branch.entryNodeId}
                               className={`story-tree-sibling ${branch.isActive ? 'active' : ''}`}
                               data-testid={`story-tree-branch-${branch.entryNodeId}`}
+                              data-active={branch.isActive ? 'true' : 'false'}
                             >
                               <div className="story-tree-row-top">
                                 <strong>{branch.label}</strong>
