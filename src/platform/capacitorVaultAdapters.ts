@@ -1,6 +1,8 @@
 import { registerPlugin } from '@capacitor/core';
 import type {
   BackupExporter,
+  CreativeStorage,
+  CreativeWorkspaceState,
   ModelConfigMeta,
   SecretStore,
   Story,
@@ -15,11 +17,13 @@ export interface NativeVaultPluginLike {
   clearApiKey(): Promise<void>;
   listStories(): Promise<{ stories: Story[] }>;
   getStory(options: { id: string }): Promise<{ story: Story | null }>;
-  saveStory(options: { story: Story }): Promise<void>;
+  saveStory(options: { story: Story; expectedUpdatedAt?: number }): Promise<void>;
   deleteStory(options: { id: string }): Promise<void>;
   getActiveStoryId(): Promise<{ id: string | null }>;
   setActiveStoryId(options: { id: string | null }): Promise<void>;
-  exportJsonFile(options: { fileName: string; jsonContent: string }): Promise<void>;
+  exportJsonFile(options: { fileName: string; jsonContent: string; format?: 'markdown' | 'attachment' }): Promise<void>;
+  loadCreativeWorkspace?(): Promise<{ workspace: CreativeWorkspaceState | null }>;
+  saveCreativeWorkspace?(options: { workspace: CreativeWorkspaceState; expected: number }): Promise<void>;
 }
 
 const NativeVault = registerPlugin<NativeVaultPluginLike>('NativeVault');
@@ -76,8 +80,8 @@ export function createAndroidStoryStorage(
     getStory(id: string): Promise<Story | null> {
       return enqueue(async () => (await plugin.getStory({ id })).story ?? null);
     },
-    saveStory(story: Story): Promise<void> {
-      return enqueue(() => plugin.saveStory({ story }));
+    saveStory(story: Story, expectedUpdatedAt?: number): Promise<void> {
+      return enqueue(() => plugin.saveStory({ story, ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}) }));
     },
     deleteStory(id: string): Promise<void> {
       return enqueue(() => plugin.deleteStory({ id }));
@@ -100,6 +104,25 @@ export function createAndroidBackupExporter(
   return {
     async exportJsonFile(fileName: string, jsonContent: string): Promise<void> {
       await plugin.exportJsonFile({ fileName, jsonContent });
+    },
+    async exportMarkdown(fileName, markdown) {
+      await plugin.exportJsonFile({ fileName, jsonContent: markdown, format: 'markdown' });
+    },
+    async exportAttachment(fileName, base64) {
+      await plugin.exportJsonFile({ fileName, jsonContent: base64, format: 'attachment' });
+    },
+  };
+}
+
+export function createAndroidCreativeStorage(plugin: NativeVaultPluginLike = NativeVault): CreativeStorage {
+  return {
+    async load() {
+      if (!plugin.loadCreativeWorkspace) throw new Error('当前 Android 客户端无法读取工作台。');
+      return (await plugin.loadCreativeWorkspace()).workspace;
+    },
+    async save(workspace, expected) {
+      if (!plugin.saveCreativeWorkspace) throw new Error('当前 Android 客户端无法保存工作台。');
+      await plugin.saveCreativeWorkspace({ workspace, expected });
     },
   };
 }

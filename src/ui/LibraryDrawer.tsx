@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { BookOpen, ChevronRight, FilePlus2, PanelLeftClose, Settings, Sparkles, X } from 'lucide-react';
+import { BookOpen, ChevronRight, FilePlus2, MessagesSquare, PencilLine, PanelLeftClose, Settings, Sparkles, X } from 'lucide-react';
 import type { Story } from '../harness/index.ts';
 import { StoryLibrary } from './StoryLibrary.tsx';
 import { DrawerDialog } from './primitives/DrawerDialog.tsx';
@@ -18,6 +18,7 @@ interface LibraryDrawerProps {
   onSelectStory: (id: string) => void;
   onRenameStory: (id: string, title: string) => void;
   onDeleteStory: (id: string) => void;
+  onOpenCreative?: (mode: 'writing' | 'character') => void;
   onExportStoryBackup: (id: string) => void;
 }
 
@@ -35,6 +36,7 @@ export function LibraryDrawer({
   onSelectStory,
   onRenameStory,
   onDeleteStory,
+  onOpenCreative,
   onExportStoryBackup,
 }: LibraryDrawerProps) {
   const selectStory = (id: string) => {
@@ -62,6 +64,14 @@ export function LibraryDrawer({
         <FilePlus2 size={16} strokeWidth={1.75} />
         导入剧本 / 新建故事
       </button>
+      {onOpenCreative && <>
+        <button type="button" className="btn" onClick={() => onOpenCreative('writing')}>
+          <PencilLine size={16} strokeWidth={1.75} /> 产粮
+        </button>
+        <button type="button" className="btn" onClick={() => onOpenCreative('character')}>
+          <MessagesSquare size={16} strokeWidth={1.75} /> 人机恋
+        </button>
+      </>}
     </div>
   );
 

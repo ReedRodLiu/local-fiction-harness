@@ -1,4 +1,4 @@
-import { FilePlus2, Sparkles } from 'lucide-react';
+import { FilePlus2, MessagesSquare, PencilLine, Sparkles } from 'lucide-react';
 import { getActiveBranchNodes, type Story } from '../harness/index.ts';
 
 interface WelcomeViewProps {
@@ -6,6 +6,7 @@ interface WelcomeViewProps {
   onStartDeepSeekImport: () => void;
   onStartScriptImport: () => void;
   onSelectStory: (id: string) => void;
+  onOpenCreative?: (mode: 'writing' | 'character') => void;
 }
 
 export function WelcomeView({
@@ -13,6 +14,7 @@ export function WelcomeView({
   onStartDeepSeekImport,
   onStartScriptImport,
   onSelectStory,
+  onOpenCreative,
 }: WelcomeViewProps) {
   const recentStories = [...stories].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3);
 
@@ -40,6 +42,16 @@ export function WelcomeView({
             <span className="welcome-card-icon"><FilePlus2 size={18} strokeWidth={1.75} /></span>
             <span><strong>导入自由剧本</strong><small>从原始剧本创建一部新故事</small></span>
           </button>
+          {onOpenCreative && <>
+            <button type="button" className="welcome-card" onClick={() => onOpenCreative('writing')}>
+              <span className="welcome-card-icon"><PencilLine size={18} strokeWidth={1.75} /></span>
+              <span><strong>产粮</strong><small>写正文，按需采纳灵感</small></span>
+            </button>
+            <button type="button" className="welcome-card" onClick={() => onOpenCreative('character')}>
+              <span className="welcome-card-icon"><MessagesSquare size={18} strokeWidth={1.75} /></span>
+              <span><strong>人机恋</strong><small>和角色聊天或对戏</small></span>
+            </button>
+          </>}
         </div>
 
         {recentStories.length > 0 && (

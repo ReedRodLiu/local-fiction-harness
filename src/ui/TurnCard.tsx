@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, PencilLine, RefreshCw, RotateCcw, Sparkles } from 'lucide-react';
-import type { SiblingBranchInfo, TurnNode } from '../harness/index.ts';
+import type { SiblingBranchInfo, StoryAttachment, TurnNode } from '../harness/index.ts';
+import { DocumentReadDetails } from './DocumentReadDetails.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { formatDiagnosticTags } from './StoryTree.tsx';
 
@@ -19,6 +20,9 @@ interface TurnCardProps {
   onSwitchBranch: (targetNodeId: string) => void;
   onEditAndBranch: (targetUserNodeId: string, newContent: string) => void;
   onRegenerate: (targetAssistantNodeId: string) => void;
+  onWriteFrom?: (nodeId: string) => void;
+  attachments?: StoryAttachment[];
+  onExportAttachment?: (attachment: StoryAttachment) => void;
   onRewindToNode: (targetNodeId: string) => void;
 }
 
@@ -38,6 +42,9 @@ export function TurnCard({
   onEditAndBranch,
   onRegenerate,
   onRewindToNode,
+  onWriteFrom,
+  attachments,
+  onExportAttachment,
 }: TurnCardProps) {
   const [historyActionsOpen, setHistoryActionsOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -90,6 +97,10 @@ export function TurnCard({
 
       {node.role === 'assistant' && (
         <>
+          {onWriteFrom && <button type="button" className="btn turn-action-button" disabled={isBusy}
+            title="从这里开稿" aria-label="从这里开稿" onClick={() => onWriteFrom(node.id)}>
+            <PencilLine size={16} strokeWidth={1.75} aria-hidden="true" />
+          </button>}
           <button
             type="button"
             className="btn turn-action-button"
@@ -253,10 +264,20 @@ export function TurnCard({
                 showChoices={isActiveLeaf}
                 disabled={isBusy}
                 onSelectChoice={onSelectChoice}
-                afterContent={contentActions}
+                afterContent={<>{contentActions}<DocumentReadDetails reads={node.documentReads} /></>}
               />
             )}
 
+            {attachments && attachments.length > 0 && onExportAttachment && (
+              <details className="reasoning-details">
+                <summary>原始附件</summary>
+                <div className="btn-group turn-attachment-list">
+                  {attachments.map((file, index) => (
+                    <button type="button" className="btn" key={index} onClick={() => onExportAttachment(file)}>{file.fileName}</button>
+                  ))}
+                </div>
+              </details>
+            )}
             {node.role === 'user' && siblings.total > 1 && contentActions}
             {copyStatus && <span className="turn-copy-status" role="status">{copyStatus}</span>}
           </>

@@ -1,8 +1,9 @@
-# Wayfinder 本地 Markdown 记录方式
+# Wayfinder 地图和票据
 
-当前没有为本项目指定外部 issue tracker，因此按 Wayfinder 的本地 Markdown tracker 方式记录。
+现行地图、依赖和票据状态以 GitHub 为准。仓库里的 [早期地图](map.md) 和 `tickets/` 保留项目启动时的记录。
 
-- [map.md](map.md) 是唯一开发地图；开放票据保存在 `tickets/`，不在地图中重复列举。
-- 每张票据用 front matter 标明 `type`、`status`、父地图和依赖关系；`blocks` / `blocked_by` 表示先后关系。
-- 票据用 `## Question` 表达要解开的判断，用 `## Acceptance` 记录需要留下的证据。完成时在票据中追加 `## Resolution`，再将结论链接补入地图的 Decisions so far。
-- 类型采用 Wayfinder 定义的 `research`、`prototype`、`grilling`、`task`。
+- [开发地图与发布验收](https://github.com/ReedRodLiu/local-fiction-harness/issues/1)
+- [通用 Harness 架构地图](https://github.com/ReedRodLiu/local-fiction-harness/issues/66)
+- [产粮首版规划地图](https://github.com/ReedRodLiu/local-fiction-harness/issues/49)
+- [人机恋首版探索地图](https://github.com/ReedRodLiu/local-fiction-harness/issues/59)
+- [GitHub 票据维护约定](../docs/agents/issue-tracker.md)

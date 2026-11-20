@@ -1,4 +1,12 @@
-import { formatConfirmedBlueprintAnchor } from './blueprint.ts';
+import {
+  CHANGE_PROMPT,
+  documentMessages,
+  documentProgress,
+  documentVersion,
+  legacyStoryMarkdown,
+  storyDocumentState,
+  type MarkdownVersion,
+} from './markdownDocuments.ts';
 import type { LlmMessage, PlotSummarySnapshot, Story, TurnNode } from './types.ts';
 
 const ESTIMATED_TOKENS_PER_CHAR = 0.65;
@@ -46,7 +54,7 @@ export function estimateTokensFromChars(charCount: number): number {
  * Walks from the target leaf node back to the root to reconstruct the linear active branch.
  */
 export function getActiveBranchNodes(
-  story: Story,
+  story: Pick<Story, 'nodes' | 'activeLeafNodeId'>,
   leafId: string | null = story.activeLeafNodeId,
 ): TurnNode[] {
   const path: TurnNode[] = [];
@@ -74,7 +82,13 @@ export function getActiveSummarySnapshot(
   leafId: string | null = story.activeLeafNodeId,
 ): PlotSummarySnapshot {
   if (!leafId) return EMPTY_SUMMARY_SNAPSHOT;
-  return story.nodes[leafId]?.summarySnapshot ?? EMPTY_SUMMARY_SNAPSHOT;
+  const node = story.nodes[leafId];
+  if (!node) return EMPTY_SUMMARY_SNAPSHOT;
+  if (!story.documents) return node.summarySnapshot;
+  const scoped = { ...story, documents: story.documents };
+  const state = storyDocumentState(scoped, leafId, leafId === story.activeLeafNodeId);
+  const content = documentProgress(documentVersion(story.documents.local, state.local).markdown);
+  return content ? { ...node.summarySnapshot, content } : EMPTY_SUMMARY_SNAPSHOT;
 }
 
 export function getUncoveredNodes(
@@ -91,22 +105,17 @@ export function getUncoveredNodes(
   return branchNodes.slice(idx + 1);
 }
 
-export function buildSystemAnchorPrompt(story: Story): string {
-  const sections: string[] = [
-    '你正在运行一个本地优先交互式文游播放器，请严格遵循以下剧本设定与交互原则：',
-    '- 始终保持角色一致性（防 OOC）与设定约束，不要替玩家代操抉择。',
-  ];
-
-  const blueprintSummary = formatConfirmedBlueprintAnchor(story.blueprint);
-  if (blueprintSummary) {
-    sections.push(`## 已确认故事蓝图\n${blueprintSummary}`);
-  }
-
-  if (story.rawScript.trim()) {
-    sections.push(`## 原始剧本全文（最高权威锚定）\n${story.rawScript.trim()}`);
-  }
-
-  return sections.join('\n\n');
+export function buildSystemAnchorPrompt(story: Story, nodeId = story.activeLeafNodeId, selected?: MarkdownVersion): string {
+  const markdown = selected?.markdown ?? (story.documents
+    ? documentVersion(story.documents.container, storyDocumentState({ ...story, documents: story.documents }, nodeId,
+      nodeId === story.activeLeafNodeId).container).markdown
+    : legacyStoryMarkdown(story));
+  return [
+    '你是文游的叙事者。保持角色与设定一致，把玩家关键抉择留给玩家。',
+    '如需提供可点选行动，把选项单独写在 lfh-choices 围栏内，每行一项。普通正文列表照常写。',
+    CHANGE_PROMPT,
+    markdown && `以下是当前故事 Markdown。\n\n${markdown}`,
+  ].filter(Boolean).join('\n\n');
 }
 
 export const SETUP_NODE_PLACEHOLDER =
@@ -148,21 +157,28 @@ function capPreviousSummary(previousSummary: string, maxChars: number): string {
 }
 
 export interface SetupNodeFilter {
+  readonly markdown?: string;
   readonly setupNodeIds?: ReadonlySet<string>;
   readonly hasRawScript: boolean;
 }
 
 export function getSetupNodeFilter(
-  story: Pick<Story, 'rawScript' | 'setupNodeIds'>,
+  story: Pick<Story, 'rawScript' | 'setupNodeIds' | 'documents'> & { nodes?: Story['nodes'] },
+  at?: string | null,
+  selected?: MarkdownVersion,
 ): SetupNodeFilter {
+  const version = at ? story.nodes?.[at]?.documents?.container : undefined;
+  const markdown = selected?.markdown ?? (story.documents ? documentVersion(story.documents.container, version).markdown : null);
   return {
-    hasRawScript: Boolean(story.rawScript.trim()),
+    ...(markdown ? { markdown } : {}),
+    hasRawScript: Boolean(story.rawScript.trim() && (markdown === null || markdown.includes(story.rawScript.trim()))),
     setupNodeIds: story.setupNodeIds?.length ? new Set(story.setupNodeIds) : undefined,
   };
 }
 
 export function getEffectiveNodeContent(node: TurnNode, filter?: SetupNodeFilter): string {
-  if (filter?.hasRawScript && filter.setupNodeIds?.has(node.id)) {
+  if ((filter?.hasRawScript && filter.setupNodeIds?.has(node.id)) ||
+    (node.role === 'user' && node.content.length >= 180 && filter?.markdown?.includes(node.content))) {
     return SETUP_NODE_PLACEHOLDER;
   }
   return node.content;
@@ -210,20 +226,35 @@ export function assembleThreeZoneContext(
   targetParentId: string | null = story.activeLeafNodeId,
   userInput?: string,
   budgetOverrides?: Partial<ContextBudgetConfig>,
+  requireHistory = false,
+  requestDocuments?: { publicVersion?: MarkdownVersion; container: MarkdownVersion; local: MarkdownVersion; snapshot: PlotSummarySnapshot },
 ): ThreeZoneContextResult {
   const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...budgetOverrides };
-  const anchorText = buildSystemAnchorPrompt(story);
-  const setupFilter = getSetupNodeFilter(story);
-  const snapshot = getActiveSummarySnapshot(story, targetParentId);
+  const anchorText = buildSystemAnchorPrompt(story, targetParentId, requestDocuments?.container);
+  const setupFilter = getSetupNodeFilter(story, targetParentId, requestDocuments?.container);
+  const snapshot = requestDocuments?.snapshot ?? getActiveSummarySnapshot(story, targetParentId);
   const branchNodes = getActiveBranchNodes(story, targetParentId);
   const uncovered = getUncoveredNodes(branchNodes, snapshot.coveredUpToNodeId);
   const trimmedInput = userInput?.trim() ?? '';
-  const recentNodes = trimRecentWindow(uncovered, budget, trimmedInput.length, setupFilter);
+  const historyChars = sumNodeChars(uncovered, setupFilter);
+  if (requireHistory && historyChars > budget.recentMaxChars && uncovered.length > 2) {
+    throw new Error('尚未补齐这段剧情，原文又超过近期预算。请重试续写。');
+  }
+  const recentNodes = requireHistory
+    ? uncovered
+    : trimRecentWindow(uncovered, budget, trimmedInput.length, setupFilter);
 
-  const messages: LlmMessage[] = [{ role: 'system', content: anchorText }];
+  const readDocs = requestDocuments?.publicVersion
+    ? documentMessages([['公共记忆', requestDocuments.publicVersion]])
+    : [];
+  const messages: LlmMessage[] = [{ role: 'system', content: anchorText }, ...readDocs];
   let summaryChars = 0;
 
-  if (snapshot.content.trim()) {
+  if (requestDocuments?.local?.markdown.trim()) {
+    const local = documentMessages([['当前路径', requestDocuments.local]])[0];
+    summaryChars = local.content.length;
+    messages.push(local);
+  } else if (snapshot.content.trim()) {
     const summaryMsg = `## 滚动剧情摘要（已覆盖 ${snapshot.summarizedTurnCount} 条历史节点）\n${snapshot.content.trim()}`;
     summaryChars = summaryMsg.length;
     messages.push({ role: 'system', content: summaryMsg });
@@ -244,7 +275,7 @@ export function assembleThreeZoneContext(
     messages.push({ role: 'user', content: trimmedInput });
   }
 
-  const totalChars = anchorText.length + summaryChars + recentChars;
+  const totalChars = anchorText.length + readDocs.reduce((sum, doc) => sum + doc.content.length, 0) + summaryChars + recentChars;
   return {
     messages,
     metrics: {
@@ -326,20 +357,4 @@ export function buildSummaryCompressionMessages(
       ].join('\n\n'),
     },
   ];
-}
-
-export function buildFallbackSummary(
-  previousSummary: string,
-  nodesToFold: TurnNode[],
-  filter?: SetupNodeFilter,
-): string {
-  const digest = nodesToFold
-    .map((n) => {
-      const prefix = n.role === 'user' ? '玩家' : '叙事';
-      const effective = getEffectiveNodeContent(n, filter);
-      const snippet = effective.replace(/\s+/g, ' ').trim().slice(0, 80);
-      return `- ${prefix}：${snippet}${effective.length > 80 ? '…' : ''}`;
-    })
-    .join('\n');
-  return previousSummary.trim() ? `${previousSummary.trim()}\n${digest}` : digest;
 }

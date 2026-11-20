@@ -6,6 +6,7 @@ import {
   createOpenAiTransport,
   createWebBinaryDownloader,
   type BackupExporter,
+  type CreativeStorage,
   type BinaryDownloader,
   type BinaryFetchLike,
   type FetchLike,
@@ -20,6 +21,7 @@ export interface WebRuntimeOptions {
   keyValueStorage?: KeyValueStorage;
   diagnosticsStorage?: KeyValueStorage;
   storyStorage?: StoryStorage;
+  creativeStorage?: CreativeStorage;
   fetchImpl?: FetchLike;
   binaryFetchImpl?: BinaryFetchLike;
   binaryDownloader?: BinaryDownloader;
@@ -29,16 +31,19 @@ export interface WebRuntimeOptions {
 }
 
 function createDomBackupExporter(): BackupExporter {
+  async function download(fileName: string, content: BlobPart, type: string): Promise<void> {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
   return {
-    async exportJsonFile(fileName: string, jsonContent: string): Promise<void> {
-      const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      a.click();
-      URL.revokeObjectURL(url);
-    },
+    exportJsonFile: (name, content) => download(name, content, 'application/json;charset=utf-8'),
+    exportMarkdown: (name, content) => download(name, content, 'text/markdown;charset=utf-8'),
+    exportAttachment: (name, base64) => download(name, Uint8Array.from(atob(base64), (value) => value.charCodeAt(0)), 'application/octet-stream'),
   };
 }
 
@@ -84,19 +89,20 @@ export function createWebPlatformRuntime(options: WebRuntimeOptions = {}): Platf
     storage: options.diagnosticsStorage ?? kvStorage,
   });
 
+  const indexedDb = createIndexedDbStoryStorage();
+  const exporter = createDomBackupExporter();
   return {
     platform: 'web',
     diagnostics,
     transport: createDiagnosticTransport(createOpenAiTransport(devAwareFetch), diagnostics),
     binaryDownloader: options.binaryDownloader ?? createWebBinaryDownloader(binaryFetch),
     storyStorage: createDiagnosticStoryStorage(
-      options.storyStorage ?? createIndexedDbStoryStorage(),
+      options.storyStorage ?? indexedDb,
       diagnostics,
     ),
     secretStore: createKeyValueSecretStore(kvStorage),
-    backupExporter: options.exportJsonFile
-      ? { exportJsonFile: options.exportJsonFile }
-      : createDomBackupExporter(),
+    creativeStorage: options.creativeStorage ?? indexedDb.creativeStorage,
+    backupExporter: { ...exporter, exportJsonFile: options.exportJsonFile ?? exporter.exportJsonFile },
     supportsMemoryOnlySession: true,
   };
 }

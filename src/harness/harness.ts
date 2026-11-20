@@ -1,4 +1,9 @@
 import { createDefaultId } from './id.ts';
+import {
+  documentProgress, documentVersion, migrateStoryDocuments, referenceDocument,
+  replaceDocumentProgress, splitMarkdownReply, storyDocumentState, visibleReplyPrefix, writeDocument,
+  type MarkdownDocument, type StoryDocuments, type StoryDocumentState,
+} from './markdownDocuments.ts';
 import { DEFAULT_STORY_TITLE } from './scriptParser.ts';
 import {
   buildBlueprintExtractionMessages,
@@ -15,9 +20,9 @@ import {
   DEFAULT_CONTEXT_BUDGET,
   EMPTY_SUMMARY_SNAPSHOT,
   assembleThreeZoneContext,
-  buildFallbackSummary,
   buildSummaryCompressionMessages,
   getActiveBranchNodes,
+  getActiveSummarySnapshot,
   getEffectiveNodeContent,
   getSetupNodeFilter,
   getUncoveredNodes,
@@ -28,6 +33,7 @@ import {
 } from './context.ts';
 import type {
   AbortSignalLike,
+  DocumentRead,
   LlmMessage,
   LlmTransport,
   ModelConfig,
@@ -44,6 +50,7 @@ export interface FictionHarnessDeps {
   transport: LlmTransport;
   storage?: StoryStorage;
   contextBudget?: Partial<ContextBudgetConfig>;
+  loadPublicDocument?: () => Promise<MarkdownDocument | undefined>;
   now?: () => number;
   createId?: () => string;
 }
@@ -74,7 +81,7 @@ export interface FictionHarness {
   readonly transport: LlmTransport;
   createStory(input: CreateStoryInput): Story;
   createAndSaveStory(input: CreateStoryInput): Promise<Story>;
-  saveStory(story: Story): Promise<Story>;
+  saveStory(story: Story, expectedUpdatedAt?: number): Promise<Story>;
   listStories(): Promise<Story[]>;
   loadActiveStory(): Promise<Story | null>;
   setActiveStory(id: string | null): Promise<Story | null>;
@@ -197,9 +204,10 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     };
   };
 
-  const persistStory = async (story: Story, activate = false): Promise<Story> => {
+  const persistStory = async (story: Story, activate = false, expectedUpdatedAt?: number): Promise<Story> => {
+    story = migrateStoryDocuments(story);
     if (deps.storage) {
-      await deps.storage.saveStory(story);
+      await deps.storage.saveStory(story, expectedUpdatedAt);
       if (activate) {
         await deps.storage.setActiveStoryId(story.id);
       }
@@ -242,9 +250,12 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     config: ModelConfig,
     messages: LlmMessage[],
     callbacks?: TurnCallbacks,
-  ): Promise<{ content: string; reasoningContent: string }> => {
+    markdownReply = false,
+  ): Promise<{ content: string; reasoningContent: string; finishReason?: string | null }> => {
     let content = '';
     let reasoningContent = '';
+    let finishReason: string | null | undefined;
+    let shownChars = 0;
 
     throwIfAborted(callbacks?.signal);
     for await (const delta of deps.transport.streamChat({
@@ -255,17 +266,20 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       signal: callbacks?.signal,
     })) {
       throwIfAborted(callbacks?.signal);
+      if (delta.finishReason != null) finishReason = delta.finishReason;
       if (delta.reasoningDelta) {
         reasoningContent += delta.reasoningDelta;
         callbacks?.onReasoningDelta?.(delta.reasoningDelta);
       }
       if (delta.contentDelta) {
         content += delta.contentDelta;
-        callbacks?.onContentDelta?.(delta.contentDelta);
+        const visible = markdownReply ? visibleReplyPrefix(content) : content;
+        if (visible.length > shownChars) callbacks?.onContentDelta?.(visible.slice(shownChars));
+        shownChars = visible.length;
       }
     }
     throwIfAborted(callbacks?.signal);
-    return { content, reasoningContent };
+    return { content, reasoningContent, finishReason };
   };
 
   const summarizeOverflowTurns = async (
@@ -277,7 +291,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
   ): Promise<PlotSummarySnapshot> => {
     if (!targetLeafId) return parentSnapshot;
     const branchNodes = getActiveBranchNodes(story, targetLeafId);
-    const setupFilter = getSetupNodeFilter(story);
+    const setupFilter = getSetupNodeFilter(story, targetLeafId);
     let currentSnapshot = parentSnapshot;
 
     while (true) {
@@ -314,25 +328,18 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         previousContent: string,
         nodes: TurnNode[],
         filter?: SetupNodeFilter,
-      ): Promise<string> => {
-        let compressed = '';
+      ): Promise<string | null> => {
         try {
           const result = await streamText(
             config,
-            // Message role/content chars are bounded by 2 * maxBatchChars plus
-            // fixed prompt framing and node labels/separators (up to maxBatchNodes).
             buildSummaryCompressionMessages(previousContent, nodes, filter, maxBatchChars),
             { signal },
           );
-          compressed = result.content;
+          return result.finishReason === 'stop' ? result.content.trim() || null : null;
         } catch (err) {
-          if (isAbortError(err)) {
-            throw err;
-          }
-          compressed = '';
+          if (isAbortError(err)) throw err;
+          return null;
         }
-
-        return compressed.trim() || buildFallbackSummary(previousContent, nodes, filter);
       };
 
       const oversizedNode = batch.length === 1 ? batch[0] : undefined;
@@ -342,10 +349,12 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       if (oversizedNode && oversizedContent.length > maxBatchChars) {
         let rollingContent = currentSnapshot.content;
         for (const chunk of splitSummaryText(oversizedContent, maxBatchChars)) {
-          rollingContent = await summarizeBatch(
+          const next = await summarizeBatch(
             rollingContent,
             [{ ...oversizedNode, content: chunk }],
           );
+          if (!next) return currentSnapshot;
+          rollingContent = next;
         }
         currentSnapshot = {
           content: rollingContent,
@@ -356,6 +365,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       }
 
       const finalContent = await summarizeBatch(currentSnapshot.content, batch, setupFilter);
+      if (!finalContent) return currentSnapshot;
       currentSnapshot = {
         content: finalContent,
         coveredUpToNodeId: batch[batch.length - 1].id,
@@ -364,38 +374,45 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     }
   };
 
-  const catchUpParentSummary = async (
+  const prepareTurn = async (
     story: Story,
     parentId: string | null,
     config: ModelConfig,
     signal?: AbortSignalLike,
-  ): Promise<{ story: Story; snapshot: PlotSummarySnapshot }> => {
-    if (!parentId || !story.nodes[parentId]) {
-      return { story, snapshot: EMPTY_SUMMARY_SNAPSHOT };
-    }
-    const parentNode = story.nodes[parentId];
-    const caughtUp = await summarizeOverflowTurns(
-      story,
-      parentId,
-      parentNode.summarySnapshot,
-      config,
-      signal,
-    );
-    if (caughtUp === parentNode.summarySnapshot) {
-      return { story, snapshot: caughtUp };
+    applyEdit = parentId === story.activeLeafNodeId,
+  ) => {
+    const globalDocument = await deps.loadPublicDocument?.();
+    const publicVersion = globalDocument ? documentVersion(globalDocument) : undefined;
+    const saved = await deps.storage?.getStory(story.id);
+    if (saved && saved.updatedAt !== story.updatedAt) throw new Error('故事已在其他位置变化，请重新打开后继续。');
+    const scoped = migrateStoryDocuments(story) as Story & { documents: StoryDocuments };
+    const state = storyDocumentState(scoped, parentId, applyEdit);
+    const original = parentId ? scoped.nodes[parentId].summarySnapshot : EMPTY_SUMMARY_SNAPSHOT;
+    const base = documentVersion(scoped.documents.local, state.local);
+    const progress = documentProgress(base.markdown);
+    const previous = progress ? { ...original, content: progress } : EMPTY_SUMMARY_SNAPSHOT;
+    const snapshot = await summarizeOverflowTurns(scoped, parentId, previous, config, signal);
+    const local = snapshot.content === progress ? { ...scoped.documents.local, head: base.id } :
+      writeDocument(scoped.documents.local, base.id, replaceDocumentProgress(base.markdown, snapshot.content), 'automatic');
+    const container = documentVersion(scoped.documents.container, state.container);
+    const reads: DocumentRead[] = [
+      ...(publicVersion ? [referenceDocument('public', '公共记忆', publicVersion)] : []),
+      referenceDocument('container', scoped.title, container),
+      referenceDocument('local', '当前路径', documentVersion(local)),
+    ];
+    const edits = { ...scoped.documents.edits };
+    const containerEdits = { ...scoped.documents.containerEdits };
+    if (applyEdit) {
+      delete edits[parentId ?? ''];
+      delete containerEdits[parentId ?? ''];
     }
     return {
-      story: {
-        ...story,
-        nodes: {
-          ...story.nodes,
-          [parentId]: {
-            ...parentNode,
-            summarySnapshot: caughtUp,
-          },
-        },
-      },
-      snapshot: caughtUp,
+      story: { ...scoped, documents: { ...scoped.documents, local: { ...local, head: scoped.documents.local.head }, edits, containerEdits } },
+      state: { container: state.container, local: local.head },
+      snapshot,
+      expectedUpdatedAt: saved?.updatedAt,
+      reads,
+      request: { publicVersion, container, local: documentVersion(local), snapshot },
     };
   };
 
@@ -412,29 +429,37 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     const updatedSnapshot = await summarizeOverflowTurns(
       story,
       leafId,
-      leaf.summarySnapshot,
+      getActiveSummarySnapshot(story, leafId),
       config,
       signal,
     );
-    if (updatedSnapshot === leaf.summarySnapshot) {
+    if (updatedSnapshot.content === getActiveSummarySnapshot(story, leafId).content &&
+      updatedSnapshot.coveredUpToNodeId === leaf.summarySnapshot.coveredUpToNodeId) {
       return story;
     }
 
+    const scoped = migrateStoryDocuments(story) as Story & { documents: StoryDocuments };
+    const state = storyDocumentState(scoped, leafId, true);
+    if (scoped.documents.edits[leafId]) return story;
+    const revise = writeDocument(scoped.documents.local, state.local,
+      replaceDocumentProgress(documentVersion(scoped.documents.local, state.local).markdown, updatedSnapshot.content), 'automatic');
     return {
-      ...story,
+      ...scoped,
+      documents: { ...scoped.documents, local: { ...revise, head: scoped.documents.local.head } },
       nodes: {
-        ...story.nodes,
-        [leafId]: {
-          ...leaf,
-          summarySnapshot: updatedSnapshot,
-        },
+        ...scoped.nodes,
+        [leafId]: { ...scoped.nodes[leafId], documents: { ...state, local: revise.head }, summarySnapshot: updatedSnapshot },
       },
       updatedAt: now(),
     };
   };
 
   const finalizeAssistantReply = async (opts: {
-    baseStory: Story;
+    baseStory: Story & { documents: StoryDocuments };
+    documentState: StoryDocumentState;
+    reads: DocumentRead[];
+    proposal?: TurnExecutionResult['proposal'];
+    expectedUpdatedAt?: number;
     userNode: TurnNode;
     baseSnapshot: PlotSummarySnapshot;
     content: string;
@@ -444,7 +469,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     config: ModelConfig;
     signal?: AbortSignalLike;
   }): Promise<TurnExecutionResult> => {
-    const assistantCreatedAt = now();
+    const assistantCreatedAt = Math.max(now(), opts.baseStory.updatedAt + 1);
     const initialAssistantNode: TurnNode = {
       id: createId(),
       parentId: opts.userNode.id,
@@ -453,6 +478,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       ...(opts.reasoningContent ? { reasoningContent: opts.reasoningContent } : {}),
       createdAt: assistantCreatedAt,
       summarySnapshot: opts.baseSnapshot,
+      documents: opts.documentState,
+      documentReads: opts.reads,
     };
 
     const provisionalStory: Story = {
@@ -475,16 +502,22 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       opts.signal,
     );
 
-    const finalAssistantNode: TurnNode =
-      updatedSnapshot === opts.baseSnapshot
-        ? initialAssistantNode
-        : { ...initialAssistantNode, summarySnapshot: updatedSnapshot };
+    const documents = opts.baseStory.documents;
+    const before = documentVersion(documents.local, opts.documentState.local);
+    const revised = updatedSnapshot === opts.baseSnapshot ? documents.local : writeDocument(
+      documents.local, before.id, replaceDocumentProgress(before.markdown, updatedSnapshot.content), 'automatic',
+    );
+    const finalAssistantNode: TurnNode = updatedSnapshot === opts.baseSnapshot ? initialAssistantNode : {
+      ...initialAssistantNode, summarySnapshot: updatedSnapshot,
+      documents: { ...opts.documentState, local: revised.head },
+    };
 
     const updatedStory: Story =
       finalAssistantNode === initialAssistantNode
         ? provisionalStory
         : {
             ...provisionalStory,
+            documents: { ...documents, local: { ...revised, head: documents.local.head } },
             nodes: {
               ...provisionalStory.nodes,
               [finalAssistantNode.id]: finalAssistantNode,
@@ -492,12 +525,13 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
           };
 
     throwIfAborted(opts.signal);
-    await persistStory(updatedStory, true);
+    await persistStory(updatedStory, true, opts.expectedUpdatedAt);
 
     return {
       userNode: opts.userNode,
       assistantNode: finalAssistantNode,
       story: updatedStory,
+      ...(opts.proposal ? { proposal: opts.proposal } : {}),
     };
   };
 
@@ -508,21 +542,21 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     config: ModelConfig,
     callbacks?: TurnCallbacks,
   ): Promise<TurnExecutionResult> => {
-    const { story: workingStory, snapshot: parentSnapshot } = await catchUpParentSummary(
-      story,
-      parentId,
-      config,
-      callbacks?.signal,
-    );
+    const prepared = await prepareTurn(story, parentId, config, callbacks?.signal);
+    const { story: workingStory, snapshot: parentSnapshot } = prepared;
 
     const { messages } = assembleThreeZoneContext(
       workingStory,
       parentId,
       trimmedInput,
       deps.contextBudget,
+      true,
+      prepared.request,
     );
 
-    const { content, reasoningContent } = await streamText(config, messages, callbacks);
+    const result = await streamText(config, messages, callbacks, true);
+    const { content, proposal } = splitMarkdownReply(result.content);
+    if (!content.trim() && !proposal) throw new Error('模型没有返回可用内容，请重试。');
 
     const userNode: TurnNode = {
       id: createId(),
@@ -531,14 +565,19 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       content: trimmedInput,
       createdAt: now(),
       summarySnapshot: parentSnapshot,
+      documents: prepared.state,
     };
 
     return finalizeAssistantReply({
       baseStory: workingStory,
       userNode,
       baseSnapshot: parentSnapshot,
-      content,
-      reasoningContent,
+      content: content || '请核对拟保存的资料。',
+      reasoningContent: result.reasoningContent,
+      documentState: prepared.state,
+      reads: prepared.reads,
+      proposal: result.finishReason === 'stop' ? proposal : undefined,
+      expectedUpdatedAt: prepared.expectedUpdatedAt,
       extraNodes: { [userNode.id]: userNode },
       rootNodeIds:
         parentId === null ? [...workingStory.rootNodeIds, userNode.id] : workingStory.rootNodeIds,
@@ -556,13 +595,13 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       return persistStory(story, true);
     },
 
-    async saveStory(story: Story): Promise<Story> {
-      return persistStory(story, false);
+    async saveStory(story: Story, expectedUpdatedAt?: number): Promise<Story> {
+      return persistStory(story, false, expectedUpdatedAt);
     },
 
     async listStories(): Promise<Story[]> {
       if (!deps.storage) return [];
-      return deps.storage.listStories();
+      return (await deps.storage.listStories()).map(migrateStoryDocuments);
     },
 
     async loadActiveStory(): Promise<Story | null> {
@@ -570,16 +609,17 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       const activeId = await deps.storage.getActiveStoryId();
       if (activeId) {
         const found = await deps.storage.getStory(activeId);
-        if (found) return found;
+        if (found) return migrateStoryDocuments(found);
       }
       const all = await deps.storage.listStories();
-      return all[0] ?? null;
+      return all[0] ? migrateStoryDocuments(all[0]) : null;
     },
 
     async setActiveStory(id: string | null): Promise<Story | null> {
       if (!deps.storage) return null;
       await deps.storage.setActiveStoryId(id);
-      return id ? deps.storage.getStory(id) : null;
+      const selected = id ? await deps.storage.getStory(id) : null;
+      return selected ? migrateStoryDocuments(selected) : null;
     },
 
     async renameStory(id: string, title: string): Promise<Story | null> {
@@ -591,9 +631,9 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         ...existing,
         title: trimmedTitle,
         blueprint: { ...existing.blueprint, title: trimmedTitle },
-        updatedAt: now(),
+        updatedAt: Math.max(now(), existing.updatedAt + 1),
       };
-      await deps.storage.saveStory(updated);
+      await deps.storage.saveStory(updated, existing.updatedAt);
       return updated;
     },
 
@@ -654,12 +694,10 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     },
 
     async updateStoryBlueprint(story: Story, blueprint: StoryBlueprint): Promise<Story> {
-      const trimmedTitle = blueprint.title.trim() || story.title;
+      const scoped = migrateStoryDocuments(story);
       const updated: Story = {
-        ...story,
-        title: trimmedTitle,
-        blueprint: { ...blueprint, title: trimmedTitle },
-        updatedAt: now(),
+        ...scoped, blueprint,
+        updatedAt: Math.max(now(), scoped.updatedAt + 1),
       };
       return persistStory(updated, false);
     },
@@ -742,33 +780,37 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         throw new Error('AI 节点缺少关联的玩家输入父节点。');
       }
 
-      const { story: workingStory, snapshot: parentSnapshot } = await catchUpParentSummary(
+      const prepared = await prepareTurn(
         story,
         userNode.parentId,
         config,
         callbacks?.signal,
+        false,
       );
-      const effectiveUserNode =
-        parentSnapshot === userNode.summarySnapshot
-          ? userNode
-          : { ...userNode, summarySnapshot: parentSnapshot };
-
+      const { story: workingStory, snapshot: parentSnapshot } = prepared;
       const { messages } = assembleThreeZoneContext(
         workingStory,
         userNode.parentId,
         userNode.content,
         deps.contextBudget,
+        true,
+        prepared.request,
       );
-      const { content, reasoningContent } = await streamText(config, messages, callbacks);
+      const result = await streamText(config, messages, callbacks, true);
+      const { content, proposal } = splitMarkdownReply(result.content);
+      if (!content.trim() && !proposal) throw new Error('模型没有返回可用内容，请重试。');
 
       return finalizeAssistantReply({
         baseStory: workingStory,
-        userNode: effectiveUserNode,
+        userNode,
         baseSnapshot: parentSnapshot,
-        content,
-        reasoningContent,
-        extraNodes:
-          effectiveUserNode === userNode ? {} : { [effectiveUserNode.id]: effectiveUserNode },
+        content: content || '请核对拟保存的资料。',
+        reasoningContent: result.reasoningContent,
+        documentState: prepared.state,
+        reads: prepared.reads,
+        proposal: result.finishReason === 'stop' ? proposal : undefined,
+        expectedUpdatedAt: prepared.expectedUpdatedAt,
+        extraNodes: {},
         rootNodeIds: workingStory.rootNodeIds,
         config,
         signal: callbacks?.signal,

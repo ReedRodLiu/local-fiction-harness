@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   assembleThreeZoneContext,
-  buildFallbackSummary,
   createFictionHarness,
   parseAssistantMessage,
   type LlmStreamRequest,
@@ -100,7 +99,7 @@ describe('Slice 4: Three-Zone Context & incremental Plot Summary compression', (
     expect(assembled.messages[0].content).toContain('【原始设定】绝不违背的铁律。');
     expect(assembled.messages[0].content).toContain('灵根决定资质');
     expect(assembled.messages[0].content).toContain('禁止私下窃听');
-    expect(assembled.messages[0].content).toContain('防 OOC');
+    expect(assembled.messages[0].content).toContain('保持角色与设定一致');
     expect(assembled.messages[1].role).toBe('system');
     expect(assembled.messages[1].content).toContain('【增量摘要】主角结识师兄并赢得内门比试。');
     const zone3Contents = assembled.messages.slice(2).map((m) => m.content);
@@ -201,36 +200,7 @@ describe('Slice 4: Three-Zone Context & incremental Plot Summary compression', (
     expect(minKept.messages.filter((m) => m.role !== 'system')[0]?.role).toBe('user');
   });
 
-  it('builds deterministic buildFallbackSummary digests with truncation and previous summary retention', () => {
-    const emptySnapshot = { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 };
-    const longText = '玩家探索了漫长的走廊'.repeat(12); // > 80 chars
-    const nodes: TurnNode[] = [
-      {
-        id: 'u1',
-        parentId: null,
-        role: 'user',
-        content: longText,
-        createdAt: 1,
-        summarySnapshot: emptySnapshot,
-      },
-      {
-        id: 'a1',
-        parentId: 'u1',
-        role: 'assistant',
-        content: '发现一扇暗门。',
-        createdAt: 2,
-        summarySnapshot: emptySnapshot,
-      },
-    ];
 
-    const fresh = buildFallbackSummary('', nodes);
-    expect(fresh).toContain('- 玩家：');
-    expect(fresh).toContain('…');
-    expect(fresh).toContain('- 叙事：发现一扇暗门。');
-
-    const appended = buildFallbackSummary('既有摘要要点', nodes);
-    expect(appended.startsWith('既有摘要要点\n- 玩家：')).toBe(true);
-  });
 });
 
 describe('Slice 4: Pseudo-code HUD panel & A/B/C/D or numbered choice parsing', () => {
@@ -242,10 +212,12 @@ describe('Slice 4: Pseudo-code HUD panel & A/B/C/D or numbered choice parsing', 
       '时间：Day 1 夜 | 体力：85/100',
       '```',
       '请选择你的下一步行动：',
+      '```lfh-choices',
       'A. 礼貌致意并入座',
       'B、冷淡扫视众人后落座',
       'C) 转身退出门外',
       'D: 保持沉默静观其变',
+      '```',
     ].join('\n');
 
     const parsed = parseAssistantMessage(reply);
@@ -265,7 +237,8 @@ describe('Slice 4: Pseudo-code HUD panel & A/B/C/D or numbered choice parsing', 
       { key: 'D', label: '保持沉默静观其变', fullText: 'D: 保持沉默静观其变' },
     ]);
 
-    const numbered = parseAssistantMessage('1. 调查书桌\n2. 询问管家\n3. 推窗观察\n4. 离开走廊\n5. 直接休息');
+    expect(parseAssistantMessage('1. 物品\n2. 笔记').choices).toEqual([]);
+    const numbered = parseAssistantMessage('```lfh-choices\n1. 调查书桌\n2. 询问管家\n3. 推窗观察\n4. 离开走廊\n5. 直接休息\n```');
     expect(numbered.choices).toHaveLength(5);
     expect(numbered.choices[4]).toEqual({ key: '5', label: '直接休息', fullText: '5. 直接休息' });
   });

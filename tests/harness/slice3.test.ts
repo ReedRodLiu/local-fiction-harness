@@ -102,7 +102,7 @@ describe('Slice 3: Versioned Story JSON export & import backup', () => {
 
     const jsonBackup = exportStoryBackup(afterTurn.story);
     const parsed = JSON.parse(jsonBackup);
-    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.schemaVersion).toBe(2);
 
     const importedFresh = importStoryBackup(jsonBackup, []);
     expect(importedFresh.id).toBe(afterTurn.story.id);

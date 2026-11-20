@@ -1,4 +1,5 @@
 import { unzipSync } from 'fflate';
+import { DEFAULT_ZIP_MAX_BYTES } from './binaryDownload.ts';
 import { createDefaultBlueprint } from './blueprint.ts';
 import { getActiveBranchNodes } from './context.ts';
 import { decodeUtf8WithGbFallback } from './encoding.ts';
@@ -13,6 +14,7 @@ import type {
   NodeDiagnostics,
   PlotSummarySnapshot,
   Story,
+  StoryAttachment,
   TurnNode,
 } from './types.ts';
 
@@ -124,7 +126,7 @@ export interface ScriptTurnRange {
   endTurn: number;
 }
 
-export type ImportSummaryStatus = 'compressed' | 'within_window' | 'pending_key';
+export type ImportSummaryStatus = 'within_window' | 'pending_key' | 'pending_summary';
 
 export interface DeepSeekImportBatchResult {
   stories: Story[];
@@ -552,13 +554,13 @@ function detectRawScriptFromActivePath(
     if (firstAttachments) {
       return {
         rawScript: buildSetupAttachmentScript(firstAttachments),
-        confidence: 'strong',
-        setupNodeIds: [firstUser.id],
+        confidence: 'ambiguous',
+        setupNodeIds: [],
       };
     }
     const firstText = firstUser.content.trim();
     if (firstText.length >= 180 || countStrongFictionMatches(firstText) >= 2) {
-      return { rawScript: firstText, confidence: 'strong', setupNodeIds: [firstUser.id] };
+      return { rawScript: firstText, confidence: 'ambiguous', setupNodeIds: [] };
     }
   }
 
@@ -570,12 +572,12 @@ function detectRawScriptFromActivePath(
       return {
         rawScript: buildSetupAttachmentScript(attachments),
         confidence: 'ambiguous',
-        setupNodeIds: [node.id],
+        setupNodeIds: [],
       };
     }
     const text = node.content.trim();
     if (text.length >= 120 || countStrongFictionMatches(text) >= 2) {
-      return { rawScript: text, confidence: 'ambiguous', setupNodeIds: [node.id] };
+      return { rawScript: text, confidence: 'ambiguous', setupNodeIds: [] };
     }
   }
 
@@ -583,7 +585,7 @@ function detectRawScriptFromActivePath(
   return {
     rawScript: fallbackText,
     confidence: 'ambiguous',
-    setupNodeIds: firstUser && fallbackText ? [firstUser.id] : [],
+    setupNodeIds: [],
   };
 }
 
@@ -594,6 +596,7 @@ function buildStoryFromRawSession(
     createId: () => string;
     now: () => number;
     scriptRangeOverride?: ScriptTurnRange;
+    retainAttachments: boolean;
   },
 ): DeepSeekSessionPreview {
   const messages = getSessionMessages(raw);
@@ -617,6 +620,7 @@ function buildStoryFromRawSession(
   const skippedAttachments: DeepSeekAttachmentResult[] = [];
   const seenAttachmentPaths = new Set<string>();
   const attachmentsByNodeId = new Map<string, SetupAttachmentText>();
+  const attachments: Record<string, StoryAttachment> = Object.create(null);
   const nodes: Record<string, TurnNode> = {};
   const rawParentByNodeId = new Map<string, string | null>();
   const emptySnapshot: PlotSummarySnapshot = {
@@ -660,6 +664,7 @@ function buildStoryFromRawSession(
 
     const inlineAttachmentSections: string[] = [];
     const rawAttachmentTexts: string[] = [];
+    const attachmentIds = new Set<string>();
 
     for (const f of fileRefs) {
       const fileName = f.file_name?.trim() || '未命名附件';
@@ -667,6 +672,13 @@ function buildStoryFromRawSession(
       const kind = classifyAttachment(fileName, f.is_image);
       const isFirstSeen = !seenAttachmentPaths.has(exportPath);
       seenAttachmentPaths.add(exportPath);
+      const original = extractedFiles[exportPath];
+      if (opts.retainAttachments && original) {
+        if (!Object.hasOwn(attachments, exportPath)) {
+          attachments[exportPath] = { fileName, base64: encodeAttachment(original) };
+        }
+        attachmentIds.add(exportPath);
+      }
 
       if (kind === 'text') {
         const bytes = extractedFiles[exportPath];
@@ -705,7 +717,7 @@ function buildStoryFromRawSession(
           fileName,
           exportPath,
           kind,
-          hint: kind === 'media' ? '图片或 PDF 附件已跳过（未解压）。' : '不支持的附件格式已跳过。',
+          hint: kind === 'media' ? '图片或 PDF 不提取正文。' : '此附件格式不提取正文。',
         });
       }
     }
@@ -715,7 +727,7 @@ function buildStoryFromRawSession(
     }
 
     const combinedText = [text, ...inlineAttachmentSections].filter(Boolean).join('\n\n').trim();
-    if (!combinedText && !reasoning && !diagnostics) {
+    if (!combinedText && !reasoning && !diagnostics && attachmentIds.size === 0) {
       continue;
     }
 
@@ -724,7 +736,7 @@ function buildStoryFromRawSession(
       firstUserSnippet = toSnippet(text, 40);
     }
 
-    const finalContent = combinedText || '（原平台回复在此中断，未返回正文）';
+    const finalContent = combinedText || (attachmentIds.size ? '（原平台消息包含附件）' : '（原平台回复在此中断，未返回正文）');
     rawParentByNodeId.set(
       nodeId,
       msg.parent_id !== null && msg.parent_id !== undefined ? String(msg.parent_id) : null,
@@ -737,6 +749,7 @@ function buildStoryFromRawSession(
       content: finalContent,
       ...(reasoning ? { reasoningContent: reasoning } : {}),
       ...(diagnostics ? { diagnostics } : {}),
+      ...(attachmentIds.size > 0 ? { attachmentIds: [...attachmentIds] } : {}),
       createdAt: parseTimestamp(msg.inserted_at, createdAt),
       summarySnapshot: emptySnapshot,
     };
@@ -775,6 +788,7 @@ function buildStoryFromRawSession(
     id: opts.createId(),
     title,
     sourceKind: 'deepseek_import',
+    ...(Object.keys(attachments).length > 0 ? { attachments } : {}),
     rawScript: '',
     blueprint: createDefaultBlueprint(title),
     nodes,
@@ -818,14 +832,33 @@ function buildStoryFromRawSession(
   };
 }
 
-/**
- * Stage 2: Decompresses ONLY the selected sessions' JSONs and their referenced .docx/.md/.txt files.
- * Media (.png/.jpg/.pdf/.doc) and unselected sessions are never decompressed.
- */
+function encodeAttachment(bytes: Uint8Array): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let encoded = '';
+  for (let index = 0; index < bytes.length; index += 3) {
+    const first = bytes[index];
+    const second = bytes[index + 1] ?? 0;
+    const third = bytes[index + 2] ?? 0;
+    encoded += alphabet[first >>> 2] + alphabet[((first & 3) << 4) | (second >>> 4)] +
+      (index + 1 < bytes.length ? alphabet[((second & 15) << 2) | (third >>> 6)] : '=') +
+      (index + 2 < bytes.length ? alphabet[third & 63] : '=');
+  }
+  return encoded;
+}
+
 export function previewDeepSeekSessions(
   zipBytes: Uint8Array,
   selectedSessionIds: readonly string[],
   options: DeepSeekPreviewOptions = {},
+): DeepSeekSessionPreview[] {
+  return readDeepSeekSessions(zipBytes, selectedSessionIds, options, false);
+}
+
+function readDeepSeekSessions(
+  zipBytes: Uint8Array,
+  selectedSessionIds: readonly string[],
+  options: DeepSeekPreviewOptions,
+  retainAttachments: boolean,
 ): DeepSeekSessionPreview[] {
   const selectedSet = new Set(selectedSessionIds);
   if (selectedSet.size === 0) return [];
@@ -867,22 +900,45 @@ export function previewDeepSeekSessions(
       const { fileRefs } = extractFragments(msg);
       for (const f of fileRefs) {
         const fileName = f.file_name?.trim() || '';
-        if (classifyAttachment(fileName, f.is_image) === 'text') {
+        if (retainAttachments || classifyAttachment(fileName, f.is_image) === 'text') {
           neededAttachmentPaths.add(resolveAttachmentPath(raw.id, f));
         }
       }
     }
   }
 
-  let extractedFiles: Record<string, Uint8Array> = {};
-  if (neededAttachmentPaths.size > 0) {
-    const rawFiles = unzipSync(zipBytes, {
-      filter: (file) => neededAttachmentPaths.has(normalizeZipPath(file.name)),
+  const extractedFiles: Record<string, Uint8Array> = Object.create(null);
+  function extract(paths: Set<string>) {
+    let remaining = DEFAULT_ZIP_MAX_BYTES;
+    return unzipSync(zipBytes, {
+      filter: (file) => {
+        if (!paths.has(normalizeZipPath(file.name)) || file.originalSize > remaining) return false;
+        remaining -= file.originalSize;
+        return true;
+      },
     });
-    extractedFiles = {};
-    for (const [k, v] of Object.entries(rawFiles)) {
-      extractedFiles[normalizeZipPath(k)] = v;
+  }
+  if (neededAttachmentPaths.size > 0) {
+    let files: Record<string, Uint8Array>;
+    try {
+      files = extract(neededAttachmentPaths);
+    } catch {
+      // A damaged entry should not discard other originals or their conversation history.
+      files = Object.create(null);
+      let remaining = DEFAULT_ZIP_MAX_BYTES;
+      for (const path of neededAttachmentPaths) {
+        try {
+          for (const [name, value] of Object.entries(extract(new Set([path])))) {
+            if (value.length > remaining) break;
+            files[name] = value;
+            remaining -= value.length;
+          }
+        } catch {
+          // The original cannot be restored from this ZIP entry.
+        }
+      }
     }
+    for (const [key, value] of Object.entries(files)) extractedFiles[normalizeZipPath(key)] = value;
   }
 
   const createId = options.createId ?? createDefaultId;
@@ -893,6 +949,7 @@ export function previewDeepSeekSessions(
       createId,
       now,
       scriptRangeOverride: options.scriptRangeOverrides?.[raw.id],
+      retainAttachments,
     }),
   );
 }
@@ -981,10 +1038,9 @@ export async function locateDeepSeekScriptBoundary(
   if (!parsed) return fallbackResult();
 
   const validIds = new Set(earlyNodes.map((n) => n.id));
+  const userIds = new Set(earlyNodes.filter((node) => node.role === 'user').map((node) => node.id));
   const scriptMessageIds = Array.isArray(parsed.scriptMessageIds)
-    ? parsed.scriptMessageIds.filter(
-        (id): id is string => typeof id === 'string' && validIds.has(id),
-      )
+    ? earlyNodes.filter((node) => userIds.has(node.id) && (parsed.scriptMessageIds as unknown[]).includes(node.id)).map((node) => node.id)
     : [];
   const firstPlayMessageId =
     typeof parsed.firstPlayMessageId === 'string' && validIds.has(parsed.firstPlayMessageId)
@@ -1011,8 +1067,7 @@ export async function locateDeepSeekScriptBoundary(
 
 /**
  * Persists each selected DeepSeek session 1-to-1 as an independent Story.
- * When modelConfig is provided, runs Level-2 boundary detection (only for ambiguous openings),
- * extracts Story Blueprint, and compresses over-window Plot Summary for the active branch only.
+ * Opening candidates are advisory. Defer compression until the next continuation.
  */
 export async function importDeepSeekSessions(
   zipBytes: Uint8Array,
@@ -1021,93 +1076,32 @@ export async function importDeepSeekSessions(
     FictionHarness,
     | 'saveStory'
     | 'setActiveStory'
-    | 'extractStoryBlueprint'
-    | 'ensureActiveBranchSummary'
     | 'getReviewState'
     | 'transport'
   >,
   options: DeepSeekImportOptions = {},
 ): Promise<DeepSeekImportBatchResult> {
-  const previews = previewDeepSeekSessions(zipBytes, selectedSessionIds, options);
+  const previews = readDeepSeekSessions(zipBytes, selectedSessionIds, options, true);
   const stories: Story[] = [];
   const summaryStatuses: Record<string, ImportSummaryStatus> = {};
   const modelConfig = options.modelConfig;
   const transport = options.transport ?? harness.transport;
 
   for (const preview of previews) {
-    let workingStory = preview.story;
+    let workingStory = preview.scriptConfidence === 'ambiguous'
+      ? { ...preview.story, importCandidate: preview.rawScript, rawScript: '' }
+      : preview.story;
     const hasManualOverride = Boolean(options.scriptRangeOverrides?.[preview.sessionId]);
 
-    if (modelConfig) {
-      let locatedOpeningHook: string | null = null;
-      if (preview.scriptConfidence === 'ambiguous' && !hasManualOverride) {
-        const boundary = await locateDeepSeekScriptBoundary(
-          workingStory,
-          transport,
-          modelConfig,
-          options.signal,
-        );
-        if (!boundary.usedFallback && boundary.rawScript.trim()) {
-          workingStory = {
-            ...workingStory,
-            rawScript: boundary.rawScript,
-            ...(boundary.scriptMessageIds.length > 0
-              ? { setupNodeIds: boundary.scriptMessageIds }
-              : {}),
-          };
-        }
-        if (boundary.firstPlayMessageId && workingStory.nodes[boundary.firstPlayMessageId]) {
-          locatedOpeningHook = toSnippet(
-            workingStory.nodes[boundary.firstPlayMessageId].content,
-            120,
-          );
-          workingStory = {
-            ...workingStory,
-            blueprint: {
-              ...workingStory.blueprint,
-              openingHook: locatedOpeningHook,
-            },
-          };
-        }
+    if (modelConfig && preview.scriptConfidence === 'ambiguous' && !hasManualOverride) {
+      const boundary = await locateDeepSeekScriptBoundary(workingStory, transport, modelConfig, options.signal);
+      if (!boundary.usedFallback && boundary.rawScript.trim()) {
+        workingStory = { ...workingStory, importCandidate: boundary.rawScript };
       }
-
-      if (workingStory.rawScript.trim()) {
-        try {
-          const blueprint = await harness.extractStoryBlueprint(
-            workingStory.rawScript,
-            modelConfig,
-            workingStory.title,
-            options.signal,
-          );
-          workingStory = {
-            ...workingStory,
-            blueprint:
-              locatedOpeningHook && !blueprint.openingHook.trim()
-                ? { ...blueprint, openingHook: locatedOpeningHook }
-                : blueprint,
-          };
-        } catch (err) {
-          if (isAbortError(err)) throw err;
-          // Keep partial_fallback blueprint cleanly without blocking import
-        }
-      }
-
-      if (harness.getReviewState(workingStory).needsSummaryCompression) {
-        workingStory = await harness.ensureActiveBranchSummary(
-          workingStory,
-          modelConfig,
-          options.signal,
-        );
-        summaryStatuses[workingStory.id] = 'compressed';
-      } else {
-        summaryStatuses[workingStory.id] = 'within_window';
-      }
-    } else {
-      summaryStatuses[workingStory.id] = harness.getReviewState(workingStory).needsSummaryCompression
-        ? 'pending_key'
-        : 'within_window';
     }
-
+    summaryStatuses[workingStory.id] = harness.getReviewState(workingStory).needsSummaryCompression
+      ? (modelConfig ? 'pending_summary' : 'pending_key')
+      : 'within_window';
     const saved = await harness.saveStory(workingStory);
     stories.push(saved);
   }

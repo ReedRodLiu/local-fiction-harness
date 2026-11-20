@@ -148,7 +148,7 @@ describe('Spec #25 Slice 1: Pre-turn catch-up & chunked rolling Plot Summary', (
     const mainRequest = captured.find(
       (request) => !(request.messages[0]?.content ?? '').includes('剧情摘要压缩'),
     );
-    expect(mainRequest?.messages[1]?.content).toContain('已覆盖 1 条历史节点');
+    expect(mainRequest?.messages[1]?.content).toContain('当前进度');
     expect(mainRequest?.messages[1]?.content).toContain('滚动摘要片段2');
   });
 
@@ -299,7 +299,7 @@ describe('Spec #25 Slice 1: Pre-turn catch-up & chunked rolling Plot Summary', (
     // Main reply request must already contain Zone 2 summary before sending
     const mainReq = captured[mainReqIndex];
     expect(mainReq.messages[1]?.role).toBe('system');
-    expect(mainReq.messages[1]?.content).toContain('滚动剧情摘要');
+    expect(mainReq.messages[1]?.content).toContain('当前进度');
     expect(mainReq.messages[1]?.content).toContain(`滚动摘要第${preTurnSummaryReqs.length}批`);
 
     // Recent window in main reply must NOT exceed recentMaxNodes
@@ -443,7 +443,9 @@ describe('Spec #25 Slice 2: Setup Node annotation, deduplication & backup compat
       'files/script.docx': docxBytes,
     });
 
-    const previews = previewDeepSeekSessions(zipBytes, [session.id]);
+    const previews = previewDeepSeekSessions(zipBytes, [session.id], {
+      scriptRangeOverrides: { [session.id]: { startTurn: 1, endTurn: 1 } },
+    });
     expect(previews).toHaveLength(1);
     const story = previews[0].story;
     expect(story.setupNodeIds).toBeDefined();
@@ -483,7 +485,7 @@ describe('Spec #25 Slice 2: Setup Node annotation, deduplication & backup compat
     expect(summaryReq!.messages.map((m) => m.content).join('\n')).not.toContain(uniqueScriptMarker);
   });
 
-  it('records setupNodeIds from Level-2 LLM script boundary detection when opening is ambiguous', async () => {
+  it('retains model boundary suggestions for user review without hiding setup nodes', async () => {
     const session = {
       id: 'sess-ambiguous',
       title: '模糊开局',
@@ -584,9 +586,9 @@ describe('Spec #25 Slice 2: Setup Node annotation, deduplication & backup compat
     expect(boundaryCalled).toBe(true);
     expect(batch.stories).toHaveLength(1);
     const imported = batch.stories[0];
-    expect(imported.setupNodeIds).toHaveLength(2);
-    expect(imported.nodes[imported.setupNodeIds![0]].content).toContain('你好');
-    expect(imported.nodes[imported.setupNodeIds![1]].content).toContain('角色：林晚');
+    expect(imported.setupNodeIds).toBeUndefined();
+    expect(imported.importCandidate).toContain('角色：林晚');
+    expect(imported.rawScript).toBe('');
   });
 
   it('round-trips setupNodeIds in Story JSON backup, validates node existence, and remains backward-compatible with v1 backups lacking setupNodeIds', () => {
@@ -602,6 +604,8 @@ describe('Spec #25 Slice 2: Setup Node annotation, deduplication & backup compat
 
     // Legacy v1 backup without setupNodeIds still imports cleanly
     const legacyParsed = JSON.parse(json);
+    legacyParsed.schemaVersion = 1;
+    delete legacyParsed.story.documents;
     delete legacyParsed.story.setupNodeIds;
     const legacyRestored = importStoryBackup(JSON.stringify(legacyParsed), []);
     expect(legacyRestored.setupNodeIds).toBeUndefined();

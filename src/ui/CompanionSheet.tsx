@@ -3,7 +3,6 @@ import {
   computeActiveReviewState,
   type PlotSummarySnapshot,
   type Story,
-  type StoryBlueprint,
   type ThreeZoneMetrics,
 } from '../harness/index.ts';
 import { ContextOverview } from './ContextOverview.tsx';
@@ -29,13 +28,12 @@ interface CompanionSheetProps {
   isSummarizing: boolean;
   isSummaryInProgress: boolean;
   isBlueprintReextracting: boolean;
-  isBranchSwitchSummarizing: boolean;
   isBranchSwitching: boolean;
   onSwitchBranch: (targetNodeId: string) => void;
   onRenameBranch: (branchEntryNodeId: string, name: string) => Promise<void> | void;
   onExtractBranchGist: (branchEntryNodeId: string) => Promise<void> | void;
   onComputeSummary: () => void;
-  onSaveBlueprintTweak: (updatedBlueprint: StoryBlueprint) => Promise<boolean | void>;
+  onOpenDocuments?: { container(): void; local(): void; public(): void; adoptScript?: () => void };
   onReextractBlueprint: () => void;
   onClose: () => void;
 }
@@ -50,13 +48,12 @@ export function CompanionSheet({
   isSummarizing,
   isSummaryInProgress,
   isBlueprintReextracting,
-  isBranchSwitchSummarizing,
   isBranchSwitching,
   onSwitchBranch,
   onRenameBranch,
   onExtractBranchGist,
   onComputeSummary,
-  onSaveBlueprintTweak,
+  onOpenDocuments,
   onReextractBlueprint,
   onClose,
 }: CompanionSheetProps) {
@@ -122,7 +119,7 @@ export function CompanionSheet({
           <StoryTree
             story={story}
             isBusy={isStreaming || isSummarizing || isBranchSwitching}
-            isRenameBusy={isStreaming || isBranchSwitching || (isSummarizing && !isBranchSwitchSummarizing)}
+            isRenameBusy={isStreaming || isBranchSwitching || isSummarizing}
             collapsible={false}
             onSwitchBranch={onSwitchBranch}
             onRenameBranch={onRenameBranch}
@@ -161,13 +158,21 @@ export function CompanionSheet({
           data-testid="companion-panel-blueprint"
           hidden={activeTab !== 'blueprint'}
         >
+          {onOpenDocuments && <div className="btn-group creative-role-entry">
+            <button type="button" className="btn" disabled={isStreaming || isSummarizing}
+              onClick={onOpenDocuments.container}>故事资料</button>
+            <button type="button" className="btn" disabled={isStreaming || isSummarizing}
+              onClick={onOpenDocuments.local}>当前路径资料</button>
+            <button type="button" className="btn" onClick={onOpenDocuments.public}>公共记忆</button>
+            {onOpenDocuments.adoptScript && <button type="button" className="btn" disabled={isStreaming || isSummarizing}
+              onClick={onOpenDocuments.adoptScript}>核对候选剧本</button>}
+          </div>}
           <ContextOverview
             story={story}
             summarySnapshot={summarySnapshot}
             metrics={metrics}
             isStreaming={isStreaming || isSummarizing || isBranchSwitching}
             isReextracting={isBlueprintReextracting}
-            onSaveBlueprintTweak={onSaveBlueprintTweak}
             onReextractBlueprint={() => {
               if (!hasCredentials) onClose();
               onReextractBlueprint();

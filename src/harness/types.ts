@@ -1,3 +1,5 @@
+import type { MarkdownProposal, StoryDocumentState, StoryDocuments } from './markdownDocuments.ts';
+import type { CreativeStorage } from './creative.ts';
 import type { DiagnosticCollector } from './diagnostics.ts';
 
 export interface StoryBlueprint {
@@ -25,6 +27,18 @@ export interface NodeDiagnostics {
   readonly contentRisk?: boolean;
 }
 
+export interface DocumentRead {
+  scope: 'public' | 'container' | 'local';
+  name: string;
+  versionId: string;
+  readAt: number;
+}
+
+export interface StoryAttachment {
+  fileName: string;
+  base64: string;
+}
+
 export interface TurnNode {
   id: string;
   parentId: string | null;
@@ -34,12 +48,18 @@ export interface TurnNode {
   diagnostics?: NodeDiagnostics;
   createdAt: number;
   summarySnapshot: PlotSummarySnapshot;
+  documents?: StoryDocumentState;
+  documentReads?: DocumentRead[];
+  attachmentIds?: string[];
 }
 
 export interface Story {
   id: string;
   title: string;
   sourceKind?: StorySourceKind;
+  documents?: StoryDocuments;
+  importCandidate?: string;
+  attachments?: Record<string, StoryAttachment>;
   rawScript: string;
   blueprint: StoryBlueprint;
   nodes: Record<string, TurnNode>;
@@ -88,14 +108,14 @@ export interface KeyValueStorage {
 export interface StoryStorage {
   listStories(): Promise<Story[]>;
   getStory(id: string): Promise<Story | null>;
-  saveStory(story: Story): Promise<void>;
+  saveStory(story: Story, expectedUpdatedAt?: number): Promise<void>;
   deleteStory(id: string): Promise<void>;
   getActiveStoryId(): Promise<string | null>;
   setActiveStoryId(id: string | null): Promise<void>;
 }
 
 export interface StoryBackupEnvelope {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   exportedAt: number;
   story: Story;
 }
@@ -119,6 +139,8 @@ export interface SecretStore {
 
 export interface BackupExporter {
   exportJsonFile(fileName: string, jsonContent: string): Promise<void>;
+  exportMarkdown?(fileName: string, markdown: string): Promise<void>;
+  exportAttachment?(fileName: string, base64: string): Promise<void>;
 }
 
 export interface BinaryDownloadResult {
@@ -143,6 +165,7 @@ export interface PlatformRuntime {
   secretStore: SecretStore;
   backupExporter: BackupExporter;
   supportsMemoryOnlySession: boolean;
+  creativeStorage?: CreativeStorage;
 }
 
 export interface TurnCallbacks {
@@ -154,6 +177,7 @@ export interface TurnCallbacks {
 export interface TurnExecutionResult {
   userNode: TurnNode;
   assistantNode: TurnNode;
+  proposal?: MarkdownProposal;
   story: Story;
 }
 

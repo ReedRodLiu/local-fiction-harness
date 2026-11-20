@@ -26,7 +26,7 @@ import { toErrorMessage } from './textHelpers.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 
 const SUMMARY_STATUS_LABELS: Record<ImportSummaryStatus, string> = {
-  compressed: '已压缩',
+  pending_summary: '将在续写时补齐进度',
   within_window: '近期窗口内',
   pending_key: '待配置密钥',
 };
@@ -759,6 +759,9 @@ export function DeepSeekImportPanel({
             {receipt.previews.map((item, index) => {
               const savedStory = receipt.stories[index] ?? item.story;
               const status = receipt.summaryStatuses[savedStory.id] ?? 'within_window';
+              const savedAttachments = Object.values(savedStory.attachments ?? {});
+              const missingAttachments = item.skippedAttachments.filter((file) =>
+                !Object.hasOwn(savedStory.attachments ?? {}, file.exportPath));
               return (
                 <li key={savedStory.id} className="ds-receipt-item">
                   <div className="ds-receipt-heading">
@@ -766,14 +769,14 @@ export function DeepSeekImportPanel({
                     <span className="badge">{SUMMARY_STATUS_LABELS[status]}</span>
                   </div>
                   <span className="status-text">{item.turnCount} 轮 · {item.forkCount} 处分叉</span>
-                  {item.recoveredAttachments.length > 0 && (
+                  {savedAttachments.length > 0 && (
                     <span className="status-text">
-                      已恢复附件：{item.recoveredAttachments.map((attachment) => attachment.fileName).join('、')}
+                      已保存原始附件：{savedAttachments.map((attachment) => attachment.fileName).join('、')}
                     </span>
                   )}
-                  {item.skippedAttachments.length > 0 && (
+                  {missingAttachments.length > 0 && (
                     <div className="turn-diagnostics" role="note">
-                      已跳过附件：{item.skippedAttachments
+                      未能保存原始附件：{missingAttachments
                         .map((attachment) => `${attachment.fileName}${attachment.hint ? `（${attachment.hint}）` : ''}`)
                         .join('；')}
                     </div>

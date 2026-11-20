@@ -27,9 +27,11 @@ describe('DeepSeek official key validation & config normalization', () => {
     expect(normalized).toEqual({
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-flash',
-      apiKey: '  sk-legacy-1234  ',
+      apiKey: '',
       memoryOnly: false,
     });
+    expect(normalizeOfficialModelConfig({ ...normalized, baseUrl: 'https://api.deepseek.com/v1', apiKey: 'sk-official' }).apiKey)
+      .toBe('sk-official');
   });
 
   it('sanitizes, validates, and masks API keys', () => {

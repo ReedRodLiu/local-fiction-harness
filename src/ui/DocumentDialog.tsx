@@ -1,0 +1,110 @@
+import { useEffect, useState } from 'react';
+import type { MarkdownVersion } from '../harness/index.ts';
+import { BannerAlert } from './primitives/BannerAlert.tsx';
+import { ModalDialog } from './primitives/ModalDialog.tsx';
+import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
+import { toErrorMessage } from './textHelpers.ts';
+
+export interface DocumentEdit {
+  title: string;
+  description?: string;
+  base: MarkdownVersion;
+  history?: MarkdownVersion[];
+  proposal?: string;
+  apply: (expected: string, markdown: string) => Promise<void>;
+  reload?: () => Promise<Pick<DocumentEdit, 'base' | 'history'>>;
+}
+
+export function DocumentDialog({ edit, onClose }: { edit: DocumentEdit | null; onClose: () => void }) {
+  const [base, setBase] = useState<MarkdownVersion | null>(null);
+  const [history, setHistory] = useState<MarkdownVersion[]>([]);
+  const [draft, setDraft] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [preview, setPreview] = useState(false);
+  const [olderDraft, setOlderDraft] = useState<string | null>(null);
+  useWebHistoryLayer('markdown-edit', 62, Boolean(edit), onClose, !saving);
+
+  useEffect(() => {
+    setBase(edit?.base ?? null);
+    setHistory(edit?.history ?? []);
+    setDraft(edit?.proposal ?? edit?.base.markdown ?? '');
+    setPreview(edit?.proposal !== undefined);
+    setError('');
+    setOlderDraft(null);
+  }, [edit]);
+
+  async function save() {
+    if (!edit || !base || saving) return;
+    setSaving(true);
+    try {
+      await edit.apply(base.id, draft);
+      onClose();
+    } catch (err) {
+      setError(toErrorMessage(err, '保存文档失败。'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function reload() {
+    if (!edit?.reload || saving) return;
+    setSaving(true);
+    try {
+      const fresh = await edit.reload();
+      setOlderDraft(draft);
+      setBase(fresh.base);
+      setHistory(fresh.history ?? []);
+      setDraft(fresh.base.markdown);
+      setPreview(false);
+      setError('已载入当前版本。请在这份底稿上重新编辑或在聊天中重新提出改动。');
+    } catch (err) {
+      setError(toErrorMessage(err, '读取文档失败。'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ModalDialog open={Boolean(edit)} label={edit?.title ?? '文档'} testId="markdown-document"
+      closeDisabled={saving} onClose={() => { if (!saving) onClose(); }}>
+      {edit && (
+        <div className="local-document-dialog">
+          <h2>{edit.title}</h2>
+          {edit.description && <p className="status-text">{edit.description}</p>}
+          {error && <BannerAlert tone="danger">{error}</BannerAlert>}
+          {preview && base && <details className="reasoning-details"><summary>查看修改前的内容</summary>
+            <pre>{base.markdown || '（空白文档）'}</pre>
+          </details>}
+          <label className="field">
+            {preview ? '拟保存的 Markdown' : 'Markdown'}
+            <textarea value={draft} rows={10} disabled={saving} onChange={(event) => setDraft(event.target.value)} />
+          </label>
+          {olderDraft !== null && <details className="reasoning-details">
+            <summary>查看之前拟保存的草稿</summary>
+            <pre>{olderDraft}</pre>
+          </details>}
+          {history.length > 1 && (
+            <details className="reasoning-details">
+              <summary>版本历史</summary>
+              {history.map((version) => <div className="local-document-history" key={version.id}>
+                <span>{new Date(version.savedAt).toLocaleString()} · {version.source === 'automatic' ? '自动进度' : version.source === 'migration' ? '旧档重建' : '用户保存'}</span>
+                <button type="button" className="btn" disabled={saving} onClick={() => { setDraft(version.markdown); setPreview(true); }}>
+                  用此版本创建新版本
+                </button>
+              </div>)}
+            </details>
+          )}
+          <div className="btn-group">
+            <button type="button" className="btn" disabled={saving} onClick={onClose}>取消</button>
+            {error && edit.reload && <button type="button" className="btn" disabled={saving} onClick={() => void reload()}>重新核对</button>}
+            <button type="button" className="btn btn-primary" disabled={saving || !base || draft === base.markdown}
+              onClick={() => preview ? void save() : setPreview(true)}>
+              {preview ? '确认保存' : '核对修改'}
+            </button>
+          </div>
+        </div>
+      )}
+    </ModalDialog>
+  );
+}

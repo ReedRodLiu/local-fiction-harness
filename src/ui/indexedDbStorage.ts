@@ -1,10 +1,11 @@
-import type { Story, StoryStorage } from '../harness/index.ts';
+import type { CreativeStorage, CreativeWorkspaceState, Story, StoryStorage } from '../harness/index.ts';
 
 const DB_NAME = 'local-fiction-harness';
 const DB_VERSION = 1;
 const STORE_STORIES = 'stories';
 const STORE_META = 'meta';
 const ACTIVE_STORY_KEY = 'activeStoryId';
+const CREATIVE_KEY = 'creativeWorkspace';
 
 function requestToPromise<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -49,7 +50,7 @@ function openDatabase(): Promise<IDBDatabase> {
 /**
  * Browser IndexedDB implementation of StoryStorage for local-first persistence.
  */
-export function createIndexedDbStoryStorage(): StoryStorage {
+export function createIndexedDbStoryStorage(): StoryStorage & { creativeStorage: CreativeStorage } {
   let dbPromise: Promise<IDBDatabase> | null = null;
   const getDb = () => {
     if (!dbPromise) {
@@ -92,6 +93,26 @@ export function createIndexedDbStoryStorage(): StoryStorage {
   };
 
   return {
+    creativeStorage: {
+      load() {
+        return withTransaction(STORE_META, 'readonly', async (tx) => {
+          const entry = await requestToPromise(tx.objectStore(STORE_META).get(CREATIVE_KEY)) as
+            { value: CreativeWorkspaceState } | undefined;
+          return entry?.value ?? null;
+        });
+      },
+      save(workspace, expected) {
+        return withTransaction(STORE_META, 'readwrite', async (tx) => {
+          const store = tx.objectStore(STORE_META);
+          const entry = await requestToPromise(store.get(CREATIVE_KEY)) as { value: CreativeWorkspaceState } | undefined;
+          if ((entry?.value.revision ?? 0) !== expected || workspace.revision !== expected + 1) {
+            throw new Error('本地资料已在另一个页面变化。请重新打开后核对。');
+          }
+          await requestToPromise(store.put({ key: CREATIVE_KEY, value: workspace }));
+        });
+      },
+    },
+
     listStories(): Promise<Story[]> {
       return withTransaction(STORE_STORIES, 'readonly', async (tx) => {
         const items = (await requestToPromise(tx.objectStore(STORE_STORIES).getAll())) as Story[];
@@ -108,9 +129,14 @@ export function createIndexedDbStoryStorage(): StoryStorage {
       });
     },
 
-    saveStory(story: Story): Promise<void> {
+    saveStory(story: Story, expectedUpdatedAt?: number): Promise<void> {
       return withTransaction(STORE_STORIES, 'readwrite', async (tx) => {
-        tx.objectStore(STORE_STORIES).put(story);
+        const store = tx.objectStore(STORE_STORIES);
+        if (expectedUpdatedAt !== undefined) {
+          const existing = await requestToPromise(store.get(story.id)) as Story | undefined;
+          if (existing?.updatedAt !== expectedUpdatedAt) throw new Error('故事版本已变化，请重新核对。');
+        }
+        await requestToPromise(store.put(story));
       });
     },
 

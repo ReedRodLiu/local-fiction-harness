@@ -38,38 +38,19 @@ function splitCodeSegments(raw: string): MessageSegment[] {
   return segments;
 }
 
-function extractTrailingChoices(raw: string): ParsedChoice[] {
-  const lines = raw.split(/\r?\n/);
-  const choiceRegex = /^\s*([A-Za-z]|[1-9]\d?)\s*[\.、:：\)]\s*(.+?)\s*$/;
-  const collected: ParsedChoice[] = [];
-
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim();
-    if (!line) {
-      if (collected.length > 0) break;
-      continue;
-    }
-    const m = choiceRegex.exec(line);
-    if (!m) {
-      break;
-    }
-    collected.unshift({
-      key: m[1].toUpperCase(),
-      label: m[2].trim(),
-      fullText: line,
-    });
-  }
-
-  return collected.length >= 2 ? collected : [];
-}
-
-/**
- * Splits assistant narrative content into prose and fenced pseudo-code HUD panels,
- * and extracts trailing A/B/C/D or numbered interactive choices.
- */
+/** Only a terminal lfh-choices fence creates executable choice buttons. */
 export function parseAssistantMessage(rawContent: string): ParsedAssistantMessage {
-  return {
-    segments: splitCodeSegments(rawContent),
-    choices: extractTrailingChoices(rawContent),
-  };
+  const match = /(?:^|\r?\n)`{3}lfh-choices\r?\n([\s\S]*?)\r?\n`{3}\s*$/.exec(rawContent);
+  if (!match) return { segments: splitCodeSegments(rawContent), choices: [] };
+  const choices = match[1].split(/\r?\n/).filter((line) => line.trim()).map((line, index) => {
+    const parts = /^([A-Za-z]|[1-9]\d?)\s*[.、:：)]\s*(.+)$/.exec(line.trim());
+    return {
+      key: parts?.[1]?.toUpperCase() ?? String(index + 1),
+      label: parts?.[2] ?? line.trim(),
+      fullText: line.trim(),
+    };
+  });
+  if (choices.length < 2) return { segments: splitCodeSegments(rawContent), choices: [] };
+  const display = [rawContent.slice(0, match.index).trimEnd(), ...choices.map((choice) => choice.fullText)].join('\n');
+  return { segments: splitCodeSegments(display), choices };
 }

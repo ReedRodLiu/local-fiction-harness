@@ -5,10 +5,21 @@ import {
   computeActiveReviewState,
   createAsyncModelConfigStore,
   createFictionHarness,
+  documentLineage,
+  documentVersion,
+  editStoryDocument,
+  emptyWorkspace,
+  migrateStoryDocuments,
+  newCharacter,
+  newWork,
+  storyDocumentState,
+  writeDocument,
+  type StoryDocuments,
   exportStoryBackup,
   getActiveBranchNodes,
   getActiveSummarySnapshot,
   getSiblingBranchInfo,
+  getUncoveredNodes,
   importDeepSeekSessions,
   importStoryBackup,
   isAbortError,
@@ -35,6 +46,9 @@ import {
   type DevTestConfigResponse,
 } from '../platform/runtime.ts';
 import { CompanionSheet } from './CompanionSheet.tsx';
+import { CreativeWorkspace } from './CreativeWorkspace.tsx';
+import { DocumentDialog, type DocumentEdit } from './DocumentDialog.tsx';
+import { useCreativeWorkspace } from './useCreativeWorkspace.ts';
 import { LibraryDrawer } from './LibraryDrawer.tsx';
 import { setCrashDiagnosticBundleBuilder } from './crashDiagnosticContext.ts';
 import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
@@ -100,6 +114,9 @@ export interface AppProps {
 
 export function App({ runtime }: AppProps) {
   const isWebDev = runtime.platform === 'web' && import.meta.env.DEV;
+  const creative = useCreativeWorkspace(runtime.creativeStorage);
+  const [creativePage, setCreativePage] = useState<'writing' | 'character' | null>(null);
+  const [documentEdit, setDocumentEdit] = useState<DocumentEdit | null>(null);
 
   const configStore = useMemo(
     () => createAsyncModelConfigStore(runtime.secretStore),
@@ -110,6 +127,7 @@ export function App({ runtime }: AppProps) {
       createFictionHarness({
         transport: runtime.transport,
         storage: runtime.storyStorage,
+        loadPublicDocument: async () => (await runtime.creativeStorage?.load())?.publicDocument ?? emptyWorkspace().publicDocument,
       }),
     [runtime],
   );
@@ -158,7 +176,6 @@ export function App({ runtime }: AppProps) {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [isSummaryComputationInProgress, setIsSummaryComputationInProgress] = useState(false);
   const [isBlueprintReextracting, setIsBlueprintReextracting] = useState(false);
-  const [isBranchSwitchSummarizing, setIsBranchSwitchSummarizing] = useState(false);
   const [isBranchSwitching, setIsBranchSwitching] = useState(false);
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamContent, setStreamContent] = useState('');
@@ -198,7 +215,7 @@ export function App({ runtime }: AppProps) {
   const configEditSeqRef = useRef(0);
   const configSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const suppressedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet());
-  const isSummaryInProgress = isBranchSwitchSummarizing || isSummaryComputationInProgress;
+  const isSummaryInProgress = isSummaryComputationInProgress;
   const edgeSwipeHandlers = useEdgeSwipeToOpen(
     !showImport && !showSettings && !mobileLibraryOpen,
     () => setMobileLibraryOpen(true),
@@ -285,13 +302,21 @@ export function App({ runtime }: AppProps) {
   const enqueueStoryCommit = useCallback(
     (merge: (latestStory: Story | null) => Story | null): Promise<Story | null> => {
       const commit = storyCommitQueueRef.current.then(async () => {
-        const updated = merge(storyRef.current);
+        const selected = storyRef.current;
+        const saved = selected ? await runtime.storyStorage.getStory(selected.id) : null;
+        if (!saved || storyRef.current?.id !== saved.id) return null;
+        const updated = merge(migrateStoryDocuments(saved));
         if (!updated) return null;
-        storyRef.current = updated;
-        setStory(updated);
-        await harness.saveStory(updated);
+        const committed = await harness.saveStory(
+          { ...updated, updatedAt: Math.max(updated.updatedAt, saved.updatedAt + 1) },
+          saved.updatedAt,
+        );
+        if (storyRef.current?.id === committed.id) {
+          storyRef.current = committed;
+          setStory(committed);
+        }
         await refreshStories();
-        return updated;
+        return committed;
       });
       storyCommitQueueRef.current = commit.then(
         () => undefined,
@@ -299,14 +324,13 @@ export function App({ runtime }: AppProps) {
       );
       return commit;
     },
-    [harness, refreshStories],
+    [harness, refreshStories, runtime.storyStorage],
   );
 
   const invalidateSummaryTask = useCallback(() => {
     summarySeqRef.current += 1;
     setIsSummarizing(false);
     setIsSummaryComputationInProgress(false);
-    setIsBranchSwitchSummarizing(false);
   }, []);
 
   useEffect(() => {
@@ -703,6 +727,7 @@ export function App({ runtime }: AppProps) {
       }));
       setStreamingNodeId(result.assistantNode.id);
       setStory(result.story);
+      if (result.proposal) handleMarkdownProposal(result);
       await refreshStories();
       if (!isStale()) {
         setStreamReasoning('');
@@ -754,11 +779,9 @@ export function App({ runtime }: AppProps) {
     if (opts?.trackSummarizing) {
       setIsSummarizing(true);
       setIsSummaryComputationInProgress(false);
-      setIsBranchSwitchSummarizing(false);
     } else if (!opts?.preserveSummaryTask) {
       setIsSummarizing(false);
       setIsSummaryComputationInProgress(false);
-      setIsBranchSwitchSummarizing(false);
     }
     try {
       const updated = await transition();
@@ -830,6 +853,7 @@ export function App({ runtime }: AppProps) {
     if (branchSwitchBusyRef.current) return;
     captureOverlayTrigger();
     abortActiveStream(true);
+    setCreativePage(null);
     setShowSettings(false);
     setStoryTreeOpen(false);
     setMobileLibraryOpen(false);
@@ -841,6 +865,7 @@ export function App({ runtime }: AppProps) {
   const openSettings = () => {
     if (branchSwitchBusyRef.current) return;
     captureOverlayTrigger();
+    setCreativePage(null);
     setShowImport(false);
     setMobileLibraryOpen(false);
     setStoryTreeOpen(false);
@@ -936,12 +961,10 @@ export function App({ runtime }: AppProps) {
     targetLeafId: string,
     activeCfg: ModelConfig,
     fallbackError: string,
-    allowRenameDuringSummary = false,
   ) => {
     const summarySeq = ++summarySeqRef.current;
     setIsSummarizing(true);
-    setIsSummaryComputationInProgress(!allowRenameDuringSummary);
-    setIsBranchSwitchSummarizing(allowRenameDuringSummary);
+    setIsSummaryComputationInProgress(true);
     try {
       const summarized = await harness.calculateActiveBranchSummary(targetStory, activeCfg);
       if (summarySeqRef.current !== summarySeq) return;
@@ -958,7 +981,6 @@ export function App({ runtime }: AppProps) {
       if (summarySeqRef.current === summarySeq) {
         setIsSummarizing(false);
         setIsSummaryComputationInProgress(false);
-        setIsBranchSwitchSummarizing(false);
       }
     }
   };
@@ -975,31 +997,12 @@ export function App({ runtime }: AppProps) {
         '切换分支失败。',
         { allowBranchSwitch: true },
       );
-      // The story commit is complete. Branch renaming may now use the existing
-      // exception while an automatic post-switch summary runs.
-      branchSwitchTransitionRef.current = false;
-      setIsBranchSwitching(false);
       runtime.diagnostics.recordEvent({
         level: switched ? 'info' : 'warn',
         category: 'branch',
         action: switched ? 'switch_branch' : 'switch_branch_failed',
         durationMs: Date.now() - switchStartedAt,
       });
-      const targetLeafId = switched?.activeLeafNodeId ?? null;
-      if (
-        switched &&
-        targetLeafId &&
-        computeActiveReviewState(switched).needsSummaryCompression &&
-        hasModelCredentials(config, useDevEnvKey)
-      ) {
-        await runBackgroundSummary(
-          switched,
-          targetLeafId,
-          config,
-          '补算支线剧情摘要失败，可稍后重试。',
-          true,
-        );
-      }
     } finally {
       branchSwitchTransitionRef.current = false;
       branchSwitchBusyRef.current = false;
@@ -1057,7 +1060,9 @@ export function App({ runtime }: AppProps) {
 
   const handleReextractBlueprint = (overrideConfig?: ModelConfig) => {
     if (branchSwitchBusyRef.current) return;
-    if (!story.rawScript.trim()) return;
+    const source = migrateStoryDocuments(story).documents;
+    const markdown = source ? documentVersion(source.container).markdown : '';
+    if (!markdown.trim()) return;
     withCredentials(
       '补拆故事蓝图',
       (activeCfg) => {
@@ -1065,7 +1070,7 @@ export function App({ runtime }: AppProps) {
         void runStoryTransition(
           async () => {
             const extracted = await harness.extractStoryBlueprint(
-              story.rawScript,
+              markdown,
               activeCfg,
               story.title,
             );
@@ -1166,6 +1171,7 @@ export function App({ runtime }: AppProps) {
         setStory(switched);
         setShowImport(false);
         setShowSettings(false);
+        setCreativePage(null);
         setMobileLibraryOpen(false);
       }
     } catch (err) {
@@ -1215,23 +1221,6 @@ export function App({ runtime }: AppProps) {
     }
   };
 
-  const handleSaveBlueprintTweak = async (updatedBlueprint: StoryBlueprint): Promise<boolean> => {
-    setErrorMsg(null);
-    const opSeq = storyOpSeqRef.current;
-    try {
-      const updated = await harness.updateStoryBlueprint(story, updatedBlueprint);
-      if (storyOpSeqRef.current !== opSeq) return false;
-      setStory(updated);
-      await refreshStories();
-      return true;
-    } catch (err) {
-      if (storyOpSeqRef.current === opSeq) {
-        setErrorMsg(toErrorMessage(err, '保存蓝图微调失败。'));
-      }
-      return false;
-    }
-  };
-
   const handleExportBackup = async (storyId: string) => {
     setErrorMsg(null);
     try {
@@ -1272,6 +1261,126 @@ export function App({ runtime }: AppProps) {
     }
   };
 
+  function openCreativePage(mode: 'writing' | 'character') {
+    if (deepSeekImportBusyRef.current) return;
+    captureOverlayTrigger();
+    abortActiveStream(true);
+    setShowSettings(false);
+    setShowImport(false);
+    setStoryTreeOpen(false);
+    setMobileLibraryOpen(false);
+    setCreativePage(mode);
+  }
+
+  function openPublicDocument(proposal?: string, expected?: string) {
+    void creative.read().then(({ publicDocument }) => {
+      const latest = documentVersion(publicDocument);
+      setDocumentEdit({
+        title: '公共记忆 · 保存后影响各场景的新请求',
+        base: expected && Object.hasOwn(publicDocument.versions, expected) ? documentVersion(publicDocument, expected) : latest,
+        history: documentLineage(publicDocument),
+        proposal,
+        reload: async () => {
+          const { publicDocument: current } = await creative.read();
+          return { base: documentVersion(current), history: documentLineage(current) };
+        },
+        apply: async (base: string, markdown: string) => {
+          if (expected && !Object.hasOwn(publicDocument.versions, expected) && base === latest.id) {
+            throw new Error('所用公共文档底稿无法核对。请重新提出改动。');
+          }
+          await creative.save((current) => {
+            const doc = current.publicDocument;
+            if (doc.head !== base) throw new Error('公共记忆已变化，请重新核对。');
+            return { ...current, publicDocument: writeDocument(doc, base, markdown) };
+          });
+        },
+      });
+    }).catch((err) => setErrorMsg(toErrorMessage(err, '读取公共记忆失败。')));
+  }
+
+  function openStoryDocument(source: Story, target: 'container' | 'local', proposal?: string, expected?: string, adoptImport = false) {
+    const anchor = source.activeLeafNodeId;
+    function loadEdit(current: Story) {
+      const scoped = migrateStoryDocuments(current) as Story & { documents: StoryDocuments };
+      const doc = scoped.documents[target];
+      const head = storyDocumentState(scoped, anchor, true)[target];
+      return { doc, head };
+    }
+    const { doc, head } = loadEdit(source);
+    setDocumentEdit({
+      title: target === 'container' ? '故事资料 · 保存后用于此处续写' : '当前路径资料',
+      base: documentVersion(doc, expected ?? head),
+      history: documentLineage(doc, head),
+      proposal,
+      reload: async () => {
+        const latest = await runtime.storyStorage.getStory(source.id);
+        if (!latest || latest.activeLeafNodeId !== anchor) throw new Error('当前路径已变化，请返回后重新选择。');
+        const refreshed = loadEdit(latest);
+        return { base: documentVersion(refreshed.doc, refreshed.head), history: documentLineage(refreshed.doc, refreshed.head) };
+      },
+      apply: async (base: string, markdown: string) => {
+        const latest = await runtime.storyStorage.getStory(source.id);
+        if (!latest || latest.activeLeafNodeId !== anchor) {
+          throw new Error('当前路径已变化，请返回后重新选择。');
+        }
+        const updated = editStoryDocument(latest, target, base, markdown);
+        if (adoptImport) delete updated.importCandidate;
+        await runtime.storyStorage.saveStory(updated, latest.updatedAt);
+        if (storyRef.current?.id === updated.id) {
+          storyRef.current = updated;
+          setStory(updated);
+        }
+        await refreshStories();
+      },
+    });
+  }
+
+  function handleMarkdownProposal(result: TurnExecutionResult) {
+    const proposed = result.proposal;
+    if (!proposed) return;
+    const reads = result.assistantNode.documentReads ?? [];
+    if (proposed.target === 'public') {
+      openPublicDocument(proposed.markdown, reads.find((read) => read.scope === 'public')?.versionId);
+    } else if (proposed.target === 'local' || proposed.target === 'container') {
+      openStoryDocument(result.story, proposed.target, proposed.markdown, reads.find((read) => read.scope === proposed.target)?.versionId);
+    } else if (proposed.name) {
+      const anchor = result.userNode.parentId;
+      const sourceText = anchor ? result.story.nodes[anchor]?.content.replace(/\s+/g, ' ').trim().slice(0, 48) : '';
+      setDocumentEdit({
+        title: `从「${result.story.title}」建立角色 · ${proposed.name}`,
+        description: sourceText ? `来源节点：${sourceText}` : '来源：故事开头。',
+        base: { id: 'new-character', previous: null, markdown: '', savedAt: Date.now(), source: 'user' },
+        proposal: proposed.markdown,
+        apply: async (_expected: string, markdown: string) => {
+          const latest = await runtime.storyStorage.getStory(result.story.id);
+          if (!latest || (anchor !== null && !latest.nodes[anchor])) throw new Error('来源故事或节点已不存在。');
+          if (!markdown.trim()) throw new Error('请保留要采用的人设文本。');
+          const character = newCharacter(proposed.name!, markdown);
+          await creative.save((state) => ({ ...state, characters: [...state.characters, character], activeCharacterId: character.id }));
+          openCreativePage('character');
+        },
+      });
+    }
+  }
+
+  function writeFromStory(nodeId: string | null) {
+    const scoped = migrateStoryDocuments(story) as Story & { documents: StoryDocuments };
+    const versions = storyDocumentState(scoped, nodeId, nodeId === scoped.activeLeafNodeId);
+    const history = getUncoveredNodes(getActiveBranchNodes(scoped, nodeId),
+      getActiveSummarySnapshot(scoped, nodeId).coveredUpToNodeId).map((node) => node.content).join('\n\n');
+    const details = [
+      documentVersion(scoped.documents.container, versions.container).markdown,
+      documentVersion(scoped.documents.local, versions.local).markdown,
+      history && `## 起笔前的对话
+
+${history}`,
+    ].filter(Boolean).join('\n\n');
+    const work = newWork(`${scoped.title} · 续写`, details, { storyId: scoped.id, nodeId });
+    void creative.save((state) => ({ ...state, works: [...state.works, work], activeWorkId: work.id }))
+      .then(() => openCreativePage('writing'))
+      .catch((err) => setErrorMsg(toErrorMessage(err, '从故事开稿失败。')));
+  }
+
   const storyExists =
     stories.some((item) => item.id === story.id) ||
     Boolean(story.rawScript.trim()) ||
@@ -1292,14 +1401,19 @@ export function App({ runtime }: AppProps) {
   const isCommittedStreamingReply =
     isStreaming &&
     activeLeafNode?.role === 'assistant' &&
-    activeLeafNode.content === streamContent;
+    activeLeafNode.id === streamingNodeId;
 
   return (
     <div className="app-root">
       {!showImport && !showSettings && (
         <TopBar
-          title={storyExists ? story.title : '本地文游播放器'}
-          hasStory={storyExists}
+          title={creativePage === 'writing'
+            ? (creative.workspace.works.find((item) => item.id === creative.workspace.activeWorkId)?.title ?? '本地文游')
+            : creativePage === 'character'
+              ? (creative.workspace.characters.find((item) => item.id === creative.workspace.activeCharacterId)?.name ?? '本地文游')
+              : storyExists ? story.title : '本地文游播放器'}
+          hasStory={storyExists && !creativePage}
+          hideStoryTools={Boolean(creativePage)}
           branchLabel={branchLabel}
           forkCount={forkCount}
           isSummaryInProgress={isSummaryInProgress}
@@ -1329,11 +1443,12 @@ export function App({ runtime }: AppProps) {
           onRenameStory={(id, title) => void handleRenameStory(id, title)}
           onDeleteStory={(id) => void handleDeleteStory(id)}
           onExportStoryBackup={(id) => void handleExportBackup(id)}
+          onOpenCreative={openCreativePage}
         />
 
         <main
           ref={mainStageRef}
-          className={`main-stage${storyExists && !showSettings && !showImport ? ' is-playing' : ''}`}
+          className={`main-stage${storyExists && !showSettings && !showImport && !creativePage ? ' is-playing' : ''}`}
           data-testid="main-stage"
           {...edgeSwipeHandlers}
           onScroll={handleMainStageScroll}
@@ -1381,6 +1496,11 @@ export function App({ runtime }: AppProps) {
               onThemePreferenceChange={setThemePreference}
               onFontSizeChange={setDisplayFontSize}
             />
+          ) : creativePage ? (
+            <CreativeWorkspace key={creativePage} mode={creativePage} workspace={creative.workspace}
+              ready={creative.ready} storageError={creative.error} save={creative.save} read={creative.read}
+              runtime={runtime} requestModel={withCredentials} openPublic={openPublicDocument}
+              openDocument={setDocumentEdit} onBack={() => setCreativePage(null)} />
           ) : showImport ? (
             <ImportPanel
               initialMode={importMode}
@@ -1410,6 +1530,7 @@ export function App({ runtime }: AppProps) {
                   onStartDeepSeekImport={() => openImportView('deepseek')}
                   onStartScriptImport={() => openImportView('script')}
                   onSelectStory={(id) => void handleSelectStory(id)}
+                  onOpenCreative={openCreativePage}
                 />
               ) : (
                 <>
@@ -1478,6 +1599,12 @@ export function App({ runtime }: AppProps) {
                           onSwitchBranch={(targetId) => void handleSwitchBranch(targetId)}
                           onEditAndBranch={(nodeId, text) => void handleEditAndBranch(nodeId, text)}
                           onRegenerate={(nodeId) => void handleRegenerateNode(nodeId)}
+                          onWriteFrom={writeFromStory}
+                          attachments={node.attachmentIds?.flatMap((id) => story.attachments?.[id] ?? [])}
+                          onExportAttachment={runtime.backupExporter.exportAttachment ? (file) => {
+                            void runtime.backupExporter.exportAttachment!(file.fileName, file.base64)
+                              .catch((err) => setErrorMsg(toErrorMessage(err, '保存附件失败。')));
+                          } : undefined}
                           onRewindToNode={(nodeId) => void handleRewindToNode(nodeId)}
                         />
                       );
@@ -1610,7 +1737,7 @@ export function App({ runtime }: AppProps) {
               onComplete={(verifiedKey) => {
                 const nextCfg: ModelConfig = useDevProxyForSetup
                   ? { ...config, apiKey: verifiedKey, memoryOnly: false }
-                  : normalizeOfficialModelConfig({ ...config, apiKey: verifiedKey });
+                  : normalizeOfficialModelConfig({ ...config, baseUrl: DEFAULT_MODEL_CONFIG.baseUrl, apiKey: verifiedKey });
                 const resume = pendingByok?.resume;
                 wizardCloseReasonRef.current = 'success';
                 setPendingByok(null);
@@ -1654,16 +1781,23 @@ export function App({ runtime }: AppProps) {
         isSummarizing={isSummarizing}
         isSummaryInProgress={isSummaryInProgress}
         isBlueprintReextracting={isBlueprintReextracting}
-        isBranchSwitchSummarizing={isBranchSwitchSummarizing}
         onSwitchBranch={(id) => void handleSwitchBranch(id)}
         onRenameBranch={handleRenameBranch}
         onExtractBranchGist={handleExtractBranchGist}
         onComputeSummary={() => void handleComputeActiveSummary()}
-        onSaveBlueprintTweak={handleSaveBlueprintTweak}
+        onOpenDocuments={storyExists ? {
+          container: () => openStoryDocument(story, 'container'),
+          local: () => openStoryDocument(story, 'local'),
+          public: () => openPublicDocument(),
+          adoptScript: story.importCandidate
+            ? () => openStoryDocument(story, 'container', [story.documents && documentVersion(story.documents.container, storyDocumentState({ ...story, documents: story.documents }, story.activeLeafNodeId, true).container).markdown, `## 剧本原文\n\n${story.importCandidate}`].filter(Boolean).join('\n\n'), undefined, true)
+            : undefined,
+        } : undefined}
         onReextractBlueprint={() => handleReextractBlueprint()}
         isBranchSwitching={isBranchSwitching}
         onClose={() => setStoryTreeOpen(false)}
       />
+      <DocumentDialog edit={documentEdit} onClose={() => setDocumentEdit(null)} />
     </div>
   );
 }

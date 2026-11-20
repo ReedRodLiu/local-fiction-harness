@@ -107,7 +107,7 @@ describe('TurnCard', () => {
 
   it('places quick choices after the narrative action toolbar', () => {
     const markup = renderCard({
-      node: { ...node, content: '正文\nA. 继续前进\nB. 暂时离开' },
+      node: { ...node, content: '正文\n\n```lfh-choices\n继续前进\n暂时离开\n```' },
       isLatestTurn: true,
       isActiveLeaf: true,
     });

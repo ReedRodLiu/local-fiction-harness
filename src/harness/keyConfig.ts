@@ -22,6 +22,7 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
 export function normalizeOfficialModelConfig(config: ModelConfig): ModelConfig {
   return {
     ...config,
+    apiKey: /^https:\/\/api\.deepseek\.com(?:\/v1)?\/?$/i.test(config.baseUrl.trim()) ? config.apiKey : '',
     baseUrl: DEFAULT_MODEL_CONFIG.baseUrl,
     model: DEFAULT_MODEL_CONFIG.model,
     memoryOnly: false,

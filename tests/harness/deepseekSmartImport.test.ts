@@ -206,7 +206,7 @@ function buildAmbiguousAndLongBranchZip(): Uint8Array {
 }
 
 describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path summary compression on import', () => {
-  it('skips LLM boundary call for strong turn-1 script, and uses compact early preview for ambiguous chitchat opening', async () => {
+  it('skips boundary lookup for confirmed excerpts and keeps model-selected excerpts pending review', async () => {
     const zipBytes = buildAmbiguousAndLongBranchZip();
     const captured: LlmStreamRequest[] = [];
     const transport: LlmTransport = {
@@ -277,14 +277,12 @@ describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path s
     // 2. Strong turn-1 session makes ZERO boundary-locator LLM calls even when modelConfig is passed
     await importDeepSeekSessions(zipBytes, ['sess-strong-first'], harness, {
       modelConfig: testConfig,
+      scriptRangeOverrides: { 'sess-strong-first': { startTurn: 1, endTurn: 1 } },
     });
     expect(captured.some((r) => (r.messages[0]?.content ?? '').includes('剧本边界定位'))).toBe(false);
     expect(captured.some((r) => (r.messages[0]?.content ?? '').includes('剧情摘要压缩'))).toBe(false);
 
-    // 3. Ambiguous over-window session with modelConfig:
-    //    - calls boundary locator once with compact early turns only (never inactive branch B!)
-    //    - extracts blueprint
-    //    - compresses active path once, leaving inactive branch B untouched
+    // The model proposes a candidate; the user may adopt it later.
     captured.length = 0;
     const result = await importDeepSeekSessions(zipBytes, ['sess-ambiguous-long'], harness, {
       modelConfig: testConfig,
@@ -301,18 +299,15 @@ describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path s
     const summaryReqs = captured.filter((r) =>
       (r.messages[0]?.content ?? '').includes('剧情摘要压缩'),
     );
-    expect(summaryReqs).toHaveLength(1);
-    expect(summaryReqs[0].messages[1]?.content).not.toContain('潜入后院马厩');
+    expect(summaryReqs).toHaveLength(0);
 
     const importedStory = result.stories[0];
     expect(importedStory.sourceKind).toBe('deepseek_import');
-    expect(importedStory.rawScript).toContain('【雾隐山庄剧本】');
-    expect(importedStory.rawScript).not.toContain('在吗？想玩个古风推理文游');
-    expect(importedStory.blueprint.extractionStatus).toBe('complete');
-    expect(result.summaryStatuses[importedStory.id]).toBe('compressed');
-
-    const activeSnap = getActiveSummarySnapshot(importedStory);
-    expect(activeSnap.content).toBe('【激活线摘要】顾长风自庄主处得铜钥匙。');
+    expect(importedStory.rawScript).toBe('');
+    expect(importedStory.importCandidate).toContain('【雾隐山庄剧本】');
+    expect(importedStory.importCandidate).not.toContain('在吗？想玩个古风推理文游');
+    expect(result.summaryStatuses[importedStory.id]).toBe('pending_summary');
+    expect(getActiveSummarySnapshot(importedStory).content).toBe('');
 
     // Verify inactive branch B leaf remains uncompressed
     const branchBLeaf = Object.values(importedStory.nodes).find((n) =>
@@ -327,7 +322,7 @@ describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path s
       r.messages.some((m) => m.content === '翻开账册第一页'),
     )!;
     const fullPrompt = turnReq.messages.map((m) => m.content).join('\n');
-    expect(fullPrompt).toContain('【雾隐山庄剧本】');
+    expect(turnReq.messages[0].content).not.toContain('【雾隐山庄剧本】');
     expect(fullPrompt).toContain('【激活线摘要】顾长风自庄主处得铜钥匙。');
   });
 
@@ -375,7 +370,7 @@ describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path s
     expect(story.blueprint.extractionStatus).toBe('partial_fallback');
 
     // Later after configuring key, both blueprint extraction and lazy summary completion succeed
-    const bp = await harness.extractStoryBlueprint(story.rawScript, testConfig, story.title);
+    const bp = await harness.extractStoryBlueprint(story.importCandidate ?? '', testConfig, story.title);
     expect(bp.extractionStatus).toBe('complete');
     const withBp = await harness.updateStoryBlueprint(story, bp);
     const completed = await harness.ensureActiveBranchSummary(withBp, testConfig);

@@ -346,8 +346,9 @@ export function buildBranchGistMessages(
   branchEntryNodeId: string,
 ): LlmMessage[] {
   const branchLine = collectBranchLine(story, branchEntryNodeId);
+  const progress = getActiveSummarySnapshot(story, branchLine.at(-1)?.id ?? null).content.trim();
   const transcript = branchLine
-    .slice(0, 12)
+    .slice(-12)
     .map((n) => `[${n.role === 'user' ? '玩家' : '叙事'}]: ${toCompactPreview(n.content, 160)}`)
     .join('\n');
 
@@ -359,7 +360,7 @@ export function buildBranchGistMessages(
     },
     {
       role: 'user',
-      content: transcript || '（暂无对话内容）',
+      content: [progress && `当前进度：${progress}`, transcript].filter(Boolean).join('\n\n') || '（暂无对话内容）',
     },
   ];
 }

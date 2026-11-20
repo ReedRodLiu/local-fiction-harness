@@ -1,5 +1,6 @@
 package io.localfiction.harness;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -106,5 +107,18 @@ public class PrivateStoryFileStoreTest {
 
         File bareOut = AtomicFileHelper.writeExportBackupFile(cacheDir, "bare-story", "{}");
         assertEquals("bare-story.lfh.json", bareOut.getName());
+    }
+
+    @Test
+    public void writesMarkdownAndAttachmentsAsTheirOriginalFormats() throws Exception {
+        File cacheDir = tempFolder.newFolder("creative_exports");
+        File markdown = AtomicFileHelper.writeExportFile(cacheDir, "样稿.md", "正文", true);
+        assertEquals("样稿.md", markdown.getName());
+        assertEquals("正文", new String(Files.readAllBytes(markdown.toPath()), StandardCharsets.UTF_8));
+
+        byte[] original = new byte[] {0, (byte) 255, 42};
+        File attachment = AtomicFileHelper.writeExportAttachment(cacheDir, "../立绘.png", original);
+        assertEquals("立绘.png", attachment.getName());
+        assertArrayEquals(original, Files.readAllBytes(attachment.toPath()));
     }
 }

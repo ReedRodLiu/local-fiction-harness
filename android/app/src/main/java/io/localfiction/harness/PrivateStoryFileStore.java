@@ -63,6 +63,10 @@ public class PrivateStoryFileStore {
     }
 
     public void saveStory(JSONObject story) throws IOException, JSONException {
+        saveStory(story, null);
+    }
+
+    public void saveStory(JSONObject story, Long expectedUpdatedAt) throws IOException, JSONException {
         if (story == null || !story.has("id")) {
             throw new IllegalArgumentException("story.id is required.");
         }
@@ -72,7 +76,12 @@ public class PrivateStoryFileStore {
         }
         synchronized (lock) {
             AtomicFileHelper.ensureDirectory(storiesDir);
-            AtomicFileHelper.writeUtf8Atomically(storyFileForId(id), story.toString());
+            File file = storyFileForId(id);
+            if (expectedUpdatedAt != null && (!file.exists() ||
+                new JSONObject(AtomicFileHelper.readUtf8File(file)).getLong("updatedAt") != expectedUpdatedAt)) {
+                throw new IOException("故事版本已变化，请重新核对。");
+            }
+            AtomicFileHelper.writeUtf8Atomically(file, story.toString());
         }
     }
 

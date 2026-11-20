@@ -4,6 +4,7 @@ import {
   createDiagnosticTransport,
   type BackupExporter,
   type BinaryDownloader,
+  type CreativeStorage,
   type KeyValueStorage,
   type LlmTransport,
   type PlatformRuntime,
@@ -14,6 +15,7 @@ import { createCapacitorBinaryDownloader } from './capacitorBinaryDownloader.ts'
 import { createCapacitorSseTransport } from './capacitorSseTransport.ts';
 import {
   createAndroidBackupExporter,
+  createAndroidCreativeStorage,
   createAndroidSecretStore,
   createAndroidStoryStorage,
 } from './capacitorVaultAdapters.ts';
@@ -22,6 +24,7 @@ export interface AndroidRuntimeOptions {
   transport?: LlmTransport;
   binaryDownloader?: BinaryDownloader;
   storyStorage?: StoryStorage;
+  creativeStorage?: CreativeStorage;
   secretStore?: SecretStore;
   backupExporter?: BackupExporter;
   diagnosticsStorage?: KeyValueStorage;
@@ -59,6 +62,7 @@ export function createAndroidPlatformRuntime(
       diagnostics,
     ),
     secretStore: options.secretStore ?? createAndroidSecretStore(),
+    creativeStorage: options.creativeStorage ?? createAndroidCreativeStorage(),
     backupExporter: options.backupExporter ?? createAndroidBackupExporter(),
     supportsMemoryOnlySession: true,
   };

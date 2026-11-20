@@ -151,7 +151,7 @@ public class NativeVaultPlugin extends Plugin {
             return;
         }
         try {
-            storyStore.saveStory(storyObj);
+            storyStore.saveStory(storyObj, call.getLong("expectedUpdatedAt"));
             call.resolve();
         } catch (Exception err) {
             call.reject("保存故事失败: " + err.getMessage(), err);
@@ -192,6 +192,49 @@ public class NativeVaultPlugin extends Plugin {
         }
     }
 
+    private static final Object WORKSPACE_LOCK = new Object();
+
+    private File workspaceFile() {
+        return new File(getContext().getFilesDir(), "lfh_creative_workspace.json");
+    }
+
+    @PluginMethod
+    public void loadCreativeWorkspace(PluginCall call) {
+        synchronized (WORKSPACE_LOCK) {
+            try {
+                JSObject result = new JSObject();
+                File file = workspaceFile();
+                result.put("workspace", file.exists()
+                    ? new JSONObject(AtomicFileHelper.readUtf8File(file)) : JSONObject.NULL);
+                call.resolve(result);
+            } catch (Exception err) {
+                call.reject("读取本地工作台失败。", err);
+            }
+        }
+    }
+
+    @PluginMethod
+    public void saveCreativeWorkspace(PluginCall call) {
+        synchronized (WORKSPACE_LOCK) {
+            try {
+                File file = workspaceFile();
+                Integer expected = call.getInt("expected");
+                JSObject workspace = call.getObject("workspace");
+                int revision = file.exists()
+                    ? new JSONObject(AtomicFileHelper.readUtf8File(file)).getInt("revision") : 0;
+                if (expected == null || revision != expected || workspace == null
+                    || workspace.getInt("revision") != expected + 1) {
+                    call.reject("本地资料已变化，请重新打开后核对。");
+                    return;
+                }
+                AtomicFileHelper.writeUtf8Atomically(file, workspace.toString());
+                call.resolve();
+            } catch (Exception err) {
+                call.reject("保存本地工作台失败。", err);
+            }
+        }
+    }
+
     @PluginMethod
     public void exportJsonFile(PluginCall call) {
         String fileName = call.getString("fileName", AtomicFileHelper.DEFAULT_BACKUP_FILENAME);
@@ -202,23 +245,24 @@ public class NativeVaultPlugin extends Plugin {
         }
         try {
             Context context = getContext();
-            File outFile = AtomicFileHelper.writeExportBackupFile(
-                context.getCacheDir(),
-                fileName,
-                jsonContent
-            );
+            String format = call.getString("format");
+            boolean markdown = "markdown".equals(format);
+            boolean attachment = "attachment".equals(format);
+            File outFile = attachment
+                ? AtomicFileHelper.writeExportAttachment(context.getCacheDir(), fileName, Base64.decode(jsonContent, Base64.DEFAULT))
+                : AtomicFileHelper.writeExportFile(context.getCacheDir(), fileName, jsonContent, markdown);
             Uri uri = FileProvider.getUriForFile(
                 context,
                 context.getPackageName() + ".fileprovider",
                 outFile
             );
             Intent sendIntent = new Intent(Intent.ACTION_SEND);
-            sendIntent.setType("application/json");
+            sendIntent.setType(attachment ? "application/octet-stream" : markdown ? "text/markdown" : "application/json");
             sendIntent.putExtra(Intent.EXTRA_STREAM, uri);
             sendIntent.putExtra(Intent.EXTRA_SUBJECT, outFile.getName());
             sendIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-            Intent chooser = Intent.createChooser(sendIntent, "导出故事 JSON 备份");
+            Intent chooser = Intent.createChooser(sendIntent, attachment ? "保存附件" : markdown ? "导出 Markdown" : "导出故事 JSON 备份");
             Activity activity = getActivity();
             if (activity != null) {
                 activity.runOnUiThread(() -> {

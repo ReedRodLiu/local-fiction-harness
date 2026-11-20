@@ -47,13 +47,22 @@ export function mergeBranchSummaryResult(
     return null;
   }
 
+  if (latestStory.documents?.edits[targetLeafId]) return null;
+  const local = summarizedStory.documents?.local;
   return {
     ...latestStory,
+    ...(latestStory.documents && local ? {
+      documents: {
+        ...latestStory.documents,
+        local: { ...latestStory.documents.local, versions: { ...latestStory.documents.local.versions, ...local.versions } },
+      },
+    } : summarizedStory.documents ? { documents: summarizedStory.documents } : {}),
     nodes: {
       ...latestStory.nodes,
       [targetLeafId]: {
         ...latestLeaf,
         summarySnapshot: summarizedLeaf.summarySnapshot,
+        ...(summarizedLeaf.documents ? { documents: summarizedLeaf.documents } : {}),
       },
     },
     updatedAt: Math.max(latestStory.updatedAt, summarizedStory.updatedAt),

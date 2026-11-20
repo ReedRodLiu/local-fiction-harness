@@ -1,4 +1,6 @@
 ---
+
+> 现行模型与本文条款的演进见 [ADR 0011](0011-three-mode-markdown-harness.md)。
 status: accepted
 ---
 

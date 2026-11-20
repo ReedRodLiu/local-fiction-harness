@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
+import { verifyThreeModes } from './three-modes.mjs';
 
 const require = createRequire(import.meta.url);
 const playwrightCorePath =
@@ -268,6 +269,7 @@ function sseResponse(payloads) {
 
 async function newOfflineContext(browser, port, options) {
   const context = await browser.newContext({ ...options, serviceWorkers: 'block' });
+  context.setDefaultTimeout(15000);
   // Page-level fixture routes take precedence. Unmocked HTTP traffic stays on the local Vite origin.
   await context.route('**/*', (route) =>
     new URL(route.request().url()).origin === `http://localhost:${port}`
@@ -452,6 +454,7 @@ async function holdNextStoryStorageCommit(page) {
         descriptor.set.call(this, (event) => {
           if (
             armed &&
+            transaction.mode === 'readwrite' &&
             transaction.objectStoreNames.contains('stories') &&
             typeof window.__lfhStoryCommitControl?.release !== 'function'
           ) {
@@ -817,13 +820,24 @@ async function assertImportThemeMatrix(page, testId, step, viewport) {
   });
 }
 
+async function waitForFixtureGate(promise, description) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`Fixture timed out: ${description}`)), 15000); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function runImportWizardE2E(browser, port, tmpDir) {
   const context = await newOfflineContext(browser, port, { acceptDownloads: true });
   const page = await context.newPage();
   try {
     await mockSuccessfulKeyVerification(page);
     let blueprintRequestCount = 0;
-    let nextBlueprintRequestGate = null;
     let failNextAiRequest = false;
     let nextAiRequestGate = null;
     await page.route('https://cdn.deepseek.example/export-valid.zip', (route) =>
@@ -839,12 +853,6 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       const systemPrompt = body.messages?.[0]?.content ?? '';
       if (systemPrompt.includes('严格只输出一个 JSON 对象')) {
         blueprintRequestCount += 1;
-        const gate = nextBlueprintRequestGate;
-        if (gate) {
-          nextBlueprintRequestGate = null;
-          gate.onStarted();
-          await gate.waitForRelease;
-        }
         await route.fulfill({
           status: 200,
           contentType: 'text/event-stream',
@@ -862,7 +870,6 @@ async function runImportWizardE2E(browser, port, tmpDir) {
             }],
           }]),
         });
-        gate?.onFinished();
         return;
       }
       if (systemPrompt.includes('互动叙事文游识别助手')) {
@@ -879,7 +886,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
         if (gate) {
           nextAiRequestGate = null;
           gate.onStarted();
-          await gate.waitForRelease;
+          await waitForFixtureGate(gate.waitForRelease, 'release mocked model response');
         }
         await route.fulfill({
           status: 200,
@@ -1259,8 +1266,8 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.getByTestId('deepseek-import-receipt').waitFor();
     await assertImportWizardLayout(page, 'deepseek-import-panel', 3, { width: 1280, height: 800 });
     const receipt = await page.getByTestId('deepseek-import-receipt').textContent();
-    if (!receipt?.includes('老版本.doc') || !receipt.includes('另存为 .docx')) {
-      throw new Error(`DeepSeek receipt omitted the skipped attachment conversion advice: ${receipt}`);
+    if (!receipt?.includes('老版本.doc') || !receipt.includes('已保存原始附件')) {
+      throw new Error(`DeepSeek receipt omitted the saved original attachment: ${receipt}`);
     }
     await page.getByRole('button', { name: '继续这条故事' }).click();
     await page.getByTestId('main-stage').getByText('原进度抵达东侧练歌房').waitFor();
@@ -1410,7 +1417,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     };
     await prepareAiFilterAbortProbe(page);
     await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
-    await heldAllRequestStarted;
+    await waitForFixtureGate(heldAllRequestStarted, 'heldAllRequestStarted');
     if (
       await page.getByRole('tab', { name: 'AI 筛选中…' }).getAttribute('aria-selected') !== 'true' ||
       await page.getByRole('tab', { name: 'AI 筛选中…' }).getAttribute('tabindex') !== '0'
@@ -1420,7 +1427,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.getByRole('tab', { name: '全部', exact: true }).click();
     await page.waitForFunction(() => window.__lfhAiFilterAbortCount === 1);
     releaseHeldAllRequest();
-    await heldAllRequestDone;
+    await waitForFixtureGate(heldAllRequestDone, 'heldAllRequestDone');
     await page.waitForFunction(() =>
       document.querySelector('[role="tablist"][aria-label="筛选会话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === '全部' &&
       document.querySelectorAll('[data-testid="ds-session-item"]').length === 2,
@@ -1439,7 +1446,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       onFinished: finishHeldLikelyRequest,
     };
     await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
-    await heldLikelyRequestStarted;
+    await waitForFixtureGate(heldLikelyRequestStarted, 'heldLikelyRequestStarted');
     if (
       await page.getByRole('tab', { name: 'AI 筛选中…' }).getAttribute('aria-selected') !== 'true' ||
       await page.getByRole('tab', { name: 'AI 筛选中…' }).getAttribute('tabindex') !== '0'
@@ -1449,7 +1456,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.getByRole('tab', { name: '疑似文游' }).click();
     await page.waitForFunction(() => window.__lfhAiFilterAbortCount === 2);
     releaseHeldLikelyRequest();
-    await heldLikelyRequestDone;
+    await waitForFixtureGate(heldLikelyRequestDone, 'heldLikelyRequestDone');
     await page.waitForFunction(() =>
       document.querySelector('[role="tablist"][aria-label="筛选会话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === '疑似文游' &&
       document.querySelectorAll('[data-testid="ds-session-item"]').length === 1,
@@ -1469,7 +1476,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     };
     await prepareAiFilterAbortProbe(page);
     await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
-    await heldAiRequestStarted;
+    await waitForFixtureGate(heldAiRequestStarted, 'heldAiRequestStarted');
     await page.getByRole('button', { name: '返回' }).click();
     await page.waitForFunction(() => window.__lfhAiFilterAbortCount === 1);
     await page.waitForFunction(() =>
@@ -1482,7 +1489,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     });
     await page.getByTestId('ds-session-list').getByText('模糊开局超窗长档').waitFor();
     releaseHeldAiRequest();
-    await heldAiRequestDone;
+    await waitForFixtureGate(heldAiRequestDone, 'heldAiRequestDone');
     await page.waitForFunction(() =>
       document.querySelector('[role="tablist"][aria-label="筛选会话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === '全部' &&
       document.querySelector('[data-testid="ds-session-item"]')?.textContent?.includes('模糊开局超窗长档'),
@@ -1533,19 +1540,9 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       buffer: Buffer.from(buildSyntheticDeepSeekZipE2E()),
     });
     await page.getByTestId('ds-session-list').waitFor();
-    let startHeldBlueprintRequest;
-    let releaseHeldBlueprintRequest;
-    let finishHeldBlueprintRequest;
-    const heldBlueprintRequestStarted = new Promise((resolve) => { startHeldBlueprintRequest = resolve; });
-    const heldBlueprintRequestWait = new Promise((resolve) => { releaseHeldBlueprintRequest = resolve; });
-    const heldBlueprintRequestDone = new Promise((resolve) => { finishHeldBlueprintRequest = resolve; });
-    nextBlueprintRequestGate = {
-      onStarted: startHeldBlueprintRequest,
-      waitForRelease: heldBlueprintRequestWait,
-      onFinished: finishHeldBlueprintRequest,
-    };
+    await holdNextStoryStorageCommit(page);
     await page.getByTestId('ds-confirm-import-btn').click();
-    await heldBlueprintRequestStarted;
+    await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
     const importBackButton = page.getByRole('button', { name: '返回' });
     if (!(await importBackButton.isDisabled())) {
       throw new Error('Back remained enabled while the DeepSeek import was committing.');
@@ -1555,8 +1552,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     if (await page.getByTestId('deepseek-import-panel').getByRole('progressbar').getAttribute('aria-valuenow') !== '2') {
       throw new Error('The import wizard left its committing step while import was pending.');
     }
-    releaseHeldBlueprintRequest();
-    await heldBlueprintRequestDone;
+    await releaseHeldStoryStorageCommit(page);
     await page.getByTestId('deepseek-import-receipt').waitFor();
     await page.getByRole('button', { name: '继续这条故事' }).click();
     await page.getByTestId('main-stage').getByText('原进度抵达东侧练歌房').waitFor();
@@ -1601,6 +1597,9 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       await page.getByTestId('deepseek-import-receipt').waitFor();
       console.log(`SYNTHETIC_LONG_IMPORT_PASSED sessions=${count}`);
     }
+  } catch (error) {
+    console.error('Import wizard regression failed.', error);
+    throw error;
   } finally {
     await context.close();
   }
@@ -2944,7 +2943,7 @@ async function verifyScrollDetachAndResumeThreshold(page, delayNextTurn) {
 }
 
 async function main() {
-  const port = 4185;
+  const port = Number(process.env.LFH_E2E_PORT || 4185);
   const srv = await startViteServer(port);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lfh-e2e-suite-'));
   const browser = await chromium.launch({
@@ -2959,11 +2958,20 @@ async function main() {
       return;
     }
 
+    if (!process.env.LFH_UI_IMPL_05_ONLY && !process.env.LFH_IMPORT_WIZARD_ONLY) {
+      await verifyThreeModes(browser, port, {
+        newOfflineContext, mockSuccessfulKeyVerification, completePendingSetup, sseResponse, startScriptImport,
+      });
+      console.log('THREE_MODE_HARNESS_E2E_PASSED');
+      if (process.env.LFH_CREATIVE_ONLY === '1') return;
+    }
+
     const context = await newOfflineContext(browser, port, { acceptDownloads: true });
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
       origin: `http://localhost:${port}`,
     });
     await verifyModalDialogLifecycle(context, port);
+    console.log('DIALOG_LIFECYCLE_E2E_PASSED');
     const page = await context.newPage();
     const replyCounts = new Map();
     let failNextBlueprintWith401 = false;
@@ -3149,8 +3157,10 @@ async function main() {
         '```text',
         `[状态 | 人气: 60 | 节点: ${lastMsg.slice(0, 6)} | 长线索: 东侧走廊尽头的控制室仍亮着灯，巡夜人留下的值班记录尚未归档，门外还有未解锁的线索]`,
         '```',
+        '```lfh-choices',
         'A. 继续训练声乐',
         'B. 前往休息室',
+        '```',
       ].join('\n');
 
       await route.fulfill({
@@ -3233,6 +3243,14 @@ async function main() {
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
     await page.click('button:has-text("继续这条故事")');
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("原进度抵达东侧练歌房")');
+    await page.getByTestId('turn-user').first().getByText('原始附件', { exact: true }).click();
+    const [attachment] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('button', { name: '立绘.png' }).click(),
+    ]);
+    if (fs.readFileSync(await attachment.path(), 'utf8') !== 'fake-png-bytes') {
+      throw new Error('The offline attachment did not retain its original bytes.');
+    }
     await deleteAllStories(page);
 
     // 0. Keyless DeepSeek .zip import -> preview -> batch 1-to-1 import -> Continue This Story -> inline BYOK prompt -> stream
@@ -3251,6 +3269,9 @@ async function main() {
     ) {
       throw new Error(`DeepSeek preview missing attachment/branch cues: ${previewCardText}`);
     }
+    await dsPreviewSheet.getByText('手动调整原始剧本起点/终点').click();
+    await page.fill('#ds-script-start', '1');
+    await page.fill('#ds-script-end', '1');
     await closeSessionPreview(dsPreviewSheet);
 
     // Check 390px narrow mobile viewport on DeepSeek preview panel
@@ -3355,7 +3376,8 @@ async function main() {
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("门后传来脚步声")');
     await page.setViewportSize({ width: 390, height: 844 });
     let reviewSheet = await openStoryReview(page);
-    await reviewSheet.getByTestId('summary-needed-indicator').waitFor({ state: 'visible' });
+    await reviewSheet.getByText('将在续写时补齐进度', { exact: false }).waitFor();
+    await reviewSheet.getByText('资料审计', { exact: true }).click();
     await reviewSheet.getByRole('button', { name: '立即补算剧情摘要' }).click();
     await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
     await page.fill('#byok-api-key', 'sk-e2e-inline');
@@ -3382,20 +3404,17 @@ async function main() {
     }
     await waitForActivePlotSummary(page, '【激活线压缩摘要】');
     await page.setViewportSize({ width: 1280, height: 720 });
-    const blueprintSheet = await openStoryBlueprint(page);
-    delayNextBlueprintMs = 1200;
-    await blueprintSheet.getByTestId('story-blueprint-card').getByRole('button', { name: '补拆完整故事蓝图' }).click();
-    await blueprintSheet.getByRole('button', { name: '补拆蓝图中…' }).waitFor({ state: 'visible' });
-    await assertNoSummaryProgress(page, blueprintSheet, 'Blueprint re-extraction');
-    await blueprintSheet.getByRole('button', { name: '补拆蓝图中…' }).waitFor({ state: 'detached' });
-    await closeCompanionSheet(page);
-
-    // 0b. Keyed imports: strong turn-1 skips boundary locator; ambiguous runs boundary locator once + compresses + carries both on continuation
+    // 0b. An explicit range skips the boundary request. An ambiguous opening remains a candidate until confirmed.
     boundaryCallCount = 0;
     await startDeepSeekImport(page);
     await page.waitForSelector('#deepseek-zip-input');
     await page.setInputFiles('#deepseek-zip-input', dsZipPath);
     await page.getByTestId('ds-session-list').waitFor();
+    const { sheet: manualPreview } = await openSessionPreview(page, '合成宫斗测试档');
+    await manualPreview.getByText('手动调整原始剧本起点/终点').click();
+    await page.fill('#ds-script-start', '1');
+    await page.fill('#ds-script-end', '1');
+    await closeSessionPreview(manualPreview);
     await page.click('[data-testid="ds-confirm-import-btn"]');
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
     if (boundaryCallCount !== 0) {
@@ -3412,24 +3431,21 @@ async function main() {
       throw new Error(`Expected 1 boundary LLM call for ambiguous opening, got ${boundaryCallCount}`);
     }
     const ambigReceipt = await page.locator('[data-testid="deepseek-import-receipt"]').textContent();
-    if (!ambigReceipt?.includes('已压缩')) {
-      throw new Error(`Expected compressed summary status in receipt, got: ${ambigReceipt}`);
-    }
+    if (!ambigReceipt?.includes('续写时补齐')) throw new Error(`Expected deferred import summary: ${ambigReceipt}`);
     await page.click('button:has-text("继续这条故事")');
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("门后传来脚步声")');
-    const ambigSummary = await readActivePlotSummary(page);
-    if (!ambigSummary?.includes('【激活线压缩摘要】')) {
-      throw new Error(`Expected compressed active summary in StoryReview, got: ${ambigSummary}`);
-    }
+    const storyPanel = await openStoryBlueprint(page);
+    await storyPanel.getByRole('button', { name: /核对.*剧本/ }).click();
+    const markdownDialog = page.getByTestId('markdown-document');
+    await markdownDialog.getByRole('button', { name: '确认保存' }).click();
+    await markdownDialog.waitFor({ state: 'hidden' });
+    await closeCompanionSheet(page);
     await page.fill('#turn-input', '推开船长室门');
     await page.getByRole('button', { name: '发送行动' }).click();
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：推开船长室门")');
-    if (
-      !lastTurnSystemText.includes('【E2E模糊剧本】') ||
-      !lastTurnSystemText.includes('【激活线压缩摘要】') ||
-      lastTurnSystemText.includes('你好呀')
-    ) {
-      throw new Error(`Continuation system prompt missing refined anchor or summary: ${lastTurnSystemText}`);
+    if (!lastTurnSystemText.includes('【E2E模糊剧本】') ||
+        !lastTurnSystemText.includes('【激活线压缩摘要】') || lastTurnSystemText.includes('你好呀')) {
+      throw new Error(`Continuation system prompt missing confirmed script or isolated summary: ${lastTurnSystemText}`);
     }
 
     // Clean up DeepSeek stories before running existing script-import workflow assertions
@@ -3484,7 +3500,7 @@ async function main() {
     }
     await page.getByRole('button', { name: '开启第一幕' }).click();
     await page.getByTestId('turn-assistant').last().waitFor();
-    await page.getByTestId('hud-panel').waitFor();
+    await page.locator('[data-testid=turn-assistant][data-node-id]').getByTestId('hud-panel').waitFor();
     await page.getByRole('button', { name: '发送行动' }).waitFor();
     const firstUserCard = page.getByTestId('turn-user').last();
     const firstAssistantCard = page.getByTestId('turn-assistant').last();
@@ -3691,12 +3707,12 @@ async function main() {
     if (await contextDetails.evaluate((element) => element.open)) {
       throw new Error('Three-zone context details should be collapsed by default.');
     }
-    await blueprintCard.getByRole('button', { name: '微调蓝图' }).click();
-    await page.fill('#tweak-protagonist', '练习生甲（已微调）');
-    await page.fill('#tweak-taboos', '不可缺席公演\n未经同意不离开训练营');
-    await blueprintCard.getByRole('button', { name: '保存蓝图微调' }).click();
-    await blueprintCard.getByText('练习生甲（已微调）', { exact: true }).waitFor();
-    await blueprintCard.getByText('未经同意不离开训练营', { exact: true }).waitFor();
+    await savedBlueprintSheet.getByRole('button', { name: '故事资料', exact: true }).click();
+    const storyMarkdown = page.getByTestId('markdown-document');
+    await storyMarkdown.getByRole('textbox').fill('## 剧本补充\n练习生甲未经同意不离开训练营');
+    await storyMarkdown.getByRole('button', { name: '核对修改' }).click();
+    await storyMarkdown.getByRole('button', { name: '确认保存' }).click();
+    await storyMarkdown.waitFor({ state: 'hidden' });
     await contextDetails.locator('summary').click();
     if (!(await contextDetails.evaluate((element) => element.open))) {
       throw new Error('Three-zone context details did not open on request.');
@@ -3862,7 +3878,7 @@ async function main() {
     await blueprintAfterRewind.getByTestId('context-overview').locator('summary').click();
     await closeCompanionSheet(page);
     const rewoundSummary = await readActivePlotSummary(page);
-    if (!rewoundSummary?.includes('尚未触发压缩')) {
+    if (!rewoundSummary?.includes('尚无自动回顾')) {
       throw new Error(`Expected rewound summary reset, got: ${rewoundSummary}`);
     }
 
@@ -4062,7 +4078,7 @@ async function main() {
     for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
       await runSpec24LongImportE2E(browser, port, viewport);
       await runDiagnosticsE2E(browser, port, tmpDir, viewport);
-      console.log(`SPEC24_E2E_PASSED ${viewport.width}x${viewport.height} (long import, catch-up, concurrent rename, diagnostics, crash recovery, privacy)`);
+      console.log(`SPEC24_E2E_PASSED ${viewport.width}x${viewport.height} (long import, catch-up, branch rename, diagnostics, crash recovery, privacy)`);
     }
 
     console.log('ALL_E2E_CHECKS_PASSED');
@@ -4354,12 +4370,9 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     }
     await storyTreeSheet.locator('[data-testid^="story-tree-branch-"]', { hasText: '银钥东楼线' }).locator('button:has-text("切换至此分支")').click();
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("抵达东楼密室终点")');
-    const reviewSheetA = await openStoryReview(page);
-    await reviewSheetA.getByTestId('active-plot-summary').getByText('事件X_银钥匙', { exact: false }).waitFor();
-    const reviewA = await reviewSheetA.getByTestId('active-plot-summary').textContent();
-    await closeCompanionSheet(page);
-    if (!reviewA?.includes('事件X_银钥匙') || reviewA.includes('事件Y_西塔毒药')) {
-      throw new Error(`StoryReview on Branch A not isolated: ${reviewA}`);
+    const beforeA = await readActivePlotSummary(page);
+    if (beforeA?.includes('事件X_银钥匙') || beforeA?.includes('事件Y_西塔毒药')) {
+      throw new Error(`Branch switch changed the previously uncompressed review: ${beforeA}`);
     }
 
     await page.fill('#turn-input', '打开东楼密室');
@@ -4369,6 +4382,11 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     const promptForA = capturedTurns[capturedTurns.length - 1] ?? '';
     if (!promptForA.includes('事件X_银钥匙') || promptForA.includes('事件Y_西塔毒药')) {
       throw new Error(`Branch A prompt contaminated: ${promptForA}`);
+    }
+
+    const reviewA = await readActivePlotSummary(page);
+    if (!reviewA?.includes('事件X_银钥匙') || reviewA.includes('事件Y_西塔毒药')) {
+      throw new Error(`StoryReview on Branch A not isolated: ${reviewA}`);
     }
 
     // 4. Reload browser -> verify IndexedDB restores branch names, active branch A, StoryReview, diagnostics, and zero 390px overflow
@@ -4499,7 +4517,7 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
       requests.push({ summary, messages });
       const branchB = alternateSelected;
       if (summary && branchB) {
-        await branchGate;
+        await waitForFixtureGate(branchGate, 'release alternate-path compression');
       }
       await route.fulfill({
         status: 200,
@@ -4520,6 +4538,9 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     });
     await page.getByTestId('ds-session-list').waitFor();
     const { sheet: longPreviewSheet } = await openSessionPreview(page, LONG_STORY_TITLE);
+    await longPreviewSheet.getByText('手动调整原始剧本起点/终点').click();
+    await page.fill('#ds-script-start', '1');
+    await page.fill('#ds-script-end', '1');
     await closeSessionPreview(longPreviewSheet);
     await page.getByTestId('ds-confirm-import-btn').click();
     await page.getByTestId('deepseek-import-receipt').waitFor();
@@ -4601,36 +4622,30 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     let alternate = storyTreeSheet.getByTestId(alternateId);
     const alternateRequestStart = requests.length;
     alternateSelected = true;
-    await Promise.all([
-      page.waitForRequest((req) => {
-        return req.method() === 'POST' &&
-          req.url().endsWith('/chat/completions') &&
-          req.postDataJSON()?.messages?.[0]?.content.includes('剧情摘要压缩');
-      }, { timeout: 10000 }),
-      alternate.getByRole('button', { name: '切换至此分支' }).click(),
-    ]);
-    await storyTreeSheet.getByTestId('companion-summary-progress').waitFor();
-    await storyTreeSheet.getByRole('tab', { name: '剧情回顾' }).click();
-    await storyTreeSheet.getByTestId('companion-summary-progress').waitFor({ state: 'visible' });
-    await storyTreeSheet.getByRole('tab', { name: '剧情树' }).click();
+    await alternate.getByRole('button', { name: '切换至此分支' }).click();
     await page.locator('[data-testid="turn-assistant"][data-node-id]', { hasText: '备用线第 35 轮合成回执' }).waitFor();
-    await closeStoryTree(page);
-    await page.fill('#turn-input', '等待备用线补算');
-    if (!(await submit.isDisabled())) throw new Error('Composer was enabled while branch summary was in flight');
-    storyTreeSheet = await openStoryTree(page);
-    alternate = storyTreeSheet.getByTestId(alternateId);
+    if (requests.length !== alternateRequestStart) throw new Error('Branch switch made a model request.');
     await alternate.getByRole('button', { name: '重命名' }).click({ timeout: 5000 });
     await alternate.getByRole('textbox', { name: '分支名称' }).fill(LONG_BRANCH_NAME);
     await alternate.getByRole('button', { name: '保存名称' }).click();
     await page.getByText(LONG_BRANCH_NAME, { exact: true }).first().waitFor();
+    await closeStoryTree(page);
+    await page.fill('#turn-input', '续写备用线');
+    const summaryRequested = page.waitForRequest((request) =>
+      request.method() === 'POST' && request.url().endsWith('/chat/completions') &&
+      request.postDataJSON()?.messages?.[0]?.content.includes('剧情摘要压缩'),
+    );
+    await submit.click();
+    await summaryRequested;
     releaseBranch();
+    await submit.waitFor();
     await waitForActivePlotSummary(page, SUMMARY_B);
     const alternateRequests = requests.slice(alternateRequestStart).flatMap(({ messages }) => messages);
     if (!alternateRequests.some(({ content }) => content.includes(EARLY_BRANCH_B)) ||
         alternateRequests.some(({ content }) => content.includes(EARLY_BRANCH_A) || content.includes(SUMMARY_A))) {
       throw new Error('Alternate branch catch-up did not use its own early history in isolation');
     }
-    await page.locator('button[aria-label="发送行动"]:enabled').waitFor({ timeout: 5000 });
+    await page.getByTestId('turn-user').getByText('续写备用线', { exact: true }).waitFor();
     await closeStoryTree(page);
     await page.reload({ waitUntil: 'networkidle' });
     const reviewSheetAfterReload = await openStoryReview(page);

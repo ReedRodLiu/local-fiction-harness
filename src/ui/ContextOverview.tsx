@@ -12,7 +12,7 @@ interface ContextOverviewProps {
   metrics: ThreeZoneMetrics;
   isStreaming: boolean;
   isReextracting?: boolean;
-  onSaveBlueprintTweak: (updatedBlueprint: StoryBlueprint) => Promise<boolean | void>;
+  onSaveBlueprintTweak?: (updatedBlueprint: StoryBlueprint) => Promise<boolean | void>;
   onReextractBlueprint?: () => void;
 }
 

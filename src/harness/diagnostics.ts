@@ -821,7 +821,7 @@ export function createDiagnosticStoryStorage(
   return {
     listStories: () => track('list_stories', () => inner.listStories()),
     getStory: (id) => track('get_story', () => inner.getStory(id)),
-    saveStory: (story) => track('save_story', () => inner.saveStory(story)),
+    saveStory: (story, expectedUpdatedAt) => track('save_story', () => inner.saveStory(story, expectedUpdatedAt)),
     deleteStory: (id) => track('delete_story', () => inner.deleteStory(id)),
     getActiveStoryId: () => track('get_active_story_id', () => inner.getActiveStoryId()),
     setActiveStoryId: (id) => track('set_active_story_id', () => inner.setActiveStoryId(id)),

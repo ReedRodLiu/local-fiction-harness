@@ -6,6 +6,8 @@ import {
   scanDeepSeekExportZip,
   previewDeepSeekSessions,
   importDeepSeekSessions,
+  exportStoryBackup,
+  importStoryBackup,
   assistFilterDeepSeekSessions,
   type LlmStreamRequest,
   type LlmTransport,
@@ -320,7 +322,8 @@ describe('Slice 2 (#20): DeepSeek v3 two-stage .zip scan, sanitization, Node Dia
       expect(preview.rawScript.split('【宫廷剧本】主角：沈知微')).toHaveLength(2);
       expect(preview.rawScript.split('补充设定：每晚子时触发随机事件')).toHaveLength(2);
     }
-    expect(p.scriptConfidence).toBe('strong');
+    expect(p.scriptConfidence).toBe('ambiguous');
+    expect(manual.scriptConfidence).toBe('strong');
     expect(p.story.activeLeafNodeId).toBeTruthy();
 
     // Check sanitized content & read-only NodeDiagnostics
@@ -356,10 +359,19 @@ describe('Slice 2 (#20): DeepSeek v3 two-stage .zip scan, sanitization, Node Dia
     const restoredFiction = savedList.find((s) => s.title === '深宫棋局（合成测试）')!;
     expect(restoredFiction.blueprint.extractionStatus).toBe('partial_fallback');
 
+    expect(restoredFiction.rawScript).toBe('');
+    expect(restoredFiction.importCandidate).toContain('【宫廷剧本】主角：沈知微');
+    const reference = Object.values(restoredFiction.nodes).flatMap((node) => node.attachmentIds ?? [])[0];
+    const original = restoredFiction.attachments![reference];
+    expect(original.fileName).toMatch(/\.docx$/);
+    const archive = importStoryBackup(exportStoryBackup(restoredFiction), []);
+    expect(archive.attachments?.[reference]).toEqual(original);
+
+
     // Context assembly strictly excludes NodeDiagnostics and THINK reasoningContent
     const ctx = harness.assembleContext(restoredFiction, restoredFiction.activeLeafNodeId, '询问故人身份');
     const promptText = ctx.messages.map((m) => m.content).join('\n');
-    expect(promptText).toContain('【宫廷剧本】主角：沈知微');
+    expect(ctx.messages[0].content).not.toContain('【宫廷剧本】主角：沈知微');
     expect(promptText).toContain('落款写着“旧日故人”');
     expect(promptText).not.toContain('CONTENT_FILTER');
     expect(promptText).not.toContain('CONTENT_RISK');

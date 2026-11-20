@@ -165,7 +165,9 @@ describe('Slice 5 (#23): Spec #18 end-to-end DeepSeek import -> 2-fork Story Tre
     });
 
     // 1. Keyless import -> 0 LLM calls, pending_key status, activeLeaf at current_message_id (id=10)
-    const keyless = await importDeepSeekSessions(zipBytes, ['fic-two-fork'], harness);
+    const keyless = await importDeepSeekSessions(zipBytes, ['fic-two-fork'], harness, {
+      scriptRangeOverrides: { 'fic-two-fork': { startTurn: 1, endTurn: 1 } },
+    });
     expect(captured).toHaveLength(0);
     let story = keyless.stories[0];
     expect(keyless.summaryStatuses[story.id]).toBe('pending_key');

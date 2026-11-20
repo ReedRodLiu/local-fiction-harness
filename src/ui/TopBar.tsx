@@ -3,6 +3,7 @@ import { GitBranch, Menu, PanelLeft } from 'lucide-react';
 interface TopBarProps {
   title: string;
   hasStory: boolean;
+  hideStoryTools?: boolean;
   branchLabel: string;
   forkCount: number;
   isSummaryInProgress: boolean;
@@ -15,6 +16,7 @@ interface TopBarProps {
 export function TopBar({
   title,
   hasStory,
+  hideStoryTools = false,
   branchLabel,
   forkCount,
   isSummaryInProgress,
@@ -69,10 +71,10 @@ export function TopBar({
       </div>
 
       <div className="topbar-right">
-        {isSummaryInProgress && (
+        {!hideStoryTools && isSummaryInProgress && (
           <span className="summary-progress" data-testid="summary-progress" role="status">补算摘要中…</span>
         )}
-        <button
+        {!hideStoryTools && <button
           type="button"
           className="icon-button topbar-tree-action"
           data-testid="open-companion-sheet"
@@ -81,7 +83,7 @@ export function TopBar({
           onClick={onOpenStoryTree}
         >
           <GitBranch size={20} strokeWidth={1.75} />
-        </button>
+        </button>}
       </div>
     </header>
   );
