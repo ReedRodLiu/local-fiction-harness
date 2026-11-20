@@ -60,7 +60,6 @@ export function SheetDialog({
     if (!dialog) return;
     delete dialog.dataset.dragging;
     dialog.style.removeProperty('--sheet-base-height');
-    dialog.style.removeProperty('--sheet-grow-by');
     dialog.style.removeProperty('--sheet-drag-offset');
   };
 
@@ -72,13 +71,8 @@ export function SheetDialog({
     dialog.dataset.dragging = 'true';
     const heightUnit = window.CSS?.supports('height: 1dvh') ? 'dvh' : 'vh';
     dialog.style.setProperty('--sheet-base-height', expanded ? `92${heightUnit}` : `74${heightUnit}`);
-    dialog.style.removeProperty('--sheet-grow-by');
-    dialog.style.removeProperty('--sheet-drag-offset');
-    if (delta < 0) {
-      dialog.style.setProperty('--sheet-grow-by', `${Math.min(-delta, window.innerHeight * 0.18)}px`);
-    } else {
-      dialog.style.setProperty('--sheet-drag-offset', `${Math.min(delta, window.innerHeight * 0.5)}px`);
-    }
+    const dampedDelta = delta < 0 ? delta * 0.5 : Math.min(delta, window.innerHeight * 0.5);
+    dialog.style.setProperty('--sheet-drag-offset', `${dampedDelta}px`);
   };
 
   const cancelDrag = (event?: globalThis.PointerEvent) => {
@@ -116,7 +110,6 @@ export function SheetDialog({
 
     if (dialog?.dataset.dragging === 'true') {
       dialog.style.setProperty('--sheet-base-height', settledHeight);
-      dialog.style.removeProperty('--sheet-grow-by');
       dialog.style.removeProperty('--sheet-drag-offset');
       const clearOnNextFrame = () => clearDragVisual(dialog);
       if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(clearOnNextFrame);

@@ -156,7 +156,7 @@ export function StoryTree({
                   return (
                     <li
                       key={item.id}
-                      className={`story-tree-span ${item.isActiveEnd ? 'active-end' : ''}`}
+                      className={`story-tree-span story-tree-spine-item ${item.isActiveEnd ? 'active-end' : ''}`}
                       data-testid="story-tree-span"
                     >
                       <button
@@ -229,7 +229,7 @@ export function StoryTree({
                   : [];
 
                 return (
-                  <li key={item.id} className="story-tree-fork-wrap">
+                  <li key={item.id} className="story-tree-fork-wrap story-tree-spine-item">
                     <button
                       type="button"
                       className="btn btn-sm story-tree-fork-btn"
@@ -263,7 +263,7 @@ export function StoryTree({
                           return (
                             <li
                               key={branch.entryNodeId}
-                              className={`story-tree-sibling ${branch.isActive ? 'active' : ''}`}
+                              className={`story-tree-sibling story-tree-fork-card ${branch.isActive ? 'active is-active' : ''}`}
                               data-testid={`story-tree-branch-${branch.entryNodeId}`}
                               data-active={branch.isActive ? 'true' : 'false'}
                             >

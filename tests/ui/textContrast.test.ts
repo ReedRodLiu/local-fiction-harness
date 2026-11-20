@@ -24,8 +24,8 @@ function tokenName(value: string | undefined) {
 
 function themeTokens(theme: 'light' | 'dark' | 'warm') {
   const selector = theme === 'light'
-    ? /:root,\s*:root\[data-theme="light"\]\s*\{([^}]*)\}/
-    : new RegExp(`:root\\[data-theme="${theme}"\\]\\s*\\{([^}]*)\\}`);
+    ? /:root,\s*:root\[data-theme="light"\],\s*\[data-theme="light"\]\s*\{([^}]*)\}/
+    : new RegExp(`:root\\[data-theme="${theme}"\\],\\s*\\[data-theme="${theme}"\\]\\s*\\{([^}]*)\\}`);
   const block = selector.exec(tokensCss)?.[1];
   if (!block) throw new Error(`Missing ${theme} theme tokens`);
   return Object.fromEntries(

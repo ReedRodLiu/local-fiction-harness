@@ -338,6 +338,29 @@ async function expectTouchTarget(locator, label) {
   }
 }
 
+async function expectCompactPseudoTouchTarget(locator, label, maxVisualHeight) {
+  const metrics = await locator.evaluate((element, visualHeight) => {
+    const box = element.getBoundingClientRect();
+    const after = getComputedStyle(element, '::after');
+    return {
+      width: box.width,
+      height: box.height,
+      afterContent: after.content,
+      afterMinWidth: Number.parseFloat(after.minWidth),
+      afterMinHeight: Number.parseFloat(after.minHeight),
+      visualHeight,
+    };
+  }, maxVisualHeight);
+  if (
+    metrics.height > metrics.visualHeight + 0.5 ||
+    metrics.afterContent === 'none' ||
+    metrics.afterMinWidth < 43.99 ||
+    metrics.afterMinHeight < 43.99
+  ) {
+    throw new Error(`${label} does not expose a compact 44×44px pseudo hit target: ${JSON.stringify(metrics)}`);
+  }
+}
+
 async function assertSessionFilterTabState(page, tabId, expectedResultCount, label) {
   const readState = () => page.evaluate(({ tabId, expectedResultCount }) => {
     const tablist = document.querySelector('[role="tablist"][aria-label="筛选会话"]');
@@ -526,11 +549,18 @@ async function verifySliceOneViewportMatrix(page) {
 
       if (viewport.width >= 960) {
         const libraryToggle = page.getByTestId('desktop-library-toggle');
+        const libraryClose = page.getByTestId('desktop-library-close');
+        if (!(await libraryClose.isVisible().catch(() => false))) {
+          await libraryToggle.click();
+          await libraryClose.waitFor({ state: 'visible' });
+        }
+        await libraryClose.click();
+        await libraryToggle.waitFor({ state: 'visible' });
         await libraryToggle.click();
+        await libraryClose.waitFor({ state: 'visible' });
         if ((await page.getByRole('button', { name: '设置与模型密钥' }).count()) !== 1) {
           throw new Error(`${cell} collapsed Settings button has no accessible name.`);
         }
-        await libraryToggle.click();
       }
 
       await openSettings(page);
@@ -1579,6 +1609,14 @@ async function runImportWizardE2E(browser, port, tmpDir) {
 async function openSettings(page) {
   if (await page.getByTestId('settings-page').isVisible().catch(() => false)) return;
   const desktopEntry = page.getByTestId('desktop-settings-open');
+  const desktopToggle = page.getByTestId('desktop-library-toggle');
+  if (
+    !(await desktopEntry.isVisible().catch(() => false)) &&
+    await desktopToggle.isVisible().catch(() => false)
+  ) {
+    await desktopToggle.click();
+    await desktopEntry.waitFor({ state: 'visible' });
+  }
   if (await desktopEntry.isVisible().catch(() => false)) {
     await expectTouchTarget(desktopEntry, 'desktop settings entry');
     await desktopEntry.click();
@@ -1889,37 +1927,40 @@ async function verifyOverlayHistoryAndShortcuts(page, port) {
   await page.getByTestId('settings-page').waitFor({ state: 'detached' });
 
   await page.setViewportSize({ width: 1280, height: 800 });
-  const toggle = page.getByTestId('desktop-library-toggle');
-  const before = await toggle.getAttribute('aria-pressed');
+  if (!(await page.getByTestId('desktop-library-close').isVisible().catch(() => false))) {
+    await page.getByTestId('desktop-library-toggle').click();
+    await page.getByTestId('desktop-library-close').waitFor({ state: 'visible' });
+  }
+  await page.getByTestId('desktop-library-close').click();
+  await page.getByTestId('desktop-library-toggle').waitFor({ state: 'visible' });
   await page.keyboard.press('Meta+b');
-  await page.waitForFunction((previous) =>
-    document.querySelector('[data-testid="desktop-library-toggle"]')?.getAttribute('aria-pressed') !== previous,
-  before);
-  const collapsed = await toggle.getAttribute('aria-pressed');
-  if (await page.evaluate(() => localStorage.getItem('lfh.ui.library_collapsed')) !== collapsed) {
+  await page.waitForFunction(() =>
+    localStorage.getItem('lfh.ui.library_collapsed') === 'false',
+  );
+  const collapsed = await page.evaluate(() =>
+    localStorage.getItem('lfh.ui.library_collapsed'),
+  );
+  if (collapsed !== 'false') {
     throw new Error('Cmd+B did not persist the desktop library collapse preference.');
   }
   await page.keyboard.press('Control+b');
-  await page.waitForFunction((previous) =>
-    document.querySelector('[data-testid="desktop-library-toggle"]')?.getAttribute('aria-pressed') !== previous,
-  collapsed);
+  await page.waitForFunction(() =>
+    localStorage.getItem('lfh.ui.library_collapsed') === 'true',
+  );
 
   await page.setViewportSize({ width: 390, height: 844 });
-  const mobileCollapseBefore = await toggle.getAttribute('aria-pressed');
   const mobileStoredBefore = await page.evaluate(() => localStorage.getItem('lfh.ui.library_collapsed'));
   await page.keyboard.press('Meta+b');
   await page.waitForTimeout(100);
   if (
-    await toggle.getAttribute('aria-pressed') !== mobileCollapseBefore ||
     await page.evaluate(() => localStorage.getItem('lfh.ui.library_collapsed')) !== mobileStoredBefore
   ) {
     throw new Error('Cmd+B changed and persisted the desktop sidebar preference at a mobile viewport.');
   }
 
   await page.setViewportSize({ width: 1280, height: 800 });
-  const overlayCollapseBefore = await toggle.getAttribute('aria-pressed');
-  const overlayStoredBefore = await page.evaluate(() => localStorage.getItem('lfh.ui.library_collapsed'));
   await openSettings(page);
+  const overlayStoredBefore = await page.evaluate(() => localStorage.getItem('lfh.ui.library_collapsed'));
   await page.keyboard.press('Control+b');
   await page.waitForTimeout(100);
   const overlayCollapseWhileOpen = await page.evaluate(() =>
@@ -1927,7 +1968,6 @@ async function verifyOverlayHistoryAndShortcuts(page, port) {
   );
   await closeSettings(page);
   if (
-    await toggle.getAttribute('aria-pressed') !== overlayCollapseBefore ||
     overlayCollapseWhileOpen !== overlayStoredBefore
   ) {
     throw new Error('Cmd/Ctrl+B changed the desktop sidebar preference while a full-screen page was open.');
@@ -2625,9 +2665,9 @@ async function openStoryTree(page) {
       });
       const fallbackDrag = await sheet.evaluate((dialog) => ({
         dragging: dialog.dataset.dragging,
-        growth: Number.parseFloat(dialog.style.getPropertyValue('--sheet-grow-by')),
+        offset: Number.parseFloat(dialog.style.getPropertyValue('--sheet-drag-offset')),
       }));
-      if (fallbackDrag.dragging !== 'true' || fallbackDrag.growth < 40) {
+      if (fallbackDrag.dragging !== 'true' || fallbackDrag.offset > -20) {
         throw new Error(`Pointer event fallback did not track the drag: ${JSON.stringify({ fallbackStartHeight, ...fallbackDrag })}.`);
       }
       await dragHandle.dispatchEvent('pointercancel', {
@@ -2651,10 +2691,10 @@ async function openStoryTree(page) {
       await page.mouse.move(startX, startY - 60, { steps: 4 });
       const liveDrag = await sheet.evaluate((dialog) => ({
         dragging: dialog.dataset.dragging,
-        growth: Number.parseFloat(dialog.style.getPropertyValue('--sheet-grow-by')),
+        offset: Number.parseFloat(dialog.style.getPropertyValue('--sheet-drag-offset')),
       }));
-      if (liveDrag.dragging !== 'true' || liveDrag.growth < 45) {
-        throw new Error(`Dragging should update the sheet height before release: ${JSON.stringify(liveDrag)}.`);
+      if (liveDrag.dragging !== 'true' || liveDrag.offset > -25) {
+        throw new Error(`Dragging should update the sheet transform before release: ${JSON.stringify(liveDrag)}.`);
       }
       await page.mouse.up();
       await page.waitForFunction(() => {
@@ -3485,7 +3525,7 @@ async function main() {
       throw new Error(`Missing measured reasoning duration: ${reasoningLabel}`);
     }
     const reasoningToggle = firstReasoning.getByTestId('reasoning-toggle');
-    await expectTouchTarget(reasoningToggle, 'reasoning summary');
+    await expectCompactPseudoTouchTarget(reasoningToggle, 'reasoning summary', 28);
     await reasoningToggle.click();
     await firstAssistantCard.getByTestId('reasoning-content').waitFor({ state: 'visible' });
     await firstReasoning.getByTestId('reasoning-toggle').click();
@@ -3493,7 +3533,11 @@ async function main() {
 
     const firstHud = firstAssistantCard.getByTestId('hud-panel').first();
     await expectTouchTarget(firstHud.getByTestId('hud-collapse-toggle'), 'HUD collapse toggle');
-    await expectTouchTarget(firstHud.locator('button', { hasText: '原始格式' }), 'HUD view toggle');
+    await expectCompactPseudoTouchTarget(
+      firstHud.locator('button', { hasText: '原始格式' }),
+      'HUD view toggle',
+      24,
+    );
     const grid = firstHud.getByTestId('hud-grid');
     await grid.waitFor();
     if ((await grid.getByTestId('hud-field-wide').count()) !== 1) {
@@ -3980,7 +4024,11 @@ async function main() {
     await mobileLibraryDialog.waitFor({ state: 'visible' });
     await page.mouse.click(380, 420);
     await mobileLibraryDialog.waitFor({ state: 'hidden' });
-    await expectTouchTarget(page.getByTestId('open-story-tree'), 'mobile branch badge');
+    await expectCompactPseudoTouchTarget(
+      page.getByTestId('open-story-tree'),
+      'mobile branch badge',
+      24,
+    );
     const checkNoHorizontalOverflow = async (label) => {
       const { scrollWidth, clientWidth } = await page.evaluate(() => ({
         scrollWidth: document.documentElement.scrollWidth,

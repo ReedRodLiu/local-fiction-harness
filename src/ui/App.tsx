@@ -1321,6 +1321,7 @@ export function App({ runtime }: AppProps) {
           mobileOpen={mobileLibraryOpen && !showImport && !showSettings}
           hasCredentials={hasCredentials}
           onClose={() => setMobileLibraryOpen(false)}
+          onCollapse={() => setLibraryCollapsed(true)}
           onOpenSettings={openSettings}
           onStartDeepSeekImport={() => openImportView('deepseek')}
           onStartScriptImport={() => openImportView('script')}
@@ -1484,7 +1485,6 @@ export function App({ runtime }: AppProps) {
 
                     {isStreaming && !isCommittedStreamingReply && (
                       <article className="turn-card assistant turn-streaming" data-testid="turn-assistant" aria-live="polite">
-                        <div className="turn-role">叙事 AI（生成中…）</div>
                         {streamReasoning && (
                           <details className="reasoning-details" data-testid="reasoning-details" open>
                             <summary data-testid="reasoning-toggle">
@@ -1507,28 +1507,30 @@ export function App({ runtime }: AppProps) {
               )}
 
               <form className="composer" data-testid="stage-composer" onSubmit={handleSubmit}>
-                {errorMsg && !showSettings && !showImport && !isWelcome && (
-                  <BannerAlert tone="danger" testId="main-error-banner">
-                    <span>{errorMsg}</span>
+                <div className="composer-notices">
+                  {errorMsg && !showSettings && !showImport && !isWelcome && (
+                    <BannerAlert tone="danger" testId="main-error-banner">
+                      <span>{errorMsg}</span>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => openDiagnostics('error_banner')}
+                      >
+                        打包排障日志
+                      </button>
+                    </BannerAlert>
+                  )}
+                  {showScrollToBottom && (
                     <button
                       type="button"
-                      className="btn btn-sm"
-                      onClick={() => openDiagnostics('error_banner')}
+                      className="scroll-to-bottom"
+                      data-testid="scroll-to-bottom"
+                      onClick={handleScrollToBottom}
                     >
-                      打包排障日志
+                      回到底部 ↓
                     </button>
-                  </BannerAlert>
-                )}
-                {showScrollToBottom && (
-                  <button
-                    type="button"
-                    className="scroll-to-bottom"
-                    data-testid="scroll-to-bottom"
-                    onClick={handleScrollToBottom}
-                  >
-                    回到底部 ↓
-                  </button>
-                )}
+                  )}
+                </div>
                 <label className="visually-hidden" htmlFor="turn-input">输入你的行动或对话</label>
                 <textarea
                   id="turn-input"
@@ -1560,7 +1562,7 @@ export function App({ runtime }: AppProps) {
                   }}
                 />
                 <div className="composer-actions">
-                  <span className="status-text">
+                  <span className="status-text visually-hidden">
                     {isWelcome ? '先导入一部故事，再开始游玩' : `已保存轮次：${Math.floor(activeNodes.length / 2)}`}
                   </span>
                   <div>

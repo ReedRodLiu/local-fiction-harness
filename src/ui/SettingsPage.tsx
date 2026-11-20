@@ -33,12 +33,11 @@ interface SettingsPageProps {
 const THEME_OPTIONS: Array<{
   value: DisplayThemePreference;
   label: string;
-  swatches: readonly string[];
 }> = [
-  { value: 'system', label: '跟随系统', swatches: ['var(--text-primary)', 'var(--bg-canvas)'] },
-  { value: 'light', label: '浅色', swatches: ['var(--bg-canvas)', 'var(--bg-surface-hover)'] },
-  { value: 'dark', label: '深邃炭黑', swatches: ['var(--bg-canvas)', 'var(--bg-surface-hover)'] },
-  { value: 'warm', label: '暖纸护眼', swatches: ['var(--bg-canvas)', 'var(--bg-user-bubble)'] },
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深邃炭黑' },
+  { value: 'warm', label: '暖纸护眼' },
 ];
 
 const FONT_SIZE_OPTIONS: readonly DisplayFontSize[] = DISPLAY_FONT_SIZES;
@@ -153,7 +152,7 @@ export function SettingsPage({
       >
         <section className="appearance-preview" data-testid="settings-appearance-preview" aria-label="阅读效果预览">
           <p className="appearance-preview-kicker">实时预览</p>
-          <p className="appearance-player-preview" data-testid="appearance-player-preview">
+          <p className="settings-reading-preview-user" data-testid="appearance-player-preview">
             我推开窗，决定沿着微亮的走廊继续前行。
           </p>
           <p className="appearance-narrative-preview" data-testid="appearance-narrative-preview">
@@ -173,10 +172,17 @@ export function SettingsPage({
                 aria-pressed={themePreference === option.value}
                 onClick={() => onThemePreferenceChange(option.value)}
               >
-                <span className="theme-option-canvas" aria-hidden="true">
-                  {option.swatches.map((color, index) => (
-                    <span key={`${option.value}-${index}`} style={{ background: color }} />
-                  ))}
+                <span
+                  className="settings-theme-swatches"
+                  data-theme={option.value === 'system' ? 'light' : option.value}
+                  aria-hidden="true"
+                >
+                  <span className="settings-theme-preview-bubble" />
+                  <span className="settings-theme-preview-lines">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
                 </span>
                 <span>{option.label}</span>
               </button>

@@ -180,12 +180,6 @@ export function TurnCard({
       aria-label={node.role === 'user' ? '玩家行动' : '叙事 AI 回复'}
     >
       <div className="turn-expanded-content">
-        {node.role === 'assistant' && (
-          <div className="turn-header">
-            <div className="turn-role">叙事 AI</div>
-          </div>
-        )}
-
         {diagnosticTags.length > 0 && (
           <div className="turn-diagnostics" data-testid="turn-diagnostics" role="note">
             只读来源诊断（不进入模型上下文）：{diagnosticTags.join(' · ')}

@@ -169,9 +169,12 @@ export function MessageContent({
           <HudPanel key={`code-${idx}`} code={seg.code} />
         ) : (
           <div key={`text-${idx}`} className="turn-body" data-testid="turn-body">
-            {idx === finalTextSegment
+            {(idx === finalTextSegment
               ? stripTrailingChoices(seg.content, visibleChoices)
-              : seg.content}
+              : seg.content
+            ).split(/\n\n+/).map((paragraph, paragraphIndex) => (
+              <p key={`paragraph-${paragraphIndex}`}>{paragraph}</p>
+            ))}
           </div>
         ),
       )}

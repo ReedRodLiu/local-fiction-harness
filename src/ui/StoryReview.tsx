@@ -38,15 +38,15 @@ export function StoryReview({
       </header>
 
       <div className="story-review-metrics" aria-label="剧情摘要指标">
-        <div className="story-review-metric">
+        <div className="story-review-metric story-review-card">
           <strong>{story.rawScript.length}</strong>
           <span>锚定字数</span>
         </div>
-        <div className="story-review-metric">
+        <div className="story-review-metric story-review-card">
           <strong>{summarySnapshot.summarizedTurnCount}</strong>
           <span>摘要覆盖节点</span>
         </div>
-        <div className="story-review-metric">
+        <div className="story-review-metric story-review-card">
           <strong>{metrics.totalEstimatedTokens}</strong>
           <span>上下文预算 Token</span>
         </div>
@@ -57,7 +57,7 @@ export function StoryReview({
         <span>{recentLabel}</span>
       </div>
 
-      <div className="story-review-summary" data-testid="active-plot-summary">
+      <div className="story-review-summary story-review-card" data-testid="active-plot-summary">
         <strong>当前路线剧情摘要：</strong>
         {summarySnapshot.content ? (
           <span>{summarySnapshot.content}</span>
@@ -69,7 +69,7 @@ export function StoryReview({
       </div>
 
       {review.needsSummaryCompression && onComputeSummary && (
-        <div className="story-review-summary-action">
+        <div className="story-review-summary-action story-review-card">
           <div>
             <strong>为当前分支补齐剧情摘要</strong>
             <p>摘要仅沿当前路线生成，不会混入其他分支的剧情。</p>

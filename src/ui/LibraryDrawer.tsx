@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { BookOpen, Settings, X } from 'lucide-react';
+import { BookOpen, ChevronRight, FilePlus2, PanelLeftClose, Settings, Sparkles, X } from 'lucide-react';
 import type { Story } from '../harness/index.ts';
 import { StoryLibrary } from './StoryLibrary.tsx';
 import { DrawerDialog } from './primitives/DrawerDialog.tsx';
@@ -11,6 +11,7 @@ interface LibraryDrawerProps {
   mobileOpen: boolean;
   hasCredentials: boolean;
   onClose: () => void;
+  onCollapse: () => void;
   onOpenSettings: () => void;
   onStartDeepSeekImport: () => void;
   onStartScriptImport: () => void;
@@ -27,6 +28,7 @@ export function LibraryDrawer({
   mobileOpen,
   hasCredentials,
   onClose,
+  onCollapse,
   onOpenSettings,
   onStartDeepSeekImport,
   onStartScriptImport,
@@ -48,6 +50,7 @@ export function LibraryDrawer({
         data-testid={`${location}-library-start-deepseek`}
         onClick={onStartDeepSeekImport}
       >
+        <Sparkles size={16} strokeWidth={1.75} />
         从 DeepSeek 继续
       </button>
       <button
@@ -56,6 +59,7 @@ export function LibraryDrawer({
         data-testid={`${location}-library-start-script`}
         onClick={onStartScriptImport}
       >
+        <FilePlus2 size={16} strokeWidth={1.75} />
         导入剧本 / 新建故事
       </button>
     </div>
@@ -83,14 +87,15 @@ export function LibraryDrawer({
         onOpenSettings();
       }}
     >
-      <Settings size={18} strokeWidth={1.75} />
-      <span className="library-settings-copy">
+      <span className="library-settings-main">
+        <Settings size={16} strokeWidth={1.75} />
         <span>设置与模型密钥</span>
-        <span className={`connection-pill ${hasCredentials ? 'is-ready' : 'is-pending'}`}>
-          <span className="connection-dot" aria-hidden="true" />
-          {hasCredentials ? 'DeepSeek 已就绪' : '待配置密钥'}
-        </span>
       </span>
+      <span className={`connection-pill ${hasCredentials ? 'is-ready' : 'is-pending'}`}>
+        <span className="connection-dot" aria-hidden="true" />
+        {hasCredentials ? 'DeepSeek 已就绪' : '待配置密钥'}
+      </span>
+      <ChevronRight size={14} strokeWidth={1.75} aria-hidden="true" />
     </button>
   );
 
@@ -105,7 +110,17 @@ export function LibraryDrawer({
           <button type="button" className="icon-button" aria-label="关闭书架" onClick={onClose}>
             <X size={18} strokeWidth={1.75} />
           </button>
-        ) : null}
+        ) : (
+          <button
+            type="button"
+            className="icon-button"
+            data-testid="desktop-library-close"
+            aria-label="收起书架侧栏"
+            onClick={onCollapse}
+          >
+            <PanelLeftClose size={18} strokeWidth={1.75} />
+          </button>
+        )}
       </header>
       {actions(location)}
       <div className="library-list-scroll" data-testid="library-list-scroll">{storyList()}</div>

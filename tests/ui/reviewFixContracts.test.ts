@@ -61,24 +61,70 @@ describe('UI review fix contracts', () => {
       /\.library-brand-icon\s*\{[^}]*color:\s*var\(--text-secondary\)/s,
     );
     expect(shell).toMatch(
-      /\.welcome-mark\s*\{[^}]*background:\s*var\(--bg-surface\);[^}]*color:\s*var\(--text-secondary\)/s,
+      /\.badge\s*\{[^}]*background:\s*var\(--bg-surface-hover\);[^}]*color:\s*var\(--text-secondary\)/s,
     );
     expect(shell).toMatch(
-      /\.badge\s*\{[^}]*background:\s*var\(--bg-surface-hover\);[^}]*color:\s*var\(--text-secondary\)/s,
+      /\.branch-badge::after\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px;/s,
     );
     expect(readSource('src/ui/styles/import-wizard.css')).toMatch(
       /\.overlay-page-progress-track span\s*\{[^}]*background:\s*var\(--text-secondary\)/s,
     );
   });
 
-  it('meets the 44px target for compact stage controls', () => {
+  it('keeps compact stage controls small while retaining 44px hit targets', () => {
     const playStage = readSource('src/ui/styles/play-stage.css');
     expect(playStage).toMatch(
-      /\.main-stage\.is-playing \.reasoning-details summary\s*\{[^}]*min-height:\s*44px/s,
+      /\.main-stage\.is-playing \.reasoning-details summary\s*\{[^}]*position:\s*relative;[^}]*min-height:\s*28px;/s,
     );
     expect(playStage).toMatch(
-      /\.main-stage\.is-playing \.hud-view-toggle\s*\{[^}]*min-height:\s*44px/s,
+      /\.main-stage\.is-playing \.reasoning-details summary::after\s*\{[^}]*min-height:\s*44px;/s,
     );
+    expect(playStage).toMatch(
+      /\.main-stage\.is-playing \.hud-view-toggle\s*\{[^}]*position:\s*relative;[^}]*min-height:\s*24px;/s,
+    );
+    expect(playStage).toMatch(
+      /\.main-stage\.is-playing \.hud-view-toggle::after\s*\{[^}]*min-height:\s*44px;/s,
+    );
+  });
+
+  it('keeps welcome and play composers on the same compact row geometry', () => {
+    const shell = readSource('src/ui/styles/shell.css');
+    expect(shell).toMatch(
+      /\.composer\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*row;[^}]*width:\s*min\(100%,\s*68ch\);[^}]*background:\s*var\(--bg-surface\);/s,
+    );
+    expect(shell).toMatch(
+      /\.composer textarea\s*\{[^}]*flex:\s*1;[^}]*min-height:\s*26px;[^}]*padding:\s*4px 0;/s,
+    );
+    expect(shell).toMatch(
+      /\.composer-actions\s*\{[^}]*flex:\s*0 0 auto;[^}]*min-height:\s*40px;[^}]*padding:\s*0;/s,
+    );
+    expect(shell).toMatch(
+      /\.composer \.composer-send\s*\{[^}]*width:\s*40px;[^}]*min-width:\s*40px;[^}]*min-height:\s*40px;[^}]*border-radius:\s*50%;/s,
+    );
+  });
+
+  it('allows local theme previews to inherit the matching token scope', () => {
+    const tokens = readSource('src/ui/styles/tokens.css');
+    expect(tokens).toContain('[data-theme="light"] {');
+    expect(tokens).toContain('[data-theme="dark"] {');
+    expect(tokens).toContain('[data-theme="warm"] {');
+    expect(readSource('src/ui/SettingsPage.tsx')).toContain(
+      "data-theme={option.value === 'system' ? 'light' : option.value}",
+    );
+  });
+
+  it('keeps the story tree spine continuous without the legacy dashed branch rail', () => {
+    const companionSheet = readSource('src/ui/styles/companion-sheet.css');
+    expect(companionSheet).toMatch(
+      /\.story-tree-spine::before\s*\{[^}]*left:\s*11px;[^}]*opacity:\s*1;/s,
+    );
+    expect(companionSheet).toMatch(
+      /\.story-tree-spine-item::before\s*\{[^}]*left:\s*-24px;[^}]*width:\s*10px;[^}]*height:\s*10px;/s,
+    );
+    expect(companionSheet).toMatch(
+      /\.story-tree-siblings\s*\{[^}]*border-inline-start:\s*0;[^}]*padding-inline-start:\s*0;/s,
+    );
+    expect(companionSheet).toMatch(/\.story-tree-connector\s*\{[^}]*display:\s*none;/s);
   });
 
   it('boots display preferences from the same source used by React', () => {

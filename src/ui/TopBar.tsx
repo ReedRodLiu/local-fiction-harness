@@ -1,4 +1,4 @@
-import { GitBranch, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { GitBranch, Menu, PanelLeft } from 'lucide-react';
 
 interface TopBarProps {
   title: string;
@@ -36,16 +36,18 @@ export function TopBar({
         >
           <Menu size={20} strokeWidth={1.75} />
         </button>
-        <button
-          type="button"
-          className="icon-button desktop-topbar-action"
-          data-testid="desktop-library-toggle"
-          aria-label={libraryCollapsed ? '展开书架侧栏' : '收起书架侧栏'}
-          aria-pressed={libraryCollapsed}
-          onClick={onToggleLibrary}
-        >
-          {libraryCollapsed ? <PanelLeftOpen size={20} strokeWidth={1.75} /> : <PanelLeftClose size={20} strokeWidth={1.75} />}
-        </button>
+        {libraryCollapsed && (
+          <button
+            type="button"
+            className="icon-button desktop-topbar-action"
+            data-testid="desktop-library-toggle"
+            aria-label="展开书架侧栏"
+            aria-pressed={libraryCollapsed}
+            onClick={onToggleLibrary}
+          >
+            <PanelLeft size={18} strokeWidth={1.75} />
+          </button>
+        )}
       </div>
 
       <div className="topbar-title-group">

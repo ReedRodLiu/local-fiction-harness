@@ -113,7 +113,6 @@ export function StoryLibrary({
             const activeNodes = getActiveBranchNodes(item);
             const turnCount = Math.floor(activeNodes.length / 2);
             const forkCount = projectStoryTreeSpine(item).forkCount;
-            const recentTitle = activeNodes.at(-1)?.content.replace(/\s+/g, ' ').trim();
             return (
               <li
                 key={item.id}
@@ -161,7 +160,6 @@ export function StoryLibrary({
                         <span className="story-list-meta">
                           {turnCount} 轮 · {forkCount} 分支
                         </span>
-                        {recentTitle && <span className="story-list-recent">{recentTitle}</span>}
                       </span>
                     </button>
                     <div className="story-menu-container">
