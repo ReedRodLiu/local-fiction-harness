@@ -325,14 +325,12 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
   const [confirm, setConfirm] = useState<'export' | 'delete' | null>(null);
   const conversation = character.conversations.find((item) => item.id === character.activeConversationId);
   const path = conversation ? getActiveBranchNodes(conversation) : [];
-  const documentReadEntries: DocumentReadEntry[] = character.conversations.flatMap((item) =>
-    Object.values(item.nodes).flatMap((node) => node.documentReads?.length ? [{
-      id: `${item.id}-${node.id}`,
-      label: `${conversationLabel(item.kind)} · ${node.role === 'assistant' ? character.name : '玩家消息'}`,
+  const documentReadEntries: DocumentReadEntry[] = path.flatMap((node) => node.documentReads?.length ? [{
+      id: node.id,
+      label: `${node.role === 'assistant' ? character.name : '玩家消息'} · ${node.id}`,
       createdAt: node.createdAt,
       reads: node.documentReads,
-    }] : []),
-  );
+    }] : []);
 
   function editCharacter(proposal?: string, expected?: string) {
     openDocument({

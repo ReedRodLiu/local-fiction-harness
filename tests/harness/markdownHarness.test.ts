@@ -53,6 +53,17 @@ describe('three-mode Markdown Harness', () => {
     expect(documentVersion(changed.documents.container).markdown).toBe(before);
   });
 
+  it.each(['标题：另一个标题\n\n主角设定：另一位主角', '核心规则：\n- 另一条规则'])('rejects blueprint fields appended outside the original anchor: %s', async (extra) => {
+    const harness = createFictionHarness({ transport: { async *streamChat() { yield { contentDelta: 'ok', finishReason: 'stop' }; } } });
+    const saved = withDocs(await harness.saveStory(harness.createStory({ title: '渡口', rawScript: '原文' })));
+    const version = documentVersion(saved.documents.container);
+    const changed = withDocs(editStoryDocument(saved, 'container', version.id,
+      version.markdown.replace('\n\n## 剧本原文', `\n\n${extra}\n\n## 剧本原文`)));
+    const before = documentVersion(changed.documents.container).markdown;
+    await expect(harness.updateStoryBlueprint(changed, { ...changed.blueprint, protagonist: '新主角' })).rejects.toThrow(/备份手工内容/);
+    expect(documentVersion(changed.documents.container).markdown).toBe(before);
+  });
+
   it('reads the latest public version on a historical fork and keeps local edits on their own path', async () => {
     let publicDocument = newDocument('OLD-PUBLIC');
     const captured: LlmStreamRequest[] = [];

@@ -1,11 +1,15 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Story, ThreeZoneMetrics } from '../../src/harness/index.ts';
 import { ContextOverview } from '../../src/ui/ContextOverview.tsx';
 import { DocumentReadDetails } from '../../src/ui/DocumentReadDetails.tsx';
 import { isBlueprintEditCurrent } from '../../src/ui/StoryBlueprintCard.tsx';
 import { StoryReview } from '../../src/ui/StoryReview.tsx';
+import { CreativeWorkspace } from '../../src/ui/CreativeWorkspace.tsx';
+import { emptyWorkspace, newCharacter, newConversation, EMPTY_SUMMARY_SNAPSHOT } from '../../src/harness/index.ts';
+
+vi.mock('../../src/ui/useWebHistoryLayer.ts', () => ({ useWebHistoryLayer: () => undefined }));
 
 const story: Story = {
   id: 'story-1',
@@ -36,6 +40,34 @@ const metrics: ThreeZoneMetrics = {
 };
 
 describe('UI-POLISH-01 companion panel', () => {
+  it('shows only the active conversation path in character document reads', () => {
+    const character = newCharacter('小雨', '人设');
+    const active = newConversation(character, 'personal');
+    const other = newConversation(character, 'roleplay');
+    const node = (id: string, parentId: string | null, versionId: string) => ({
+      id, parentId, role: 'assistant' as const, content: id, createdAt: 10,
+      summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      documentReads: [{ scope: 'container' as const, name: '人设', versionId, readAt: 10 }],
+    });
+    active.nodes = { root: node('root', null, 'root-version'), current: node('current', 'root', 'current-version'), sibling: node('sibling', 'root', 'sibling-version') };
+    active.activeLeafNodeId = 'current';
+    other.nodes = { other: node('other', null, 'other-version') };
+    other.activeLeafNodeId = 'other';
+    character.conversations = [active, other];
+    character.activeConversationId = active.id;
+    const workspace = { ...emptyWorkspace(), characters: [character], activeCharacterId: character.id };
+    const markup = renderToStaticMarkup(createElement(CreativeWorkspace, {
+      mode: 'character', workspace, ready: true, storageError: '',
+      save: async () => workspace, read: async () => workspace,
+      runtime: {} as never, requestModel: () => undefined, openPublic: () => undefined,
+      openDocument: () => undefined, onBack: () => undefined,
+    }));
+    expect(markup).toContain('root-version');
+    expect(markup).toContain('current-version');
+    expect(markup).toContain('小雨 · current');
+    expect(markup).not.toContain('sibling-version');
+    expect(markup).not.toContain('other-version');
+  });
   it('rejects a stale blueprint edit baseline', () => {
     expect(isBlueprintEditCurrent(story, story)).toBe(true);
     expect(isBlueprintEditCurrent({ ...story, updatedAt: 2 }, story)).toBe(false);
