@@ -13,6 +13,10 @@ export async function verifyThreeModes(browser, port, helpers) {
     page.setDefaultTimeout(8000);
     const requests = [];
     let failOpening = true;
+    let releaseStoryResponse;
+    let storyResponseStarted;
+    const storyResponsePending = new Promise((resolve) => { storyResponseStarted = resolve; });
+    const storyResponseRelease = new Promise((resolve) => { releaseStoryResponse = resolve; });
     await mockSuccessfulKeyVerification(page);
     await page.route('**/chat/completions', async (route) => {
       const messages = route.request().postDataJSON().messages;
@@ -22,6 +26,10 @@ export async function verifyThreeModes(browser, port, helpers) {
         failOpening = false;
         await route.fulfill({ status: 500, body: 'synthetic failure' });
         return;
+      }
+      if (input.includes('敲钟')) {
+        storyResponseStarted();
+        await storyResponseRelease;
       }
       let content = `接续：${input}`;
       if (input.includes('保存公共记忆')) content = `请核对公共记忆。\n${proposal('public', '仅用短句。PUBLIC-LATEST')}`;
@@ -201,6 +209,27 @@ export async function verifyThreeModes(browser, port, helpers) {
     await page.getByTestId('turn-assistant').last().waitFor();
     await page.fill('#turn-input', '敲钟');
     await page.getByRole('button', { name: '发送行动' }).click();
+    await storyResponsePending;
+    await page.getByTestId('desktop-settings-open').click();
+    await page.getByTestId('settings-page').waitFor();
+    releaseStoryResponse();
+    await page.waitForFunction(async () => {
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('local-fiction-harness');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const stories = await new Promise((resolve, reject) => {
+        const request = db.transaction('stories').objectStore('stories').getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      db.close();
+      return JSON.stringify(stories).includes('渡口灯亮，第二声钟响。');
+    });
+    await page.getByTestId('settings-page').getByRole('button', { name: '返回' }).click();
+    await page.getByTestId('story-timeline').getByText('渡口灯亮，第二声钟响。', { exact: true }).waitFor();
+    await go();
     await page.getByTestId('story-timeline').getByText('渡口灯亮，第二声钟响。', { exact: true }).waitFor();
     const library = page.getByTestId('desktop-library');
     const selectStory = () => library.getByTestId('story-select-button').filter({ hasText: '浮灯渡口' }).click();
@@ -227,6 +256,16 @@ export async function verifyThreeModes(browser, port, helpers) {
     await selectStory();
     await page.getByTestId('story-timeline').waitFor();
     await releaseHeldStoryStorageCommit(page);
+    await page.getByTestId('story-timeline').waitFor();
+    await library.getByRole('button', { name: '产粮', exact: true }).click();
+    await holdNextStoryStorageCommit(page, 'meta');
+    await selectWork();
+    await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
+    await page.getByTestId('desktop-settings-open').click();
+    await page.getByTestId('settings-page').waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await page.getByTestId('settings-page').waitFor();
+    await page.getByTestId('settings-page').getByRole('button', { name: '返回' }).click();
     await page.getByTestId('story-timeline').waitFor();
     assert.match(lastRequest(), /SCRIPT-END/);
     assert.match(lastRequest(), /PUBLIC-LATEST/);
@@ -307,6 +346,41 @@ export async function verifyThreeModes(browser, port, helpers) {
     await page.setInputFiles('[data-testid="backup-import-input"]', backupPath);
     await character.waitFor({ state: 'detached' });
     await page.getByTestId('story-timeline').waitFor();
+
+    // Settings opened during deletion must remain open when the save finishes.
+    const desktopLibrary = page.getByTestId('desktop-library');
+    await desktopLibrary.getByRole('button', { name: '产粮', exact: true }).click();
+    const secondWork = desktopLibrary.getByTestId('story-list-item').filter({ hasText: '浮灯渡口' });
+    await secondWork.getByTestId('story-select-button').click();
+    await writing.waitFor();
+    await secondWork.getByTestId('story-menu-trigger').click();
+    await secondWork.getByRole('menuitem', { name: /删除/ }).click();
+    await holdNextStoryStorageCommit(page, 'meta');
+    await page.getByRole('dialog', { name: '确认删除' }).getByRole('button', { name: '确认删除' }).click();
+    await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
+    await page.getByTestId('desktop-settings-open').click();
+    await page.getByTestId('settings-page').waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await page.getByTestId('settings-page').waitFor();
+    await page.getByTestId('settings-page').getByRole('button', { name: '返回' }).click();
+    await secondWork.waitFor({ state: 'detached' });
+
+    // Import navigation also takes precedence over a pending deletion redirect.
+    await desktopLibrary.getByRole('button', { name: '角色', exact: true }).click();
+    const secondCharacter = desktopLibrary.getByTestId('story-list-item').filter({ hasText: '收灯人' });
+    await secondCharacter.getByTestId('story-select-button').click();
+    await character.waitFor();
+    await secondCharacter.getByTestId('story-menu-trigger').click();
+    await secondCharacter.getByRole('menuitem', { name: /删除/ }).click();
+    await holdNextStoryStorageCommit(page, 'meta');
+    await page.getByRole('dialog', { name: '确认删除' }).getByRole('button', { name: '确认删除' }).click();
+    await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
+    await startScriptImport(page);
+    await page.getByTestId('import-panel').waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await page.getByTestId('import-panel').waitFor();
+    await page.getByTestId('import-panel').getByRole('button', { name: '返回' }).click();
+    await secondCharacter.waitFor({ state: 'detached' });
 
     // New creation is reachable from the library on both screen sizes.
     for (const mobile of [false, true]) {

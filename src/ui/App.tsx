@@ -218,6 +218,7 @@ export function App({ runtime }: AppProps) {
   const abortRef = useRef<AbortController | null>(null);
   const streamSeqRef = useRef(0);
   const storyOpSeqRef = useRef(0);
+  const overlayNavigationSeqRef = useRef(0);
   const summarySeqRef = useRef(0);
   const storyCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
   const storyRef = useRef<Story | null>(story);
@@ -870,6 +871,7 @@ export function App({ runtime }: AppProps) {
 
   const openImportView = (mode: ImportMode) => {
     if (creationPending.current || branchSwitchBusyRef.current) return;
+    ++overlayNavigationSeqRef.current;
     captureOverlayTrigger();
     abortActiveStream(true);
     setCreativePage(null);
@@ -883,6 +885,7 @@ export function App({ runtime }: AppProps) {
 
   const openSettings = () => {
     if (creationPending.current || branchSwitchBusyRef.current) return;
+    ++overlayNavigationSeqRef.current;
     captureOverlayTrigger();
     setCreativeCompanionOpen(false);
     setShowImport(false);
@@ -1388,6 +1391,7 @@ export function App({ runtime }: AppProps) {
     if (creationPending.current) return;
     const opSeq = action === 'select' ? ++storyOpSeqRef.current : null;
     const storySeqAtStart = storyOpSeqRef.current;
+    const overlaySeqAtStart = overlayNavigationSeqRef.current;
     setErrorMsg(null);
     try {
       if (action === 'export') {
@@ -1417,8 +1421,10 @@ export function App({ runtime }: AppProps) {
             : action === 'delete' ? state.characters.filter((item) => item.id !== id) : state.characters,
         };
       });
-      if (action === 'select' && storyOpSeqRef.current === opSeq) openCreativePage(mode);
-      if (action === 'delete' && storyOpSeqRef.current === storySeqAtStart && creativePage === mode &&
+      if (action === 'select' && storyOpSeqRef.current === opSeq &&
+        overlayNavigationSeqRef.current === overlaySeqAtStart) openCreativePage(mode);
+      if (action === 'delete' && storyOpSeqRef.current === storySeqAtStart &&
+        overlayNavigationSeqRef.current === overlaySeqAtStart && creativePage === mode &&
         (mode === 'writing' ? creative.workspace.activeWorkId === id : creative.workspace.activeCharacterId === id)) openNewCreation();
     } catch (error) {
       if (opSeq === null || storyOpSeqRef.current === opSeq) setErrorMsg(toErrorMessage(error, '书架操作失败。'));
