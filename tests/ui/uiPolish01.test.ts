@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { Story, ThreeZoneMetrics } from '../../src/harness/index.ts';
 import { ContextOverview } from '../../src/ui/ContextOverview.tsx';
 import { DocumentReadDetails } from '../../src/ui/DocumentReadDetails.tsx';
+import { isBlueprintEditCurrent } from '../../src/ui/StoryBlueprintCard.tsx';
 import { StoryReview } from '../../src/ui/StoryReview.tsx';
 
 const story: Story = {
@@ -35,6 +36,13 @@ const metrics: ThreeZoneMetrics = {
 };
 
 describe('UI-POLISH-01 companion panel', () => {
+  it('rejects a stale blueprint edit baseline', () => {
+    expect(isBlueprintEditCurrent(story, story)).toBe(true);
+    expect(isBlueprintEditCurrent({ ...story, updatedAt: 2 }, story)).toBe(false);
+    expect(isBlueprintEditCurrent({ ...story, blueprint: { ...story.blueprint, protagonist: 'changed' } }, story)).toBe(false);
+    expect(isBlueprintEditCurrent({ ...story, activeLeafNodeId: 'other' }, story)).toBe(false);
+  });
+
   it('shows plot review metrics and summary without a document-audit disclosure', () => {
     const markup = renderToStaticMarkup(createElement(StoryReview, {
       story,
@@ -55,6 +63,7 @@ describe('UI-POLISH-01 companion panel', () => {
     const storyWithRead: Story = {
       ...story,
       nodes: {
+        'other': { id: 'other', parentId: null, role: 'assistant', content: 'other branch', createdAt: 11, summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 }, documentReads: [{ scope: 'container', name: 'other', versionId: 'other-version', readAt: 11 }] },
         'reply-1': {
           id: 'reply-1',
           parentId: null,
@@ -70,7 +79,7 @@ describe('UI-POLISH-01 companion panel', () => {
           }],
         },
       },
-      rootNodeIds: ['reply-1'],
+      rootNodeIds: ['reply-1', 'other'],
       activeLeafNodeId: 'reply-1',
       importCandidate: '待核对剧本',
     };
@@ -95,6 +104,8 @@ describe('UI-POLISH-01 companion panel', () => {
     expect(markup).toContain('>微调</button>');
     expect(markup).toContain('三区上下文与资料版本详情');
     expect(markup).toContain('container-v3');
+    expect(markup).toContain('reply-1');
+    expect(markup).not.toContain('other-version');
     expect(markup).toContain('雨夜车站');
     expect(markup).not.toContain('资料审计');
     expect(markup).not.toMatch(/<details[^>]* open=/);

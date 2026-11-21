@@ -7,8 +7,15 @@ export interface StoryBlueprintCardProps {
   story: Story;
   isBusy?: boolean;
   isReextracting?: boolean;
-  onSaveBlueprintTweak?: (updatedBlueprint: StoryBlueprint) => Promise<boolean | void>;
+  onSaveBlueprintTweak?: (updatedBlueprint: StoryBlueprint, baseline: Story) => Promise<boolean | void>;
   onReextractBlueprint?: () => void;
+}
+
+export function isBlueprintEditCurrent(current: Story, baseline: Story): boolean {
+  return current.id === baseline.id && current.updatedAt === baseline.updatedAt &&
+    JSON.stringify(current.blueprint) === JSON.stringify(baseline.blueprint) &&
+    current.activeLeafNodeId === baseline.activeLeafNodeId &&
+    current.documents?.container.head === baseline.documents?.container.head;
 }
 
 export function StoryBlueprintCard({
@@ -20,6 +27,7 @@ export function StoryBlueprintCard({
 }: StoryBlueprintCardProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<StoryBlueprint | null>(null);
+  const [baseline, setBaseline] = useState<Story | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,8 +41,8 @@ export function StoryBlueprintCard({
     setIsSaving(true);
     setError(null);
     try {
-      if (!draft) return;
-      const saved = await onSaveBlueprintTweak(draft);
+      if (!draft || !baseline) return;
+      const saved = await onSaveBlueprintTweak({ ...draft, worldRules: splitNonEmptyLines(draft.worldRules.join('\n')), taboos: splitNonEmptyLines(draft.taboos.join('\n')) }, baseline);
       if (saved !== false) setEditing(false);
     } catch (err) {
       setError(toErrorMessage(err, '保存蓝图微调失败。'));
@@ -56,6 +64,7 @@ export function StoryBlueprintCard({
             className="btn btn-sm"
             disabled={isBusy}
             onClick={() => {
+              setBaseline(story);
               setDraft({
                 ...story.blueprint,
                 worldRules: [...story.blueprint.worldRules],
@@ -92,14 +101,14 @@ export function StoryBlueprintCard({
               rows={3}
               value={draft?.worldRules.join('\n') ?? ''}
               onChange={(event) => setDraft((current) => current
-                ? { ...current, worldRules: splitNonEmptyLines(event.target.value) }
+                ? { ...current, worldRules: event.target.value.split('\n') }
                 : current)}
             />
           </div>
           <fieldset className="story-blueprint-editor-npcs" aria-label="关键角色">
             <legend>关键角色</legend>
             {draft?.npcs.map((npc, index) => (
-              <div className="story-blueprint-editor-npc" key={`${index}-${npc.name}`}>
+              <div className="story-blueprint-editor-npc" key={index}>
                 <label className="field">姓名
                   <input value={npc.name} onChange={(event) => setDraft((current) => current ? {
                     ...current,
@@ -141,7 +150,7 @@ export function StoryBlueprintCard({
               rows={2}
               value={draft?.taboos.join('\n') ?? ''}
               onChange={(event) => setDraft((current) => current
-                ? { ...current, taboos: splitNonEmptyLines(event.target.value) }
+                ? { ...current, taboos: event.target.value.split('\n') }
                 : current)}
             />
           </div>

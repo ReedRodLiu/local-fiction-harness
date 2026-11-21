@@ -3715,7 +3715,18 @@ async function main() {
     }
     await blueprintCard.getByRole('button', { name: '微调', exact: true }).click();
     await blueprintCard.getByLabel('微调主角设定').fill('E2E调整主角');
-    await blueprintCard.getByLabel('背景规则（每行一条）').fill('每轮输出状态面板\nE2E补充规则');
+    const rules = blueprintCard.getByLabel('背景规则（每行一条）');
+    await rules.focus();
+    await rules.evaluate((element) => element.setSelectionRange(element.value.length, element.value.length));
+    await rules.press('Enter');
+    await rules.press('Space');
+    await rules.pressSequentially('E2E补充规则');
+    if (!((await rules.inputValue()).includes('\n E2E补充规则'))) throw new Error('Multiline draft lost whitespace');
+    const npcName = blueprintCard.getByLabel('姓名').first();
+    await npcName.focus();
+    await npcName.press('End');
+    await npcName.pressSequentially('测试');
+    if (!(await npcName.evaluate((element) => document.activeElement === element)) || !(await npcName.inputValue()).endsWith('测试')) throw new Error('NPC name lost focus while typing');
     await blueprintCard.getByRole('button', { name: '保存蓝图微调' }).click();
     await blueprintCard.getByText('E2E调整主角', { exact: true }).waitFor();
     await savedBlueprintSheet.getByRole('button', { name: '故事资料', exact: true }).click();

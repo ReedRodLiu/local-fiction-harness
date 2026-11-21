@@ -43,6 +43,16 @@ describe('three-mode Markdown Harness', () => {
     expect(markdown).not.toContain('旧主角');
   });
 
+  it('rejects a manually changed confirmed anchor without changing the document', async () => {
+    const harness = createFictionHarness({ transport: { async *streamChat() { yield { contentDelta: 'ok', finishReason: 'stop' }; } } });
+    const saved = withDocs(await harness.saveStory(harness.createStory({ title: '渡口', rawScript: '原文' })));
+    const version = documentVersion(saved.documents.container);
+    const changed = withDocs(editStoryDocument(saved, 'container', version.id, version.markdown.replace('标题：渡口', '标题：手工修改')));
+    const before = documentVersion(changed.documents.container).markdown;
+    await expect(harness.updateStoryBlueprint(changed, { ...changed.blueprint, protagonist: '新主角' })).rejects.toThrow(/备份手工内容/);
+    expect(documentVersion(changed.documents.container).markdown).toBe(before);
+  });
+
   it('reads the latest public version on a historical fork and keeps local edits on their own path', async () => {
     let publicDocument = newDocument('OLD-PUBLIC');
     const captured: LlmStreamRequest[] = [];

@@ -513,13 +513,13 @@ export function ImportPanel({
                       id="bp-rules"
                       rows={3}
                       value={draft.blueprint.worldRules.join('\n')}
-                      onChange={(event) => updateBlueprint({ worldRules: splitNonEmptyLines(event.target.value) })}
+                      onChange={(event) => updateBlueprint({ worldRules: event.target.value.split('\n') })}
                     />
                   </div>
                   <fieldset className="import-npc-editor" id="bp-npcs" aria-label="关键角色">
                     <legend>关键角色</legend>
                     {draft.blueprint.npcs.map((npc, index) => (
-                      <div className="import-npc-row" key={`${index}-${npc.name}`}>
+                      <div className="import-npc-row" key={index}>
                         <div className="field">
                           <label htmlFor={`bp-npcs-name-${index}`}>姓名</label>
                           <input
@@ -584,7 +584,7 @@ export function ImportPanel({
                       id="bp-taboos"
                       rows={3}
                       value={draft.blueprint.taboos.join('\n')}
-                      onChange={(event) => updateBlueprint({ taboos: splitNonEmptyLines(event.target.value) })}
+                      onChange={(event) => updateBlueprint({ taboos: event.target.value.split('\n') })}
                     />
                   </div>
                   <div className="field">
@@ -601,6 +601,7 @@ export function ImportPanel({
                       type="button"
                       className="btn btn-primary"
                       onClick={() => {
+                        updateBlueprint({ worldRules: splitNonEmptyLines(draft.blueprint.worldRules.join('\n')), taboos: splitNonEmptyLines(draft.blueprint.taboos.join('\n')) });
                         setEditingBlueprint(false);
                         setEditBaseline(null);
                       }}

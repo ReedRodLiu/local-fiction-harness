@@ -1,5 +1,6 @@
 import { ChevronRight } from 'lucide-react';
 import {
+  getActiveBranchNodes,
   type PlotSummarySnapshot,
   type Story,
   type StoryBlueprint,
@@ -23,7 +24,7 @@ interface ContextOverviewProps {
   isStreaming: boolean;
   isReextracting?: boolean;
   onOpenDocuments?: CompanionDocuments;
-  onSaveBlueprintTweak?: (updatedBlueprint: StoryBlueprint) => Promise<boolean | void>;
+  onSaveBlueprintTweak?: (updatedBlueprint: StoryBlueprint, baseline: Story) => Promise<boolean | void>;
   onReextractBlueprint?: () => void;
 }
 
@@ -37,10 +38,10 @@ export function ContextOverview({
   onSaveBlueprintTweak,
   onReextractBlueprint,
 }: ContextOverviewProps) {
-  const readEntries = Object.values(story.nodes)
+  const readEntries = getActiveBranchNodes(story, story.activeLeafNodeId)
     .flatMap((node) => node.documentReads?.length ? [{
       id: node.id,
-      label: node.role === 'assistant' ? 'AI 回复' : '对话节点',
+      label: `${node.role === 'assistant' ? 'AI 回复' : '对话节点'} · ${node.id}`,
       createdAt: node.createdAt,
       reads: node.documentReads,
     }] : [])

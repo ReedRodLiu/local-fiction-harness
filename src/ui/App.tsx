@@ -1,3 +1,4 @@
+import { isBlueprintEditCurrent } from './StoryBlueprintCard.tsx';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Sparkles, Square } from 'lucide-react';
 import {
@@ -1084,10 +1085,13 @@ export function App({ runtime }: AppProps) {
     );
   };
 
-  const handleSaveBlueprintTweak = async (blueprint: StoryBlueprint) => {
+  const handleSaveBlueprintTweak = async (blueprint: StoryBlueprint, baseline: Story) => {
     if (branchSwitchBusyRef.current) throw new Error('分支切换中，请稍后再保存。');
     const source = storyRef.current;
     if (!source) throw new Error('当前故事已不存在。');
+    if (!isBlueprintEditCurrent(source, baseline)) {
+      throw new Error('故事或资料已发生变化，无法保存旧的蓝图草稿。请复制需要保留的修改，取消编辑后重新打开蓝图微调。');
+    }
     const updated = await harness.updateStoryBlueprint(source, blueprint);
     if (storyRef.current?.id === source.id && storyRef.current.updatedAt === source.updatedAt) {
       storyRef.current = updated;

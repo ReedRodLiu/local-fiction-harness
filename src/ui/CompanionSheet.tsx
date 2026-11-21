@@ -35,7 +35,7 @@ interface CompanionSheetProps {
   onExtractBranchGist: (branchEntryNodeId: string) => Promise<void> | void;
   onComputeSummary: () => void;
   onOpenDocuments?: { container(): void; local(): void; public(): void; adoptScript?: () => void };
-  onSaveBlueprintTweak?: (blueprint: StoryBlueprint) => Promise<boolean | void>;
+  onSaveBlueprintTweak?: (blueprint: StoryBlueprint, baseline: Story) => Promise<boolean | void>;
   onReextractBlueprint: () => void;
   onClose: () => void;
 }

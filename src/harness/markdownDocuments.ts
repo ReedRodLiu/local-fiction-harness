@@ -149,16 +149,17 @@ export function syncConfirmedBlueprintMarkdown(
   const lines = markdown.split('\n');
   const start = lines.findIndex((line) => line.trim() === heading);
   if (start < 0) {
-    return [`${heading}\n\n${nextAnchor}`, markdown].filter(Boolean).join('\n\n');
+    throw new Error('故事资料中找不到已确认的规则与资料。请先备份手工内容，恢复原蓝图内容及标题，再重新打开蓝图微调。');
   }
 
   let end = start + 1;
   while (end < lines.length && !/^##\s/.test(lines[end])) end += 1;
   const sectionBody = lines.slice(start + 1, end).join('\n');
   const previousAnchorStart = sectionBody.indexOf(previousAnchor);
-  const nextBody = previousAnchorStart >= 0
-    ? sectionBody.slice(0, previousAnchorStart) + nextAnchor + sectionBody.slice(previousAnchorStart + previousAnchor.length)
-    : `${sectionBody.trimEnd()}\n\n${nextAnchor}`;
+  if (previousAnchorStart < 0 || (previousAnchorStart > 0 && sectionBody[previousAnchorStart - 1] !== '\n') || (previousAnchorStart + previousAnchor.length < sectionBody.length && sectionBody[previousAnchorStart + previousAnchor.length] !== '\n') || sectionBody.indexOf(previousAnchor, previousAnchorStart + previousAnchor.length) >= 0 || lines.slice(start + 1).some((line) => line.trim() === heading)) {
+    throw new Error('故事资料中的已确认规则与蓝图不一致或存在重复标题。请先备份手工内容，在故事资料中恢复唯一的原蓝图内容，再重新打开蓝图微调。');
+  }
+  const nextBody = sectionBody.slice(0, previousAnchorStart) + nextAnchor + sectionBody.slice(previousAnchorStart + previousAnchor.length);
   const tail = lines.slice(end);
   const nextBodyLines = nextBody.split('\n');
   if (tail.length && nextBodyLines.at(-1) !== '') nextBodyLines.push('');
