@@ -323,6 +323,10 @@ export async function verifyThreeModes(browser, port, helpers) {
       const library = page.getByTestId(mobile ? 'mobile-library-dialog' : 'desktop-library');
       await library.getByRole('button', { name: category, exact: true }).click();
       const row = library.getByTestId('story-list-item').filter({ hasText: title });
+      if (!mobile) {
+        await row.getByTestId('story-select-button').click();
+        await writing.waitFor();
+      }
       await row.getByTestId('story-menu-trigger').click();
       await row.getByRole('menuitem', { name: /删除/ }).click();
       const confirmation = page.getByRole('dialog', { name: '确认删除' });
@@ -338,7 +342,18 @@ export async function verifyThreeModes(browser, port, helpers) {
         await row.getByTestId('story-menu-trigger').click();
         await row.getByRole('menuitem', { name: /删除/ }).click();
       }
+      if (!mobile) await holdNextStoryStorageCommit(page, 'meta');
       await confirmation.getByRole('button', { name: '确认删除' }).click();
+      if (!mobile) {
+        await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
+        await library.getByRole('button', { name: '文游', exact: true }).click();
+        await library.getByTestId('story-select-button').filter({ hasText: '浮灯渡口' }).first().click();
+        await page.getByTestId('story-timeline').waitFor();
+        await releaseHeldStoryStorageCommit(page);
+        await page.getByTestId('story-timeline').waitFor();
+        assert.equal(await page.getByTestId('welcome-view').count(), 0);
+        await library.getByRole('button', { name: '产粮', exact: true }).click();
+      }
       await row.waitFor({ state: 'detached' });
     }
 

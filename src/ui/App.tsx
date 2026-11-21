@@ -1387,6 +1387,7 @@ export function App({ runtime }: AppProps) {
   async function changeCreativeItem(mode: 'writing' | 'character', id: string, action: 'select' | 'rename' | 'delete' | 'export', title = '') {
     if (creationPending.current) return;
     const opSeq = action === 'select' ? ++storyOpSeqRef.current : null;
+    const storySeqAtStart = storyOpSeqRef.current;
     setErrorMsg(null);
     try {
       if (action === 'export') {
@@ -1417,7 +1418,7 @@ export function App({ runtime }: AppProps) {
         };
       });
       if (action === 'select' && storyOpSeqRef.current === opSeq) openCreativePage(mode);
-      if (action === 'delete' && creativePage === mode &&
+      if (action === 'delete' && storyOpSeqRef.current === storySeqAtStart && creativePage === mode &&
         (mode === 'writing' ? creative.workspace.activeWorkId === id : creative.workspace.activeCharacterId === id)) openNewCreation();
     } catch (error) {
       if (opSeq === null || storyOpSeqRef.current === opSeq) setErrorMsg(toErrorMessage(error, '书架操作失败。'));
