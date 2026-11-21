@@ -24,6 +24,7 @@ interface SettingsPageProps {
   onClearSavedKey: () => void;
   onApplyDevTestConfig: () => void;
   onOpenDiagnostics: () => void;
+  onOpenPublicMemory: () => void;
   onExportCurrentStory: () => void;
   onImportBackupFile: (file: File) => void;
   onThemePreferenceChange: (preference: DisplayThemePreference) => void;
@@ -65,6 +66,7 @@ export function SettingsPage({
   onClearSavedKey,
   onApplyDevTestConfig,
   onOpenDiagnostics,
+  onOpenPublicMemory,
   onExportCurrentStory,
   onImportBackupFile,
   onThemePreferenceChange,
@@ -206,6 +208,10 @@ export function SettingsPage({
             ))}
           </div>
         </div>
+      </InsetGroup>
+
+      <InsetGroup title="公共记忆" description="管理各场景共用的资料。">
+        <button type="button" className="btn" onClick={onOpenPublicMemory}>公共记忆</button>
       </InsetGroup>
 
       <InsetGroup

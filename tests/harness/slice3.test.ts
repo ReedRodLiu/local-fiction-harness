@@ -21,6 +21,43 @@ const testConfig = {
 };
 
 describe('Slice 3: Multi-story storage & auto-persistence', () => {
+  it('uses recent-story fallback only when the active selection is missing', async () => {
+    const storage = createInMemoryStoryStorage();
+    let tick = 0;
+    const harness = createFictionHarness({
+      transport: mockTransport,
+      storage,
+      now: () => 1700000000000 + ++tick * 1000,
+      createId: (() => {
+        let seq = 0;
+        return () => `fallback-${++seq}`;
+      })(),
+    });
+
+    await harness.createAndSaveStory({ title: '较早故事', rawScript: '旧规则' });
+    const recent = await harness.createAndSaveStory({ title: '最近故事', rawScript: '新规则' });
+
+    expect(await storage.getActiveStorySelection()).toEqual({ status: 'missing' });
+    expect((await harness.loadActiveStory())?.id).toBe(recent.id);
+
+    await storage.setActiveStoryId(null);
+    expect(await storage.getActiveStorySelection()).toEqual({ status: 'present', id: null });
+    expect(await harness.loadActiveStory()).toBeNull();
+  });
+
+  it('does not fall back when the present active story no longer exists', async () => {
+    const storage = createInMemoryStoryStorage();
+    const harness = createFictionHarness({
+      transport: mockTransport,
+      storage,
+    });
+
+    await harness.createAndSaveStory({ title: '仅存故事', rawScript: '规则' });
+    await storage.setActiveStoryId('missing-story');
+
+    expect(await harness.loadActiveStory()).toBeNull();
+  });
+
   it('auto-persists created stories, blueprint tweaks, turns, renames, and active selection across reloads', async () => {
     const storage = createInMemoryStoryStorage();
     const saveSpy = vi.spyOn(storage, 'saveStory');
@@ -37,6 +74,9 @@ describe('Slice 3: Multi-story storage & auto-persistence', () => {
     const story1 = await harnessA.createAndSaveStory({ title: '宫闱风云', rawScript: '规则A' });
     const story2 = await harnessA.createAndSaveStory({ title: '修仙奇缘', rawScript: '规则B' });
     expect(saveSpy).toHaveBeenCalledTimes(2);
+    expect(activeSpy).not.toHaveBeenCalled();
+    await harnessA.setActiveStory(story1.id);
+    await harnessA.setActiveStory(story2.id);
     expect(activeSpy).toHaveBeenLastCalledWith(story2.id);
 
     const tweaked = await harnessA.updateStoryBlueprint(story2, {

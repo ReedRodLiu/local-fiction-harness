@@ -107,6 +107,16 @@ public class PrivateStoryFileStore {
         }
     }
 
+    public JSONObject getActiveStorySelection() throws IOException, JSONException {
+        synchronized (lock) {
+            String activeId = getActiveStoryIdLocked();
+            JSONObject result = new JSONObject();
+            result.put("present", activeFile.isFile());
+            result.put("id", activeId == null ? JSONObject.NULL : activeId);
+            return result;
+        }
+    }
+
     public void setActiveStoryId(String id) throws IOException, JSONException {
         synchronized (lock) {
             setActiveStoryIdLocked(id);

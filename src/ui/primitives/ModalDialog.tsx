@@ -69,6 +69,7 @@ export function ModalDialog({
       aria-label={label}
       data-testid={testId}
       onCancel={(event) => {
+        event.stopPropagation();
         onCancel?.(event);
         if (!event.defaultPrevented) {
           event.preventDefault();
@@ -106,7 +107,8 @@ export function ModalDialog({
         backdropClickRef.current = false;
         onClose();
       }}
-      onClose={() => {
+      onClose={(event) => {
+        event.stopPropagation();
         if (suppressCloseEventRef.current) {
           suppressCloseEventRef.current = false;
           return;

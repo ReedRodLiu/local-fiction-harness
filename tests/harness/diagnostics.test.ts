@@ -531,7 +531,7 @@ describe('Spec #26 Slice 2: DeepSeek structure radar & breadcrumb wrappers', () 
 
     const storage = createDiagnosticStoryStorage(createInMemoryStoryStorage(), collector);
     await storage.listStories();
-    await storage.getActiveStoryId();
+    await storage.getActiveStorySelection();
     await storage.setActiveStoryId('story-id-private-canary');
 
     const bundle = collector.buildBundle({ baseUrl: '', model: 'm', memoryOnly: false });
@@ -544,7 +544,7 @@ describe('Spec #26 Slice 2: DeepSeek structure radar & breadcrumb wrappers', () 
         'stream_done',
         'stream_error',
         'list_stories',
-        'get_active_story_id',
+        'get_active_story_selection',
         'set_active_story_id',
       ]),
     );

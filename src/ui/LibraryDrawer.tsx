@@ -1,14 +1,24 @@
 import type { ReactNode } from 'react';
-import { BookOpen, ChevronRight, FilePlus2, MessagesSquare, PencilLine, PanelLeftClose, Settings, Sparkles, X } from 'lucide-react';
+import { BookOpen, ChevronRight, FilePlus2, PanelLeftClose, Plus, Settings, Sparkles, X } from 'lucide-react';
 import type { Story } from '../harness/index.ts';
-import { StoryLibrary } from './StoryLibrary.tsx';
+import { StoryLibrary, type LibraryItem, type LibraryItemActions } from './StoryLibrary.tsx';
 import { DrawerDialog } from './primitives/DrawerDialog.tsx';
 
-interface LibraryDrawerProps {
+export interface LibraryDrawerProps {
+  /** Optional normalized entries and their ID-based actions for the two creative categories. */
+  works?: LibraryItem[];
+  characters?: LibraryItem[];
+  activeWorkId?: string;
+  activeCharacterId?: string;
+  workActions?: LibraryItemActions;
+  characterActions?: LibraryItemActions;
+  /** Return to the new-creation stage and focus its input. */
+  onNewCreation?: () => void;
   stories: Story[];
   activeStoryId: string;
   collapsed: boolean;
   mobileOpen: boolean;
+  onMobileExitComplete?: () => void;
   hasCredentials: boolean;
   onClose: () => void;
   onCollapse: () => void;
@@ -18,15 +28,16 @@ interface LibraryDrawerProps {
   onSelectStory: (id: string) => void;
   onRenameStory: (id: string, title: string) => void;
   onDeleteStory: (id: string) => void;
-  onOpenCreative?: (mode: 'writing' | 'character') => void;
   onExportStoryBackup: (id: string) => void;
 }
 
 export function LibraryDrawer({
   stories,
+  works, characters, activeWorkId, activeCharacterId, workActions, characterActions, onNewCreation,
   activeStoryId,
   collapsed,
   mobileOpen,
+  onMobileExitComplete,
   hasCredentials,
   onClose,
   onCollapse,
@@ -36,7 +47,6 @@ export function LibraryDrawer({
   onSelectStory,
   onRenameStory,
   onDeleteStory,
-  onOpenCreative,
   onExportStoryBackup,
 }: LibraryDrawerProps) {
   const selectStory = (id: string) => {
@@ -46,38 +56,33 @@ export function LibraryDrawer({
 
   const actions = (location: 'desktop' | 'mobile') => (
     <div className="library-actions">
-      <button
-        type="button"
-        className="btn btn-primary library-start-deepseek"
-        data-testid={`${location}-library-start-deepseek`}
-        onClick={onStartDeepSeekImport}
-      >
-        <Sparkles size={16} strokeWidth={1.75} />
-        从 DeepSeek 继续
+      <button type="button" className="btn btn-primary" data-testid={`${location}-library-new-creation`} onClick={() => {
+        if (mobileOpen) onClose();
+        onNewCreation?.();
+      }}>
+        <Plus size={16} strokeWidth={1.75} /> 新建创作
       </button>
-      <button
-        type="button"
-        className="btn library-start-script"
-        data-testid={`${location}-library-start-script`}
-        onClick={onStartScriptImport}
-      >
-        <FilePlus2 size={16} strokeWidth={1.75} />
-        导入剧本 / 新建故事
-      </button>
-      {onOpenCreative && <>
-        <button type="button" className="btn" onClick={() => onOpenCreative('writing')}>
-          <PencilLine size={16} strokeWidth={1.75} /> 产粮
+      <details className="library-import-picker">
+        <summary className="btn">导入外部会话 / 剧本</summary>
+        <button type="button" className="btn library-start-deepseek" data-testid={`${location}-library-start-deepseek`} onClick={onStartDeepSeekImport}>
+          <Sparkles size={16} strokeWidth={1.75} /> 从 DeepSeek 导入
         </button>
-        <button type="button" className="btn" onClick={() => onOpenCreative('character')}>
-          <MessagesSquare size={16} strokeWidth={1.75} /> 人机恋
+        <button type="button" className="btn library-start-script" data-testid={`${location}-library-start-script`} onClick={onStartScriptImport}>
+          <FilePlus2 size={16} strokeWidth={1.75} /> 导入剧本文件
         </button>
-      </>}
+      </details>
     </div>
   );
 
   const storyList = () => (
     <StoryLibrary
       stories={stories}
+      works={works}
+      characters={characters}
+      activeWorkId={activeWorkId}
+      activeCharacterId={activeCharacterId}
+      workActions={workActions && { ...workActions, onSelect: (id) => { workActions.onSelect(id); if (mobileOpen) onClose(); } }}
+      characterActions={characterActions && { ...characterActions, onSelect: (id) => { characterActions.onSelect(id); if (mobileOpen) onClose(); } }}
       activeStoryId={activeStoryId}
       onSelectStory={selectStory}
       onRenameStory={onRenameStory}
@@ -150,6 +155,7 @@ export function LibraryDrawer({
       <DrawerDialog
         open={mobileOpen}
         label="我的故事书架"
+        onExitComplete={onMobileExitComplete}
         testId="mobile-library-dialog"
         sheetTestId="mobile-library-sheet"
         onClose={onClose}

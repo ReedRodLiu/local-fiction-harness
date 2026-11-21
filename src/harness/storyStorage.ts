@@ -1,6 +1,7 @@
 import { documentVersion, migrateStoryDocuments, replaceDocumentProgress, validateDocumentReads, validateMarkdownDocument, writeDocument, type StoryDocuments } from './markdownDocuments.ts';
 import { createDefaultId } from './id.ts';
 import type {
+  ActiveStorySelection,
   NodeDiagnosticStatus,
   NodeDiagnostics,
   PlotSummarySnapshot,
@@ -18,7 +19,7 @@ function cloneStory(story: Story): Story {
 
 export function createInMemoryStoryStorage(): StoryStorage {
   const stories = new Map<string, Story>();
-  let activeStoryId: string | null = null;
+  let activeSelection: ActiveStorySelection = { status: 'missing' };
 
   return {
     async listStories(): Promise<Story[]> {
@@ -41,17 +42,24 @@ export function createInMemoryStoryStorage(): StoryStorage {
 
     async deleteStory(id: string): Promise<void> {
       stories.delete(id);
-      if (activeStoryId === id) {
-        activeStoryId = null;
+      if (activeSelection.status === 'present' && activeSelection.id === id) {
+        activeSelection = { status: 'present', id: null };
       }
     },
 
-    async getActiveStoryId(): Promise<string | null> {
-      return activeStoryId;
+    async getActiveStorySelection(): Promise<ActiveStorySelection> {
+      return activeSelection;
     },
 
     async setActiveStoryId(id: string | null): Promise<void> {
-      activeStoryId = id;
+      activeSelection = { status: 'present', id };
+    },
+
+    async compareAndSetActiveStoryId(expected: string | null, next: string | null): Promise<boolean> {
+      const current = activeSelection.status === 'present' ? activeSelection.id : null;
+      if (current !== expected) return false;
+      activeSelection = { status: 'present', id: next };
+      return true;
     },
   };
 }

@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
-import { verifyThreeModes } from './three-modes.mjs';
+import { verifyInactiveStoryReload, verifyThreeModes } from './three-modes.mjs';
 
 const require = createRequire(import.meta.url);
 const playwrightCorePath =
@@ -433,8 +433,8 @@ async function assertUploadControlHasVisibleKeyboardFocus(page, backButton, targ
   }
 }
 
-async function holdNextStoryStorageCommit(page) {
-  await page.evaluate(() => {
+async function holdNextStoryStorageCommit(page, store = 'stories') {
+  await page.evaluate((store) => {
     const descriptor = Object.getOwnPropertyDescriptor(IDBTransaction.prototype, 'oncomplete');
     if (!descriptor?.get || !descriptor.set) {
       throw new Error('IDBTransaction.oncomplete cannot be controlled in this browser.');
@@ -455,7 +455,7 @@ async function holdNextStoryStorageCommit(page) {
           if (
             armed &&
             transaction.mode === 'readwrite' &&
-            transaction.objectStoreNames.contains('stories') &&
+            transaction.objectStoreNames.contains(store) &&
             typeof window.__lfhStoryCommitControl?.release !== 'function'
           ) {
             armed = false;
@@ -469,12 +469,15 @@ async function holdNextStoryStorageCommit(page) {
         });
       },
     });
-  });
+  }, store);
 }
 
 async function releaseHeldStoryStorageCommit(page) {
   await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
-  await page.evaluate(() => window.__lfhStoryCommitControl.release());
+  await page.evaluate(async () => {
+    window.__lfhStoryCommitControl.release();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
 }
 
 async function prepareAiFilterAbortProbe(page) {
@@ -599,11 +602,13 @@ async function startDeepSeekImport(page) {
     return;
   }
   const desktopAction = page.getByTestId('desktop-library-start-deepseek');
-  if (await desktopAction.isVisible()) {
+  if (await page.getByTestId('desktop-library').isVisible()) {
+    if (!await desktopAction.locator('xpath=..').evaluate((details) => details.open)) await desktopAction.locator('xpath=..').locator('summary').click();
     await desktopAction.click();
     return;
   }
   await page.getByTestId('library-drawer-trigger').click();
+  if (!await page.getByTestId('mobile-library-start-deepseek').locator('xpath=..').evaluate((details) => details.open)) await page.getByTestId('mobile-library-start-deepseek').locator('xpath=..').locator('summary').click();
   await page.getByTestId('mobile-library-start-deepseek').click();
 }
 
@@ -615,11 +620,13 @@ async function startScriptImport(page) {
     return;
   }
   const desktopAction = page.getByTestId('desktop-library-start-script');
-  if (await desktopAction.isVisible()) {
+  if (await page.getByTestId('desktop-library').isVisible()) {
+    if (!await desktopAction.locator('xpath=..').evaluate((details) => details.open)) await desktopAction.locator('xpath=..').locator('summary').click();
     await desktopAction.click();
     return;
   }
   await page.getByTestId('library-drawer-trigger').click();
+  if (!await page.getByTestId('mobile-library-start-script').locator('xpath=..').evaluate((details) => details.open)) await page.getByTestId('mobile-library-start-script').locator('xpath=..').locator('summary').click();
   await page.getByTestId('mobile-library-start-script').click();
 }
 
@@ -2032,6 +2039,16 @@ async function verifyOverlayHistoryAndShortcuts(page, port) {
   const finalMenuTrigger = page.locator('[data-testid="story-menu-trigger"]:visible').first();
   await finalMenuTrigger.click();
   await page.getByTestId('story-overflow-menu').getByRole('menuitem', { name: '删除故事' }).click();
+  const storyDeleteConfirmation = page.getByRole('dialog', { name: '确认删除' });
+  await storyDeleteConfirmation.waitFor({ state: 'visible' });
+  await page.evaluate(() => history.back());
+  await storyDeleteConfirmation.waitFor({ state: 'hidden' });
+  if (!(await drawer.evaluate((dialog) => dialog.open))) {
+    throw new Error('Browser Back closed the mobile drawer before the story delete confirmation.');
+  }
+  await finalMenuTrigger.click();
+  await page.getByTestId('story-overflow-menu').getByRole('menuitem', { name: '删除故事' }).click();
+  await storyDeleteConfirmation.getByRole('button', { name: '确认删除' }).click();
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="story-list-item"]').length === 0);
   await page.getByTestId('mobile-settings-open').click();
   await page.getByTestId('settings-page').waitFor({ state: 'visible' });
@@ -2561,6 +2578,8 @@ async function deleteAllStories(page) {
     const row = rows.first();
     await row.getByTestId('story-menu-trigger').click();
     await row.getByRole('menuitem', { name: '删除故事' }).click();
+    const confirmation = page.getByRole('dialog', { name: '确认删除' });
+    await confirmation.getByRole('button', { name: '确认删除' }).click();
     await page.waitForFunction((count) =>
       [...document.querySelectorAll('[data-testid="story-list-item"]')]
         .filter((item) => item.getClientRects().length > 0).length < count,
@@ -2959,8 +2978,13 @@ async function main() {
     }
 
     if (!process.env.LFH_UI_IMPL_05_ONLY && !process.env.LFH_IMPORT_WIZARD_ONLY) {
+      await verifyInactiveStoryReload(browser, port, {
+        newOfflineContext, startScriptImport, holdNextStoryStorageCommit, releaseHeldStoryStorageCommit,
+      });
+      console.log('INACTIVE_STORY_RELOAD_E2E_PASSED');
       await verifyThreeModes(browser, port, {
         newOfflineContext, mockSuccessfulKeyVerification, completePendingSetup, sseResponse, startScriptImport,
+        holdNextStoryStorageCommit, releaseHeldStoryStorageCommit,
       });
       console.log('THREE_MODE_HARNESS_E2E_PASSED');
       if (process.env.LFH_CREATIVE_ONLY === '1') return;
@@ -3846,6 +3870,7 @@ async function main() {
     await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
     await backupRow.getByTestId('story-menu-trigger').click();
     await backupRow.getByRole('menuitem', { name: '删除故事' }).click();
+    await page.getByRole('dialog', { name: '确认删除' }).getByRole('button', { name: '确认删除' }).click();
     await page.waitForFunction((count) =>
       [...document.querySelectorAll('[data-testid="story-list-item"]')]
         .filter((item) => item.getClientRects().length > 0).length < count,

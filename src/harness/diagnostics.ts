@@ -58,6 +58,8 @@ const DIAGNOSTIC_ACTIONS = new Set([
   'delete_story_error',
   'get_active_story_id',
   'get_active_story_id_error',
+  'get_active_story_selection',
+  'get_active_story_selection_error',
   'set_active_story_id',
   'set_active_story_id_error',
   'deepseek_scan_error',
@@ -837,7 +839,14 @@ export function createDiagnosticStoryStorage(
     getStory: (id) => track('get_story', () => inner.getStory(id)),
     saveStory: (story, expectedUpdatedAt) => track('save_story', () => inner.saveStory(story, expectedUpdatedAt)),
     deleteStory: (id) => track('delete_story', () => inner.deleteStory(id)),
-    getActiveStoryId: () => track('get_active_story_id', () => inner.getActiveStoryId()),
+    getActiveStorySelection: () => track(
+      'get_active_story_selection',
+      () => inner.getActiveStorySelection(),
+    ),
     setActiveStoryId: (id) => track('set_active_story_id', () => inner.setActiveStoryId(id)),
+    compareAndSetActiveStoryId: (expected, next) => track(
+      'compare_and_set_active_story_id',
+      () => inner.compareAndSetActiveStoryId(expected, next),
+    ),
   };
 }

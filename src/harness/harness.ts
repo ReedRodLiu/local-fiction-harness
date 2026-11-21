@@ -596,7 +596,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
 
     async createAndSaveStory(input: CreateStoryInput): Promise<Story> {
       const story = createStoryRecord(input);
-      return persistStory(story, true);
+      return persistStory(story, false);
     },
 
     async saveStory(story: Story, expectedUpdatedAt?: number): Promise<Story> {
@@ -610,10 +610,11 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
 
     async loadActiveStory(): Promise<Story | null> {
       if (!deps.storage) return null;
-      const activeId = await deps.storage.getActiveStoryId();
-      if (activeId) {
-        const found = await deps.storage.getStory(activeId);
-        if (found) return migrateStoryDocuments(found);
+      const selection = await deps.storage.getActiveStorySelection();
+      if (selection.status === 'present') {
+        if (selection.id === null) return null;
+        const found = await deps.storage.getStory(selection.id);
+        return found ? migrateStoryDocuments(found) : null;
       }
       const all = await deps.storage.listStories();
       return all[0] ? migrateStoryDocuments(all[0]) : null;

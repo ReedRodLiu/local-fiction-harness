@@ -106,13 +106,18 @@ export interface KeyValueStorage {
   removeItem(key: string): void;
 }
 
+export type ActiveStorySelection =
+  | { status: 'missing' }
+  | { status: 'present'; id: string | null };
+
 export interface StoryStorage {
   listStories(): Promise<Story[]>;
   getStory(id: string): Promise<Story | null>;
   saveStory(story: Story, expectedUpdatedAt?: number): Promise<void>;
   deleteStory(id: string): Promise<void>;
-  getActiveStoryId(): Promise<string | null>;
+  getActiveStorySelection(): Promise<ActiveStorySelection>;
   setActiveStoryId(id: string | null): Promise<void>;
+  compareAndSetActiveStoryId(expected: string | null, next: string | null): Promise<boolean>;
 }
 
 export interface StoryBackupEnvelope {

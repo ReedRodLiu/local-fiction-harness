@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import {
   adoptSuggestion, characterContext, conversationExport, conversationLocalVersion, createDefaultId,
   creativeContext, documentLineage, documentVersion, EMPTY_SUMMARY_SNAPSHOT, getActiveBranchNodes,
-  newCharacter, newConversation, newWork, referenceDocument, streamCreativeReply, writeDocument, writingInput,
+  newConversation, referenceDocument, streamCreativeReply, writeDocument, writingInput,
   type CharacterConversation, type CreativeWorkspaceState, type DraftWork, type InteractionMode,
   type LlmMessage, type LocalCharacter, type MarkdownProposal, type ModelConfig, type PlatformRuntime,
   type TurnNode, type WritingSuggestion,
@@ -12,7 +12,6 @@ import { DocumentReadDetails, type DocumentReadEntry } from './DocumentReadDetai
 import { MessageContent } from './MessageContent.tsx';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { ModalDialog } from './primitives/ModalDialog.tsx';
-import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
 import type { ReactNode } from 'react';
 import { toErrorMessage } from './textHelpers.ts';
@@ -32,7 +31,12 @@ interface Props {
   requestModel: RequestModel;
   openPublic: (proposal?: string, expected?: string) => void;
   openDocument: (edit: DocumentEdit) => void;
-  onBack: () => void;
+  manuscript?: boolean;
+  onStartManuscript?: () => void;
+  initialTurn: { id: string; prompt: string } | null;
+  onConsumeInitialTurn: () => void;
+  companionOpen: boolean;
+  setCompanionOpen: (open: boolean) => void;
 }
 
 function updateWork(state: CreativeWorkspaceState, id: string, update: (work: DraftWork) => DraftWork) {
@@ -94,15 +98,19 @@ function useCreativeReply(runtime: PlatformRuntime, requestModel: RequestModel) 
   return { start, busy, output, error, fail, stop: () => active.current?.abort() };
 }
 
+function sendOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
+  if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+  event.preventDefault();
+  event.currentTarget.form?.requestSubmit();
+}
+
 function replyContent(content: string, proposal?: MarkdownProposal) {
   return content.trim() || (proposal ? '请核对拟保存的文档。' : '');
 }
 
-function CreativeCompanion({ entries, children }: { entries: DocumentReadEntry[]; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+function CreativeCompanion({ entries, children, open, setOpen }: { entries: DocumentReadEntry[]; children: ReactNode; open: boolean; setOpen: (open: boolean) => void }) {
   useWebHistoryLayer('creative-companion', 40, open, () => setOpen(false));
   return <>
-    <button type="button" className="btn" aria-haspopup="dialog" onClick={() => setOpen(true)}>创作资料</button>
     <SheetDialog open={open} title="创作资料" label="创作资料" panelName="创作资料" testId="creative-companion" onClose={() => setOpen(false)}>
       <div className="btn-group">{children}</div>
       <DocumentReadDetails entries={entries} testId="creative-document-reads" />
@@ -114,8 +122,8 @@ function DraftPane(props: Props & { work: DraftWork }) {
   const { work, save, read, runtime, openDocument, openPublic } = props;
   const reply = useCreativeReply(runtime, props.requestModel);
   const [text, setText] = useState(work.body);
-  const editing = Boolean(work.writingStarted || work.body || work.source);
-  const [instruction, setInstruction] = useState('');
+  const editing = props.manuscript ?? Boolean(work.writingStarted || work.body || work.source);
+  const [instruction, setInstruction] = useState(() => work.discussion.at(-1)?.role === 'user' ? work.discussion.at(-1)!.content : '');
   const [useDiscussion, setUseDiscussion] = useState(false);
   const [excerpt, setExcerpt] = useState('');
   const [exported, setExported] = useState(false);
@@ -181,9 +189,8 @@ function DraftPane(props: Props & { work: DraftWork }) {
     return { state, live };
   }
 
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    const input = instruction.trim();
+  function submit(value: string) {
+    const input = value.trim();
     if (!input || reply.busy) return;
     const { start, end } = selection.current;
     const includeDiscussion = useDiscussion;
@@ -193,7 +200,9 @@ function DraftPane(props: Props & { work: DraftWork }) {
       if (signal.aborted) return;
       const publicDoc = documentVersion(state.publicDocument);
       const workDoc = documentVersion(live.document);
-      const linked = !editing || includeDiscussion ? live.discussion : [];
+      const pending = !editing && live.discussion.at(-1)?.role === 'user' && live.discussion.at(-1)?.content === input
+        ? live.discussion.at(-1) : undefined;
+      const linked = !editing || includeDiscussion ? (pending ? live.discussion.slice(0, -1) : live.discussion) : [];
       const draftInput = editing ? writingInput(live, start, end, input) : input;
       const messages = creativeContext(editing
         ? '给作者一份可采纳的短文本建议。按当前指令和选区创作，结合正文和作品资料。只有明确提供的关联讨论才可引用。若无法从所给材料确认所指原段，请作者选段。'
@@ -209,8 +218,9 @@ function DraftPane(props: Props & { work: DraftWork }) {
           suggestions: [...latest.suggestions, { id: createDefaultId(), instruction: input,
             text: result.content, revision: live.bodyRevision, start, end, documentReads: reads }],
         };
-        const user = makeTurn('user', input, latest.discussion.at(-1)?.id ?? null);
-        return { ...latest, discussion: [...latest.discussion, user, {
+        const user = pending ?? makeTurn('user', input, latest.discussion.at(-1)?.id ?? null);
+        if (pending && latest.discussion.at(-1)?.id !== pending.id) throw new Error('开书讨论已变化，请重试。');
+        return { ...latest, discussion: [...latest.discussion, ...(pending ? [] : [user]), {
           ...makeTurn('assistant', replyContent(result.content, result.proposal), user.id), documentReads: reads,
         }] };
       }));
@@ -220,6 +230,19 @@ function DraftPane(props: Props & { work: DraftWork }) {
       if (result.proposal?.target === 'container' || result.proposal?.target === 'local') editDocument(result.proposal.markdown, live.document);
     });
   }
+
+  const queuedOpening = useRef(false);
+  useEffect(() => {
+    if (queuedOpening.current || props.initialTurn?.id !== work.id) return;
+    const prompt = props.initialTurn.prompt;
+    const timer = window.setTimeout(() => {
+      queuedOpening.current = true;
+      setInstruction(prompt);
+      props.onConsumeInitialTurn();
+      submit(prompt);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  });
 
   async function adopt(target: WritingSuggestion, chosen: string) {
     const { live } = await currentWork();
@@ -250,7 +273,7 @@ function DraftPane(props: Props & { work: DraftWork }) {
       <section className="creative-section" data-testid="writing-workspace">
         <div className="creative-toolbar">
           <h2>{work.title}</h2>
-          <CreativeCompanion entries={documentReadEntries}>
+          <CreativeCompanion entries={documentReadEntries} open={props.companionOpen} setOpen={props.setCompanionOpen}>
             <button type="button" className="btn" onClick={() => editDocument()}>作品资料</button>
             <button type="button" className="btn" onClick={() => openPublic()}>公共记忆</button>
           </CreativeCompanion>
@@ -275,6 +298,7 @@ function DraftPane(props: Props & { work: DraftWork }) {
         </> : <>
           <p className="status-text">可先谈谈人物与开篇，也可以直接动笔。</p>
           <button type="button" className="btn btn-primary" onClick={() => {
+            props.onStartManuscript?.();
             void save((state) => updateWork(state, work.id, (live) => ({ ...live, writingStarted: true }))).catch(reply.fail);
           }}>开始写</button>
         </>}
@@ -302,19 +326,21 @@ function DraftPane(props: Props & { work: DraftWork }) {
         ))}
         {reply.error && <BannerAlert tone="danger">{reply.error}</BannerAlert>}
         {reply.output && <p className="creative-text" aria-live="polite">{reply.output}</p>}
-        <form className="creative-message-form" onSubmit={submit}>
-          {editing && work.discussion.length > 0 && <label><input type="checkbox" checked={useDiscussion}
-            onChange={(event) => { setUseDiscussion(event.target.checked); setExcerpt(''); }} /> 引用开书讨论</label>}
-          {editing && excerpt && <p className="status-text">将引用所选开书段落。</p>}
-          <label className="field">{editing ? '写作要求' : '讨论内容'}
-            <textarea value={instruction} rows={3} onChange={(event) => setInstruction(event.target.value)} />
-          </label>
-          <div className="btn-group">
-            <button type="submit" className="btn btn-primary" disabled={reply.busy || !instruction.trim()}>{editing ? '获取建议' : '发送'}</button>
-            {reply.busy && <button type="button" className="btn" onClick={reply.stop}>停止</button>}
-          </div>
-        </form>
       </section>
+      <form className="composer" data-testid="stage-composer" onSubmit={(event) => {
+        event.preventDefault();
+        submit(instruction);
+      }}>
+        {editing && work.discussion.length > 0 && <label><input type="checkbox" checked={useDiscussion}
+          onChange={(event) => { setUseDiscussion(event.target.checked); setExcerpt(''); }} /> 引用开书讨论</label>}
+        {editing && excerpt && <p className="status-text">将引用所选开书段落。</p>}
+        <textarea aria-label={editing ? '写作要求' : '讨论内容'} value={instruction} rows={1}
+          onChange={(event) => setInstruction(event.target.value)} onKeyDown={sendOnEnter} />
+        <div className="btn-group">
+          <button type="submit" className="btn btn-primary" disabled={reply.busy || !instruction.trim()}>{editing ? '获取建议' : '发送'}</button>
+          {reply.busy && <button type="button" className="btn" onClick={reply.stop}>停止</button>}
+        </div>
+      </form>
       <ModalDialog open={Boolean(selectedSuggestion)} label="核对正文位置" onClose={() => setSelectedSuggestion(null)}>
         {selectedSuggestion && <div className="local-document-dialog">
           <h2>核对正文位置</h2>
@@ -429,6 +455,18 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
     });
   }
 
+  const queuedOpening = useRef(false);
+  useEffect(() => {
+    if (queuedOpening.current || props.initialTurn?.id !== character.id || !conversation) return;
+    const prompt = props.initialTurn.prompt;
+    const timer = window.setTimeout(() => {
+      queuedOpening.current = true;
+      props.onConsumeInitialTurn();
+      send(conversation.id, prompt);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  });
+
   async function startConversation(kind: InteractionMode, markdown = '', openWithModel = true) {
     let id = '';
     await save((state) => updateCharacter(state, character.id, (live) => {
@@ -437,6 +475,7 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
       return { ...live, conversations: [...live.conversations, next], activeConversationId: id };
     }));
     if (openWithModel) send(id, '');
+    return id;
   }
 
   function openMode(kind: InteractionMode) {
@@ -458,7 +497,7 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
       <section className="creative-section" data-testid="character-workspace">
         <div className="creative-toolbar">
           <h2>{character.name}</h2>
-          <CreativeCompanion entries={documentReadEntries}>
+          <CreativeCompanion entries={documentReadEntries} open={props.companionOpen} setOpen={props.setCompanionOpen}>
             <button type="button" className="btn" onClick={() => editCharacter()}>角色人设</button>
             {conversation && <button type="button" className="btn" disabled={reply.busy} onClick={() => editConversation(conversation)}>当前对话资料</button>}
             <button type="button" className="btn" onClick={() => openPublic()}>公共记忆</button>
@@ -501,16 +540,6 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
         )}
         {reply.output && <p className="creative-text" aria-live="polite">{reply.output}</p>}
         {!path.length && !reply.busy && <button type="button" className="btn" onClick={() => send(conversation.id, '')}>生成开场</button>}
-        <form className="creative-message-form" onSubmit={(event) => {
-          event.preventDefault();
-          if (input.trim() && !reply.busy) send(conversation.id, input.trim());
-        }}>
-          <label className="field">发消息<textarea rows={3} value={input} onChange={(event) => setInput(event.target.value)} /></label>
-          <div className="btn-group">
-            <button type="submit" className="btn btn-primary" disabled={reply.busy || !input.trim()}>发送</button>
-            {reply.busy && <button type="button" className="btn" onClick={reply.stop}>停止</button>}
-          </div>
-        </form>
         <details className="reasoning-details">
           <summary>对话管理</summary>
           <p className="status-text">空白开聊不带入这里的历史。已保存的人设和公共资料可在各自的文档中修改。</p>
@@ -530,6 +559,19 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
           </div>
         </details>
       </section>}
+      <form className="composer" data-testid="stage-composer" onSubmit={(event) => {
+        event.preventDefault();
+        const contents = input.trim();
+        if (!contents || reply.busy) return;
+        if (conversation) send(conversation.id, contents);
+        else void startConversation('personal', '', false).then((id) => send(id, contents)).catch(reply.fail);
+      }}>
+        <textarea aria-label="发消息" rows={1} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={sendOnEnter} />
+        <div className="btn-group">
+          <button type="submit" className="btn btn-primary" disabled={reply.busy || !input.trim()}>发送</button>
+          {reply.busy && <button type="button" className="btn" onClick={reply.stop}>停止</button>}
+        </div>
+      </form>
       <ModalDialog open={Boolean(confirm)} label={confirm === 'delete' ? '删除这段对话及其分叉' : '对话导出预览'} onClose={() => setConfirm(null)}>
         {conversation && confirm && <div className="local-document-dialog">
           <h2>{confirm === 'delete' ? '删除这段对话及其分叉' : '对话导出预览'}</h2>
@@ -554,62 +596,16 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
 }
 
 export function CreativeWorkspace(props: Props) {
-  const { mode, workspace, save, onBack, ready, storageError } = props;
-  const [form, setForm] = useState(false);
-  const [name, setName] = useState('');
-  const [persona, setPersona] = useState('');
-  const [error, setError] = useState('');
+  const { mode, workspace, ready, storageError } = props;
   const selectedWork = workspace.works.find((work) => work.id === workspace.activeWorkId);
   const selectedCharacter = workspace.characters.find((character) => character.id === workspace.activeCharacterId);
   const isWriting = mode === 'writing';
-  useWebHistoryLayer('creative-workspace', 20, true, onBack);
-
-  function create(event: FormEvent) {
-    event.preventDefault();
-    if (!isWriting && (!name.trim() || !persona.trim())) return;
-    const work = newWork(name);
-    const character = newCharacter(name, persona);
-    void save((state) => isWriting
-      ? { ...state, works: [...state.works, work], activeWorkId: work.id }
-      : { ...state, characters: [...state.characters, character], activeCharacterId: character.id },
-    ).then(() => {
-      setForm(false);
-      setName('');
-      setPersona('');
-      setError('');
-    }).catch((err) => setError(toErrorMessage(err, '创建失败。')));
-  }
 
   return (
-    <OverlayPageShell title={isWriting ? '产粮' : '人机恋'} onBack={onBack}
-      testId={isWriting ? 'writing-page' : 'character-page'}>
-      {(error || storageError) && <BannerAlert tone="danger">{error || storageError}</BannerAlert>}
-      {ready && <>
-        <div className="creative-toolbar">
-          <button type="button" className="btn btn-primary" onClick={() => setForm((open) => !open)}>
-            {isWriting ? '开新书' : '添加角色'}
-          </button>
-          <button type="button" className="btn" onClick={() => props.openPublic()}>公共记忆</button>
-        </div>
-        <div className="creative-picks" aria-label={isWriting ? '本地作品' : '本地角色'}>
-          {(isWriting ? workspace.works.map(({ id, title }) => ({ id, label: title }))
-            : workspace.characters.map(({ id, name: label }) => ({ id, label }))).map(({ id, label }) => (
-            <button type="button" className="btn" key={id} aria-pressed={(isWriting ? selectedWork : selectedCharacter)?.id === id}
-              onClick={() => {
-                void save((state) => isWriting ? { ...state, activeWorkId: id } : { ...state, activeCharacterId: id })
-                  .catch((err) => setError(toErrorMessage(err, '打开失败。')));
-                setForm(false);
-              }}>{label}</button>
-          ))}
-        </div>
-        {form && <form className="creative-section" onSubmit={create}>
-          <label className="field">{isWriting ? '作品标题' : '角色名称'}<input value={name} onChange={(event) => setName(event.target.value)} /></label>
-          {!isWriting && <label className="field">自由文本人设<textarea rows={7} value={persona} onChange={(event) => setPersona(event.target.value)} /></label>}
-          <button type="submit" className="btn btn-primary">{isWriting ? '开始讨论' : '保存角色'}</button>
-        </form>}
-        {!form && isWriting && selectedWork && <DraftPane key={selectedWork.id} {...props} work={selectedWork} />}
-        {!form && !isWriting && selectedCharacter && <CharacterPane key={selectedCharacter.id} {...props} character={selectedCharacter} />}
-      </>}
-    </OverlayPageShell>
+    <section className="creative-stage" data-testid={isWriting ? 'writing-page' : 'character-page'}>
+      {storageError && <BannerAlert tone="danger">{storageError}</BannerAlert>}
+      {ready && isWriting && selectedWork && <DraftPane key={selectedWork.id} {...props} work={selectedWork} />}
+      {ready && !isWriting && selectedCharacter && <CharacterPane key={selectedCharacter.id} {...props} character={selectedCharacter} />}
+    </section>
   );
 }

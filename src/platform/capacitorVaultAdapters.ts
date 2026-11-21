@@ -19,7 +19,7 @@ export interface NativeVaultPluginLike {
   getStory(options: { id: string }): Promise<{ story: Story | null }>;
   saveStory(options: { story: Story; expectedUpdatedAt?: number }): Promise<void>;
   deleteStory(options: { id: string }): Promise<void>;
-  getActiveStoryId(): Promise<{ id: string | null }>;
+  getActiveStoryId(): Promise<{ id: string | null; present: boolean }>;
   setActiveStoryId(options: { id: string | null }): Promise<void>;
   exportJsonFile(options: { fileName: string; jsonContent: string; format?: 'markdown' | 'attachment' }): Promise<void>;
   loadCreativeWorkspace?(): Promise<{ workspace: CreativeWorkspaceState | null }>;
@@ -86,11 +86,25 @@ export function createAndroidStoryStorage(
     deleteStory(id: string): Promise<void> {
       return enqueue(() => plugin.deleteStory({ id }));
     },
-    getActiveStoryId(): Promise<string | null> {
-      return enqueue(async () => (await plugin.getActiveStoryId()).id ?? null);
+    getActiveStorySelection() {
+      return enqueue(async () => {
+        const selection = await plugin.getActiveStoryId();
+        return selection.present
+          ? { status: 'present' as const, id: selection.id }
+          : { status: 'missing' as const };
+      });
     },
     setActiveStoryId(id: string | null): Promise<void> {
       return enqueue(() => plugin.setActiveStoryId({ id }));
+    },
+    compareAndSetActiveStoryId(expected: string | null, next: string | null): Promise<boolean> {
+      return enqueue(async () => {
+        const selection = await plugin.getActiveStoryId();
+        const current = selection.present ? selection.id : null;
+        if (current !== expected) return false;
+        await plugin.setActiveStoryId({ id: next });
+        return true;
+      });
     },
   };
 }

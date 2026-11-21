@@ -25,8 +25,9 @@ function createNoopStoryStorage(): StoryStorage {
     getStory: async () => null,
     saveStory: async () => {},
     deleteStory: async () => {},
-    getActiveStoryId: async () => null,
+    getActiveStorySelection: async () => ({ status: 'missing' }),
     setActiveStoryId: async () => {},
+    compareAndSetActiveStoryId: async () => false,
   };
 }
 

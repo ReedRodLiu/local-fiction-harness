@@ -39,6 +39,7 @@ function createFakeNativeVault() {
   let apiKey = '';
   const stories = new Map<string, Story>();
   let activeId: string | null = null;
+  let activePresent = false;
   const exported: Array<{ fileName: string; jsonContent: string }> = [];
   const callLog: string[] = [];
 
@@ -83,15 +84,19 @@ function createFakeNativeVault() {
     async deleteStory({ id }) {
       callLog.push(`deleteStory:${id}`);
       stories.delete(id);
-      if (activeId === id) activeId = null;
+      if (activeId === id) {
+        activeId = null;
+        activePresent = true;
+      }
     },
     async getActiveStoryId() {
       callLog.push('getActiveStoryId');
-      return { id: activeId };
+      return { id: activeId, present: activePresent };
     },
     async setActiveStoryId({ id }) {
       callLog.push(`setActiveStoryId:${id}`);
       activeId = id;
+      activePresent = true;
     },
     async exportJsonFile({ fileName, jsonContent }) {
       callLog.push(`exportJsonFile:${fileName}`);
@@ -231,9 +236,13 @@ describe('Android NativeVault TS adapters & PlatformRuntime parity', () => {
     });
     expect(runtime.platform).toBe('android');
     expect(runtime.supportsMemoryOnlySession).toBe(true);
+    expect(await runtime.storyStorage.getActiveStorySelection()).toEqual({ status: 'missing' });
     await runtime.storyStorage.saveStory(makeStory('s2', '安卓存档', 300));
     await runtime.storyStorage.setActiveStoryId('s2');
-    expect(await runtime.storyStorage.getActiveStoryId()).toBe('s2');
+    expect(await runtime.storyStorage.getActiveStorySelection()).toEqual({ status: 'present', id: 's2' });
+    await expect(runtime.storyStorage.compareAndSetActiveStoryId('other', 's1')).resolves.toBe(false);
+    await expect(runtime.storyStorage.compareAndSetActiveStoryId('s2', 's1')).resolves.toBe(true);
+    expect(await runtime.storyStorage.getActiveStorySelection()).toEqual({ status: 'present', id: 's1' });
     expect((await runtime.storyStorage.listStories()).map((s) => s.id)).toEqual(['s2']);
   });
 });
