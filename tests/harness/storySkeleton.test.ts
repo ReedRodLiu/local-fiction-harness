@@ -194,27 +194,29 @@ describe('anonymous story skeleton', () => {
     });
   });
 
-  it('keeps crash action names allowlisted and never persists raw error text', () => {
+  it('keeps crash action names allowlisted and scrubs secrets/paths while preserving sanitized error details', () => {
     const collector = createDiagnosticCollector({ platform: 'web' });
     collector.recordError({
       category: 'crash',
       action: 'unhandled_render_crash',
-      error: new Error('private-dialogue-CANARY sk-secret-CANARY'),
+      error: new TypeError(
+        'Cannot read properties of undefined at /Users/alice_secret/ProposalCard.tsx with sk-secret-CANARY',
+      ),
     });
     collector.recordError({
       category: 'crash',
       action: 'freeform-CANARY',
-      error: new Error('private-dialogue-CANARY'),
+      error: new Error('should be dropped'),
     });
     collector.recordError({
       category: 'crash',
       action: 'unhandled_window_error',
-      error: new Error('private-window-error-CANARY'),
+      error: new RangeError('Invalid range at https://relay-canary.example.com/path?token=secret-CANARY'),
     });
     collector.recordError({
       category: 'crash',
       action: 'unhandled_rejection',
-      error: 'private-rejection-CANARY',
+      error: 'Bearer secret-bearer-CANARY Quota exceeded',
     });
 
     const bundle = collector.buildBundle({ baseUrl: '', model: 'deepseek-chat', memoryOnly: false }, {
@@ -222,6 +224,7 @@ describe('anonymous story skeleton', () => {
     });
     const json = JSON.stringify(bundle);
 
+    expect(bundle.schemaVersion).toBe(2);
     expect(bundle.trigger).toBe('crash_boundary');
     expect(bundle.events).toHaveLength(3);
     expect(bundle.events.map((event) => [event.category, event.action])).toEqual([
@@ -229,10 +232,16 @@ describe('anonymous story skeleton', () => {
       ['crash', 'unhandled_window_error'],
       ['crash', 'unhandled_rejection'],
     ]);
-    expect(json).not.toContain('private-dialogue-CANARY');
+    expect(bundle.events[0]).toMatchObject({ errorName: 'TypeError' });
+    expect(bundle.events[0]?.sanitizedReason).toContain('Cannot read properties of undefined');
+    expect(bundle.events[0]?.sanitizedReason).toContain('[REDACTED_PATH]');
+    expect(bundle.events[0]?.sanitizedReason).toContain('[REDACTED_KEY]');
+    expect(bundle.events[1]).toMatchObject({ errorName: 'RangeError' });
+    expect(json).not.toContain('alice_secret');
     expect(json).not.toContain('sk-secret-CANARY');
     expect(json).not.toContain('freeform-CANARY');
-    expect(json).not.toContain('private-window-error-CANARY');
-    expect(json).not.toContain('private-rejection-CANARY');
+    expect(json).not.toContain('relay-canary.example.com');
+    expect(json).not.toContain('secret-CANARY');
+    expect(json).not.toContain('secret-bearer-CANARY');
   });
 });
