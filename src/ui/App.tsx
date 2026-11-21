@@ -1638,7 +1638,7 @@ ${history}`,
     ...creative.workspace.works.map((work, index) => ({
       id: `work-${work.id}`,
       title: work.title,
-      kindLabel: '产粮',
+      kindLabel: '写故事',
       recency: Math.max(
         work.discussion.at(-1)?.createdAt ?? 0,
         ...Object.values(work.document.versions).map((version) => version.savedAt),
@@ -1683,10 +1683,10 @@ ${history}`,
       {!showImport && !showSettings && (
         <TopBar
           title={creativePage === 'writing'
-            ? (creative.workspace.works.find((item) => item.id === creative.workspace.activeWorkId)?.title ?? '本地文游')
+            ? (creative.workspace.works.find((item) => item.id === creative.workspace.activeWorkId)?.title ?? 'Folio')
             : creativePage === 'character'
-              ? (creative.workspace.characters.find((item) => item.id === creative.workspace.activeCharacterId)?.name ?? '本地文游')
-              : !isWelcome ? story.title : '本地文游播放器'}
+              ? (creative.workspace.characters.find((item) => item.id === creative.workspace.activeCharacterId)?.name ?? 'Folio')
+              : !isWelcome ? story.title : 'Folio'}
           stageMode={creativePage ?? 'story'}
           hasStory={storyExists && !isWelcome && !creativePage}
           hideStoryTools={Boolean(creativePage)}

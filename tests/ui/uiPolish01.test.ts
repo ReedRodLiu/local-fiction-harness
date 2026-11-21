@@ -194,9 +194,9 @@ describe('UI-POLISH-01 companion panel', () => {
       onStartManuscript: () => undefined,
       onSelectStory: () => undefined,
       recentCreative: [
-        { id: 'w1', title: '作品一', kindLabel: '产粮', activate: () => undefined },
+        { id: 'w1', title: '作品一', kindLabel: '写故事', activate: () => undefined },
         { id: 'c1', title: '角色一', kindLabel: '角色', activate: () => undefined },
-        { id: 'w2', title: '作品二', kindLabel: '产粮', activate: () => undefined },
+        { id: 'w2', title: '作品二', kindLabel: '写故事', activate: () => undefined },
       ],
     }));
     expect(welcomeMarkup).toContain('作品一');

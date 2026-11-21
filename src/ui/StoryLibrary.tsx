@@ -137,7 +137,7 @@ export function StoryLibrary({
       id: story.id, title: story.title,
       subtitle: `${Math.floor(getActiveBranchNodes(story).length / 2)} 轮 · ${projectStoryTreeSpine(story).forkCount} 分支`,
     })), activeId: activeStoryId, actions: { onSelect: onSelectStory, onRename: onRenameStory, onDelete: onDeleteStory, onExport: onExportStoryBackup } },
-    work: { label: '产粮', heading: '我的作品', items: works, activeId: activeWorkId, actions: workActions },
+    work: { label: '写故事', heading: '我的作品', items: works, activeId: activeWorkId, actions: workActions },
     character: { label: '角色', heading: '我的角色', items: characters, activeId: activeCharacterId, actions: characterActions },
   };
   const current = config[category];

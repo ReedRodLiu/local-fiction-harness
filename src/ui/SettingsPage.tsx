@@ -110,7 +110,10 @@ export function SettingsPage({
         <section className="connected-key-card" data-testid="deepseek-connection-card" aria-label="DeepSeek 连接状态">
           <div className="connected-key-header">
             <strong>{hasCredentials ? '已连接 DeepSeek 官方' : '未连接 DeepSeek 官方'}</strong>
-            <span className={`badge ${hasCredentials ? 'badge-ok' : 'badge-pending'}`}>
+            <span
+              className={`badge ${hasCredentials ? 'badge-ok' : 'badge-pending'}`}
+              data-testid={hasCredentials && !useDevEnvKey && config.apiKey ? 'connected-key-mask' : undefined}
+            >
               {hasCredentials
                 ? useDevEnvKey
                   ? '开发代理'
@@ -118,9 +121,6 @@ export function SettingsPage({
                 : '待配置'}
             </span>
           </div>
-          {hasCredentials && !useDevEnvKey && config.apiKey && (
-            <span className="key-mask" data-testid="connected-key-mask">{maskApiKey(config.apiKey)}</span>
-          )}
           <p className="wizard-privacy-note">
             模型请求会由你的设备直接发送至 DeepSeek 官方 API；API Key 只保存在本机，不会交给项目方。
           </p>

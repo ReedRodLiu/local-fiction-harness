@@ -119,7 +119,7 @@ export function LibraryDrawer({
       <header className="library-header">
         <div className="library-brand">
           <span className="library-brand-icon"><BookOpen size={20} strokeWidth={1.75} /></span>
-          <span className="library-brand-copy">本地文游</span>
+          <span className="library-brand-copy">Folio</span>
         </div>
         {location === 'mobile' ? (
           <button type="button" className="icon-button" aria-label="关闭书架" onClick={onClose}>

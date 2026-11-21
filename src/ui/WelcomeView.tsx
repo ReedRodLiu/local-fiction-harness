@@ -2,8 +2,8 @@ import { type Story } from '../harness/index.ts';
 
 const modes = [
   ['story', '文游'],
-  ['writing', '产粮'],
-  ['character', '人机恋'],
+  ['writing', '写故事'],
+  ['character', '角色互动'],
 ] as const;
 
 interface RecentCreativeEntry {

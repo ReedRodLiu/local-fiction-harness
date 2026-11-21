@@ -321,7 +321,6 @@ textarea:focus-visible {
 .badge-pending { background: var(--status-warn-soft); color: var(--status-warn); }
 .connected-key-card { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--border-hairline); border-radius: var(--radius-md); background: var(--bg-surface); }
 .connected-key-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 0.9rem; }
-.key-mask { width: fit-content; padding: 3px 8px; border-radius: 999px; background: var(--bg-surface-hover); color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; }
 .settings-privacy { gap: 7px; margin: 0; color: var(--text-muted); font-size: 12px; }
 .settings-privacy svg { flex: 0 0 auto; color: var(--status-ok); }
 .settings-button-row { flex-wrap: wrap; gap: 8px; }
