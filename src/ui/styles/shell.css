@@ -467,6 +467,21 @@ textarea:focus-visible {
   gap: 4px;
 }
 
+.welcome-character-name {
+  width: min(100%, 20rem);
+  padding-inline: 12px;
+}
+
+.welcome-character-name input {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  text-align: center;
+}
+
 .welcome-mode-controls button[aria-pressed="true"] {
   border-color: var(--action-primary-bg);
 }

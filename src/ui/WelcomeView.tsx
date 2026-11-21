@@ -10,6 +10,8 @@ interface WelcomeViewProps {
   stories: Story[];
   mode: (typeof modes)[number][0];
   onModeChange: (mode: WelcomeViewProps['mode']) => void;
+  characterName: string;
+  onCharacterNameChange: (name: string) => void;
   onStartDeepSeekImport: () => void;
   onStartScriptImport: () => void;
   onStartManuscript: () => void;
@@ -21,6 +23,8 @@ export function WelcomeView({
   stories,
   mode,
   onModeChange,
+  characterName,
+  onCharacterNameChange,
   onStartDeepSeekImport,
   onStartScriptImport,
   onStartManuscript,
@@ -56,6 +60,18 @@ export function WelcomeView({
               onClick={() => onModeChange(id)}>{label}</button>
           ))}
         </div>
+        {mode === 'character' && (
+          <label className="welcome-character-name">
+            <span className="visually-hidden">角色名（可选）</span>
+            <input
+              type="text"
+              data-testid="welcome-character-name"
+              value={characterName}
+              placeholder="角色名（可选）"
+              onChange={(event) => onCharacterNameChange(event.target.value)}
+            />
+          </label>
+        )}
         {mode === 'story' && <div className="recent-story-list">
           <button type="button" className="btn btn-sm" data-testid="welcome-deepseek-import" onClick={onStartDeepSeekImport}>从 DeepSeek 导入</button>
           <button type="button" className="btn btn-sm" data-testid="welcome-script-import" onClick={onStartScriptImport}>导入剧本文件</button>

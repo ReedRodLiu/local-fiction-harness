@@ -297,10 +297,17 @@ export async function verifyThreeModes(browser, port, helpers) {
     await page.getByTestId('desktop-library-new-creation').click();
     const targetScreens = process.env.LFH_MODE_SCREENSHOTS;
     for (const theme of ['light', 'dark', 'warm']) {
-      await page.evaluate((mode) => localStorage.setItem('lfh.ui.theme', mode), theme);
+      await page.getByTestId('desktop-settings-open').click();
+      const appearanceSettings = page.getByTestId('settings-page');
+      await appearanceSettings.getByTestId(`theme-option-${theme}`).click();
+      await page.waitForFunction(
+        (selectedTheme) => document.documentElement.dataset.theme === selectedTheme,
+        theme,
+      );
+      await appearanceSettings.getByRole('button', { name: '返回' }).click();
+      await page.getByTestId('welcome-view').waitFor();
       for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }]) {
         await page.setViewportSize(viewport);
-        await go();
         assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
         for (const [name, category, title, target] of [['产粮', '产粮', '纸月车站', writing], ['人机恋', '角色', '岑灯', character]]) {
           if (viewport.width < 960) await page.getByTestId('library-drawer-trigger').click();
@@ -430,6 +437,185 @@ export async function verifyThreeModes(browser, port, helpers) {
       }
       await row.waitFor({ state: 'detached' });
     }
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const mobileLibrary = page.getByTestId('mobile-library-dialog');
+    if (await mobileLibrary.isVisible().catch(() => false)) {
+      await mobileLibrary.getByRole('button', { name: '关闭书架' }).click();
+      await mobileLibrary.waitFor({ state: 'hidden' });
+    }
+    const welcome = page.getByTestId('welcome-view');
+    const settingsPage = page.getByTestId('settings-page');
+    const importPanel = page.getByTestId('import-panel');
+    const polishLibrary = page.getByTestId('desktop-library');
+    const openCreationMode = async (label) => {
+      if (await settingsPage.isVisible().catch(() => false)) {
+        await settingsPage.getByRole('button', { name: '返回' }).click();
+      }
+      if (await importPanel.isVisible().catch(() => false)) {
+        await importPanel.getByRole('button', { name: '返回' }).click();
+      }
+      if (!await welcome.isVisible().catch(() => false)) {
+        await page.getByTestId('desktop-library-new-creation').click();
+      }
+      await welcome.waitFor();
+      await welcome.getByRole('button', { name: label, exact: true }).click();
+    };
+    const waitForHeldCommit = () => page.waitForFunction(
+      () => typeof window.__lfhStoryCommitControl?.release === 'function',
+    );
+
+    // A creation save may finish behind newer navigation, but it must not steal the stage or start a model turn.
+    await openCreationMode('文游');
+    await page.fill('#turn-input', '慢速文游。创建期间的设置不能被关闭');
+    const requestsBeforeSlowStory = requests.length;
+    await holdNextStoryStorageCommit(page, 'stories');
+    await button('发送行动').click();
+    await waitForHeldCommit();
+    await page.getByTestId('desktop-settings-open').click();
+    await settingsPage.waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await page.waitForTimeout(250);
+    await settingsPage.waitFor();
+    assert.equal(requests.length, requestsBeforeSlowStory, 'A stale story creation must not trigger its opening turn');
+    await settingsPage.getByRole('button', { name: '返回' }).click();
+    await welcome.waitFor();
+    await polishLibrary.getByRole('button', { name: '文游', exact: true }).click();
+    const slowStoryRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '慢速文游' });
+    await slowStoryRow.waitFor();
+
+    await openCreationMode('文游');
+    await page.fill('#turn-input', '直开渡口。从欢迎文游直接创建');
+    await button('发送行动').click();
+    await page.getByTestId('story-timeline').waitFor();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '直开渡口', exact: true }).waitFor();
+
+    // Story selection may persist while settings or import navigation remains on top of it.
+    await holdNextStoryStorageCommit(page, 'meta');
+    await slowStoryRow.getByTestId('story-select-button').click();
+    await waitForHeldCommit();
+    await page.getByTestId('desktop-settings-open').click();
+    await settingsPage.waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await page.waitForTimeout(150);
+    await settingsPage.waitFor();
+    await settingsPage.getByRole('button', { name: '返回' }).click();
+
+    const directStoryRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '直开渡口' });
+    await holdNextStoryStorageCommit(page, 'meta');
+    await directStoryRow.getByTestId('story-select-button').click();
+    await waitForHeldCommit();
+    await startScriptImport(page);
+    await importPanel.waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await page.waitForTimeout(150);
+    await importPanel.waitFor();
+    await importPanel.getByRole('button', { name: '返回' }).click();
+
+    // All three library categories share the same cancellable delete confirmation.
+    await slowStoryRow.getByTestId('story-menu-trigger').click();
+    await slowStoryRow.getByRole('menuitem', { name: /删除/ }).click();
+    const deleteConfirmation = page.getByRole('dialog', { name: '确认删除' });
+    await deleteConfirmation.waitFor();
+    await deleteConfirmation.getByRole('button', { name: '取消' }).click();
+    await deleteConfirmation.waitFor({ state: 'hidden' });
+    await slowStoryRow.waitFor();
+
+    // Successful deletion always refreshes the shelf, while a newer welcome navigation keeps its stage.
+    await slowStoryRow.getByTestId('story-menu-trigger').click();
+    await slowStoryRow.getByRole('menuitem', { name: /删除/ }).click();
+    await deleteConfirmation.waitFor();
+    await holdNextStoryStorageCommit(page, 'stories');
+    await deleteConfirmation.getByRole('button', { name: '确认删除' }).click();
+    await deleteConfirmation.waitFor({ state: 'hidden' });
+    await waitForHeldCommit();
+    await page.getByTestId('desktop-library-new-creation').click();
+    await welcome.waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await welcome.waitFor();
+    await polishLibrary.getByRole('button', { name: '文游', exact: true }).click();
+    await slowStoryRow.waitFor({ state: 'detached' });
+
+    await openCreationMode('产粮');
+    await page.fill('#turn-input', '慢速产粮。创建期间的设置不能被关闭');
+    await holdNextStoryStorageCommit(page, 'meta');
+    await button('发送行动').click();
+    await waitForHeldCommit();
+    await page.getByTestId('desktop-settings-open').click();
+    await settingsPage.waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await page.waitForTimeout(150);
+    await settingsPage.waitFor();
+    assert.equal(await writing.count(), 0, 'A stale work creation must not open the writing page');
+    await settingsPage.getByRole('button', { name: '返回' }).click();
+    await welcome.waitFor();
+
+    await openCreationMode('人机恋');
+    await page.getByTestId('welcome-character-name').fill('明灯');
+    await page.fill('#turn-input', '从人设推断名\n守夜的引路人。');
+    await holdNextStoryStorageCommit(page, 'meta');
+    await button('发送行动').click();
+    await waitForHeldCommit();
+    await startScriptImport(page);
+    await importPanel.waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await page.waitForTimeout(150);
+    await importPanel.waitFor();
+    assert.equal(await character.count(), 0, 'A stale character creation must not open the character page');
+    await importPanel.getByRole('button', { name: '返回' }).click();
+    await welcome.waitFor();
+    await polishLibrary.getByRole('button', { name: '角色', exact: true }).click();
+    const namedCharacterRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '明灯' });
+    await namedCharacterRow.waitFor();
+
+    await openCreationMode('产粮');
+    await holdNextStoryStorageCommit(page, 'meta');
+    await welcome.getByRole('button', { name: '直接写正文', exact: true }).click();
+    await waitForHeldCommit();
+    await page.getByTestId('desktop-settings-open').click();
+    await settingsPage.waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await page.waitForTimeout(150);
+    await settingsPage.waitFor();
+    assert.equal(await writing.count(), 0, 'A stale direct-writing creation must not open its page');
+    await settingsPage.getByRole('button', { name: '返回' }).click();
+    await welcome.waitFor();
+    await polishLibrary.getByRole('button', { name: '产粮', exact: true }).click();
+    const manuscriptRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '未命名作品' }).last();
+    await manuscriptRow.waitFor();
+    await manuscriptRow.getByTestId('story-select-button').click();
+    await writing.waitFor();
+    await writing.locator('textarea.creative-manuscript').waitFor();
+
+    // Rename and export remain available from the shelf overflow menu for works and characters.
+    await polishLibrary.getByRole('button', { name: '产粮', exact: true }).click();
+    const workRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '慢速产粮' });
+    await workRow.getByTestId('story-menu-trigger').click();
+    await workRow.getByRole('menuitem', { name: '重命名' }).click();
+    await polishLibrary.getByRole('textbox', { name: '重命名作品标题' }).fill('慢速产粮改名');
+    await polishLibrary.getByRole('button', { name: '保存', exact: true }).click();
+    const renamedWorkRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '慢速产粮改名' });
+    await renamedWorkRow.waitFor();
+    await renamedWorkRow.getByTestId('story-menu-trigger').click();
+    const [workExport] = await Promise.all([
+      page.waitForEvent('download'),
+      renamedWorkRow.getByRole('menuitem', { name: '导出 .md' }).click(),
+    ]);
+    assert.match(workExport.suggestedFilename(), /慢速产粮改名\.md$/);
+
+    await polishLibrary.getByRole('button', { name: '角色', exact: true }).click();
+    await namedCharacterRow.getByTestId('story-menu-trigger').click();
+    await namedCharacterRow.getByRole('menuitem', { name: '重命名' }).click();
+    await polishLibrary.getByRole('textbox', { name: '重命名角色标题' }).fill('明灯改名');
+    await polishLibrary.getByRole('button', { name: '保存', exact: true }).click();
+    const renamedCharacterRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '明灯改名' });
+    await renamedCharacterRow.waitFor();
+    await renamedCharacterRow.getByTestId('story-menu-trigger').click();
+    const [characterExport] = await Promise.all([
+      page.waitForEvent('download'),
+      renamedCharacterRow.getByRole('menuitem', { name: '导出 .md' }).click(),
+    ]);
+    assert.match(characterExport.suggestedFilename(), /明灯改名\.md$/);
 
   } finally {
     await context.close();

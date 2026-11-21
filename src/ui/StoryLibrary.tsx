@@ -49,8 +49,12 @@ export function StoryLibrary({
   onExportStoryBackup,
 }: StoryLibraryProps) {
   const [category, setCategory] = useState<'story' | 'work' | 'character'>('story');
-  const [deleteItem, setDeleteItem] = useState<{ id: string; title: string; category: 'work' | 'character' } | null>(null);
-  useWebHistoryLayer('creative-delete', 110, Boolean(deleteItem), () => setDeleteItem(null));
+  const [deleteItem, setDeleteItem] = useState<{
+    id: string;
+    title: string;
+    category: 'story' | 'work' | 'character';
+  } | null>(null);
+  useWebHistoryLayer('library-delete', 110, Boolean(deleteItem), () => setDeleteItem(null));
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -268,13 +272,8 @@ export function StoryLibrary({
                             role="menuitem"
                             className="danger-menu-item"
                             onClick={() => {
-                              if (category === 'story') {
-                                closeMenu();
-                                actions?.onDelete(item.id);
-                              } else {
-                                closeMenu(false);
-                                setDeleteItem({ id: item.id, title: item.title, category });
-                              }
+                              closeMenu(false);
+                              setDeleteItem({ id: item.id, title: item.title, category });
                             }}
                           >
                             删除{category === 'story' ? '故事' : category === 'work' ? '作品' : '角色'}
@@ -291,14 +290,16 @@ export function StoryLibrary({
       )}
       <ModalDialog open={Boolean(deleteItem)} label="确认删除" onClose={() => setDeleteItem(null)}>
         {deleteItem && <div className="local-document-dialog">
-          <h2>确认删除{deleteItem.category === 'work' ? '作品' : '角色'}</h2>
+          <h2>确认删除{deleteItem.category === 'story' ? '故事' : deleteItem.category === 'work' ? '作品' : '角色'}</h2>
           <p>将永久删除本机的“{deleteItem.title}”及其相关内容，此操作无法撤销。</p>
           <div className="btn-group">
             <button type="button" className="btn" onClick={() => setDeleteItem(null)}>取消</button>
             <button type="button" className="btn btn-primary" onClick={() => {
               const target = deleteItem;
               setDeleteItem(null);
-              (target.category === 'work' ? workActions : characterActions)?.onDelete(target.id);
+              if (target.category === 'story') onDeleteStory(target.id);
+              else if (target.category === 'work') workActions?.onDelete(target.id);
+              else characterActions?.onDelete(target.id);
             }}>确认删除</button>
           </div>
         </div>}

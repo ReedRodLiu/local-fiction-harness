@@ -2039,6 +2039,16 @@ async function verifyOverlayHistoryAndShortcuts(page, port) {
   const finalMenuTrigger = page.locator('[data-testid="story-menu-trigger"]:visible').first();
   await finalMenuTrigger.click();
   await page.getByTestId('story-overflow-menu').getByRole('menuitem', { name: '删除故事' }).click();
+  const storyDeleteConfirmation = page.getByRole('dialog', { name: '确认删除' });
+  await storyDeleteConfirmation.waitFor({ state: 'visible' });
+  await page.evaluate(() => history.back());
+  await storyDeleteConfirmation.waitFor({ state: 'hidden' });
+  if (!(await drawer.evaluate((dialog) => dialog.open))) {
+    throw new Error('Browser Back closed the mobile drawer before the story delete confirmation.');
+  }
+  await finalMenuTrigger.click();
+  await page.getByTestId('story-overflow-menu').getByRole('menuitem', { name: '删除故事' }).click();
+  await storyDeleteConfirmation.getByRole('button', { name: '确认删除' }).click();
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="story-list-item"]').length === 0);
   await page.getByTestId('mobile-settings-open').click();
   await page.getByTestId('settings-page').waitFor({ state: 'visible' });
@@ -2568,6 +2578,8 @@ async function deleteAllStories(page) {
     const row = rows.first();
     await row.getByTestId('story-menu-trigger').click();
     await row.getByRole('menuitem', { name: '删除故事' }).click();
+    const confirmation = page.getByRole('dialog', { name: '确认删除' });
+    await confirmation.getByRole('button', { name: '确认删除' }).click();
     await page.waitForFunction((count) =>
       [...document.querySelectorAll('[data-testid="story-list-item"]')]
         .filter((item) => item.getClientRects().length > 0).length < count,
@@ -3854,6 +3866,7 @@ async function main() {
     await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
     await backupRow.getByTestId('story-menu-trigger').click();
     await backupRow.getByRole('menuitem', { name: '删除故事' }).click();
+    await page.getByRole('dialog', { name: '确认删除' }).getByRole('button', { name: '确认删除' }).click();
     await page.waitForFunction((count) =>
       [...document.querySelectorAll('[data-testid="story-list-item"]')]
         .filter((item) => item.getClientRects().length > 0).length < count,

@@ -128,6 +128,7 @@ export function App({ runtime }: AppProps) {
   const creative = useCreativeWorkspace(runtime.creativeStorage);
   const [creativePage, setCreativePage] = useState<'writing' | 'character' | null>(null);
   const [newCreationMode, setNewCreationMode] = useState<StageMode>('story');
+  const [characterName, setCharacterName] = useState('');
   const [newCreationOpen, setNewCreationOpen] = useState(false);
   const [writingView, setWritingView] = useState<{ id: string; manuscript: boolean } | null>(null);
   const [initialCreativeTurn, setInitialCreativeTurn] = useState<{ id: string; prompt: string } | null>(null);
@@ -236,6 +237,8 @@ export function App({ runtime }: AppProps) {
   const configSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const suppressedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet());
   const isSummaryInProgress = isSummaryComputationInProgress;
+  const isNavigationCurrent = (storySeq: number, overlaySeq: number) =>
+    storyOpSeqRef.current === storySeq && overlayNavigationSeqRef.current === overlaySeq;
   const edgeSwipeHandlers = useEdgeSwipeToOpen(
     !showImport && !showSettings && !mobileLibraryOpen,
     () => setMobileLibraryOpen(true),
@@ -870,7 +873,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const openImportView = (mode: ImportMode) => {
-    if (creationPending.current || branchSwitchBusyRef.current) return;
+    if (branchSwitchBusyRef.current) return;
     ++overlayNavigationSeqRef.current;
     captureOverlayTrigger();
     abortActiveStream(true);
@@ -884,7 +887,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const openSettings = () => {
-    if (creationPending.current || branchSwitchBusyRef.current) return;
+    if (branchSwitchBusyRef.current) return;
     ++overlayNavigationSeqRef.current;
     captureOverlayTrigger();
     setCreativeCompanionOpen(false);
@@ -1197,8 +1200,8 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleSelectStory = async (id: string) => {
-    if (creationPending.current) return;
     if (branchSwitchBusyRef.current) return;
+    const overlaySeqAtStart = overlayNavigationSeqRef.current;
     abortActiveStream(true);
     invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
@@ -1209,11 +1212,13 @@ export function App({ runtime }: AppProps) {
       if (switched) {
         storyRef.current = switched;
         setStory(switched);
-        setNewCreationOpen(false);
-        setShowImport(false);
-        setShowSettings(false);
-        setCreativePage(null);
-        setMobileLibraryOpen(false);
+        if (isNavigationCurrent(opSeq, overlaySeqAtStart)) {
+          setNewCreationOpen(false);
+          setShowImport(false);
+          setShowSettings(false);
+          setCreativePage(null);
+          setMobileLibraryOpen(false);
+        }
       }
     } catch (err) {
       if (storyOpSeqRef.current === opSeq) {
@@ -1237,7 +1242,8 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleDeleteStory = async (id: string) => {
-    if (creationPending.current || branchSwitchBusyRef.current) return;
+    if (branchSwitchBusyRef.current) return;
+    const overlaySeqAtStart = overlayNavigationSeqRef.current;
     abortActiveStream(true);
     invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
@@ -1245,10 +1251,8 @@ export function App({ runtime }: AppProps) {
     setErrorMsg(null);
     try {
       await harness.deleteStory(id);
-      if (storyOpSeqRef.current !== opSeq) return;
       const remaining = await refreshStories();
-      if (storyOpSeqRef.current !== opSeq) return;
-      if (deletedActiveStory) {
+      if (deletedActiveStory && isNavigationCurrent(opSeq, overlaySeqAtStart)) {
         const next = remaining[0] ?? harness.createStory({ title: '新故事' });
         setStory(next);
         if (remaining[0]) {
@@ -1306,8 +1310,8 @@ export function App({ runtime }: AppProps) {
     }
   };
 
-  function openCreativePage(mode: 'writing' | 'character', fromCreation = false) {
-    if ((!fromCreation && creationPending.current) || deepSeekImportBusyRef.current) return;
+  function openCreativePage(mode: 'writing' | 'character') {
+    if (deepSeekImportBusyRef.current) return;
     ++storyOpSeqRef.current;
     captureOverlayTrigger();
     setCreativeCompanionOpen(false);
@@ -1328,11 +1332,12 @@ export function App({ runtime }: AppProps) {
   }
 
   function openNewCreation() {
-    if (creationPending.current || deepSeekImportBusyRef.current) return;
+    if (deepSeekImportBusyRef.current) return;
     ++storyOpSeqRef.current;
     abortActiveStream(true);
     invalidateSummaryTask();
     setNewCreationMode(creativePage ?? 'story');
+    setCharacterName('');
     setCreativePage(null);
     setCreativeCompanionOpen(false);
     setShowSettings(false);
@@ -1349,6 +1354,8 @@ export function App({ runtime }: AppProps) {
   async function createStage(prompt: string, manuscript = false) {
     const mode = newCreationMode;
     if (creationPending.current || (!manuscript && !prompt)) return;
+    const storySeqAtStart = ++storyOpSeqRef.current;
+    const overlaySeqAtStart = overlayNavigationSeqRef.current;
     creationPending.current = true;
     setCreating(true);
     setErrorMsg(null);
@@ -1357,27 +1364,35 @@ export function App({ runtime }: AppProps) {
         const created = await harness.createAndSaveStory({
           title: creationTitle(prompt, '新故事'), rawScript: prompt, sourceKind: 'manual_script',
         });
-        await commitStoryState(created);
+        await refreshStories();
+        if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
+        storyRef.current = created;
+        setStory(created);
         setNewCreationOpen(false);
         setInput('');
+        setCharacterName('');
         startFirstAct(created);
       } else if (mode === 'writing') {
         const firstTurn = manuscript ? null : { id: createDefaultId(), parentId: null, role: 'user' as const, content: prompt, summarySnapshot: EMPTY_SUMMARY_SNAPSHOT, createdAt: Date.now() };
         const work = { ...newWork(creationTitle(prompt, '未命名作品')), writingStarted: manuscript, discussion: firstTurn ? [firstTurn] : [] };
         await creative.save((state) => ({ ...state, works: [...state.works, work], activeWorkId: work.id }));
+        if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
         setInitialCreativeTurn(manuscript ? null : { id: work.id, prompt });
         setInput('');
-        openCreativePage('writing', true);
+        openCreativePage('writing');
       } else {
-        const character = newCharacter(creationTitle(prompt, '未命名角色'), prompt);
+        const name = characterName.trim() || creationTitle(prompt, '未命名角色');
+        const character = newCharacter(name, prompt);
         const conversation = newConversation(character, 'personal');
         const activeCharacter = { ...character, conversations: [conversation], activeConversationId: conversation.id };
         await creative.save((state) => ({
           ...state, characters: [...state.characters, activeCharacter], activeCharacterId: character.id,
         }));
+        if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
         setInitialCreativeTurn({ id: character.id, prompt: '' });
         setInput('');
-        openCreativePage('character', true);
+        setCharacterName('');
+        openCreativePage('character');
       }
     } catch (error) {
       setErrorMsg(toErrorMessage(error, '新建创作失败。'));
@@ -1388,7 +1403,6 @@ export function App({ runtime }: AppProps) {
   }
 
   async function changeCreativeItem(mode: 'writing' | 'character', id: string, action: 'select' | 'rename' | 'delete' | 'export', title = '') {
-    if (creationPending.current) return;
     const opSeq = action === 'select' ? ++storyOpSeqRef.current : null;
     const storySeqAtStart = storyOpSeqRef.current;
     const overlaySeqAtStart = overlayNavigationSeqRef.current;
@@ -1531,6 +1545,8 @@ export function App({ runtime }: AppProps) {
   }
 
   function writeFromStory(nodeId: string | null) {
+    const storySeqAtStart = ++storyOpSeqRef.current;
+    const overlaySeqAtStart = overlayNavigationSeqRef.current;
     const scoped = migrateStoryDocuments(story) as Story & { documents: StoryDocuments };
     const versions = storyDocumentState(scoped, nodeId, nodeId === scoped.activeLeafNodeId);
     const history = getUncoveredNodes(getActiveBranchNodes(scoped, nodeId),
@@ -1544,7 +1560,9 @@ ${history}`,
     ].filter(Boolean).join('\n\n');
     const work = newWork(`${scoped.title} · 续写`, details, { storyId: scoped.id, nodeId });
     void creative.save((state) => ({ ...state, works: [...state.works, work], activeWorkId: work.id }))
-      .then(() => openCreativePage('writing'))
+      .then(() => {
+        if (isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) openCreativePage('writing');
+      })
       .catch((err) => setErrorMsg(toErrorMessage(err, '从故事开稿失败。')));
   }
 
@@ -1741,7 +1759,13 @@ ${history}`,
                   onStartScriptImport={() => openImportView('script')}
                   onSelectStory={(id) => void handleSelectStory(id)}
                   mode={newCreationMode}
-                  onModeChange={setNewCreationMode}
+                  onModeChange={(mode) => {
+                    if (mode === newCreationMode) return;
+                    ++storyOpSeqRef.current;
+                    setNewCreationMode(mode);
+                  }}
+                  characterName={characterName}
+                  onCharacterNameChange={setCharacterName}
                   onStartManuscript={() => void createStage('', true)}
                   recentCreative={[
                     ...(activeWork ? [{ id: activeWork.id, title: activeWork.title, activate: () => openCreativePage('writing') }] : []),
