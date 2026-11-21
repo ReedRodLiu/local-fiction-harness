@@ -464,78 +464,169 @@ export async function verifyThreeModes(browser, port, helpers) {
     const waitForHeldCommit = () => page.waitForFunction(
       () => typeof window.__lfhStoryCommitControl?.release === 'function',
     );
+    const readActiveStoryId = () => page.evaluate(async () => {
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('local-fiction-harness');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const active = await new Promise((resolve, reject) => {
+        const request = db.transaction('meta').objectStore('meta').get('activeStoryId');
+        request.onsuccess = () => resolve(request.result?.value ?? null);
+        request.onerror = () => reject(request.error);
+      });
+      db.close();
+      return active;
+    });
+    const waitForStoredCreativeItemMissing = (title, collection) => page.waitForFunction(async ({ title, collection }) => {
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('local-fiction-harness');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const entry = await new Promise((resolve, reject) => {
+        const request = db.transaction('meta').objectStore('meta').get('creativeWorkspace');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      db.close();
+      const items = entry?.value?.[collection] ?? [];
+      return !items.some((item) => (collection === 'characters' ? item.name : item.title) === title);
+    }, { title, collection });
+    const waitForCreativeWorkBody = (title, body) => page.waitForFunction(async ({ title, body }) => {
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('local-fiction-harness');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const entry = await new Promise((resolve, reject) => {
+        const request = db.transaction('meta').objectStore('meta').get('creativeWorkspace');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      db.close();
+      return entry?.value?.works?.some((work) => work.title === title && work.body === body) === true;
+    }, { title, body });
+    const assertWelcomeStage = async (deletedTitle) => {
+      await welcome.waitFor();
+      assert.equal(await page.locator('#turn-input').count(), 1, 'The welcome stage should expose exactly one story composer');
+      assert.equal(await page.locator('#turn-input').isVisible(), true);
+      if (deletedTitle) assert.equal((await page.getByTestId('main-stage').innerText()).includes(deletedTitle), false);
+    };
 
-    // A creation save may finish behind newer navigation, but it must not steal the stage or start a model turn.
+    // A slow story save stays on the welcome stage when settings opens after creation starts.
+    await polishLibrary.getByRole('button', { name: '文游', exact: true }).click();
     await openCreationMode('文游');
     await page.fill('#turn-input', '慢速文游。创建期间的设置不能被关闭');
     const requestsBeforeSlowStory = requests.length;
+    const activeBeforeSlowStory = await readActiveStoryId();
     await holdNextStoryStorageCommit(page, 'stories');
     await button('发送行动').click();
     await waitForHeldCommit();
     await page.getByTestId('desktop-settings-open').click();
     await settingsPage.waitFor();
     await releaseHeldStoryStorageCommit(page);
-    await page.waitForTimeout(250);
-    await settingsPage.waitFor();
+    const slowStoryRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '慢速文游' });
+    await slowStoryRow.waitFor({ state: 'attached' });
+    assert.equal(await settingsPage.isVisible(), true, 'A completed story creation must not close settings');
+    assert.equal(await readActiveStoryId(), activeBeforeSlowStory, 'A creation hidden by settings must not activate its story');
     assert.equal(requests.length, requestsBeforeSlowStory, 'A stale story creation must not trigger its opening turn');
     await settingsPage.getByRole('button', { name: '返回' }).click();
-    await welcome.waitFor();
+    await assertWelcomeStage();
     await polishLibrary.getByRole('button', { name: '文游', exact: true }).click();
-    const slowStoryRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '慢速文游' });
     await slowStoryRow.waitFor();
 
+    // A delayed story save cannot replace a newer story selection, in memory or after reload.
     await openCreationMode('文游');
-    await page.fill('#turn-input', '直开渡口。从欢迎文游直接创建');
+    await page.fill('#turn-input', '慢速导航。迟到创建不能抢走用户选择');
+    await holdNextStoryStorageCommit(page, 'stories');
     await button('发送行动').click();
-    await page.getByTestId('story-timeline').waitFor();
-    await page.getByTestId('app-topbar').getByRole('heading', { name: '直开渡口', exact: true }).waitFor();
+    await waitForHeldCommit();
+    const newerStoryRow = polishLibrary.getByTestId('story-list-item').filter({
+      has: page.locator('.story-list-title', { hasText: /^浮灯渡口$/ }),
+    });
+    await newerStoryRow.getByTestId('story-select-button').click();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '浮灯渡口', exact: true }).waitFor();
+    const newerActiveStoryId = await readActiveStoryId();
+    await releaseHeldStoryStorageCommit(page);
+    const lateNavigationStoryRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '慢速导航' });
+    await lateNavigationStoryRow.waitFor();
+    assert.equal(await page.getByTestId('app-topbar').getByRole('heading').innerText(), '浮灯渡口');
+    assert.equal(await readActiveStoryId(), newerActiveStoryId, 'The late story save must not change the active story');
+    await go();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '浮灯渡口', exact: true }).waitFor();
+    assert.equal(await readActiveStoryId(), newerActiveStoryId, 'Reload must keep the user selection rather than the late creation');
 
-    // Story selection may persist while settings or import navigation remains on top of it.
-    await holdNextStoryStorageCommit(page, 'meta');
-    await slowStoryRow.getByTestId('story-select-button').click();
+    // Backup restore is newer navigation even while a story save is pending.
+    await openCreationMode('文游');
+    await page.fill('#turn-input', '慢速恢复。恢复备份应该取代这次创建');
+    const requestsBeforeRestore = requests.length;
+    await holdNextStoryStorageCommit(page, 'stories');
+    await button('发送行动').click();
     await waitForHeldCommit();
     await page.getByTestId('desktop-settings-open').click();
     await settingsPage.waitFor();
+    await page.setInputFiles('[data-testid="backup-import-input"]', backupPath);
+    await settingsPage.waitFor({ state: 'hidden' });
+    await page.getByTestId('story-timeline').waitFor();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '浮灯渡口（导入副本）', exact: true }).waitFor();
+    const restoredActiveStoryId = await readActiveStoryId();
     await releaseHeldStoryStorageCommit(page);
-    await page.waitForTimeout(150);
-    await settingsPage.waitFor();
-    await settingsPage.getByRole('button', { name: '返回' }).click();
+    const lateRestoreStoryRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '慢速恢复' });
+    await lateRestoreStoryRow.waitFor();
+    assert.equal(await page.getByTestId('app-topbar').getByRole('heading').innerText(), '浮灯渡口（导入副本）');
+    assert.equal(await readActiveStoryId(), restoredActiveStoryId, 'The pending creation must not replace the restored active story');
+    assert.equal(requests.length, requestsBeforeRestore, 'The pending creation must not start an opening turn after restore');
+    await go();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '浮灯渡口（导入副本）', exact: true }).waitFor();
 
-    const directStoryRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '直开渡口' });
-    await holdNextStoryStorageCommit(page, 'meta');
-    await directStoryRow.getByTestId('story-select-button').click();
-    await waitForHeldCommit();
-    await startScriptImport(page);
-    await importPanel.waitFor();
-    await releaseHeldStoryStorageCommit(page);
-    await page.waitForTimeout(150);
-    await importPanel.waitFor();
-    await importPanel.getByRole('button', { name: '返回' }).click();
-
-    // All three library categories share the same cancellable delete confirmation.
+    // Deleting the active story under settings keeps settings open, then closes to a usable welcome stage.
+    await polishLibrary.getByRole('button', { name: '文游', exact: true }).click();
+    await slowStoryRow.getByTestId('story-select-button').click();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '慢速文游', exact: true }).waitFor();
     await slowStoryRow.getByTestId('story-menu-trigger').click();
     await slowStoryRow.getByRole('menuitem', { name: /删除/ }).click();
     const deleteConfirmation = page.getByRole('dialog', { name: '确认删除' });
-    await deleteConfirmation.waitFor();
-    await deleteConfirmation.getByRole('button', { name: '取消' }).click();
-    await deleteConfirmation.waitFor({ state: 'hidden' });
-    await slowStoryRow.waitFor();
-
-    // Successful deletion always refreshes the shelf, while a newer welcome navigation keeps its stage.
-    await slowStoryRow.getByTestId('story-menu-trigger').click();
-    await slowStoryRow.getByRole('menuitem', { name: /删除/ }).click();
     await deleteConfirmation.waitFor();
     await holdNextStoryStorageCommit(page, 'stories');
     await deleteConfirmation.getByRole('button', { name: '确认删除' }).click();
     await deleteConfirmation.waitFor({ state: 'hidden' });
     await waitForHeldCommit();
-    await page.getByTestId('desktop-library-new-creation').click();
-    await welcome.waitFor();
+    await page.getByTestId('desktop-settings-open').click();
+    await settingsPage.waitFor();
     await releaseHeldStoryStorageCommit(page);
-    await welcome.waitFor();
-    await polishLibrary.getByRole('button', { name: '文游', exact: true }).click();
     await slowStoryRow.waitFor({ state: 'detached' });
+    assert.equal(await settingsPage.isVisible(), true, 'Delete completion must not close newer settings navigation');
+    await settingsPage.getByRole('button', { name: '返回' }).click();
+    await assertWelcomeStage('慢速文游');
+    assert.equal(await page.getByTestId('story-timeline').count(), 0);
 
+    // Deleting the active story under import does the same, then leaves the deleted story off the shelf.
+    await polishLibrary.getByRole('button', { name: '文游', exact: true }).click();
+    await openCreationMode('文游');
+    await page.fill('#turn-input', '删除导入文游。删除期间打开导入');
+    await button('发送行动').click();
+    await page.getByTestId('story-timeline').waitFor();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '删除导入文游', exact: true }).waitFor();
+    const importDeleteStoryRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '删除导入文游' });
+    await importDeleteStoryRow.getByTestId('story-menu-trigger').click();
+    await importDeleteStoryRow.getByRole('menuitem', { name: /删除/ }).click();
+    await deleteConfirmation.waitFor();
+    await holdNextStoryStorageCommit(page, 'stories');
+    await deleteConfirmation.getByRole('button', { name: '确认删除' }).click();
+    await deleteConfirmation.waitFor({ state: 'hidden' });
+    await waitForHeldCommit();
+    await startScriptImport(page);
+    await importPanel.waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await importDeleteStoryRow.waitFor({ state: 'detached' });
+    assert.equal(await importPanel.isVisible(), true, 'Delete completion must not close newer import navigation');
+    await importPanel.getByRole('button', { name: '返回' }).click();
+    await assertWelcomeStage('删除导入文游');
+    assert.equal(await page.getByTestId('story-timeline').count(), 0);
+
+    // Work creation finishing behind settings only adds a shelf entry.
+    await polishLibrary.getByRole('button', { name: '产粮', exact: true }).click();
     await openCreationMode('产粮');
     await page.fill('#turn-input', '慢速产粮。创建期间的设置不能被关闭');
     await holdNextStoryStorageCommit(page, 'meta');
@@ -544,12 +635,15 @@ export async function verifyThreeModes(browser, port, helpers) {
     await page.getByTestId('desktop-settings-open').click();
     await settingsPage.waitFor();
     await releaseHeldStoryStorageCommit(page);
-    await page.waitForTimeout(150);
-    await settingsPage.waitFor();
+    const workRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '慢速产粮' });
+    await workRow.waitFor({ state: 'attached' });
+    assert.equal(await settingsPage.isVisible(), true);
     assert.equal(await writing.count(), 0, 'A stale work creation must not open the writing page');
     await settingsPage.getByRole('button', { name: '返回' }).click();
-    await welcome.waitFor();
+    await assertWelcomeStage();
 
+    // Character creation finishing behind import only adds a shelf entry.
+    await polishLibrary.getByRole('button', { name: '角色', exact: true }).click();
     await openCreationMode('人机恋');
     await page.getByTestId('welcome-character-name').fill('明灯');
     await page.fill('#turn-input', '从人设推断名\n守夜的引路人。');
@@ -559,15 +653,15 @@ export async function verifyThreeModes(browser, port, helpers) {
     await startScriptImport(page);
     await importPanel.waitFor();
     await releaseHeldStoryStorageCommit(page);
-    await page.waitForTimeout(150);
-    await importPanel.waitFor();
+    const namedCharacterRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '明灯' });
+    await namedCharacterRow.waitFor({ state: 'attached' });
+    assert.equal(await importPanel.isVisible(), true);
     assert.equal(await character.count(), 0, 'A stale character creation must not open the character page');
     await importPanel.getByRole('button', { name: '返回' }).click();
-    await welcome.waitFor();
-    await polishLibrary.getByRole('button', { name: '角色', exact: true }).click();
-    const namedCharacterRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '明灯' });
-    await namedCharacterRow.waitFor();
+    await assertWelcomeStage();
 
+    // Direct manuscript creation also cannot open its page after settings takes navigation.
+    await polishLibrary.getByRole('button', { name: '产粮', exact: true }).click();
     await openCreationMode('产粮');
     await holdNextStoryStorageCommit(page, 'meta');
     await welcome.getByRole('button', { name: '直接写正文', exact: true }).click();
@@ -575,21 +669,24 @@ export async function verifyThreeModes(browser, port, helpers) {
     await page.getByTestId('desktop-settings-open').click();
     await settingsPage.waitFor();
     await releaseHeldStoryStorageCommit(page);
-    await page.waitForTimeout(150);
-    await settingsPage.waitFor();
+    const manuscriptRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '未命名作品' }).last();
+    await manuscriptRow.waitFor({ state: 'attached' });
+    assert.equal(await settingsPage.isVisible(), true);
     assert.equal(await writing.count(), 0, 'A stale direct-writing creation must not open its page');
     await settingsPage.getByRole('button', { name: '返回' }).click();
-    await welcome.waitFor();
-    await polishLibrary.getByRole('button', { name: '产粮', exact: true }).click();
-    const manuscriptRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '未命名作品' }).last();
-    await manuscriptRow.waitFor();
+    await assertWelcomeStage();
     await manuscriptRow.getByTestId('story-select-button').click();
     await writing.waitFor();
     await writing.locator('textarea.creative-manuscript').waitFor();
 
     // Rename and export remain available from the shelf overflow menu for works and characters.
     await polishLibrary.getByRole('button', { name: '产粮', exact: true }).click();
-    const workRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '慢速产粮' });
+    await workRow.getByTestId('story-select-button').click();
+    await writing.waitFor();
+    await page.getByRole('group', { name: '作品视图' }).getByRole('button', { name: '正文' }).click();
+    const exportedWorkBody = '慢速产粮导出内容 WORK-EXPORT-CONTENT';
+    await writing.locator('textarea.creative-manuscript').fill(exportedWorkBody);
+    await waitForCreativeWorkBody('慢速产粮', exportedWorkBody);
     await workRow.getByTestId('story-menu-trigger').click();
     await workRow.getByRole('menuitem', { name: '重命名' }).click();
     await polishLibrary.getByRole('textbox', { name: '重命名作品标题' }).fill('慢速产粮改名');
@@ -602,6 +699,7 @@ export async function verifyThreeModes(browser, port, helpers) {
       renamedWorkRow.getByRole('menuitem', { name: '导出 .md' }).click(),
     ]);
     assert.match(workExport.suggestedFilename(), /慢速产粮改名\.md$/);
+    assert.equal(fs.readFileSync(await workExport.path(), 'utf8'), exportedWorkBody);
 
     await polishLibrary.getByRole('button', { name: '角色', exact: true }).click();
     await namedCharacterRow.getByTestId('story-menu-trigger').click();
@@ -616,6 +714,49 @@ export async function verifyThreeModes(browser, port, helpers) {
       renamedCharacterRow.getByRole('menuitem', { name: '导出 .md' }).click(),
     ]);
     assert.match(characterExport.suggestedFilename(), /明灯改名\.md$/);
+    assert.match(fs.readFileSync(await characterExport.path(), 'utf8'), /^# 明灯改名 · 本人聊天/m);
+
+    // Deleting the active work under settings leaves settings open, then returns to the welcome stage.
+    await polishLibrary.getByRole('button', { name: '产粮', exact: true }).click();
+    await renamedWorkRow.getByTestId('story-select-button').click();
+    await writing.waitFor();
+    await renamedWorkRow.getByTestId('story-menu-trigger').click();
+    await renamedWorkRow.getByRole('menuitem', { name: /删除作品/ }).click();
+    await deleteConfirmation.waitFor();
+    await holdNextStoryStorageCommit(page, 'meta');
+    await deleteConfirmation.getByRole('button', { name: '确认删除' }).click();
+    await deleteConfirmation.waitFor({ state: 'hidden' });
+    await waitForHeldCommit();
+    await page.getByTestId('desktop-settings-open').click();
+    await settingsPage.waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await waitForStoredCreativeItemMissing('慢速产粮改名', 'works');
+    await renamedWorkRow.waitFor({ state: 'detached' });
+    assert.equal(await settingsPage.isVisible(), true);
+    await settingsPage.getByRole('button', { name: '返回' }).click();
+    await assertWelcomeStage();
+    assert.equal(await writing.count(), 0);
+
+    // Deleting the active character under import leaves import open, then returns to the welcome stage.
+    await polishLibrary.getByRole('button', { name: '角色', exact: true }).click();
+    await renamedCharacterRow.getByTestId('story-select-button').click();
+    await character.waitFor();
+    await renamedCharacterRow.getByTestId('story-menu-trigger').click();
+    await renamedCharacterRow.getByRole('menuitem', { name: /删除角色/ }).click();
+    await deleteConfirmation.waitFor();
+    await holdNextStoryStorageCommit(page, 'meta');
+    await deleteConfirmation.getByRole('button', { name: '确认删除' }).click();
+    await deleteConfirmation.waitFor({ state: 'hidden' });
+    await waitForHeldCommit();
+    await startScriptImport(page);
+    await importPanel.waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await waitForStoredCreativeItemMissing('明灯改名', 'characters');
+    await renamedCharacterRow.waitFor({ state: 'detached' });
+    assert.equal(await importPanel.isVisible(), true);
+    await importPanel.getByRole('button', { name: '返回' }).click();
+    await assertWelcomeStage();
+    assert.equal(await character.count(), 0);
 
   } finally {
     await context.close();

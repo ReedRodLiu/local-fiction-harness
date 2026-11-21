@@ -596,7 +596,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
 
     async createAndSaveStory(input: CreateStoryInput): Promise<Story> {
       const story = createStoryRecord(input);
-      return persistStory(story, true);
+      return persistStory(story, false);
     },
 
     async saveStory(story: Story, expectedUpdatedAt?: number): Promise<Story> {

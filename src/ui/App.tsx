@@ -1160,12 +1160,15 @@ export function App({ runtime }: AppProps) {
         ...imported,
         sourceKind: 'manual_script',
       });
+      await refreshStories();
       if (storyOpSeqRef.current !== opSeq) return;
-      await commitStoryState(created);
+      const activated = await harness.setActiveStory(created.id);
+      if (storyOpSeqRef.current !== opSeq) return;
+      await commitStoryState(activated ?? created);
       setNewCreationOpen(false);
       setShowImport(false);
       setShowSettings(false);
-      startFirstAct(created);
+      startFirstAct(activated ?? created);
     } catch (err) {
       if (storyOpSeqRef.current === opSeq) {
         setErrorMsg(toErrorMessage(err, '保存导入故事失败。'));
@@ -1251,13 +1254,15 @@ export function App({ runtime }: AppProps) {
     setErrorMsg(null);
     try {
       await harness.deleteStory(id);
-      const remaining = await refreshStories();
-      if (deletedActiveStory && isNavigationCurrent(opSeq, overlaySeqAtStart)) {
-        const next = remaining[0] ?? harness.createStory({ title: '新故事' });
+      await refreshStories();
+      if (deletedActiveStory && storyOpSeqRef.current === opSeq) {
+        const next = harness.createStory({ title: '新故事' });
+        storyRef.current = next;
         setStory(next);
-        if (remaining[0]) {
-          await harness.setActiveStory(remaining[0].id);
-        }
+        convergeToWelcomeStage(
+          'story',
+          overlayNavigationSeqRef.current === overlaySeqAtStart,
+        );
       }
     } catch (err) {
       if (storyOpSeqRef.current === opSeq) {
@@ -1280,7 +1285,6 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleImportBackupFile = async (file: File) => {
-    if (creationPending.current) return;
     abortActiveStream(true);
     invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
@@ -1295,9 +1299,10 @@ export function App({ runtime }: AppProps) {
         existing.map((s) => s.id),
       );
       await harness.saveStory(restored);
-      await harness.setActiveStory(restored.id);
       if (storyOpSeqRef.current !== opSeq) return;
-      await commitStoryState(restored);
+      const activated = await harness.setActiveStory(restored.id);
+      if (storyOpSeqRef.current !== opSeq) return;
+      await commitStoryState(activated ?? restored);
       setNewCreationOpen(false);
       setCreativePage(null);
       setCreativeCompanionOpen(false);
@@ -1323,6 +1328,26 @@ export function App({ runtime }: AppProps) {
     setNewCreationOpen(false);
     setWritingView(null);
     setCreativePage(mode);
+  }
+
+  function convergeToWelcomeStage(mode: StageMode, closeOverlays: boolean) {
+    setNewCreationMode(mode);
+    setCharacterName('');
+    setCreativePage(null);
+    setCreativeCompanionOpen(false);
+    setWritingView(null);
+    setInitialCreativeTurn(null);
+    setNewCreationOpen(true);
+    setInput('');
+    setErrorMsg(null);
+    const shouldFocus = closeOverlays && !mobileLibraryOpen;
+    focusNewCreation.current = shouldFocus;
+    if (closeOverlays) {
+      setShowSettings(false);
+      setShowImport(false);
+      setStoryTreeOpen(false);
+      if (shouldFocus) window.requestAnimationFrame(focusCreationInput);
+    }
   }
 
   function focusCreationInput() {
@@ -1366,12 +1391,15 @@ export function App({ runtime }: AppProps) {
         });
         await refreshStories();
         if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
-        storyRef.current = created;
-        setStory(created);
+        const activated = await harness.setActiveStory(created.id);
+        if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
+        const currentStory = activated ?? created;
+        storyRef.current = currentStory;
+        setStory(currentStory);
         setNewCreationOpen(false);
         setInput('');
         setCharacterName('');
-        startFirstAct(created);
+        startFirstAct(currentStory);
       } else if (mode === 'writing') {
         const firstTurn = manuscript ? null : { id: createDefaultId(), parentId: null, role: 'user' as const, content: prompt, summarySnapshot: EMPTY_SUMMARY_SNAPSHOT, createdAt: Date.now() };
         const work = { ...newWork(creationTitle(prompt, '未命名作品')), writingStarted: manuscript, discussion: firstTurn ? [firstTurn] : [] };
@@ -1406,6 +1434,10 @@ export function App({ runtime }: AppProps) {
     const opSeq = action === 'select' ? ++storyOpSeqRef.current : null;
     const storySeqAtStart = storyOpSeqRef.current;
     const overlaySeqAtStart = overlayNavigationSeqRef.current;
+    const deletingVisibleActive = action === 'delete' && creativePage === mode &&
+      (mode === 'writing'
+        ? creative.workspace.activeWorkId === id
+        : creative.workspace.activeCharacterId === id);
     setErrorMsg(null);
     try {
       if (action === 'export') {
@@ -1437,9 +1469,9 @@ export function App({ runtime }: AppProps) {
       });
       if (action === 'select' && storyOpSeqRef.current === opSeq &&
         overlayNavigationSeqRef.current === overlaySeqAtStart) openCreativePage(mode);
-      if (action === 'delete' && storyOpSeqRef.current === storySeqAtStart &&
-        overlayNavigationSeqRef.current === overlaySeqAtStart && creativePage === mode &&
-        (mode === 'writing' ? creative.workspace.activeWorkId === id : creative.workspace.activeCharacterId === id)) openNewCreation();
+      if (deletingVisibleActive && storyOpSeqRef.current === storySeqAtStart) {
+        convergeToWelcomeStage(mode, overlayNavigationSeqRef.current === overlaySeqAtStart);
+      }
     } catch (error) {
       if (opSeq === null || storyOpSeqRef.current === opSeq) setErrorMsg(toErrorMessage(error, '书架操作失败。'));
     }

@@ -2,7 +2,6 @@ import type { ReactNode } from 'react';
 import { BookOpen, ChevronRight, FilePlus2, PanelLeftClose, Plus, Settings, Sparkles, X } from 'lucide-react';
 import type { Story } from '../harness/index.ts';
 import { StoryLibrary, type LibraryItem, type LibraryItemActions } from './StoryLibrary.tsx';
-import './styles/library-drawer.css';
 import { DrawerDialog } from './primitives/DrawerDialog.tsx';
 
 export interface LibraryDrawerProps {

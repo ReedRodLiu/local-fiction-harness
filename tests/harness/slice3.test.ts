@@ -37,6 +37,9 @@ describe('Slice 3: Multi-story storage & auto-persistence', () => {
     const story1 = await harnessA.createAndSaveStory({ title: '宫闱风云', rawScript: '规则A' });
     const story2 = await harnessA.createAndSaveStory({ title: '修仙奇缘', rawScript: '规则B' });
     expect(saveSpy).toHaveBeenCalledTimes(2);
+    expect(activeSpy).not.toHaveBeenCalled();
+    await harnessA.setActiveStory(story1.id);
+    await harnessA.setActiveStory(story2.id);
     expect(activeSpy).toHaveBeenLastCalledWith(story2.id);
 
     const tweaked = await harnessA.updateStoryBlueprint(story2, {
