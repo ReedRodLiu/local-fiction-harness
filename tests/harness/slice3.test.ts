@@ -45,6 +45,19 @@ describe('Slice 3: Multi-story storage & auto-persistence', () => {
     expect(await harness.loadActiveStory()).toBeNull();
   });
 
+  it('does not fall back when the present active story no longer exists', async () => {
+    const storage = createInMemoryStoryStorage();
+    const harness = createFictionHarness({
+      transport: mockTransport,
+      storage,
+    });
+
+    await harness.createAndSaveStory({ title: '仅存故事', rawScript: '规则' });
+    await storage.setActiveStoryId('missing-story');
+
+    expect(await harness.loadActiveStory()).toBeNull();
+  });
+
   it('auto-persists created stories, blueprint tweaks, turns, renames, and active selection across reloads', async () => {
     const storage = createInMemoryStoryStorage();
     const saveSpy = vi.spyOn(storage, 'saveStory');

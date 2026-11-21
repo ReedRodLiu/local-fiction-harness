@@ -614,7 +614,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       if (selection.status === 'present') {
         if (selection.id === null) return null;
         const found = await deps.storage.getStory(selection.id);
-        if (found) return migrateStoryDocuments(found);
+        return found ? migrateStoryDocuments(found) : null;
       }
       const all = await deps.storage.listStories();
       return all[0] ? migrateStoryDocuments(all[0]) : null;
