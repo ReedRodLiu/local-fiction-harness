@@ -494,13 +494,15 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       updatedAt: assistantCreatedAt,
     };
 
-    const updatedSnapshot = await summarizeOverflowTurns(
-      provisionalStory,
-      provisionalStory.activeLeafNodeId,
-      opts.baseSnapshot,
-      opts.config,
-      opts.signal,
-    );
+    const updatedSnapshot = opts.proposal?.target === 'local'
+      ? opts.baseSnapshot
+      : await summarizeOverflowTurns(
+        provisionalStory,
+        provisionalStory.activeLeafNodeId,
+        opts.baseSnapshot,
+        opts.config,
+        opts.signal,
+      );
 
     const documents = opts.baseStory.documents;
     const before = documentVersion(documents.local, opts.documentState.local);
@@ -555,7 +557,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     );
 
     const result = await streamText(config, messages, callbacks, true);
-    const { content, proposal } = splitMarkdownReply(result.content);
+    const { content, proposal, proposalStatus } = splitMarkdownReply(result.content);
+    deps.transport.recordMarkdownProposal?.(result.finishReason === 'stop' ? proposalStatus : 'incomplete');
     if (!content.trim() && !proposal) throw new Error('模型没有返回可用内容，请重试。');
 
     const userNode: TurnNode = {
@@ -797,7 +800,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         prepared.request,
       );
       const result = await streamText(config, messages, callbacks, true);
-      const { content, proposal } = splitMarkdownReply(result.content);
+      const { content, proposal, proposalStatus } = splitMarkdownReply(result.content);
+      deps.transport.recordMarkdownProposal?.(result.finishReason === 'stop' ? proposalStatus : 'incomplete');
       if (!content.trim() && !proposal) throw new Error('模型没有返回可用内容，请重试。');
 
       return finalizeAssistantReply({

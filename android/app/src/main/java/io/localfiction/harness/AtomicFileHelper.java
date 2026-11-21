@@ -67,22 +67,46 @@ final class AtomicFileHelper {
 
     static File writeExportFile(File cacheDir, String requestedFileName, String content, boolean markdown)
         throws IOException {
-        File exportsDir = new File(cacheDir, EXPORTS_DIR_NAME);
-        ensureDirectory(exportsDir);
         String safeName = sanitizeBackupFileName(requestedFileName);
         if (markdown) {
             safeName = safeName.replaceFirst("(?i)(?:\\.lfh)?\\.json$", "");
             if (!safeName.toLowerCase(java.util.Locale.ROOT).endsWith(".md")) safeName += ".md";
         }
-        File outFile = new File(exportsDir, safeName);
-        writeUtf8Atomically(outFile, content == null ? "" : content);
-        return outFile;
+        return writeExportBytes(cacheDir, safeName,
+            (content == null ? "" : content).getBytes(StandardCharsets.UTF_8));
     }
 
     static File writeExportAttachment(File cacheDir, String fileName, byte[] content) throws IOException {
-        File outFile = new File(new File(cacheDir, EXPORTS_DIR_NAME), sanitizeFileName(fileName, "附件"));
-        writeBytesAtomically(outFile, content);
-        return outFile;
+        return writeExportBytes(cacheDir, sanitizeFileName(fileName, "附件"), content);
+    }
+
+    private static File writeExportBytes(File cacheDir, String fileName, byte[] content) throws IOException {
+        File exportDir = createExportDirectory(cacheDir);
+        boolean written = false;
+        try {
+            File outFile = new File(exportDir, fileName);
+            writeBytesAtomically(outFile, content);
+            written = true;
+            return outFile;
+        } finally {
+            if (!written) {
+                exportDir.delete();
+            }
+        }
+    }
+
+    private static File createExportDirectory(File cacheDir) throws IOException {
+        File exportsDir = new File(cacheDir, EXPORTS_DIR_NAME);
+        ensureDirectory(exportsDir);
+        while (true) {
+            File exportDir = new File(exportsDir, UUID.randomUUID().toString());
+            if (exportDir.mkdir()) {
+                return exportDir;
+            }
+            if (!exportDir.exists()) {
+                throw new IOException("无法创建存储目录: " + exportDir.getAbsolutePath());
+            }
+        }
     }
 
     static String sanitizeBackupFileName(String requested) {

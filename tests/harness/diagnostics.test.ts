@@ -4,10 +4,12 @@ import {
   createDiagnosticCollector,
   createDiagnosticStoryStorage,
   createDiagnosticTransport,
+  createFictionHarness,
   createInMemoryStoryStorage,
   sanitizeDiagnosticText,
   sanitizeEndpointProfile,
   scanDeepSeekExportZip,
+  streamCreativeReply,
   type KeyValueStorage,
   type LlmTransport,
 } from '../../src/harness/index.ts';
@@ -548,5 +550,50 @@ describe('Spec #26 Slice 2: DeepSeek structure radar & breadcrumb wrappers', () 
     );
     expect(json).not.toContain('story-id-private-canary');
     expect(bundle.events.find((e) => e.action === 'stream_error')?.statusCode).toBe(401);
+  });
+
+  it('records only proposal outcomes for creative and story replies', async () => {
+    const storage = createMemoryKv();
+    const collector = createDiagnosticCollector({ platform: 'web', storage });
+    const config = { baseUrl: '', model: 'fixture', apiKey: 'SECRET_CANARY', memoryOnly: true };
+    const fence = '```';
+    const valid = `${fence}lfh-change\n${JSON.stringify({ target: 'container', markdown: 'PROPOSAL_CANARY' }, null, 2)}\n${fence}`;
+    const invalid = `${fence}lfh-change\n{BROKEN_CANARY}\n${fence}`;
+    const replies = [
+      { contentDelta: 'REPLY_CANARY', finishReason: 'stop' },
+      { contentDelta: `REPLY_CANARY\n${invalid}`, finishReason: 'stop' },
+      { contentDelta: `REPLY_CANARY\n${valid}`, finishReason: 'length' },
+      { contentDelta: `REPLY_CANARY\n${valid}`, finishReason: 'stop' },
+      { contentDelta: `REPLY_CANARY\n${valid}`, finishReason: 'length' },
+    ];
+    const transport = createDiagnosticTransport({
+      async *streamChat() {
+        const reply = replies.shift();
+        if (!reply) throw new Error('Unexpected model request');
+        yield reply;
+      },
+    }, collector);
+    const messages = [{ role: 'user' as const, content: 'USER_CANARY' }];
+    await streamCreativeReply(transport, config, messages);
+    await streamCreativeReply(transport, config, messages);
+    await expect(streamCreativeReply(transport, config, messages)).rejects.toThrow();
+    const harness = createFictionHarness({ transport });
+    const turn = await harness.runTurn(harness.createStory({ title: 'TITLE_CANARY' }), 'USER_CANARY', config);
+    expect(turn.proposal?.target).toBe('container');
+    const retry = await harness.regenerateNode(turn.story, turn.assistantNode.id, config);
+    expect(retry.proposal).toBeUndefined();
+
+    const restored = createDiagnosticCollector({ platform: 'web', storage });
+    const bundle = restored.buildBundle(config);
+    const outcomes = bundle.events.filter((event) => event.action.startsWith('markdown_proposal_'));
+    expect(outcomes.map(({ action, level }) => [action, level])).toEqual([
+      ['markdown_proposal_none', 'info'],
+      ['markdown_proposal_invalid', 'warn'],
+      ['markdown_proposal_incomplete', 'warn'],
+      ['markdown_proposal_recognized', 'info'],
+      ['markdown_proposal_incomplete', 'warn'],
+    ]);
+    expect(outcomes.every((event) => event.meta === undefined && event.sanitizedMessage === undefined)).toBe(true);
+    expect(JSON.stringify(bundle)).not.toContain('CANARY');
   });
 });

@@ -1,4 +1,4 @@
-import type { MarkdownProposal, StoryDocumentState, StoryDocuments } from './markdownDocuments.ts';
+import type { MarkdownProposal, MarkdownProposalStatus, StoryDocumentState, StoryDocuments } from './markdownDocuments.ts';
 import type { CreativeStorage } from './creative.ts';
 import type { DiagnosticCollector } from './diagnostics.ts';
 
@@ -97,6 +97,7 @@ export interface LlmStreamRequest {
 
 export interface LlmTransport {
   streamChat(req: LlmStreamRequest): AsyncIterable<LlmStreamDelta>;
+  recordMarkdownProposal?(status: MarkdownProposalStatus | 'incomplete'): void;
 }
 
 export interface KeyValueStorage {

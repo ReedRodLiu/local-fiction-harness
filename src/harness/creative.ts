@@ -182,8 +182,12 @@ export async function streamCreativeReply(
     visible = next;
   }
   if (callbacks.signal?.aborted) throw new Error('生成已取消。');
-  if (finishReason !== 'stop') throw new Error('回复未完成，请重试。');
+  if (finishReason !== 'stop') {
+    transport.recordMarkdownProposal?.('incomplete');
+    throw new Error('回复未完成，请重试。');
+  }
   const reply = splitMarkdownReply(raw);
+  transport.recordMarkdownProposal?.(reply.proposalStatus);
   if (!reply.content.trim() && !reply.proposal) throw new Error('模型没有返回可用内容。');
   return reply;
 }

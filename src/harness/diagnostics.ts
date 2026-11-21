@@ -35,10 +35,17 @@ const DIAGNOSTIC_CATEGORIES = new Set<DiagnosticCategory>([
   'ui',
   'crash',
 ]);
+const MARKDOWN_PROPOSAL_ACTIONS = {
+  none: 'markdown_proposal_none',
+  invalid: 'markdown_proposal_invalid',
+  recognized: 'markdown_proposal_recognized',
+  incomplete: 'markdown_proposal_incomplete',
+} as const;
 const DIAGNOSTIC_ACTIONS = new Set([
   'stream_done',
   'stream_aborted',
   'stream_error',
+  ...Object.values(MARKDOWN_PROPOSAL_ACTIONS),
   'switch_branch',
   'switch_branch_failed',
   'list_stories',
@@ -742,7 +749,7 @@ function extractStatusCode(err: unknown): number | undefined {
 }
 
 /**
- * Wraps an LlmTransport so each stream records a zero-content breadcrumb (duration / status only).
+ * Wraps an LlmTransport so streams and Markdown proposal parsing can record zero-content breadcrumbs.
  */
 export function createDiagnosticTransport(
   inner: LlmTransport,
@@ -750,6 +757,13 @@ export function createDiagnosticTransport(
   now: () => number = () => Date.now(),
 ): LlmTransport {
   return {
+    recordMarkdownProposal(status) {
+      collector.recordEvent({
+        level: status === 'invalid' || status === 'incomplete' ? 'warn' : 'info',
+        category: 'llm',
+        action: MARKDOWN_PROPOSAL_ACTIONS[status],
+      });
+    },
     async *streamChat(req) {
       const startedAt = now();
       let chunkCount = 0;
