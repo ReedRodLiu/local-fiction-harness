@@ -1,7 +1,8 @@
 import { createDefaultId } from './id.ts';
 import {
-  documentProgress, documentVersion, editStoryDocument, migrateStoryDocuments, referenceDocument,
-  replaceDocumentProgress, splitMarkdownReply, storyDocumentState, syncConfirmedBlueprintMarkdown,
+  buildTurnProposalRecords,
+  documentProgress, documentVersion, editStoryDocument, migrateStoryDocuments, parseProposalReply, referenceDocument,
+  replaceDocumentProgress, storyDocumentState, syncConfirmedBlueprintMarkdown,
   visibleReplyPrefix, writeDocument,
   type MarkdownDocument, type StoryDocuments, type StoryDocumentState,
 } from './markdownDocuments.ts';
@@ -45,6 +46,7 @@ import type {
   TurnCallbacks,
   TurnExecutionResult,
   TurnNode,
+  TurnProposalRecord,
 } from './types.ts';
 
 export interface FictionHarnessDeps {
@@ -397,9 +399,9 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       writeDocument(scoped.documents.local, base.id, replaceDocumentProgress(base.markdown, snapshot.content), 'automatic');
     const container = documentVersion(scoped.documents.container, state.container);
     const reads: DocumentRead[] = [
-      ...(publicVersion ? [referenceDocument('public', '公共记忆', publicVersion)] : []),
+      ...(publicVersion ? [referenceDocument('public', '我的记忆', publicVersion)] : []),
       referenceDocument('container', scoped.title, container),
-      referenceDocument('local', '当前路径', documentVersion(local)),
+      referenceDocument('local', '分支笔记', documentVersion(local)),
     ];
     const edits = { ...scoped.documents.edits };
     const containerEdits = { ...scoped.documents.containerEdits };
@@ -460,6 +462,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     documentState: StoryDocumentState;
     reads: DocumentRead[];
     proposal?: TurnExecutionResult['proposal'];
+    proposals?: TurnProposalRecord[];
     expectedUpdatedAt?: number;
     userNode: TurnNode;
     baseSnapshot: PlotSummarySnapshot;
@@ -481,6 +484,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       summarySnapshot: opts.baseSnapshot,
       documents: opts.documentState,
       documentReads: opts.reads,
+      ...(opts.proposals && opts.proposals.length > 0 ? { proposals: opts.proposals } : {}),
     };
 
     const provisionalStory: Story = {
@@ -558,9 +562,25 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     );
 
     const result = await streamText(config, messages, callbacks, true);
-    const { content, proposal, proposalStatus } = splitMarkdownReply(result.content);
-    deps.transport.recordMarkdownProposal?.(result.finishReason === 'stop' ? proposalStatus : 'incomplete');
-    if (!content.trim() && !proposal) throw new Error('模型没有返回可用内容，请重试。');
+    const parsed = parseProposalReply(result.content, { finishReason: result.finishReason });
+    const legacyProposalStatus = parsed.proposals.length > 0
+      ? 'recognized'
+      : parsed.proposalStatus === 'needs_review'
+        ? 'invalid'
+        : 'none';
+    deps.transport.recordMarkdownProposal?.(result.finishReason === 'stop' ? legacyProposalStatus : 'incomplete');
+    const proposalRecords = buildTurnProposalRecords(
+      parsed,
+      {
+        setting: prepared.request.container.id,
+        memory: prepared.request.publicVersion?.id,
+        note: prepared.request.local.id,
+      },
+      now(),
+    );
+    if (!parsed.content.trim() && proposalRecords.length === 0) {
+      throw new Error('模型没有返回可用内容，请重试。');
+    }
 
     const userNode: TurnNode = {
       id: createId(),
@@ -576,11 +596,12 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       baseStory: workingStory,
       userNode,
       baseSnapshot: parentSnapshot,
-      content: content || '请核对拟保存的资料。',
+      content: parsed.content || '请核对下方的修改建议。',
       reasoningContent: result.reasoningContent,
       documentState: prepared.state,
       reads: prepared.reads,
-      proposal: result.finishReason === 'stop' ? proposal : undefined,
+      proposal: result.finishReason === 'stop' ? parsed.proposal : undefined,
+      proposals: proposalRecords,
       expectedUpdatedAt: prepared.expectedUpdatedAt,
       extraNodes: { [userNode.id]: userNode },
       rootNodeIds:
@@ -821,19 +842,36 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         prepared.request,
       );
       const result = await streamText(config, messages, callbacks, true);
-      const { content, proposal, proposalStatus } = splitMarkdownReply(result.content);
-      deps.transport.recordMarkdownProposal?.(result.finishReason === 'stop' ? proposalStatus : 'incomplete');
-      if (!content.trim() && !proposal) throw new Error('模型没有返回可用内容，请重试。');
+      const parsed = parseProposalReply(result.content, { finishReason: result.finishReason });
+      const legacyProposalStatus = parsed.proposals.length > 0
+        ? 'recognized'
+        : parsed.proposalStatus === 'needs_review'
+          ? 'invalid'
+          : 'none';
+      deps.transport.recordMarkdownProposal?.(result.finishReason === 'stop' ? legacyProposalStatus : 'incomplete');
+      const proposalRecords = buildTurnProposalRecords(
+        parsed,
+        {
+          setting: prepared.request.container.id,
+          memory: prepared.request.publicVersion?.id,
+          note: prepared.request.local.id,
+        },
+        now(),
+      );
+      if (!parsed.content.trim() && proposalRecords.length === 0) {
+        throw new Error('模型没有返回可用内容，请重试。');
+      }
 
       return finalizeAssistantReply({
         baseStory: workingStory,
         userNode,
         baseSnapshot: parentSnapshot,
-        content: content || '请核对拟保存的资料。',
+        content: parsed.content || '请核对下方的修改建议。',
         reasoningContent: result.reasoningContent,
         documentState: prepared.state,
         reads: prepared.reads,
-        proposal: result.finishReason === 'stop' ? proposal : undefined,
+        proposal: result.finishReason === 'stop' ? parsed.proposal : undefined,
+        proposals: proposalRecords,
         expectedUpdatedAt: prepared.expectedUpdatedAt,
         extraNodes: {},
         rootNodeIds: workingStory.rootNodeIds,

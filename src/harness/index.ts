@@ -19,5 +19,6 @@ export * from './markdownDocuments.ts';
 export * from './markdownProposal.ts';
 export * from './markdownDiff.ts';
 export * from './creative.ts';
+export * from './entryRouter.ts';
 export * from './migration.ts';
 export * from './backup.ts';

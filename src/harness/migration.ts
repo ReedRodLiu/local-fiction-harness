@@ -106,8 +106,9 @@ export function migrateStoryToV02(story: Story): Story {
 function migrateDraftWorkToV02(work: DraftWork): DraftWork {
   const hasTree = work.discussionNodes !== undefined;
   const hasLeaf = work.activeDiscussionLeafId !== undefined;
-  if (hasTree && hasLeaf) {
-    if (work.discussion.length === 0 && Object.keys(work.discussionNodes!).length > 0 && work.activeDiscussionLeafId) {
+  const treeCount = work.discussionNodes ? Object.keys(work.discussionNodes).length : 0;
+  if (hasTree && hasLeaf && (treeCount > 0 || work.discussion.length === 0)) {
+    if (work.discussion.length === 0 && treeCount > 0 && work.activeDiscussionLeafId) {
       return {
         ...work,
         discussion: getActiveBranchNodes(

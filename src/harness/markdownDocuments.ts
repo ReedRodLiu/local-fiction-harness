@@ -48,6 +48,7 @@ export {
   PROPOSAL_FENCE,
   V02_CHANGE_PROMPT,
   applyProposalPatch,
+  buildTurnProposalRecords,
   generateProposalSummary,
   inspectStreamingReplyPrefix,
   normalizeProposalTarget,

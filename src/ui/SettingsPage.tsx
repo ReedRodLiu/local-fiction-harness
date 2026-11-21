@@ -115,13 +115,13 @@ export function SettingsPage({
   return (
     <OverlayPageShell title="设置" testId="settings-page" onBack={onBack}>
       <InsetGroup
-        title="模型与密钥"
-        description="密钥只保存在你的设备上，应用会直接连接 DeepSeek 官方服务。"
+        title="连接 DeepSeek"
+        description="API Key 只保存在你的设备上，应用会直接连接 DeepSeek 官方服务。"
         testId="settings-connection-group"
       >
         <section className="connected-key-card" data-testid="deepseek-connection-card" aria-label="DeepSeek 连接状态">
           <div className="connected-key-header">
-            <strong>{hasCredentials ? '已连接 DeepSeek 官方' : '未连接 DeepSeek 官方'}</strong>
+            <strong>{hasCredentials ? '已连接 DeepSeek' : '未连接 DeepSeek'}</strong>
             <span
               className={`badge ${hasCredentials ? 'badge-ok' : 'badge-pending'}`}
               data-testid={hasCredentials && !useDevEnvKey && config.apiKey ? 'connected-key-mask' : undefined}
@@ -130,19 +130,19 @@ export function SettingsPage({
                 ? useDevEnvKey
                   ? '开发代理'
                   : maskApiKey(config.apiKey) || '本地已连接'
-                : '待配置'}
+                : '未连接'}
             </span>
           </div>
           <p className="wizard-privacy-note">
-            模型请求会由你的设备直接发送至 DeepSeek 官方 API；API Key 只保存在本机，不会交给项目方。
+            请求会由你的设备直接发送至 DeepSeek 官方 API；API Key 仅保存在本机，不会上传至第三方。
           </p>
           {hasCredentials ? (
             <div className="settings-button-row">
               <button type="button" className="btn" data-testid="change-key-btn" onClick={onOpenSetupWizard}>
-                更换 Key
+                更换 API Key
               </button>
               <button type="button" className="btn" data-testid="clear-key-btn" onClick={onClearSavedKey}>
-                清除已保存的 key
+                断开连接
               </button>
             </div>
           ) : (

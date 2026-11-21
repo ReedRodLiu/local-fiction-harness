@@ -65,6 +65,51 @@ export function getRootNodes(story: Story): TurnNode[] {
 }
 
 /**
+ * Returns all sibling TurnNodes sharing the same parentId as targetNodeId in a generic node map.
+ */
+export function getNodeSiblingBranchInfo(
+  nodes: Record<string, TurnNode>,
+  targetNodeId: string,
+): SiblingBranchInfo {
+  const target = nodes[targetNodeId];
+  if (!target) {
+    return {
+      siblings: [],
+      currentIndex: -1,
+      total: 0,
+      prevSiblingId: null,
+      nextSiblingId: null,
+    };
+  }
+  const rawSiblings = Object.values(nodes).filter((n) => n.parentId === target.parentId);
+  const siblings = sortNodesChronologically(rawSiblings);
+  const currentIndex = siblings.findIndex((n) => n.id === targetNodeId);
+  return {
+    siblings,
+    currentIndex,
+    total: siblings.length,
+    prevSiblingId: currentIndex > 0 ? siblings[currentIndex - 1].id : null,
+    nextSiblingId:
+      currentIndex >= 0 && currentIndex < siblings.length - 1
+        ? siblings[currentIndex + 1].id
+        : null,
+  };
+}
+
+/**
+ * Walks down from targetNodeId in a generic TurnNode map along the most recently active subtree.
+ */
+export function findLeafForTurnTreeNode(
+  nodes: Record<string, TurnNode>,
+  targetNodeId: string,
+): string | null {
+  if (!nodes[targetNodeId]) return null;
+  const fakeStory = { nodes, rootNodeIds: [] } as unknown as Story;
+  const childrenByParent = buildChildrenByParent(fakeStory);
+  return findLeafForBranchNode(fakeStory, targetNodeId, childrenByParent);
+}
+
+/**
  * Returns all sibling TurnNodes sharing the same parentId as targetNodeId, ordered by creation time.
  */
 export function getSiblingBranchInfo(story: Story, targetNodeId: string): SiblingBranchInfo {

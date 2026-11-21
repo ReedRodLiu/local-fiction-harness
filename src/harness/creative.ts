@@ -12,14 +12,16 @@ import {
   CHANGE_PROMPT,
   documentMessages,
   documentVersion,
+  legacyStoryMarkdown,
   newDocument,
+  parseProposalReply,
   referenceDocument,
   replaceDocumentProgress,
-  splitMarkdownReply,
   storyDocumentState,
   visibleReplyPrefix,
   writeDocument,
   type MarkdownDocument,
+  type MarkdownProposalStatus,
   type MarkdownVersion,
   type StoryDocuments,
 } from './markdownDocuments.ts';
@@ -120,13 +122,13 @@ export function newCharacter(name: string, markdown: string): LocalCharacter {
 
 export function newConversation(
   character: LocalCharacter,
-  kind: InteractionMode,
+  kind: InteractionMode = 'personal',
   markdown = '',
   title?: string,
 ): CharacterConversation {
   return {
     id: createDefaultId(),
-    title: title?.trim() || (kind === 'roleplay' ? '扮演对戏' : '本人聊天'),
+    title: title?.trim() || '新对话',
     kind,
     characterVersion: character.document.head,
     document: newDocument(markdown),
@@ -140,7 +142,7 @@ export function newConversation(
  * Resolves a DraftWork's discussion TurnNode tree from V0.2 `discussionNodes` or legacy `discussion`.
  */
 export function getWorkDiscussionTree(work: DraftWork): TurnTreeState {
-  if (work.discussionNodes) {
+  if (work.discussionNodes && Object.keys(work.discussionNodes).length > 0) {
     return {
       nodes: work.discussionNodes,
       activeLeafNodeId: work.activeDiscussionLeafId ?? null,
@@ -181,6 +183,7 @@ export function appendWorkDiscussionTurn(
   nodeInput: {
     role: TurnNode['role'];
     content: string;
+    reasoningContent?: string;
     parentId?: string | null;
     id?: string;
     createdAt?: number;
@@ -200,6 +203,7 @@ export function appendWorkDiscussionTurn(
     parentId,
     role: nodeInput.role,
     content: nodeInput.content,
+    ...(nodeInput.reasoningContent ? { reasoningContent: nodeInput.reasoningContent } : {}),
     createdAt: nodeInput.createdAt ?? Date.now(),
     summarySnapshot: parentSnapshot,
     ...(nodeInput.documentReads ? { documentReads: nodeInput.documentReads } : {}),
@@ -264,26 +268,28 @@ export function characterContext(
   const publicVersion = documentVersion(global);
   const persona = documentVersion(character.document, conversation.characterVersion);
   const local = documentVersion(conversation.document, conversationLocalVersion(conversation));
-  const prompt = conversation.kind === 'personal'
-    ? '和用户以本人身份聊天。自然延续关系；不清楚对方身份时可自然询问。'
-    : '和用户共同扮演对戏。维持人设，用户自己决定关键行动。自然承接旧事件及当时的参与者，新身份按初见交流。';
+  const prompt =
+    '你是该角色本人。保持人设一致，随用户的说话方式和情境自然切换日常聊天或代入对戏；让用户自主决定自身身份与关键行动。自然承接较早经历与当时参与者，用户换新身份时按初见交流。';
   const assembled = assembleCreativeThreeZoneContext({
     systemPrompt: `${prompt}\n${CHANGE_PROMPT}`,
     documents: [
-      ['公共记忆', publicVersion],
-      ['角色人设', persona],
+      ['我的记忆', publicVersion],
+      ['角色设定', persona],
     ],
     localDocument: local,
     nodes: conversation.nodes,
     targetParentId: conversation.activeLeafNodeId,
-    userInput: input || '按当前人设和身份自然开场，由你先说第一句。',
+    userInput: input || '按当前人设和情境自然开场，由你先说第一句。',
     budgetOverrides,
   });
   return {
     messages: assembled.messages,
     metrics: assembled.metrics,
-    reads: [referenceDocument('public', '公共记忆', publicVersion),
-      referenceDocument('container', character.name, persona), referenceDocument('local', '当前对话', local)],
+    reads: [
+      referenceDocument('public', '我的记忆', publicVersion),
+      referenceDocument('container', character.name, persona),
+      referenceDocument('local', '分支笔记', local),
+    ],
     localVersion: local.id,
   };
 }
@@ -480,10 +486,15 @@ export async function streamCreativeReply(
   callbacks: TurnCallbacks = {},
 ) {
   let raw = '';
+  let reasoningContent = '';
   let finishReason: string | null | undefined;
   let visible = '';
   for await (const delta of transport.streamChat({ ...config, messages, signal: callbacks.signal })) {
     if (delta.finishReason != null) finishReason = delta.finishReason;
+    if (delta.reasoningDelta) {
+      reasoningContent += delta.reasoningDelta;
+      callbacks.onReasoningDelta?.(delta.reasoningDelta);
+    }
     if (!delta.contentDelta) continue;
     raw += delta.contentDelta;
     const next = visibleReplyPrefix(raw);
@@ -495,17 +506,83 @@ export async function streamCreativeReply(
     transport.recordMarkdownProposal?.('incomplete');
     throw new Error('回复未完成，请重试。');
   }
-  const reply = splitMarkdownReply(raw);
-  transport.recordMarkdownProposal?.(reply.proposalStatus);
-  if (!reply.content.trim() && !reply.proposal) throw new Error('模型没有返回可用内容。');
-  return reply;
+  const parsed = parseProposalReply(raw, { finishReason });
+  const legacyProposalStatus: MarkdownProposalStatus = parsed.proposals.length > 0
+    ? 'recognized'
+    : parsed.proposalStatus === 'needs_review'
+      ? 'invalid'
+      : 'none';
+  transport.recordMarkdownProposal?.(legacyProposalStatus);
+  if (!parsed.content.trim() && parsed.proposals.length === 0 && parsed.unparsedBlocks.length === 0) {
+    throw new Error('模型没有返回可用内容。');
+  }
+  return {
+    content: parsed.content,
+    proposalStatus: legacyProposalStatus,
+    proposalParseStatus: parsed.proposalStatus,
+    proposal: parsed.proposal,
+    proposals: parsed.proposals,
+    unparsedBlocks: parsed.unparsedBlocks,
+    reasoningContent,
+  };
+}
+
+const SYNTHETIC_CONVERSATION_TITLE_RE = /^(?:本人聊天|扮演对戏|新对话)(?:\s+\d+)?$/;
+
+/**
+ * Returns a human-readable title or opening snippet for a character conversation,
+ * replacing legacy synthetic `本人聊天 N` / `扮演对戏 N` labels when possible.
+ */
+export function formatCharacterConversationTitle(
+  character: LocalCharacter,
+  conversation: CharacterConversation,
+): string {
+  const explicit = conversation.title?.trim() ?? '';
+  if (explicit && !SYNTHETIC_CONVERSATION_TITLE_RE.test(explicit)) {
+    return explicit;
+  }
+  const path = getActiveBranchNodes(conversation);
+  const firstMeaningful = path.find((node) => node.content.trim())
+    ?? Object.values(conversation.nodes)
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .find((node) => node.content.trim());
+  if (firstMeaningful) {
+    const compact = firstMeaningful.content.replace(/\s+/g, ' ').trim();
+    return compact.length > 22 ? `${compact.slice(0, 22)}…` : compact;
+  }
+  return `与${character.name || '角色'}的新对话`;
 }
 
 export function conversationExport(character: LocalCharacter, conversation: CharacterConversation): string {
   const path = getActiveBranchNodes(conversation);
+  const title = formatCharacterConversationTitle(character, conversation);
+  const localNote = documentVersion(conversation.document, conversationLocalVersion(conversation)).markdown.trim();
   return [
-    `# ${character.name} · ${conversation.kind === 'personal' ? '本人聊天' : '扮演对戏'}`,
+    `# ${character.name} · ${title}`,
     ...path.map((node) => `### ${node.role === 'user' ? '你' : character.name}\n\n${node.content}`),
-    documentVersion(conversation.document, conversationLocalVersion(conversation)).markdown,
+    localNote ? `## 分支笔记\n\n${localNote}` : '',
+  ].filter(Boolean).join('\n\n');
+}
+
+/**
+ * Exports a 文游 story's current setting, active branch narrative, and branch note as UTF-8 Markdown.
+ */
+export function storyExportMarkdown(story: Story): string {
+  const path = getActiveBranchNodes(story);
+  let settingMarkdown = '';
+  let branchNoteMarkdown = '';
+  if (story.documents) {
+    const scoped = { ...story, documents: story.documents };
+    const state = storyDocumentState(scoped, story.activeLeafNodeId, true);
+    settingMarkdown = documentVersion(scoped.documents.container, state.container).markdown.trim();
+    branchNoteMarkdown = documentVersion(scoped.documents.local, state.local).markdown.trim();
+  } else {
+    settingMarkdown = legacyStoryMarkdown(story).trim();
+  }
+  return [
+    `# ${story.title}`,
+    settingMarkdown ? `## 故事设定\n\n${settingMarkdown}` : '',
+    ...path.map((node) => `### ${node.role === 'user' ? '玩家' : '叙事 AI'}\n\n${node.content}`),
+    branchNoteMarkdown ? `## 分支笔记\n\n${branchNoteMarkdown}` : '',
   ].filter(Boolean).join('\n\n');
 }

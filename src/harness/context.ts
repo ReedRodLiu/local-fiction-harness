@@ -253,13 +253,13 @@ export function assembleThreeZoneContext(
     : trimRecentWindow(uncovered, budget, trimmedInput.length, setupFilter);
 
   const readDocs = requestDocuments?.publicVersion
-    ? documentMessages([['公共记忆', requestDocuments.publicVersion]])
+    ? documentMessages([['我的记忆', requestDocuments.publicVersion]])
     : [];
   const messages: LlmMessage[] = [{ role: 'system', content: anchorText }, ...readDocs];
   let summaryChars = 0;
 
   if (requestDocuments?.local?.markdown.trim()) {
-    const local = documentMessages([['当前路径', requestDocuments.local]])[0];
+    const local = documentMessages([['分支笔记', requestDocuments.local]])[0];
     summaryChars = local.content.length;
     messages.push(local);
   } else if (snapshot.content.trim()) {

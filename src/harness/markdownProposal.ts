@@ -1,4 +1,5 @@
 import { createDefaultId } from './id.ts';
+import type { TurnProposalRecord } from './types.ts';
 
 export type LegacyProposalTarget = 'public' | 'container' | 'local' | 'character';
 export type ProposalTarget = 'setting' | 'memory' | 'note' | 'character' | 'draft';
@@ -980,4 +981,61 @@ export function resolveProposalMarkdown(
     ok: true,
     markdown: [head, replacementSection, tail].filter((part) => part !== '').join('\n\n'),
   };
+}
+
+/**
+ * Converts parsed `lfh-proposal` / `lfh-change` blocks and unparsed fallback blocks into
+ * persistent `TurnProposalRecord[]` entries attached to a `TurnNode`.
+ */
+export function buildTurnProposalRecords(
+  parsed: Pick<ProposalReplySplit, 'proposals' | 'unparsedBlocks'>,
+  baseVersions: { setting?: string; memory?: string; note?: string } = {},
+  now: number = Date.now(),
+): TurnProposalRecord[] {
+  const resolveBaseVersion = (target: ProposalTarget): string | undefined => {
+    if (target === 'setting') return baseVersions.setting;
+    if (target === 'memory') return baseVersions.memory;
+    if (target === 'note') return baseVersions.note;
+    return undefined;
+  };
+
+  const validRecords: TurnProposalRecord[] = parsed.proposals.map((item) => {
+    const baseVersionId = resolveBaseVersion(item.target);
+    return {
+      id: item.id,
+      target: item.target,
+      op: item.op,
+      summary: item.summary,
+      status: 'pending',
+      body: item.body,
+      ...(item.heading ? { heading: item.heading } : {}),
+      ...(item.name ? { name: item.name } : {}),
+      ...(baseVersionId ? { baseVersionId } : {}),
+      raw: item.raw,
+      createdAt: now,
+      updatedAt: now,
+    };
+  });
+
+  const needsReviewRecords: TurnProposalRecord[] = parsed.unparsedBlocks.map((block) => {
+    const target = block.partialTarget ?? 'setting';
+    const baseVersionId = resolveBaseVersion(target);
+    return {
+      id: createDefaultId(),
+      target,
+      op: block.partialOp ?? 'full',
+      summary: block.partialSummary?.trim() || '建议格式需手动核对',
+      status: 'needs_review',
+      body: block.raw,
+      ...(block.partialHeading ? { heading: block.partialHeading } : {}),
+      ...(block.partialName ? { name: block.partialName } : {}),
+      ...(baseVersionId ? { baseVersionId } : {}),
+      raw: block.raw,
+      reason: block.reason,
+      createdAt: now,
+      updatedAt: now,
+    };
+  });
+
+  return [...validRecords, ...needsReviewRecords];
 }

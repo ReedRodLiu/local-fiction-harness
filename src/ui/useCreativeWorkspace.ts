@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { emptyWorkspace, type CreativeStorage, type CreativeWorkspaceState } from '../harness/index.ts';
+import {
+  emptyWorkspace,
+  migrateWorkspaceToV02,
+  type CreativeStorage,
+  type CreativeWorkspaceState,
+} from '../harness/index.ts';
 
 export type SaveWorkspace = (
   change: (current: CreativeWorkspaceState) => CreativeWorkspaceState,
@@ -15,8 +20,9 @@ export function useCreativeWorkspace(storage?: CreativeStorage) {
     let cancelled = false;
     void (storage?.load() ?? Promise.resolve(null)).then((saved) => {
       if (cancelled) return;
-      current.current = saved ?? emptyWorkspace();
-      setWorkspace(current.current);
+      const migrated = saved ? migrateWorkspaceToV02(saved) : emptyWorkspace();
+      current.current = migrated;
+      setWorkspace(migrated);
       setReady(true);
     }).catch(() => {
       if (!cancelled) setError('读取本地工作台失败。请重新打开应用。');
@@ -30,14 +36,15 @@ export function useCreativeWorkspace(storage?: CreativeStorage) {
       const previous = current.current;
       const changed = change(previous);
       if (changed === previous) return previous;
-      const next = { ...changed, revision: previous.revision + 1 };
+      const next = migrateWorkspaceToV02({ ...changed, revision: previous.revision + 1 });
       try {
         await storage.save(next, previous.revision);
       } catch (err) {
         const updated = await storage.load().catch(() => null);
         if (updated && updated.revision !== previous.revision) {
-          current.current = updated;
-          setWorkspace(updated);
+          const migratedUpdated = migrateWorkspaceToV02(updated);
+          current.current = migratedUpdated;
+          setWorkspace(migratedUpdated);
         }
         throw err;
       }
@@ -53,8 +60,9 @@ export function useCreativeWorkspace(storage?: CreativeStorage) {
     await queue.current;
     const latest = await storage?.load();
     if (latest && latest.revision > current.current.revision) {
-      current.current = latest;
-      setWorkspace(latest);
+      const migrated = migrateWorkspaceToV02(latest);
+      current.current = migrated;
+      setWorkspace(migrated);
     }
     return current.current;
   }, [storage]);

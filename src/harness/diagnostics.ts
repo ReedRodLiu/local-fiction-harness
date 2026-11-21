@@ -26,8 +26,9 @@ const STACK_MODULES = new Set([
   'bundle.js',
   // V0.2 modules
   'markdownProposal.ts', 'markdownDiff.ts', 'MarkdownView.tsx', 'ProposalCard.tsx',
-  'migration.ts', 'backup.ts', 'creative.ts', 'DraftPane.tsx', 'CharacterPane.tsx',
+  'migration.ts', 'backup.ts', 'creative.ts', 'entryRouter.ts', 'DraftPane.tsx', 'CharacterPane.tsx',
   'WelcomeView.tsx', 'SettingsPage.tsx', 'useCreativeReply.ts', 'useCreativeWorkspace.ts',
+  'useManuscriptAutosave.ts', 'useAutoScrollTimeline.ts', 'CompanionSheet.tsx',
   'markdownDocuments.ts', 'storyStorage.ts', 'storySkeleton.ts', 'context.ts',
   'branches.ts', 'storyTree.ts',
 ]);

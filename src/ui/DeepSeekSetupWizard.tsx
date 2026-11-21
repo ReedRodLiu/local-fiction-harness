@@ -129,8 +129,8 @@ export function DeepSeekSetupWizard({
       <div className="wizard-dialog-content" data-verifying={isVerifying ? 'true' : 'false'}>
         <div className="wizard-header">
           <div>
-            <h3 id="wizard-title">连接 DeepSeek 官方</h3>
-            <p className="wizard-subtitle">只需 3 步拿到你的专属钥匙，1 分钟内即可开始游玩</p>
+            <h3 id="wizard-title">连接 DeepSeek</h3>
+            <p className="wizard-subtitle">只需 3 步连接官方服务，API Key 仅保存在本机</p>
           </div>
           <button
             type="button"
@@ -156,7 +156,7 @@ export function DeepSeekSetupWizard({
               <strong>前往 DeepSeek 开放平台</strong>
             </div>
             <p className="wizard-step-desc">
-              新注册用户通常有免费额度。点击下方按钮用手机浏览器打开官网：
+              前往 DeepSeek 开放平台获取 API Key：
             </p>
             <button
               type="button"
@@ -164,14 +164,14 @@ export function DeepSeekSetupWizard({
               data-testid="wizard-open-platform-btn"
               onClick={handleOpenPlatform}
             >
-              一键打开 DeepSeek 开放平台
+              打开 DeepSeek 开放平台
             </button>
           </li>
 
           <li className="wizard-step-card">
             <div className="wizard-step-title">
               <span className="wizard-step-num">2</span>
-              <strong>创建并复制你的钥匙（API key）</strong>
+              <strong>创建并复制 API Key</strong>
             </div>
             <ul className="wizard-mini-list">
               <li>使用手机号或微信登录开放平台；</li>
