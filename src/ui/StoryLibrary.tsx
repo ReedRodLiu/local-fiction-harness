@@ -3,8 +3,29 @@ import { MoreHorizontal } from 'lucide-react';
 import { getActiveBranchNodes, projectStoryTreeSpine, type Story } from '../harness/index.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 
-interface StoryLibraryProps {
+/** A work or character displayed in the library. Subtitle is already formatted for display. */
+export interface LibraryItem {
+  id: string;
+  title: string;
+  subtitle: string;
+}
+
+/** Callbacks operate on the item ID; export should produce a UTF-8 Markdown file. */
+export interface LibraryItemActions {
+  onSelect: (id: string) => void;
+  onRename: (id: string, title: string) => void;
+  onDelete: (id: string) => void;
+  onExport: (id: string) => void;
+}
+
+export interface StoryLibraryProps {
   stories: Story[];
+  works?: LibraryItem[];
+  characters?: LibraryItem[];
+  activeWorkId?: string;
+  activeCharacterId?: string;
+  workActions?: LibraryItemActions;
+  characterActions?: LibraryItemActions;
   activeStoryId: string;
   onSelectStory: (id: string) => void;
   onRenameStory: (id: string, title: string) => void;
@@ -14,12 +35,19 @@ interface StoryLibraryProps {
 
 export function StoryLibrary({
   stories,
+  works = [],
+  characters = [],
+  activeWorkId,
+  activeCharacterId,
+  workActions,
+  characterActions,
   activeStoryId,
   onSelectStory,
   onRenameStory,
   onDeleteStory,
   onExportStoryBackup,
 }: StoryLibraryProps) {
+  const [category, setCategory] = useState<'story' | 'work' | 'character'>('story');
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -94,25 +122,42 @@ export function StoryLibrary({
   const commitRename = (id: string) => {
     const trimmed = renameDraft.trim();
     setRenamingId(null);
-    if (trimmed) onRenameStory(id, trimmed);
+    if (trimmed) actions?.onRename(id, trimmed);
   };
 
+  const config = {
+    story: { label: '文游', heading: '我的故事', items: stories.map((story) => ({
+      id: story.id, title: story.title,
+      subtitle: `${Math.floor(getActiveBranchNodes(story).length / 2)} 轮 · ${projectStoryTreeSpine(story).forkCount} 分支`,
+    })), activeId: activeStoryId, actions: { onSelect: onSelectStory, onRename: onRenameStory, onDelete: onDeleteStory, onExport: onExportStoryBackup } },
+    work: { label: '产粮', heading: '我的作品', items: works, activeId: activeWorkId, actions: workActions },
+    character: { label: '角色', heading: '我的角色', items: characters, activeId: activeCharacterId, actions: characterActions },
+  };
+  const current = config[category];
+  const actions = current.actions;
+
   return (
-    <section className="story-library" aria-label="我的故事">
+    <section className="story-library" aria-label={current.heading}>
+      <div className="library-categories" role="group" aria-label="书架分类">
+        {(['story', 'work', 'character'] as const).map((key) => (
+          <button key={key} type="button" aria-pressed={category === key} onClick={() => {
+            closeMenu(false);
+            setRenamingId(null);
+            setCategory(key);
+          }}>{config[key].label}</button>
+        ))}
+      </div>
       <div className="library-section-heading">
-        <h2>我的故事</h2>
-        <span className="story-count">{stories.length}</span>
+        <h2>{current.heading}</h2>
+        <span className="story-count">{current.items.length}</span>
       </div>
 
-      {stories.length === 0 ? (
-        <p className="library-empty">导入剧本或 DeepSeek 存档后，故事会保存在这里。</p>
+      {current.items.length === 0 ? (
+        <p className="library-empty">{category === 'story' ? '导入剧本或 DeepSeek 存档后，故事会保存在这里。' : `还没有${category === 'work' ? '作品' : '角色'}。`}</p>
       ) : (
         <ul className="story-list">
-          {stories.map((item) => {
-            const isActive = item.id === activeStoryId;
-            const activeNodes = getActiveBranchNodes(item);
-            const turnCount = Math.floor(activeNodes.length / 2);
-            const forkCount = projectStoryTreeSpine(item).forkCount;
+          {current.items.map((item) => {
+            const isActive = item.id === current.activeId;
             return (
               <li
                 key={item.id}
@@ -130,7 +175,7 @@ export function StoryLibrary({
                   >
                     <input
                       type="text"
-                      aria-label="重命名故事标题"
+                      aria-label={`重命名${category === 'story' ? '故事' : category === 'work' ? '作品' : '角色'}标题`}
                       value={renameDraft}
                       onChange={(event) => setRenameDraft(event.target.value)}
                       onKeyDown={(event) => {
@@ -152,13 +197,13 @@ export function StoryLibrary({
                       className="story-select-button"
                       data-testid="story-select-button"
                       aria-current={isActive ? 'true' : undefined}
-                      onClick={() => onSelectStory(item.id)}
+                      onClick={() => actions?.onSelect(item.id)}
                     >
                       <span className="story-active-dot" aria-hidden="true" />
                       <span className="story-list-copy">
                         <span className="story-list-title">{item.title}</span>
                         <span className="story-list-meta">
-                          {turnCount} 轮 · {forkCount} 分支
+                          {item.subtitle}
                         </span>
                       </span>
                     </button>
@@ -210,10 +255,10 @@ export function StoryLibrary({
                             role="menuitem"
                             onClick={() => {
                               closeMenu();
-                              onExportStoryBackup(item.id);
+                              actions?.onExport(item.id);
                             }}
                           >
-                            导出 .lfh.json
+                            导出 {category === 'story' ? '.lfh.json' : '.md'}
                           </button>
                           <button
                             type="button"
@@ -221,10 +266,10 @@ export function StoryLibrary({
                             className="danger-menu-item"
                             onClick={() => {
                               closeMenu();
-                              onDeleteStory(item.id);
+                              actions?.onDelete(item.id);
                             }}
                           >
-                            删除故事
+                            删除{category === 'story' ? '故事' : category === 'work' ? '作品' : '角色'}
                           </button>
                         </div>
                       )}
