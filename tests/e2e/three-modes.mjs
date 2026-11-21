@@ -12,11 +12,17 @@ export async function verifyThreeModes(browser, port, helpers) {
     const page = await context.newPage();
     page.setDefaultTimeout(8000);
     const requests = [];
+    let failOpening = true;
     await mockSuccessfulKeyVerification(page);
     await page.route('**/chat/completions', async (route) => {
       const messages = route.request().postDataJSON().messages;
       requests.push(messages);
       const input = messages.at(-1)?.content ?? '';
+      if (input.includes('讨论纸月') && failOpening) {
+        failOpening = false;
+        await route.fulfill({ status: 500, body: 'synthetic failure' });
+        return;
+      }
       let content = `接续：${input}`;
       if (input.includes('保存公共记忆')) content = `请核对公共记忆。\n${proposal('public', '仅用短句。PUBLIC-LATEST')}`;
       else if (input.includes('带入文游人设')) content = `请核对渡口人物。\n${proposal('character', '渡口的收灯人。SOURCE-COPY', '收灯人')}`;
@@ -56,8 +62,21 @@ export async function verifyThreeModes(browser, port, helpers) {
     assert.equal(await page.getByRole('heading', { level: 1 }).count(), 1, 'Writing shares the main top bar');
     await page.fill('#turn-input', '纸月车站。讨论纸月车站的开场');
     await button('发送行动').click();
+    await page.getByTestId('deepseek-setup-wizard').getByRole('button', { name: '关闭引导' }).click();
+    await go();
+    await page.getByTestId('desktop-library').getByRole('button', { name: '产粮', exact: true }).click();
+    await page.getByTestId('desktop-library').getByTestId('story-select-button').filter({ hasText: '纸月车站' }).click();
+    await writing.getByText('你 · 纸月车站。讨论纸月车站的开场', { exact: true }).waitFor();
+    await writing.getByRole('button', { name: '发送', exact: true }).click();
     await completePendingSetup(page, 'sk-synthetic-fixture');
+    await writing.getByRole('alert').waitFor();
+    await go();
+    await page.getByTestId('desktop-library').getByRole('button', { name: '产粮', exact: true }).click();
+    await page.getByTestId('desktop-library').getByTestId('story-select-button').filter({ hasText: '纸月车站' }).click();
+    await writing.getByRole('button', { name: '发送', exact: true }).click();
     await writing.getByText('AI · 废弃车站收到一件无人承认的行李。', { exact: true }).waitFor();
+    assert.equal(await writing.getByText('你 · 纸月车站。讨论纸月车站的开场', { exact: true }).count(), 1);
+    assert.equal(requests.at(-1).filter((message) => message.content === '纸月车站。讨论纸月车站的开场').length, 1);
     await page.getByTestId('app-topbar').getByRole('heading', { name: '纸月车站', exact: true }).waitFor();
     assert.doesNotMatch(await writing.innerText(), /资料审计/);
     assert.equal(await page.getByTestId('creative-document-reads').count(), 1);

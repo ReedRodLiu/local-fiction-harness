@@ -3,6 +3,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ArrowUp, Sparkles, Square } from 'lucide-react';
 import {
   DEFAULT_MODEL_CONFIG,
+  createDefaultId,
+  EMPTY_SUMMARY_SNAPSHOT,
   computeActiveReviewState,
   conversationExport,
   createAsyncModelConfigStore,
@@ -867,7 +869,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const openImportView = (mode: ImportMode) => {
-    if (branchSwitchBusyRef.current) return;
+    if (creationPending.current || branchSwitchBusyRef.current) return;
     captureOverlayTrigger();
     abortActiveStream(true);
     setCreativePage(null);
@@ -880,7 +882,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const openSettings = () => {
-    if (branchSwitchBusyRef.current) return;
+    if (creationPending.current || branchSwitchBusyRef.current) return;
     captureOverlayTrigger();
     setCreativeCompanionOpen(false);
     setShowImport(false);
@@ -1232,7 +1234,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleDeleteStory = async (id: string) => {
-    if (branchSwitchBusyRef.current) return;
+    if (creationPending.current || branchSwitchBusyRef.current) return;
     abortActiveStream(true);
     invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
@@ -1271,6 +1273,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleImportBackupFile = async (file: File) => {
+    if (creationPending.current) return;
     abortActiveStream(true);
     invalidateSummaryTask();
     const opSeq = ++storyOpSeqRef.current;
@@ -1300,8 +1303,8 @@ export function App({ runtime }: AppProps) {
     }
   };
 
-  function openCreativePage(mode: 'writing' | 'character') {
-    if (deepSeekImportBusyRef.current) return;
+  function openCreativePage(mode: 'writing' | 'character', fromCreation = false) {
+    if ((!fromCreation && creationPending.current) || deepSeekImportBusyRef.current) return;
     captureOverlayTrigger();
     setCreativeCompanionOpen(false);
     abortActiveStream(true);
@@ -1354,11 +1357,12 @@ export function App({ runtime }: AppProps) {
         setInput('');
         startFirstAct(created);
       } else if (mode === 'writing') {
-        const work = { ...newWork(creationTitle(prompt, '未命名作品')), writingStarted: manuscript };
+        const firstTurn = manuscript ? null : { id: createDefaultId(), parentId: null, role: 'user' as const, content: prompt, summarySnapshot: EMPTY_SUMMARY_SNAPSHOT, createdAt: Date.now() };
+        const work = { ...newWork(creationTitle(prompt, '未命名作品')), writingStarted: manuscript, discussion: firstTurn ? [firstTurn] : [] };
         await creative.save((state) => ({ ...state, works: [...state.works, work], activeWorkId: work.id }));
         setInitialCreativeTurn(manuscript ? null : { id: work.id, prompt });
         setInput('');
-        openCreativePage('writing');
+        openCreativePage('writing', true);
       } else {
         const character = newCharacter(creationTitle(prompt, '未命名角色'), prompt);
         const conversation = newConversation(character, 'personal');
@@ -1368,7 +1372,7 @@ export function App({ runtime }: AppProps) {
         }));
         setInitialCreativeTurn({ id: character.id, prompt: '' });
         setInput('');
-        openCreativePage('character');
+        openCreativePage('character', true);
       }
     } catch (error) {
       setErrorMsg(toErrorMessage(error, '新建创作失败。'));
@@ -1379,6 +1383,7 @@ export function App({ runtime }: AppProps) {
   }
 
   async function changeCreativeItem(mode: 'writing' | 'character', id: string, action: 'select' | 'rename' | 'delete' | 'export', title = '') {
+    if (creationPending.current) return;
     setErrorMsg(null);
     try {
       if (action === 'export') {

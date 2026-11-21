@@ -123,7 +123,7 @@ function DraftPane(props: Props & { work: DraftWork }) {
   const reply = useCreativeReply(runtime, props.requestModel);
   const [text, setText] = useState(work.body);
   const editing = props.manuscript ?? Boolean(work.writingStarted || work.body || work.source);
-  const [instruction, setInstruction] = useState('');
+  const [instruction, setInstruction] = useState(() => work.discussion.at(-1)?.role === 'user' ? work.discussion.at(-1)!.content : '');
   const [useDiscussion, setUseDiscussion] = useState(false);
   const [excerpt, setExcerpt] = useState('');
   const [exported, setExported] = useState(false);
@@ -200,7 +200,9 @@ function DraftPane(props: Props & { work: DraftWork }) {
       if (signal.aborted) return;
       const publicDoc = documentVersion(state.publicDocument);
       const workDoc = documentVersion(live.document);
-      const linked = !editing || includeDiscussion ? live.discussion : [];
+      const pending = !editing && live.discussion.at(-1)?.role === 'user' && live.discussion.at(-1)?.content === input
+        ? live.discussion.at(-1) : undefined;
+      const linked = !editing || includeDiscussion ? (pending ? live.discussion.slice(0, -1) : live.discussion) : [];
       const draftInput = editing ? writingInput(live, start, end, input) : input;
       const messages = creativeContext(editing
         ? '给作者一份可采纳的短文本建议。按当前指令和选区创作，结合正文和作品资料。只有明确提供的关联讨论才可引用。若无法从所给材料确认所指原段，请作者选段。'
@@ -216,8 +218,9 @@ function DraftPane(props: Props & { work: DraftWork }) {
           suggestions: [...latest.suggestions, { id: createDefaultId(), instruction: input,
             text: result.content, revision: live.bodyRevision, start, end, documentReads: reads }],
         };
-        const user = makeTurn('user', input, latest.discussion.at(-1)?.id ?? null);
-        return { ...latest, discussion: [...latest.discussion, user, {
+        const user = pending ?? makeTurn('user', input, latest.discussion.at(-1)?.id ?? null);
+        if (pending && latest.discussion.at(-1)?.id !== pending.id) throw new Error('开书讨论已变化，请重试。');
+        return { ...latest, discussion: [...latest.discussion, ...(pending ? [] : [user]), {
           ...makeTurn('assistant', replyContent(result.content, result.proposal), user.id), documentReads: reads,
         }] };
       }));
