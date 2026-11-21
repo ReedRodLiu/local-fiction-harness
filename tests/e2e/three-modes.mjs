@@ -51,7 +51,11 @@ export async function verifyThreeModes(browser, port, helpers) {
     await completePendingSetup(page, 'sk-synthetic-fixture');
     await writing.getByText('AI · 废弃车站收到一件无人承认的行李。', { exact: true }).waitFor();
     assert.doesNotMatch(await writing.innerText(), /资料审计/);
-    const writingReads = writing.getByTestId('creative-document-reads');
+    assert.equal(await page.getByTestId('creative-document-reads').count(), 1);
+    assert.equal(await page.getByTestId('creative-document-reads').isVisible(), false);
+    await writing.getByRole('button', { name: '创作资料' }).click();
+    const writingSheet = page.getByRole('dialog', { name: '创作资料' });
+    const writingReads = writingSheet.getByTestId('creative-document-reads');
     await writingReads.waitFor();
     if (await writingReads.evaluate((element) => element.open)) {
       throw new Error('Writing document reads should be collapsed by default.');
@@ -60,6 +64,8 @@ export async function verifyThreeModes(browser, port, helpers) {
     assert.match(await writingReads.innerText(), /纸月车站/);
     assert.match(await writingReads.innerText(), /公共记忆/);
     await writingReads.locator('summary').click();
+    await page.goBack();
+    await writingSheet.waitFor({ state: 'hidden' });
     await page.getByLabel('讨论内容').fill('把选定背景总结存入作品资料');
     await button('发送').click();
     await dialog.getByTestId('document-proposal-preview').waitFor();
@@ -84,7 +90,10 @@ export async function verifyThreeModes(browser, port, helpers) {
     await button('本人聊天').click();
     await character.getByText('岑灯推开码头边的窗。', { exact: true }).waitFor();
     assert.doesNotMatch(await character.innerText(), /资料审计/);
-    const characterReads = character.getByTestId('creative-document-reads');
+    assert.equal(await page.getByTestId('creative-document-reads').isVisible(), false);
+    await character.getByRole('button', { name: '创作资料' }).click();
+    const characterSheet = page.getByRole('dialog', { name: '创作资料' });
+    const characterReads = characterSheet.getByTestId('creative-document-reads');
     await characterReads.waitFor();
     if (await characterReads.evaluate((element) => element.open)) {
       throw new Error('Character document reads should be collapsed by default.');
@@ -93,6 +102,8 @@ export async function verifyThreeModes(browser, port, helpers) {
     assert.match(await characterReads.innerText(), /岑灯/);
     assert.match(await characterReads.innerText(), /公共记忆/);
     await characterReads.locator('summary').click();
+    await characterSheet.getByRole('button', { name: '关闭创作资料面板' }).click();
+    await characterSheet.waitFor({ state: 'hidden' });
     const requestPublicEdit = async () => {
       await page.getByLabel('发消息').fill('请保存公共记忆，今后只用短句');
       await button('发送').click();

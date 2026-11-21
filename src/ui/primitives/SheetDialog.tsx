@@ -7,6 +7,7 @@ interface SheetDialogProps {
   title: string;
   label: string;
   testId?: string;
+  panelName?: string;
   status?: string;
   statusTestId?: string;
   children: ReactNode;
@@ -25,6 +26,7 @@ export function SheetDialog({
   title,
   label,
   testId,
+  panelName = '剧情',
   status,
   statusTestId,
   children,
@@ -188,7 +190,7 @@ export function SheetDialog({
         <button
           type="button"
           className="sheet-drag-handle"
-          aria-label={expanded ? '收起剧情面板' : '展开剧情面板'}
+          aria-label={expanded ? `收起${panelName}面板` : `展开${panelName}面板`}
           aria-expanded={expanded}
           data-testid="sheet-drag-handle"
           onPointerDown={onHandlePointerDown}
@@ -210,7 +212,7 @@ export function SheetDialog({
         <button
           type="button"
           className="icon-button sheet-close"
-          aria-label="关闭剧情面板"
+          aria-label={`关闭${panelName}面板`}
           onClick={requestClose}
         >
           <X size={18} strokeWidth={1.75} />

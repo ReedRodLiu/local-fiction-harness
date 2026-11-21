@@ -13,6 +13,8 @@ import { MessageContent } from './MessageContent.tsx';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { ModalDialog } from './primitives/ModalDialog.tsx';
 import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
+import { SheetDialog } from './primitives/SheetDialog.tsx';
+import type { ReactNode } from 'react';
 import { toErrorMessage } from './textHelpers.ts';
 import type { SaveWorkspace } from './useCreativeWorkspace.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
@@ -96,6 +98,18 @@ function replyContent(content: string, proposal?: MarkdownProposal) {
   return content.trim() || (proposal ? '请核对拟保存的文档。' : '');
 }
 
+function CreativeCompanion({ entries, children }: { entries: DocumentReadEntry[]; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  useWebHistoryLayer('creative-companion', 40, open, () => setOpen(false));
+  return <>
+    <button type="button" className="btn" aria-haspopup="dialog" onClick={() => setOpen(true)}>创作资料</button>
+    <SheetDialog open={open} title="创作资料" label="创作资料" panelName="创作资料" testId="creative-companion" onClose={() => setOpen(false)}>
+      <div className="btn-group">{children}</div>
+      <DocumentReadDetails entries={entries} testId="creative-document-reads" />
+    </SheetDialog>
+  </>;
+}
+
 function DraftPane(props: Props & { work: DraftWork }) {
   const { work, save, read, runtime, openDocument, openPublic } = props;
   const reply = useCreativeReply(runtime, props.requestModel);
@@ -109,13 +123,13 @@ function DraftPane(props: Props & { work: DraftWork }) {
   const documentReadEntries: DocumentReadEntry[] = [
     ...work.discussion.flatMap((turn) => turn.documentReads?.length ? [{
       id: turn.id,
-      label: '开书讨论回复',
+      label: `开书讨论回复 · ${turn.id.slice(0, 8)}`,
       createdAt: turn.createdAt,
       reads: turn.documentReads,
     }] : []),
     ...work.suggestions.flatMap((suggestion) => suggestion.documentReads.length ? [{
       id: suggestion.id,
-      label: `写作建议 · ${suggestion.instruction}`,
+      label: `写作建议 · ${suggestion.id.slice(0, 8)} · ${suggestion.instruction}`,
       reads: suggestion.documentReads,
     }] : []),
   ];
@@ -236,6 +250,10 @@ function DraftPane(props: Props & { work: DraftWork }) {
       <section className="creative-section" data-testid="writing-workspace">
         <div className="creative-toolbar">
           <h2>{work.title}</h2>
+          <CreativeCompanion entries={documentReadEntries}>
+            <button type="button" className="btn" onClick={() => editDocument()}>作品资料</button>
+            <button type="button" className="btn" onClick={() => openPublic()}>公共记忆</button>
+          </CreativeCompanion>
           <button type="button" className="btn" onClick={() => editDocument()}>作品资料</button>
         </div>
         {work.source && <p className="status-text">已保存开稿时采用的文游资料。</p>}
@@ -297,7 +315,6 @@ function DraftPane(props: Props & { work: DraftWork }) {
           </div>
         </form>
       </section>
-      {documentReadEntries.length > 0 && <DocumentReadDetails entries={documentReadEntries} testId="creative-document-reads" />}
       <ModalDialog open={Boolean(selectedSuggestion)} label="核对正文位置" onClose={() => setSelectedSuggestion(null)}>
         {selectedSuggestion && <div className="local-document-dialog">
           <h2>核对正文位置</h2>
@@ -441,6 +458,11 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
       <section className="creative-section" data-testid="character-workspace">
         <div className="creative-toolbar">
           <h2>{character.name}</h2>
+          <CreativeCompanion entries={documentReadEntries}>
+            <button type="button" className="btn" onClick={() => editCharacter()}>角色人设</button>
+            {conversation && <button type="button" className="btn" disabled={reply.busy} onClick={() => editConversation(conversation)}>当前对话资料</button>}
+            <button type="button" className="btn" onClick={() => openPublic()}>公共记忆</button>
+          </CreativeCompanion>
           <button type="button" className="btn" onClick={() => editCharacter()}>角色人设</button>
         </div>
         <div className="btn-group">
@@ -508,7 +530,6 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
           </div>
         </details>
       </section>}
-      {documentReadEntries.length > 0 && <DocumentReadDetails entries={documentReadEntries} testId="creative-document-reads" />}
       <ModalDialog open={Boolean(confirm)} label={confirm === 'delete' ? '删除这段对话及其分叉' : '对话导出预览'} onClose={() => setConfirm(null)}>
         {conversation && confirm && <div className="local-document-dialog">
           <h2>{confirm === 'delete' ? '删除这段对话及其分叉' : '对话导出预览'}</h2>
