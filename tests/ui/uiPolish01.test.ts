@@ -60,7 +60,8 @@ describe('UI-POLISH-01 companion panel', () => {
       mode: 'character', workspace, ready: true, storageError: '',
       save: async () => workspace, read: async () => workspace,
       runtime: {} as never, requestModel: () => undefined, openPublic: () => undefined,
-      openDocument: () => undefined, onBack: () => undefined,
+      openDocument: () => undefined, initialTurn: null, onConsumeInitialTurn: () => undefined,
+      companionOpen: true, setCompanionOpen: () => undefined,
     }));
     expect(markup).toContain('root-version');
     expect(markup).toContain('current-version');

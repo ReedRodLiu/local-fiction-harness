@@ -42,18 +42,27 @@ export async function verifyThreeModes(browser, port, helpers) {
     const lastRequest = () => JSON.stringify(requests.at(-1));
 
     await go();
+    await page.getByTestId('desktop-settings-open').click();
+    await page.getByTestId('settings-page').getByRole('button', { name: '公共记忆', exact: true }).click();
+    await dialog.getByRole('textbox').fill('设置中的公共记忆');
+    await dialog.getByRole('button', { name: '确认保存' }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    await page.getByTestId('settings-page').getByRole('button', { name: '公共记忆', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=markdown-document] textarea')?.value === '设置中的公共记忆');
+    assert.equal(await dialog.getByRole('textbox').inputValue(), '设置中的公共记忆');
+    await dialog.getByRole('button', { name: '取消' }).click();
+    await page.getByTestId('settings-page').getByRole('button', { name: '返回' }).click();
     await page.getByTestId('welcome-view').getByRole('button', { name: /产粮/ }).click();
-    await button('开新书').click();
-    await page.getByLabel('作品标题').fill('纸月车站');
-    await button('开始讨论').click();
-    await page.getByLabel('讨论内容').fill('讨论纸月车站的开场');
-    await button('发送').click();
+    assert.equal(await page.getByRole('heading', { level: 1 }).count(), 1, 'Writing shares the main top bar');
+    await page.fill('#turn-input', '纸月车站。讨论纸月车站的开场');
+    await button('发送行动').click();
     await completePendingSetup(page, 'sk-synthetic-fixture');
     await writing.getByText('AI · 废弃车站收到一件无人承认的行李。', { exact: true }).waitFor();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '纸月车站', exact: true }).waitFor();
     assert.doesNotMatch(await writing.innerText(), /资料审计/);
     assert.equal(await page.getByTestId('creative-document-reads').count(), 1);
     assert.equal(await page.getByTestId('creative-document-reads').isVisible(), false);
-    await writing.getByRole('button', { name: '创作资料' }).click();
+    await page.getByTestId('app-topbar').getByRole('button', { name: '创作资料' }).click();
     const writingSheet = page.getByRole('dialog', { name: '创作资料' });
     const writingReads = writingSheet.getByTestId('creative-document-reads');
     await writingReads.waitFor();
@@ -79,19 +88,17 @@ export async function verifyThreeModes(browser, port, helpers) {
     await button('作品资料').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=markdown-document] textarea')?.value.includes('失物招领员'));
     await dialog.getByRole('button', { name: '取消' }).click();
-    await button('开始写').click();
+    await page.getByRole('group', { name: '作品视图' }).getByRole('button', { name: '正文' }).click();
     await writing.locator('textarea.creative-manuscript').fill('纸月照进车站。');
-    await button('返回').click();
-    await page.getByTestId('welcome-view').getByRole('button', { name: /人机恋/ }).click();
-    await button('添加角色').click();
-    await page.getByLabel('角色名称').fill('岑灯');
-    await page.getByLabel('自由文本人设').fill('退役夜航员，寡言。PERSONA-UNIQUE');
-    await button('保存角色').click();
-    await button('本人聊天').click();
+    await page.getByTestId('desktop-library-new-creation').click();
+    await page.getByTestId('welcome-view').getByRole('button', { name: '人机恋' }).click();
+    await page.fill('#turn-input', '名称：岑灯\n退役夜航员，寡言。PERSONA-UNIQUE');
+    await button('发送行动').click();
     await character.getByText('岑灯推开码头边的窗。', { exact: true }).waitFor();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '岑灯', exact: true }).waitFor();
     assert.doesNotMatch(await character.innerText(), /资料审计/);
     assert.equal(await page.getByTestId('creative-document-reads').isVisible(), false);
-    await character.getByRole('button', { name: '创作资料' }).click();
+    await page.getByTestId('app-topbar').getByRole('button', { name: '创作资料' }).click();
     const characterSheet = page.getByRole('dialog', { name: '创作资料' });
     const characterReads = characterSheet.getByTestId('creative-document-reads');
     await characterReads.waitFor();
@@ -116,8 +123,8 @@ export async function verifyThreeModes(browser, port, helpers) {
     await requestPublicEdit();
     const other = await context.newPage();
     await other.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
-    await other.getByTestId('welcome-view').getByRole('button', { name: /产粮/ }).click();
-    await other.getByRole('button', { name: '公共记忆', exact: true }).click();
+    await other.getByTestId('desktop-settings-open').click();
+    await other.getByTestId('settings-page').getByRole('button', { name: '公共记忆', exact: true }).click();
     const otherDoc = other.getByTestId('markdown-document');
     await otherDoc.getByRole('textbox').fill('另一处已确认 ALT-PUBLIC');
     await otherDoc.getByRole('button', { name: '确认保存' }).click();
@@ -165,7 +172,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     await button('本人聊天 1').click();
     await character.getByText('需要隔离的私密文本 PRIVATE-HISTORY', { exact: true }).waitFor();
     await button('扮演对戏 2').click();
-    await button('返回').click();
+    await page.getByTestId('desktop-library-new-creation').click();
 
     await startScriptImport(page);
     await page.fill('#import-raw-script', '收灯人用三声钟响通知船主。钟响第三次之前，赤灯不可离岸。SCRIPT-END');
@@ -197,12 +204,13 @@ export async function verifyThreeModes(browser, port, helpers) {
     assert.equal(downloaded, await manuscript.inputValue());
     assert.doesNotMatch(downloaded, /SCRIPT-END/);
     await go();
-    await button('产粮').click();
+    await page.getByTestId('desktop-library').getByRole('button', { name: '产粮', exact: true }).click();
+    await page.getByTestId('desktop-library').getByTestId('story-select-button').filter({ hasText: '浮灯渡口' }).click();
     assert.equal(await manuscript.inputValue(), downloaded);
-    await button('纸月车站').click();
+    await page.getByTestId('desktop-library').getByTestId('story-select-button').filter({ hasText: '纸月车站' }).click();
     await page.waitForFunction(() => document.querySelector('.creative-manuscript')?.value === '纸月照进车站。');
 
-    await button('返回').click();
+    await page.getByTestId('desktop-library-new-creation').click();
     const targetScreens = process.env.LFH_MODE_SCREENSHOTS;
     for (const theme of ['light', 'dark', 'warm']) {
       await page.evaluate((mode) => localStorage.setItem('lfh.ui.theme', mode), theme);
@@ -210,22 +218,27 @@ export async function verifyThreeModes(browser, port, helpers) {
         await page.setViewportSize(viewport);
         await go();
         assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
-        for (const [name, target] of [['产粮', writing], ['人机恋', character]]) {
+        for (const [name, category, title, target] of [['产粮', '产粮', '纸月车站', writing], ['人机恋', '角色', '岑灯', character]]) {
           if (viewport.width < 960) await page.getByTestId('library-drawer-trigger').click();
-          await button(name).click();
-          const bounds = await target.getByRole('button', { name: '返回' }).boundingBox();
+          const library = page.getByTestId(viewport.width < 960 ? 'mobile-library-dialog' : 'desktop-library');
+          await library.getByRole('button', { name: category, exact: true }).click();
+          await library.getByTestId('story-select-button').filter({ hasText: title }).click();
+          await target.waitFor();
+          const bounds = await page.getByTestId('app-topbar').getByRole('button', { name: '创作资料' }).boundingBox();
           assert.ok(bounds && bounds.width >= 44 && bounds.height >= 44);
-          assert.ok(await target.locator('.overlay-page-content').evaluate((element) =>
+          assert.ok(await page.getByTestId('main-stage').evaluate((element) =>
             element.scrollWidth <= element.clientWidth && document.documentElement.scrollWidth <= window.innerWidth
           ), `Unexpected horizontal overflow in ${name}, ${theme}, ${viewport.width}`);
           if (targetScreens) await page.screenshot({ path: path.join(targetScreens, `${theme}-${viewport.width}-${name}.png`) });
-          if (viewport.width < 960) await page.goBack();
-          else await button('返回').click();
+          if (viewport.width < 960) await page.getByTestId('library-drawer-trigger').click();
+          await page.getByTestId(viewport.width < 960 ? 'mobile-library-new-creation' : 'desktop-library-new-creation').click();
           await target.waitFor({ state: 'detached' });
         }
         if (targetScreens) await page.screenshot({ path: path.join(targetScreens, `${theme}-${viewport.width}-文游.png`) });
       }
     }
+    await page.getByTestId('desktop-library').getByRole('button', { name: '文游', exact: true }).click();
+    await page.getByTestId('desktop-library').getByTestId('story-select-button').filter({ hasText: '浮灯渡口' }).click();
     await page.fill('#turn-input', '请把当前文游资料带入文游人设，建立新角色');
     await page.getByRole('button', { name: '发送行动' }).click();
     await dialog.getByText(/来源节点.*第二声钟响/).waitFor();

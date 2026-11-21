@@ -1,81 +1,66 @@
-import { FilePlus2, MessagesSquare, PencilLine, Sparkles } from 'lucide-react';
-import { getActiveBranchNodes, type Story } from '../harness/index.ts';
+import { type Story } from '../harness/index.ts';
+
+const modes = [
+  ['story', '文游'],
+  ['writing', '产粮'],
+  ['character', '人机恋'],
+] as const;
 
 interface WelcomeViewProps {
   stories: Story[];
+  mode: (typeof modes)[number][0];
+  onModeChange: (mode: WelcomeViewProps['mode']) => void;
   onStartDeepSeekImport: () => void;
   onStartScriptImport: () => void;
+  onStartManuscript: () => void;
   onSelectStory: (id: string) => void;
-  onOpenCreative?: (mode: 'writing' | 'character') => void;
+  recentCreative: Array<{ id: string; title: string; activate: () => void }>;
 }
 
 export function WelcomeView({
   stories,
+  mode,
+  onModeChange,
   onStartDeepSeekImport,
   onStartScriptImport,
+  onStartManuscript,
   onSelectStory,
-  onOpenCreative,
+  recentCreative,
 }: WelcomeViewProps) {
   const recentStories = [...stories].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3);
-
   return (
-    <section className="welcome-view" data-testid="welcome-view">
+    <section className="welcome-view welcome-creation" data-testid="welcome-view">
       <div className="welcome-content">
-        <h2>开始一段新故事</h2>
-        <p>导入你的剧本或 DeepSeek 存档，用自己的密钥继续演绎。内容保存在本机。</p>
-        <div className="welcome-actions">
-          <button
-            type="button"
-            className="welcome-card welcome-card-primary"
-            data-testid="welcome-deepseek-import"
-            onClick={onStartDeepSeekImport}
-          >
-            <span className="welcome-card-icon"><Sparkles size={18} strokeWidth={1.75} /></span>
-            <span><strong>从 DeepSeek 继续</strong><small>导入 .zip 或粘贴下载链接</small></span>
-          </button>
-          <button
-            type="button"
-            className="welcome-card"
-            data-testid="welcome-script-import"
-            onClick={onStartScriptImport}
-          >
-            <span className="welcome-card-icon"><FilePlus2 size={18} strokeWidth={1.75} /></span>
-            <span><strong>导入自由剧本</strong><small>从原始剧本创建一部新故事</small></span>
-          </button>
-          {onOpenCreative && <>
-            <button type="button" className="welcome-card" onClick={() => onOpenCreative('writing')}>
-              <span className="welcome-card-icon"><PencilLine size={18} strokeWidth={1.75} /></span>
-              <span><strong>产粮</strong><small>写正文，按需采纳灵感</small></span>
-            </button>
-            <button type="button" className="welcome-card" onClick={() => onOpenCreative('character')}>
-              <span className="welcome-card-icon"><MessagesSquare size={18} strokeWidth={1.75} /></span>
-              <span><strong>人机恋</strong><small>和角色聊天或对戏</small></span>
-            </button>
-          </>}
-        </div>
-
-        {recentStories.length > 0 && (
-          <div className="recent-stories" aria-label="最近继续的故事">
-            <h3>最近继续</h3>
-            <div className="recent-story-list">
-              {recentStories.map((story) => {
-                const turnCount = Math.floor(getActiveBranchNodes(story).length / 2);
-                return (
-                  <button
-                    key={story.id}
-                    type="button"
-                    className="recent-story-chip"
-                    data-testid="welcome-resume-story"
-                    onClick={() => onSelectStory(story.id)}
-                  >
-                    <strong>{story.title}</strong>
-                    <span>{turnCount} 轮</span>
-                  </button>
-                );
-              })}
-            </div>
+        <h2>开始新的创作</h2>
+        <p>从一个设定、一句话或一段人设开始。</p>
+        {(recentStories.length > 0 || recentCreative.length > 0) && (
+          <div className="recent-story-list" aria-label="最近创作">
+            {recentStories.map((story) => (
+              <button key={story.id} type="button" className="recent-story-chip"
+                data-testid="welcome-resume-story" onClick={() => onSelectStory(story.id)}>
+                <strong>{story.title}</strong>
+              </button>
+            ))}
+            {recentCreative.map((entry) => (
+              <button key={entry.id} type="button" className="recent-story-chip" onClick={entry.activate}>
+                <strong>{entry.title}</strong>
+              </button>
+            ))}
           </div>
         )}
+      </div>
+      <div className="welcome-mode-controls">
+        <div className="recent-story-list" role="group" aria-label="创作模式">
+          {modes.map(([id, label]) => (
+            <button key={id} type="button" className="btn" aria-pressed={mode === id}
+              onClick={() => onModeChange(id)}>{label}</button>
+          ))}
+        </div>
+        {mode === 'story' && <div className="recent-story-list">
+          <button type="button" className="btn btn-sm" data-testid="welcome-deepseek-import" onClick={onStartDeepSeekImport}>从 DeepSeek 导入</button>
+          <button type="button" className="btn btn-sm" data-testid="welcome-script-import" onClick={onStartScriptImport}>导入剧本文件</button>
+        </div>}
+        {mode === 'writing' && <button type="button" className="btn btn-sm" onClick={onStartManuscript}>直接写正文</button>}
       </div>
     </section>
   );

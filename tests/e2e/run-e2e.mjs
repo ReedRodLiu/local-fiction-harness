@@ -599,11 +599,13 @@ async function startDeepSeekImport(page) {
     return;
   }
   const desktopAction = page.getByTestId('desktop-library-start-deepseek');
-  if (await desktopAction.isVisible()) {
+  if (await page.getByTestId('desktop-library').isVisible()) {
+    if (!await desktopAction.locator('xpath=..').evaluate((details) => details.open)) await desktopAction.locator('xpath=..').locator('summary').click();
     await desktopAction.click();
     return;
   }
   await page.getByTestId('library-drawer-trigger').click();
+  if (!await page.getByTestId('mobile-library-start-deepseek').locator('xpath=..').evaluate((details) => details.open)) await page.getByTestId('mobile-library-start-deepseek').locator('xpath=..').locator('summary').click();
   await page.getByTestId('mobile-library-start-deepseek').click();
 }
 
@@ -615,11 +617,13 @@ async function startScriptImport(page) {
     return;
   }
   const desktopAction = page.getByTestId('desktop-library-start-script');
-  if (await desktopAction.isVisible()) {
+  if (await page.getByTestId('desktop-library').isVisible()) {
+    if (!await desktopAction.locator('xpath=..').evaluate((details) => details.open)) await desktopAction.locator('xpath=..').locator('summary').click();
     await desktopAction.click();
     return;
   }
   await page.getByTestId('library-drawer-trigger').click();
+  if (!await page.getByTestId('mobile-library-start-script').locator('xpath=..').evaluate((details) => details.open)) await page.getByTestId('mobile-library-start-script').locator('xpath=..').locator('summary').click();
   await page.getByTestId('mobile-library-start-script').click();
 }
 

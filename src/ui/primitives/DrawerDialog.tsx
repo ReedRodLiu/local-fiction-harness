@@ -8,6 +8,7 @@ interface DrawerDialogProps {
   sheetTestId: string;
   children: ReactNode;
   onClose: () => void;
+  onExitComplete?: () => void;
 }
 
 export function DrawerDialog({
@@ -17,6 +18,7 @@ export function DrawerDialog({
   sheetTestId,
   children,
   onClose,
+  onExitComplete,
 }: DrawerDialogProps) {
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -61,6 +63,7 @@ export function DrawerDialog({
       testId={testId}
       closeOnSurfaceClick
       onClose={onClose}
+      onExitComplete={onExitComplete}
     >
       <div
         ref={sheetRef}

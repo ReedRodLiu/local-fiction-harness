@@ -4,6 +4,7 @@ import { ArrowUp, Sparkles, Square } from 'lucide-react';
 import {
   DEFAULT_MODEL_CONFIG,
   computeActiveReviewState,
+  conversationExport,
   createAsyncModelConfigStore,
   createFictionHarness,
   documentLineage,
@@ -12,6 +13,7 @@ import {
   emptyWorkspace,
   migrateStoryDocuments,
   newCharacter,
+  newConversation,
   newWork,
   storyDocumentState,
   writeDocument,
@@ -73,6 +75,12 @@ import { useLibraryCollapsedPreference } from './useLibraryCollapsedPreference.t
 import { usePresentationOverlayState } from './usePresentationOverlayState.ts';
 import { WelcomeView } from './WelcomeView.tsx';
 
+type StageMode = 'story' | 'writing' | 'character';
+
+function creationTitle(input: string, fallback: string): string {
+  return input.trim().split(/[\n。！？!?]/, 1)[0].replace(/^(?:名称|姓名)[：:]\s*/, '').trim().slice(0, 24) || fallback;
+}
+
 const FIRST_ACT_PROMPT = '开始故事，请按照剧本开场规则生成第一幕与初始状态栏。';
 
 function hasModelCredentials(config: ModelConfig, useDevEnvKey: boolean): boolean {
@@ -117,6 +125,14 @@ export function App({ runtime }: AppProps) {
   const isWebDev = runtime.platform === 'web' && import.meta.env.DEV;
   const creative = useCreativeWorkspace(runtime.creativeStorage);
   const [creativePage, setCreativePage] = useState<'writing' | 'character' | null>(null);
+  const [newCreationMode, setNewCreationMode] = useState<StageMode>('story');
+  const [newCreationOpen, setNewCreationOpen] = useState(false);
+  const [writingView, setWritingView] = useState<{ id: string; manuscript: boolean } | null>(null);
+  const [initialCreativeTurn, setInitialCreativeTurn] = useState<{ id: string; prompt: string } | null>(null);
+  const creationPending = useRef(false);
+  const focusNewCreation = useRef(false);
+  const [creating, setCreating] = useState(false);
+  const [creativeCompanionOpen, setCreativeCompanionOpen] = useState(false);
   const [documentEdit, setDocumentEdit] = useState<DocumentEdit | null>(null);
 
   const configStore = useMemo(
@@ -866,7 +882,7 @@ export function App({ runtime }: AppProps) {
   const openSettings = () => {
     if (branchSwitchBusyRef.current) return;
     captureOverlayTrigger();
-    setCreativePage(null);
+    setCreativeCompanionOpen(false);
     setShowImport(false);
     setMobileLibraryOpen(false);
     setStoryTreeOpen(false);
@@ -1105,7 +1121,8 @@ export function App({ runtime }: AppProps) {
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    void sendAction(input, true);
+    if (isWelcome) void createStage(input.trim());
+    else sendAction(input, true);
   };
 
   const startFirstAct = (targetStory: Story, overrideConfig?: ModelConfig) => {
@@ -1137,6 +1154,7 @@ export function App({ runtime }: AppProps) {
       });
       if (storyOpSeqRef.current !== opSeq) return;
       await commitStoryState(created);
+      setNewCreationOpen(false);
       setShowImport(false);
       setShowSettings(false);
       startFirstAct(created);
@@ -1174,6 +1192,7 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleSelectStory = async (id: string) => {
+    if (creationPending.current) return;
     if (branchSwitchBusyRef.current) return;
     abortActiveStream(true);
     invalidateSummaryTask();
@@ -1185,6 +1204,7 @@ export function App({ runtime }: AppProps) {
       if (switched) {
         storyRef.current = switched;
         setStory(switched);
+        setNewCreationOpen(false);
         setShowImport(false);
         setShowSettings(false);
         setCreativePage(null);
@@ -1268,6 +1288,7 @@ export function App({ runtime }: AppProps) {
       await harness.setActiveStory(restored.id);
       if (storyOpSeqRef.current !== opSeq) return;
       await commitStoryState(restored);
+      setNewCreationOpen(false);
       setShowImport(false);
       setShowSettings(false);
     } catch (err) {
@@ -1280,12 +1301,115 @@ export function App({ runtime }: AppProps) {
   function openCreativePage(mode: 'writing' | 'character') {
     if (deepSeekImportBusyRef.current) return;
     captureOverlayTrigger();
+    setCreativeCompanionOpen(false);
     abortActiveStream(true);
     setShowSettings(false);
     setShowImport(false);
     setStoryTreeOpen(false);
     setMobileLibraryOpen(false);
+    setNewCreationOpen(false);
+    setWritingView(null);
     setCreativePage(mode);
+  }
+
+  function focusCreationInput() {
+    if (!focusNewCreation.current) return;
+    focusNewCreation.current = false;
+    document.getElementById('turn-input')?.focus();
+  }
+
+  function openNewCreation() {
+    if (creationPending.current) return;
+    abortActiveStream(true);
+    invalidateSummaryTask();
+    setNewCreationMode(creativePage ?? 'story');
+    setCreativePage(null);
+    setCreativeCompanionOpen(false);
+    setStoryTreeOpen(false);
+    setMobileLibraryOpen(false);
+    setNewCreationOpen(true);
+    setInput('');
+    setErrorMsg(null);
+    focusNewCreation.current = true;
+    if (!mobileLibraryOpen) window.requestAnimationFrame(focusCreationInput);
+  }
+
+  async function createStage(prompt: string, manuscript = false) {
+    const mode = newCreationMode;
+    if (creationPending.current || (!manuscript && !prompt)) return;
+    creationPending.current = true;
+    setCreating(true);
+    setErrorMsg(null);
+    try {
+      if (mode === 'story') {
+        const created = await harness.createAndSaveStory({
+          title: creationTitle(prompt, '新故事'), rawScript: prompt, sourceKind: 'manual_script',
+        });
+        await commitStoryState(created);
+        setNewCreationOpen(false);
+        setInput('');
+        startFirstAct(created);
+      } else if (mode === 'writing') {
+        const work = { ...newWork(creationTitle(prompt, '未命名作品')), writingStarted: manuscript };
+        await creative.save((state) => ({ ...state, works: [...state.works, work], activeWorkId: work.id }));
+        setInitialCreativeTurn(manuscript ? null : { id: work.id, prompt });
+        setInput('');
+        openCreativePage('writing');
+      } else {
+        const character = newCharacter(creationTitle(prompt, '未命名角色'), prompt);
+        const conversation = newConversation(character, 'personal');
+        const activeCharacter = { ...character, conversations: [conversation], activeConversationId: conversation.id };
+        await creative.save((state) => ({
+          ...state, characters: [...state.characters, activeCharacter], activeCharacterId: character.id,
+        }));
+        setInitialCreativeTurn({ id: character.id, prompt: '' });
+        setInput('');
+        openCreativePage('character');
+      }
+    } catch (error) {
+      setErrorMsg(toErrorMessage(error, '新建创作失败。'));
+    } finally {
+      creationPending.current = false;
+      setCreating(false);
+    }
+  }
+
+  async function changeCreativeItem(mode: 'writing' | 'character', id: string, action: 'select' | 'rename' | 'delete' | 'export', title = '') {
+    setErrorMsg(null);
+    try {
+      if (action === 'export') {
+        const state = await creative.read();
+        if (mode === 'writing') {
+          const work = state.works.find((item) => item.id === id);
+          if (work) await runtime.backupExporter.exportMarkdown?.(`${work.title}.md`, work.body);
+        } else {
+          const character = state.characters.find((item) => item.id === id);
+          const conversation = character?.conversations.find((item) => item.id === character.activeConversationId);
+          if (character) await runtime.backupExporter.exportMarkdown?.(`${character.name}.md`,
+            conversation ? conversationExport(character, conversation) : documentVersion(character.document).markdown);
+        }
+        return;
+      }
+      await creative.save((state) => {
+        if (mode === 'writing') return {
+          ...state,
+          activeWorkId: action === 'select' ? id : action === 'delete' && state.activeWorkId === id ? undefined : state.activeWorkId,
+          works: action === 'rename' ? state.works.map((item) => item.id === id ? { ...item, title } : item)
+            : action === 'delete' ? state.works.filter((item) => item.id !== id) : state.works,
+        };
+        return {
+          ...state,
+          activeCharacterId: action === 'select' ? id : action === 'delete' && state.activeCharacterId === id ? undefined : state.activeCharacterId,
+          characters: action === 'rename' ? state.characters.map((item) => item.id === id ? { ...item, name: title } : item)
+            : action === 'delete' ? state.characters.filter((item) => item.id !== id) : state.characters,
+        };
+      });
+      if (action === 'select') openCreativePage(mode);
+      if (action === 'delete' && creativePage === mode &&
+        (mode === 'writing' ? creative.workspace.activeWorkId === id : creative.workspace.activeCharacterId === id)) openNewCreation();
+    } catch (error) {
+      setErrorMsg(toErrorMessage(error, '书架操作失败。'));
+    }
   }
 
   function openPublicDocument(proposal?: string, expected?: string) {
@@ -1409,7 +1533,22 @@ ${history}`,
     stories.some((item) => item.id === story.id) ||
     Boolean(story.rawScript.trim()) ||
     activeNodes.length > 0;
-  const isWelcome = !storyExists;
+  const isWelcome = !creativePage && (newCreationOpen || !storyExists);
+  const activeWork = creative.workspace.works.find((item) => item.id === creative.workspace.activeWorkId);
+  const activeCharacter = creative.workspace.characters.find((item) => item.id === creative.workspace.activeCharacterId);
+  const activeConversation = activeCharacter?.conversations.find((item) => item.id === activeCharacter.activeConversationId);
+  const showManuscript = Boolean(activeWork && (writingView?.id === activeWork.id
+    ? writingView.manuscript
+    : activeWork.writingStarted || activeWork.body || activeWork.source));
+  const selectWritingView = (manuscript: boolean) => {
+    if (activeWork) setWritingView({ id: activeWork.id, manuscript });
+  };
+  const creativeActions = (mode: 'writing' | 'character') => ({
+    onSelect: (id: string) => void changeCreativeItem(mode, id, 'select'),
+    onRename: (id: string, title: string) => void changeCreativeItem(mode, id, 'rename', title),
+    onDelete: (id: string) => void changeCreativeItem(mode, id, 'delete'),
+    onExport: (id: string) => void changeCreativeItem(mode, id, 'export'),
+  });
   const reviewState = computeActiveReviewState(story);
   const branchLabel = reviewState.activeBranchLabel === '当前主干路线'
     ? '主线'
@@ -1435,9 +1574,23 @@ ${history}`,
             ? (creative.workspace.works.find((item) => item.id === creative.workspace.activeWorkId)?.title ?? '本地文游')
             : creativePage === 'character'
               ? (creative.workspace.characters.find((item) => item.id === creative.workspace.activeCharacterId)?.name ?? '本地文游')
-              : storyExists ? story.title : '本地文游播放器'}
-          hasStory={storyExists && !creativePage}
+              : !isWelcome ? story.title : '本地文游播放器'}
+          hasStory={storyExists && !isWelcome && !creativePage}
           hideStoryTools={Boolean(creativePage)}
+          stageControls={creativePage === 'writing' && activeWork ? (
+            <div className="topbar-stage-controls" role="group" aria-label="作品视图">
+              <button type="button" className="btn btn-sm" aria-pressed={!showManuscript} onClick={() => selectWritingView(false)}>讨论</button>
+              <button type="button" className="btn btn-sm" aria-pressed={showManuscript} onClick={() => selectWritingView(true)}>正文</button>
+            </div>
+          ) : creativePage === 'character' && activeCharacter ? (
+            <button type="button" className="btn btn-sm topbar-mode-chip" onClick={() => setCreativeCompanionOpen(true)}>
+              {activeConversation?.kind === 'roleplay' ? '扮演对戏' : '本人聊天'}
+            </button>
+          ) : undefined}
+          onOpenCreativeCompanion={() => setCreativeCompanionOpen(true)}
+          canOpenCreativeCompanion={creativePage === 'writing'
+            ? creative.workspace.works.some((item) => item.id === creative.workspace.activeWorkId)
+            : creative.workspace.characters.some((item) => item.id === creative.workspace.activeCharacterId)}
           branchLabel={branchLabel}
           forkCount={forkCount}
           isSummaryInProgress={isSummaryInProgress}
@@ -1454,7 +1607,17 @@ ${history}`,
       >
         <LibraryDrawer
           stories={stories}
-          activeStoryId={story.id}
+          activeStoryId={!creativePage && !isWelcome ? story.id : ''}
+          works={creative.workspace.works.map(({ id, title, body }) => ({ id, title, subtitle: body ? `正文 ${body.length} 字` : '讨论中' }))}
+          characters={creative.workspace.characters.map((item) => ({
+            id: item.id, title: item.name, subtitle: item.conversations.find((entry) => entry.id === item.activeConversationId)?.kind === 'roleplay' ? '扮演对戏' : '本人聊天',
+          }))}
+          activeWorkId={creativePage === 'writing' ? activeWork?.id : undefined}
+          activeCharacterId={creativePage === 'character' ? activeCharacter?.id : undefined}
+          workActions={creativeActions('writing')}
+          characterActions={creativeActions('character')}
+          onNewCreation={openNewCreation}
+          onMobileExitComplete={focusCreationInput}
           collapsed={libraryCollapsed}
           mobileOpen={mobileLibraryOpen && !showImport && !showSettings}
           hasCredentials={hasCredentials}
@@ -1467,12 +1630,11 @@ ${history}`,
           onRenameStory={(id, title) => void handleRenameStory(id, title)}
           onDeleteStory={(id) => void handleDeleteStory(id)}
           onExportStoryBackup={(id) => void handleExportBackup(id)}
-          onOpenCreative={openCreativePage}
         />
 
         <main
           ref={mainStageRef}
-          className={`main-stage${storyExists && !showSettings && !showImport && !creativePage ? ' is-playing' : ''}`}
+          className={`main-stage${storyExists && !isWelcome && !showSettings && !showImport && !creativePage ? ' is-playing' : ''}`}
           data-testid="main-stage"
           {...edgeSwipeHandlers}
           onScroll={handleMainStageScroll}
@@ -1515,16 +1677,21 @@ ${history}`,
               onClearSavedKey={handleClearSavedKey}
               onApplyDevTestConfig={applyDevTestConfig}
               onOpenDiagnostics={() => openDiagnostics('settings_manual')}
+              onOpenPublicMemory={() => openPublicDocument()}
               onExportCurrentStory={() => void handleExportBackup(story.id)}
               onImportBackupFile={(file) => void handleImportBackupFile(file)}
               onThemePreferenceChange={setThemePreference}
               onFontSizeChange={setDisplayFontSize}
             />
           ) : creativePage ? (
-            <CreativeWorkspace key={creativePage} mode={creativePage} workspace={creative.workspace}
+            <><CreativeWorkspace key={creativePage} mode={creativePage} workspace={creative.workspace}
               ready={creative.ready} storageError={creative.error} save={creative.save} read={creative.read}
               runtime={runtime} requestModel={withCredentials} openPublic={openPublicDocument}
-              openDocument={setDocumentEdit} onBack={() => setCreativePage(null)} />
+              openDocument={setDocumentEdit} companionOpen={creativeCompanionOpen} setCompanionOpen={setCreativeCompanionOpen}
+              manuscript={showManuscript} onStartManuscript={() => selectWritingView(true)}
+              initialTurn={initialCreativeTurn} onConsumeInitialTurn={() => setInitialCreativeTurn(null)} />
+              {errorMsg && <BannerAlert tone="danger">{errorMsg}</BannerAlert>}
+            </>
           ) : showImport ? (
             <ImportPanel
               initialMode={importMode}
@@ -1554,7 +1721,13 @@ ${history}`,
                   onStartDeepSeekImport={() => openImportView('deepseek')}
                   onStartScriptImport={() => openImportView('script')}
                   onSelectStory={(id) => void handleSelectStory(id)}
-                  onOpenCreative={openCreativePage}
+                  mode={newCreationMode}
+                  onModeChange={setNewCreationMode}
+                  onStartManuscript={() => void createStage('', true)}
+                  recentCreative={[
+                    ...(activeWork ? [{ id: activeWork.id, title: activeWork.title, activate: () => openCreativePage('writing') }] : []),
+                    ...(activeCharacter ? [{ id: activeCharacter.id, title: activeCharacter.name, activate: () => openCreativePage('character') }] : []),
+                  ]}
                 />
               ) : (
                 <>
@@ -1689,9 +1862,9 @@ ${history}`,
                   rows={1}
                   value={input}
                   placeholder={isWelcome
-                    ? '导入故事后即可开始行动…'
+                    ? ({ story: '输入故事设定或第一步行动…', writing: '输入灵感，开始讨论…', character: '输入角色人设…' })[newCreationMode]
                     : '输入你的抉择、对话或行动（Enter 发送，Shift+Enter 换行）…'}
-                  disabled={isWelcome}
+                  disabled={creating}
                   onChange={(event) => {
                     const textarea = event.currentTarget;
                     setInput(textarea.value);
@@ -1714,7 +1887,7 @@ ${history}`,
                 />
                 <div className="composer-actions">
                   <span className="status-text visually-hidden">
-                    {isWelcome ? '先导入一部故事，再开始游玩' : `已保存轮次：${Math.floor(activeNodes.length / 2)}`}
+                    {isWelcome ? '输入内容开始新的创作' : `已保存轮次：${Math.floor(activeNodes.length / 2)}`}
                   </span>
                   <div>
                     {isStreaming ? (
@@ -1738,7 +1911,7 @@ ${history}`,
                         type="submit"
                         className="btn btn-primary composer-send"
                         aria-label="发送行动"
-                        disabled={!input.trim() || isSummarizing || isBranchSwitching || isWelcome}
+                        disabled={!input.trim() || isSummarizing || isBranchSwitching || creating}
                       >
                         <ArrowUp size={19} strokeWidth={1.75} aria-hidden="true" />
                         <span className="visually-hidden">发送行动</span>
@@ -1796,7 +1969,7 @@ ${history}`,
       )}
 
       <CompanionSheet
-        open={storyTreeOpen && storyExists && !showImport && !showSettings}
+        open={storyTreeOpen && storyExists && !isWelcome && !creativePage && !showImport && !showSettings}
         story={story}
         summarySnapshot={activeSummary}
         metrics={contextPreview.metrics}

@@ -19,6 +19,7 @@ export interface LibraryDrawerProps {
   activeStoryId: string;
   collapsed: boolean;
   mobileOpen: boolean;
+  onMobileExitComplete?: () => void;
   hasCredentials: boolean;
   onClose: () => void;
   onCollapse: () => void;
@@ -28,7 +29,6 @@ export interface LibraryDrawerProps {
   onSelectStory: (id: string) => void;
   onRenameStory: (id: string, title: string) => void;
   onDeleteStory: (id: string) => void;
-  onOpenCreative?: (mode: 'writing' | 'character') => void;
   onExportStoryBackup: (id: string) => void;
 }
 
@@ -38,6 +38,7 @@ export function LibraryDrawer({
   activeStoryId,
   collapsed,
   mobileOpen,
+  onMobileExitComplete,
   hasCredentials,
   onClose,
   onCollapse,
@@ -155,6 +156,7 @@ export function LibraryDrawer({
       <DrawerDialog
         open={mobileOpen}
         label="我的故事书架"
+        onExitComplete={onMobileExitComplete}
         testId="mobile-library-dialog"
         sheetTestId="mobile-library-sheet"
         onClose={onClose}

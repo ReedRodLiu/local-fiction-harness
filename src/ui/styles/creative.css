@@ -41,7 +41,6 @@
   width: 100%;
   min-width: 0;
 }
-.creative-picks { display: flex; flex-wrap: wrap; gap: 8px; }
 .creative-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -49,13 +48,12 @@
   margin: 0;
 }
 .creative-turn { border-block-start: 1px solid var(--border-hairline); padding-block-start: 10px; }
-.creative-section .btn, .local-document-dialog .btn, .creative-picks .btn { min-height: 44px; }
+.creative-section .btn, .local-document-dialog .btn { min-height: 44px; }
 .creative-section .creative-manuscript {
   min-height: 240px;
   line-height: var(--line-height-story);
   resize: vertical;
 }
-.creative-message-form { display: grid; gap: 8px; }
 .creative-role-entry { padding: 0 0 8px; }
 
 .turn-attachment-list .btn {

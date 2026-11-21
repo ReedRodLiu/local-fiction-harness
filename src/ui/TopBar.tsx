@@ -1,9 +1,13 @@
+import type { ReactNode } from 'react';
 import { GitBranch, Menu, PanelLeft } from 'lucide-react';
 
 interface TopBarProps {
   title: string;
+  stageControls?: ReactNode;
   hasStory: boolean;
   hideStoryTools?: boolean;
+  onOpenCreativeCompanion: () => void;
+  canOpenCreativeCompanion: boolean;
   branchLabel: string;
   forkCount: number;
   isSummaryInProgress: boolean;
@@ -15,8 +19,11 @@ interface TopBarProps {
 
 export function TopBar({
   title,
+  stageControls,
   hasStory,
   hideStoryTools = false,
+  onOpenCreativeCompanion,
+  canOpenCreativeCompanion,
   branchLabel,
   forkCount,
   isSummaryInProgress,
@@ -38,12 +45,12 @@ export function TopBar({
         >
           <Menu size={20} strokeWidth={1.75} />
         </button>
-        {libraryCollapsed && (
+        {(
           <button
             type="button"
             className="icon-button desktop-topbar-action"
             data-testid="desktop-library-toggle"
-            aria-label="展开书架侧栏"
+            aria-label={libraryCollapsed ? '展开书架侧栏' : '收起书架侧栏'}
             aria-pressed={libraryCollapsed}
             onClick={onToggleLibrary}
           >
@@ -54,6 +61,7 @@ export function TopBar({
 
       <div className="topbar-title-group">
         <h1>{title}</h1>
+        {stageControls}
         {hasStory && (
           <button
             type="button"
@@ -74,6 +82,7 @@ export function TopBar({
         {!hideStoryTools && isSummaryInProgress && (
           <span className="summary-progress" data-testid="summary-progress" role="status">补算摘要中…</span>
         )}
+        {hideStoryTools && <button type="button" className="icon-button topbar-tree-action" aria-label="创作资料" aria-haspopup="dialog" disabled={!canOpenCreativeCompanion} onClick={onOpenCreativeCompanion}><GitBranch size={20} strokeWidth={1.75} /></button>}
         {!hideStoryTools && <button
           type="button"
           className="icon-button topbar-tree-action"
