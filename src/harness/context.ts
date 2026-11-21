@@ -7,7 +7,15 @@ import {
   storyDocumentState,
   type MarkdownVersion,
 } from './markdownDocuments.ts';
-import type { LlmMessage, PlotSummarySnapshot, Story, TurnNode } from './types.ts';
+import type {
+  AbortSignalLike,
+  LlmMessage,
+  LlmTransport,
+  ModelConfig,
+  PlotSummarySnapshot,
+  Story,
+  TurnNode,
+} from './types.ts';
 
 const ESTIMATED_TOKENS_PER_CHAR = 0.65;
 const MIN_RECENT_NODES_PER_TURN = 2;
@@ -357,4 +365,313 @@ export function buildSummaryCompressionMessages(
       ].join('\n\n'),
     },
   ];
+}
+
+export interface TurnTreeState {
+  nodes: Record<string, TurnNode>;
+  activeLeafNodeId: string | null;
+}
+
+/**
+ * Appends a TurnNode into a branch tree and activates it as the new leaf.
+ */
+export function appendTurnNodeToTree(tree: TurnTreeState, node: TurnNode): TurnTreeState {
+  return {
+    nodes: { ...tree.nodes, [node.id]: node },
+    activeLeafNodeId: node.id,
+  };
+}
+
+/**
+ * Switches the active leaf pointer within an existing TurnNode tree without mutating sibling branches.
+ */
+export function switchTurnTreeBranch(tree: TurnTreeState, targetLeafId: string | null): TurnTreeState {
+  if (targetLeafId !== null && !Object.hasOwn(tree.nodes, targetLeafId)) {
+    throw new Error(`目标分支节点 ${targetLeafId} 不存在。`);
+  }
+  return {
+    ...tree,
+    activeLeafNodeId: targetLeafId,
+  };
+}
+
+/**
+ * Resolves the rolling summary snapshot for a target branch leaf, rejecting cross-branch coverage pointers.
+ */
+export function getTurnTreeSummarySnapshot(
+  nodes: Record<string, TurnNode>,
+  leafId: string | null,
+): PlotSummarySnapshot {
+  if (!leafId || !Object.hasOwn(nodes, leafId)) return EMPTY_SUMMARY_SNAPSHOT;
+  const leaf = nodes[leafId];
+  const snapshot = leaf.summarySnapshot ?? EMPTY_SUMMARY_SNAPSHOT;
+  if (snapshot.coveredUpToNodeId === null) {
+    return snapshot.content.trim() ? snapshot : EMPTY_SUMMARY_SNAPSHOT;
+  }
+  const branchNodes = getActiveBranchNodes({ nodes, activeLeafNodeId: leafId }, leafId);
+  const coveredOnBranch = branchNodes.some((node) => node.id === snapshot.coveredUpToNodeId);
+  return coveredOnBranch ? snapshot : EMPTY_SUMMARY_SNAPSHOT;
+}
+
+export interface CreativeThreeZoneContextInput {
+  systemPrompt: string;
+  documents?: readonly [string, MarkdownVersion][];
+  localDocument?: MarkdownVersion;
+  manuscriptWindow?: string;
+  nodes: Record<string, TurnNode>;
+  targetParentId: string | null;
+  userInput?: string;
+  budgetOverrides?: Partial<ContextBudgetConfig>;
+}
+
+/**
+ * Assembles Three-Zone Context (Anchored Setting + Rolling Summary + Recent Window)
+ * for 写故事, 角色互动, or any TurnNode branch tree without throwing on compression fallback.
+ */
+export function assembleCreativeThreeZoneContext(
+  input: CreativeThreeZoneContextInput,
+): ThreeZoneContextResult {
+  const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...input.budgetOverrides };
+  const anchorMessages: LlmMessage[] = [
+    { role: 'system', content: input.systemPrompt },
+    ...documentMessages(input.documents ?? []),
+  ];
+  const manuscript = input.manuscriptWindow?.trim();
+  if (manuscript) {
+    anchorMessages.push({
+      role: 'system',
+      content: `以下是当前作品的正文参考窗口。\n\n${manuscript}`,
+    });
+  }
+
+  const snapshot = getTurnTreeSummarySnapshot(input.nodes, input.targetParentId);
+  const branchNodes = getActiveBranchNodes(
+    { nodes: input.nodes, activeLeafNodeId: input.targetParentId },
+    input.targetParentId,
+  );
+  const uncovered = getUncoveredNodes(branchNodes, snapshot.coveredUpToNodeId);
+  const trimmedInput = input.userInput?.trim() ?? '';
+  const recentNodes = trimRecentWindow(uncovered, budget, trimmedInput.length);
+
+  const messages: LlmMessage[] = [...anchorMessages];
+  let summaryChars = 0;
+  const localDoc = input.localDocument;
+  const localProgress = localDoc ? documentProgress(localDoc.markdown) : '';
+  if (localDoc && localDoc.markdown.trim()) {
+    const [localMsg] = documentMessages([['当前对话', localDoc]]);
+    if (localMsg) {
+      summaryChars += localMsg.content.length;
+      messages.push(localMsg);
+    }
+  }
+  if (!localProgress && snapshot.content.trim()) {
+    const summaryMsg = `## 滚动剧情摘要（已覆盖 ${snapshot.summarizedTurnCount} 条历史节点）\n${snapshot.content.trim()}`;
+    summaryChars += summaryMsg.length;
+    messages.push({ role: 'system', content: summaryMsg });
+  }
+
+  let recentChars = 0;
+  for (const node of recentNodes) {
+    recentChars += node.content.length;
+    messages.push({
+      role: node.role,
+      content: node.content,
+    });
+  }
+
+  if (trimmedInput) {
+    recentChars += trimmedInput.length;
+    messages.push({ role: 'user', content: trimmedInput });
+  }
+
+  const anchorChars = anchorMessages.reduce((sum, msg) => sum + msg.content.length, 0);
+  const totalChars = anchorChars + summaryChars + recentChars;
+  return {
+    messages,
+    metrics: {
+      anchorChars,
+      summaryChars,
+      recentChars,
+      recentNodeCount: recentNodes.length,
+      totalEstimatedTokens: estimateTokensFromChars(totalChars),
+    },
+  };
+}
+
+function takeCreativeSummaryBatch(
+  toSummarize: TurnNode[],
+  maxNodes: number,
+  maxChars: number,
+): TurnNode[] {
+  let end = 0;
+  let batchChars = 0;
+  for (const node of toSummarize) {
+    if (end >= maxNodes) break;
+    const nodeChars = node.content.length;
+    if (batchChars + nodeChars > maxChars) {
+      if (end === 0) return [node];
+      break;
+    }
+    batchChars += nodeChars;
+    end += 1;
+  }
+  if (end === 0) return [];
+  if (end < toSummarize.length && end > 1 && toSummarize[end - 1]?.role === 'user') {
+    end -= 1;
+  }
+  return toSummarize.slice(0, end);
+}
+
+function splitCreativeSummaryText(text: string, maxChars: number): string[] {
+  const chunks: string[] = [];
+  let chunk = '';
+  for (const character of text) {
+    if (chunk && chunk.length + character.length > maxChars) {
+      chunks.push(chunk);
+      chunk = '';
+    }
+    chunk += character;
+  }
+  if (chunk) chunks.push(chunk);
+  return chunks;
+}
+
+export interface SummarizeCreativeTurnNodesOptions {
+  nodes: Record<string, TurnNode>;
+  targetLeafId: string | null;
+  transport: LlmTransport;
+  config: ModelConfig;
+  budget?: Partial<ContextBudgetConfig>;
+  signal?: AbortSignalLike;
+  baseSnapshot?: PlotSummarySnapshot;
+}
+
+export interface SummarizeCreativeTurnNodesResult {
+  nodes: Record<string, TurnNode>;
+  snapshot: PlotSummarySnapshot;
+  updated: boolean;
+  status: 'done' | 'skipped' | 'failed';
+}
+
+/**
+ * Silently compresses uncovered TurnNodes along a single branch into the target leaf's
+ * summarySnapshot. Never throws on network/model failure or abort; preserves last good summary.
+ */
+export async function summarizeCreativeTurnNodes(
+  options: SummarizeCreativeTurnNodesOptions,
+): Promise<SummarizeCreativeTurnNodesResult> {
+  const { nodes, targetLeafId, transport, config, signal } = options;
+  if (!targetLeafId || !Object.hasOwn(nodes, targetLeafId)) {
+    return {
+      nodes,
+      snapshot: EMPTY_SUMMARY_SNAPSHOT,
+      updated: false,
+      status: 'skipped',
+    };
+  }
+
+  const branchNodes = getActiveBranchNodes({ nodes, activeLeafNodeId: targetLeafId }, targetLeafId);
+  const initialSnapshot = options.baseSnapshot ?? getTurnTreeSummarySnapshot(nodes, targetLeafId);
+  let currentSnapshot = initialSnapshot;
+  let hadFailure = false;
+  let sawOverflow = false;
+
+  const maxBatchNodes = Math.max(
+    1,
+    Math.floor(options.budget?.summaryBatchMaxNodes ?? DEFAULT_CONTEXT_BUDGET.summaryBatchMaxNodes),
+  );
+  const maxBatchChars = Math.max(
+    1,
+    Math.floor(options.budget?.summaryBatchMaxChars ?? DEFAULT_CONTEXT_BUDGET.summaryBatchMaxChars),
+  );
+
+  const runBatch = async (previousContent: string, batchNodes: TurnNode[]): Promise<string | null> => {
+    if (signal?.aborted) return null;
+    try {
+      let content = '';
+      let finishReason: string | null | undefined;
+      for await (const delta of transport.streamChat({
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        model: config.model,
+        messages: buildSummaryCompressionMessages(previousContent, batchNodes, undefined, maxBatchChars),
+        signal,
+      })) {
+        if (signal?.aborted) return null;
+        if (delta.finishReason != null) finishReason = delta.finishReason;
+        if (delta.contentDelta) content += delta.contentDelta;
+      }
+      if (signal?.aborted || finishReason !== 'stop') return null;
+      return content.trim() || null;
+    } catch {
+      return null;
+    }
+  };
+
+  while (true) {
+    const uncovered = getUncoveredNodes(branchNodes, currentSnapshot.coveredUpToNodeId);
+    const toSummarize = selectNodesToSummarize(uncovered, options.budget);
+    if (toSummarize.length === 0) break;
+
+    sawOverflow = true;
+    const batch = takeCreativeSummaryBatch(toSummarize, maxBatchNodes, maxBatchChars);
+    if (batch.length === 0) break;
+
+    const single = batch.length === 1 ? batch[0] : undefined;
+    if (single && single.content.length > maxBatchChars) {
+      let rolling = currentSnapshot.content;
+      let chunkFailed = false;
+      for (const chunk of splitCreativeSummaryText(single.content, maxBatchChars)) {
+        const next = await runBatch(rolling, [{ ...single, content: chunk }]);
+        if (!next) {
+          chunkFailed = true;
+          break;
+        }
+        rolling = next;
+      }
+      if (chunkFailed) {
+        hadFailure = true;
+        break;
+      }
+      currentSnapshot = {
+        content: rolling,
+        coveredUpToNodeId: single.id,
+        summarizedTurnCount: currentSnapshot.summarizedTurnCount + 1,
+      };
+      continue;
+    }
+
+    const compressed = await runBatch(currentSnapshot.content, batch);
+    if (!compressed) {
+      hadFailure = true;
+      break;
+    }
+    currentSnapshot = {
+      content: compressed,
+      coveredUpToNodeId: batch[batch.length - 1].id,
+      summarizedTurnCount: currentSnapshot.summarizedTurnCount + batch.length,
+    };
+  }
+
+  const updated =
+    currentSnapshot.content !== initialSnapshot.content ||
+    currentSnapshot.coveredUpToNodeId !== initialSnapshot.coveredUpToNodeId ||
+    currentSnapshot.summarizedTurnCount !== initialSnapshot.summarizedTurnCount;
+
+  const nextNodes = updated
+    ? {
+        ...nodes,
+        [targetLeafId]: {
+          ...nodes[targetLeafId],
+          summarySnapshot: currentSnapshot,
+        },
+      }
+    : nodes;
+
+  return {
+    nodes: nextNodes,
+    snapshot: currentSnapshot,
+    updated,
+    status: hadFailure ? 'failed' : sawOverflow ? 'done' : 'skipped',
+  };
 }
