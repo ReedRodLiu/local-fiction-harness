@@ -30,20 +30,26 @@ describe('MessageContent', () => {
     expect(markup).toContain('class="choice-badge" aria-hidden="true">A</span>');
   });
 
-  it('falls back to the full raw state block when it cannot find key-value pairs', () => {
+  it('falls back to the full raw state block when an explicit HUD fence cannot find key-value pairs', () => {
     const markup = renderToStaticMarkup(
-      createElement(MessageContent, { content: '```text\n无法识别的状态描述\n```' }),
+      createElement(MessageContent, { content: '```lfh-hud\n无法识别的状态描述\n```' }),
     );
 
     expect(markup).toContain('data-testid="hud-raw-view"');
     expect(markup).toContain('无法识别的状态描述');
     expect(markup).not.toContain('data-testid="hud-grid"');
+
+    const plainCode = renderToStaticMarkup(
+      createElement(MessageContent, { content: '```text\n无法识别的状态描述\n```' }),
+    );
+    expect(plainCode).not.toContain('data-testid="hud-panel"');
+    expect(plainCode).toContain('<pre class="md-code-block" data-lang="text"><code>无法识别的状态描述</code></pre>');
   });
 
-  it('falls back to the full raw state block when free text is mixed with fields', () => {
+  it('falls back to the full raw state block when free text is mixed with fields in an explicit HUD fence', () => {
     const markup = renderToStaticMarkup(
       createElement(MessageContent, {
-        content: '```text\n地点: 东楼\n不可解析但不能丢失\n人气: 60\n```',
+        content: '```lfh-hud\n地点: 东楼\n不可解析但不能丢失\n人气: 60\n```',
       }),
     );
 

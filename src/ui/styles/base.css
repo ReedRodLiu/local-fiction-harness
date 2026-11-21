@@ -571,3 +571,242 @@ summary:focus-visible {
     padding: 1rem 1rem max(1rem, var(--safe-area-bottom));
   }
 }
+
+/* Lightweight Markdown & Two-Level Myers Diff */
+.main-stage .turn-body.md-view.md-view {
+  white-space: normal;
+}
+
+.md-view {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: var(--line-height-story);
+}
+
+.md-view > :first-child {
+  margin-top: 0;
+}
+
+.md-view > :last-child {
+  margin-bottom: 0;
+}
+
+.md-view h1,
+.md-view h2,
+.md-view h3,
+.md-view h4,
+.md-view h5,
+.md-view h6 {
+  margin: 1.05em 0 0.45em;
+  line-height: 1.35;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.md-view h1 { font-size: 1.32em; }
+.md-view h2 { font-size: 1.18em; }
+.md-view h3 { font-size: 1.08em; }
+.md-view h4,
+.md-view h5,
+.md-view h6 { font-size: 1em; }
+
+.md-view p {
+  margin: 0;
+}
+
+.md-view p + p,
+.md-view p + ul,
+.md-view p + ol,
+.md-view p + blockquote,
+.md-view p + pre,
+.md-view p + .md-table-wrap,
+.md-view ul + p,
+.md-view ol + p,
+.md-view blockquote + p,
+.md-view pre + p,
+.md-view .md-table-wrap + p {
+  margin-top: 0.78em;
+}
+
+.md-view ul,
+.md-view ol {
+  margin: 0.55em 0;
+  padding-inline-start: 1.35em;
+}
+
+.md-view li + li {
+  margin-top: 0.28em;
+}
+
+.md-view blockquote {
+  margin: 0.65em 0;
+  padding: 0.25em 0.85em;
+  border-inline-start: 3px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.md-view a {
+  color: var(--accent-fiction);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-view .md-blocked-link {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+
+.md-view .md-inline-code {
+  padding: 0.1em 0.35em;
+  border-radius: 5px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-hairline);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+.md-view .md-code-block {
+  margin: 0.75em 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.md-view .md-table-wrap {
+  max-width: 100%;
+  margin: 0.75em 0;
+  overflow-x: auto;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+}
+
+.md-view .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+
+.md-view .md-table th,
+.md-view .md-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-hairline);
+  text-align: left;
+  vertical-align: top;
+}
+
+.md-view .md-table th {
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.md-view .md-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.md-view .md-hr {
+  margin: 1em 0;
+  border: 0;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.md-view .md-escaped-html {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.md-view .md-image-alt {
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.md-view .md-task-checkbox {
+  margin-inline-end: 6px;
+  vertical-align: middle;
+}
+
+.diff-view {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-canvas);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-x: auto;
+}
+
+.diff-hunk {
+  display: flex;
+  flex-direction: column;
+}
+
+.diff-collapsed {
+  padding: 4px 10px;
+  border-block: 1px solid var(--border-hairline);
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  text-align: center;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 34px 34px minmax(0, 1fr);
+  gap: 6px;
+  padding: 1px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-line-num {
+  color: var(--text-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.diff-line-ctx {
+  color: var(--text-secondary);
+}
+
+.diff-line-add {
+  background: var(--status-ok-soft);
+  color: var(--text-primary);
+}
+
+.diff-line-del {
+  background: var(--status-danger-soft);
+  color: var(--text-primary);
+}
+
+.diff-inline-ins {
+  background: var(--status-ok-soft);
+  color: var(--status-ok);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.diff-inline-del {
+  background: var(--status-danger-soft);
+  color: var(--status-danger);
+  text-decoration: line-through;
+}
+
+.diff-overview {
+  padding: 10px 12px;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}

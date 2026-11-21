@@ -16,4 +16,6 @@ export * from './diagnostics.ts';
 export * from './storySkeleton.ts';
 export * from './harness.ts';
 export * from './markdownDocuments.ts';
+export * from './markdownProposal.ts';
+export * from './markdownDiff.ts';
 export * from './creative.ts';
