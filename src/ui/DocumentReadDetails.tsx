@@ -12,14 +12,16 @@ export function DocumentReadDetails({
   entries,
   children,
   testId,
+  summary = '三区上下文与资料版本详情',
 }: {
   entries: readonly DocumentReadEntry[];
   children?: ReactNode;
   testId?: string;
+  summary?: string;
 }) {
   return (
     <details id={testId} className="reasoning-details" data-testid={testId}>
-      <summary>三区上下文与资料版本详情</summary>
+      <summary>{summary}</summary>
       {children}
       <div className="context-document-reads" aria-label="资料版本读取记录">
         {entries.length ? entries.map((entry) => (

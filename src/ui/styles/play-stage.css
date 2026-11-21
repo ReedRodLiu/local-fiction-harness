@@ -536,25 +536,6 @@
   box-shadow: var(--shadow-floating);
 }
 
-.main-stage.is-playing .composer textarea {
-  flex: 1;
-  min-height: 26px;
-  max-height: 180px;
-  padding: 4px 0;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  box-shadow: none;
-  resize: none;
-  overflow-y: auto;
-}
-
-@supports (field-sizing: content) {
-  .main-stage.is-playing .composer textarea {
-    field-sizing: content;
-  }
-}
-
 .main-stage.is-playing .composer-actions {
   flex: 0 0 auto;
   justify-content: flex-end;

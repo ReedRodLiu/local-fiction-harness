@@ -16,12 +16,12 @@ export interface DocumentEdit {
 }
 
 export function DocumentDialog({ edit, onClose }: { edit: DocumentEdit | null; onClose: () => void }) {
-  const [base, setBase] = useState<MarkdownVersion | null>(null);
-  const [history, setHistory] = useState<MarkdownVersion[]>([]);
-  const [draft, setDraft] = useState('');
+  const [base, setBase] = useState<MarkdownVersion | null>(() => edit?.base ?? null);
+  const [history, setHistory] = useState<MarkdownVersion[]>(() => edit?.history ?? []);
+  const [draft, setDraft] = useState(() => edit?.proposal ?? edit?.base.markdown ?? '');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [preview, setPreview] = useState(false);
+  const [preview, setPreview] = useState(() => edit?.proposal !== undefined);
   const [olderDraft, setOlderDraft] = useState<string | null>(null);
   useWebHistoryLayer('markdown-edit', 62, Boolean(edit), onClose, !saving);
 
@@ -93,21 +93,24 @@ export function DocumentDialog({ edit, onClose }: { edit: DocumentEdit | null; o
             </button>}
             <button type="button" className="btn" disabled={saving} onClick={onClose}>取消</button>
           </div>
-          {(history.length > 1 || olderDraft !== null) && <details className="reasoning-details">
-            <summary>历史版本</summary>
-            {olderDraft !== null && <div className="local-document-history">
-              <span>重新核对前的拟保存草稿</span>
-              <button type="button" className="btn" disabled={saving} onClick={() => { setDraft(olderDraft); setPreview(true); }}>
-                预览并恢复草稿
-              </button>
-            </div>}
-            {history.map((version) => <div className="local-document-history" key={version.id}>
-              <span>{new Date(version.savedAt).toLocaleString()} · {version.source === 'automatic' ? '自动进度' : version.source === 'migration' ? '旧档重建' : '用户保存'}</span>
-              <button type="button" className="btn" disabled={saving} onClick={() => { setDraft(version.markdown); setPreview(true); }}>
-                预览并恢复此版
-              </button>
-            </div>)}
-          </details>}
+          {(() => {
+            const priorHistory = history.filter((version) => version.id !== base?.id);
+            return (priorHistory.length > 0 || olderDraft !== null) && <details className="reasoning-details">
+              <summary>历史版本</summary>
+              {olderDraft !== null && <div className="local-document-history">
+                <span>重新核对前的拟保存草稿</span>
+                <button type="button" className="btn" disabled={saving} onClick={() => { setDraft(olderDraft); setPreview(true); }}>
+                  预览并恢复草稿
+                </button>
+              </div>}
+              {priorHistory.map((version) => <div className="local-document-history" key={version.id}>
+                <span>{new Date(version.savedAt).toLocaleString()} · {version.source === 'automatic' ? '自动进度' : version.source === 'migration' ? '旧档重建' : '用户保存'}</span>
+                <button type="button" className="btn" disabled={saving} onClick={() => { setDraft(version.markdown); setPreview(true); }}>
+                  预览并恢复此版
+                </button>
+              </div>)}
+            </details>;
+          })()}
         </div>
       )}
     </ModalDialog>

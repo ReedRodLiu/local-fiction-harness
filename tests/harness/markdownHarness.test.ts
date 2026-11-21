@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  adoptSuggestion, characterContext, createFictionHarness, documentVersion, editStoryDocument, exportStoryBackup,
+  adoptSuggestion, characterContext, createFictionHarness, createInMemoryStoryStorage, documentVersion, editStoryDocument, exportStoryBackup,
   importStoryBackup, newCharacter, newConversation, newDocument, newWork, splitMarkdownReply, storyDocumentState,
   visibleReplyPrefix, writeDocument,
   type LlmStreamRequest, type Story, type StoryDocuments, type TurnExecutionResult,
@@ -172,5 +172,39 @@ describe('three-mode Markdown Harness', () => {
     const context = characterContext(newDocument('公共最新版'), nextRole, blank, '邮差初访').messages;
     expect(JSON.stringify(context)).toMatch(/公共最新版.*ORIGINAL-角色.*仅采用一条资料.*邮差初访/);
     expect(JSON.stringify(context)).not.toContain('NEW-角色');
+  });
+
+  it('syncs confirmed blueprint title in container markdown when renaming a story so later blueprint tweaks succeed', async () => {
+    const storage = createInMemoryStoryStorage();
+    const harness = createFictionHarness({
+      storage,
+      transport: { async *streamChat() { yield { contentDelta: 'ok', finishReason: 'stop' }; } },
+    });
+    const created = await harness.createAndSaveStory({
+      title: '旧渡口',
+      rawScript: '原始设定不可丢失',
+      blueprint: {
+        title: '旧渡口',
+        worldRules: ['规则甲'],
+        protagonist: '旧主角',
+        npcs: [],
+        taboos: [],
+        openingHook: '',
+        extractionStatus: 'complete',
+      },
+    });
+    const renamed = withDocs((await harness.renameStory(created.id, '新渡口'))!);
+    expect(renamed.title).toBe('新渡口');
+    expect(renamed.blueprint.title).toBe('新渡口');
+    const containerMarkdown = documentVersion(renamed.documents.container).markdown;
+    expect(containerMarkdown).toContain('标题：新渡口');
+    expect(containerMarkdown).not.toContain('标题：旧渡口');
+
+    const tweaked = withDocs(await harness.updateStoryBlueprint(renamed, {
+      ...renamed.blueprint,
+      protagonist: '新主角',
+    }));
+    expect(tweaked.blueprint.protagonist).toBe('新主角');
+    expect(documentVersion(tweaked.documents.container).markdown).toContain('主角设定：新主角');
   });
 });

@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { Story, ThreeZoneMetrics } from '../../src/harness/index.ts';
 import { ContextOverview } from '../../src/ui/ContextOverview.tsx';
+import { DocumentDialog } from '../../src/ui/DocumentDialog.tsx';
 import { DocumentReadDetails } from '../../src/ui/DocumentReadDetails.tsx';
+import { WelcomeView } from '../../src/ui/WelcomeView.tsx';
 import { isBlueprintEditCurrent } from '../../src/ui/StoryBlueprintCard.tsx';
 import { StoryReview } from '../../src/ui/StoryReview.tsx';
 import { CreativeWorkspace } from '../../src/ui/CreativeWorkspace.tsx';
@@ -65,7 +67,9 @@ describe('UI-POLISH-01 companion panel', () => {
     }));
     expect(markup).toContain('root-version');
     expect(markup).toContain('current-version');
-    expect(markup).toContain('小雨 · current');
+    expect(markup).toContain('第 1 轮 · 小雨');
+    expect(markup).toContain('资料版本详情');
+    expect(markup).not.toContain('小雨 · current');
     expect(markup).not.toContain('sibling-version');
     expect(markup).not.toContain('other-version');
   });
@@ -137,7 +141,8 @@ describe('UI-POLISH-01 companion panel', () => {
     expect(markup).toContain('>微调</button>');
     expect(markup).toContain('三区上下文与资料版本详情');
     expect(markup).toContain('container-v3');
-    expect(markup).toContain('reply-1');
+    expect(markup).toContain('第 1 轮 · AI 回复');
+    expect(markup).not.toContain('reply-1');
     expect(markup).not.toContain('other-version');
     expect(markup).toContain('雨夜车站');
     expect(markup).not.toContain('资料审计');
@@ -147,6 +152,7 @@ describe('UI-POLISH-01 companion panel', () => {
   it('renders one collapsed audit disclosure for a creative mode read group', () => {
     const markup = renderToStaticMarkup(createElement(DocumentReadDetails, {
       testId: 'creative-document-reads',
+      summary: '资料版本详情',
       entries: [{
         id: 'writing-reply-1',
         label: '开书讨论回复',
@@ -155,8 +161,48 @@ describe('UI-POLISH-01 companion panel', () => {
       }],
     }));
 
-    expect(markup).toContain('三区上下文与资料版本详情');
+    expect(markup).toContain('资料版本详情');
     expect(markup).toContain('纸月车站 · 容器 · work-v2');
     expect(markup).not.toMatch(/<details[^>]* open=/);
+  });
+
+  it('omits current base version from DocumentDialog history and renders up to 3 recent creative chips in WelcomeView', () => {
+    const dialogMarkup = renderToStaticMarkup(createElement(DocumentDialog, {
+      onClose: () => undefined,
+      edit: {
+        title: '作品资料',
+        base: { id: 'v2', previous: 'v1', markdown: 'second', savedAt: 2000, source: 'user' },
+        history: [
+          { id: 'v1', previous: null, markdown: 'first', savedAt: 1000, source: 'migration' },
+          { id: 'v2', previous: 'v1', markdown: 'second', savedAt: 2000, source: 'user' },
+        ],
+        apply: async () => undefined,
+      },
+    }));
+    expect(dialogMarkup).toContain('历史版本');
+    expect(dialogMarkup).toContain('旧档重建');
+    expect(dialogMarkup).not.toContain('用户保存');
+
+    const welcomeMarkup = renderToStaticMarkup(createElement(WelcomeView, {
+      stories: [],
+      mode: 'writing',
+      onModeChange: () => undefined,
+      characterName: '',
+      onCharacterNameChange: () => undefined,
+      onStartDeepSeekImport: () => undefined,
+      onStartScriptImport: () => undefined,
+      onStartManuscript: () => undefined,
+      onSelectStory: () => undefined,
+      recentCreative: [
+        { id: 'w1', title: '作品一', kindLabel: '产粮', activate: () => undefined },
+        { id: 'c1', title: '角色一', kindLabel: '角色', activate: () => undefined },
+        { id: 'w2', title: '作品二', kindLabel: '产粮', activate: () => undefined },
+      ],
+    }));
+    expect(welcomeMarkup).toContain('作品一');
+    expect(welcomeMarkup).toContain('角色一');
+    expect(welcomeMarkup).toContain('作品二');
+    expect(welcomeMarkup).toContain('welcome-mode-pill');
+    expect(welcomeMarkup).toContain('welcome-quick-pill');
   });
 });

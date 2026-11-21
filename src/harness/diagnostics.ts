@@ -62,6 +62,8 @@ const DIAGNOSTIC_ACTIONS = new Set([
   'get_active_story_selection_error',
   'set_active_story_id',
   'set_active_story_id_error',
+  'compare_and_set_active_story_id',
+  'compare_and_set_active_story_id_error',
   'deepseek_scan_error',
   'deepseek_url_error',
   'deepseek_import_error',

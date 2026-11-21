@@ -39,9 +39,9 @@ export function ContextOverview({
   onReextractBlueprint,
 }: ContextOverviewProps) {
   const readEntries = getActiveBranchNodes(story, story.activeLeafNodeId)
-    .flatMap((node) => node.documentReads?.length ? [{
+    .flatMap((node, index) => node.documentReads?.length ? [{
       id: node.id,
-      label: `${node.role === 'assistant' ? 'AI 回复' : '对话节点'} · ${node.id}`,
+      label: `第 ${Math.max(1, Math.ceil((index + 1) / 2))} 轮 · ${node.role === 'assistant' ? 'AI 回复' : '对话节点'}`,
       createdAt: node.createdAt,
       reads: node.documentReads,
     }] : [])
@@ -60,22 +60,22 @@ export function ContextOverview({
       {onOpenDocuments && <InsetGroup title="资料" testId="companion-documents">
         <div className="companion-document-list">
           <button type="button" className="companion-document-row" disabled={isStreaming} onClick={onOpenDocuments.container}>
-            <span>故事资料</span><ChevronRight size={18} aria-hidden="true" />
+            <span>故事资料</span><ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
           </button>
           <button type="button" className="companion-document-row" disabled={isStreaming} onClick={onOpenDocuments.local}>
-            <span>当前路径资料</span><ChevronRight size={18} aria-hidden="true" />
+            <span>当前路径资料</span><ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
           </button>
           <button type="button" className="companion-document-row" onClick={onOpenDocuments.public}>
-            <span>公共记忆</span><ChevronRight size={18} aria-hidden="true" />
+            <span>公共记忆</span><ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
           </button>
           {onOpenDocuments.adoptScript && <button type="button" className="companion-document-row"
             disabled={isStreaming} onClick={onOpenDocuments.adoptScript}>
-            <span>核对候选剧本</span><ChevronRight size={18} aria-hidden="true" />
+            <span>核对候选剧本</span><ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
           </button>}
         </div>
       </InsetGroup>}
 
-      <DocumentReadDetails entries={readEntries} testId="context-overview">
+      <DocumentReadDetails entries={readEntries} testId="context-overview" summary="三区上下文与资料版本详情">
         <div className="blueprint-summary context-overview-details">
           <p>
             <strong>固定锚定：</strong>{metrics.anchorChars} 字

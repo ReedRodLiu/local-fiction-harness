@@ -596,4 +596,25 @@ describe('Spec #26 Slice 2: DeepSeek structure radar & breadcrumb wrappers', () 
     expect(outcomes.every((event) => event.meta === undefined && event.sanitizedMessage === undefined)).toBe(true);
     expect(JSON.stringify(bundle)).not.toContain('CANARY');
   });
+
+  it('preserves compare_and_set_active_story_id and its error action without rewriting to other', async () => {
+    const collector = createDiagnosticCollector({ platform: 'web' });
+    const inner = createInMemoryStoryStorage();
+    const failingInner = {
+      ...inner,
+      async compareAndSetActiveStoryId(expected: string | null, next: string | null) {
+        if (next === 'fail-target') throw new Error('cas failed');
+        return inner.compareAndSetActiveStoryId(expected, next);
+      },
+    };
+    const tracked = createDiagnosticStoryStorage(failingInner, collector);
+    await tracked.compareAndSetActiveStoryId(null, 'story-a');
+    await expect(tracked.compareAndSetActiveStoryId('story-a', 'fail-target')).rejects.toThrow('cas failed');
+
+    const bundle = collector.buildBundle({ baseUrl: '', model: 'deepseek-chat', memoryOnly: true });
+    expect(bundle.events.map((event) => event.action)).toEqual([
+      'compare_and_set_active_story_id',
+      'compare_and_set_active_story_id_error',
+    ]);
+  });
 });

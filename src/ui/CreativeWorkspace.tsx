@@ -113,7 +113,7 @@ function CreativeCompanion({ entries, children, open, setOpen }: { entries: Docu
   return <>
     <SheetDialog open={open} title="创作资料" label="创作资料" panelName="创作资料" testId="creative-companion" onClose={() => setOpen(false)}>
       <div className="btn-group">{children}</div>
-      <DocumentReadDetails entries={entries} testId="creative-document-reads" />
+      <DocumentReadDetails entries={entries} testId="creative-document-reads" summary="资料版本详情" />
     </SheetDialog>
   </>;
 }
@@ -129,15 +129,15 @@ function DraftPane(props: Props & { work: DraftWork }) {
   const [exported, setExported] = useState(false);
   const [selectedSuggestion, setSelectedSuggestion] = useState<{ suggestion: WritingSuggestion; target: WritingSuggestion } | null>(null);
   const documentReadEntries: DocumentReadEntry[] = [
-    ...work.discussion.flatMap((turn) => turn.documentReads?.length ? [{
+    ...work.discussion.flatMap((turn, index) => turn.documentReads?.length ? [{
       id: turn.id,
-      label: `开书讨论回复 · ${turn.id.slice(0, 8)}`,
+      label: `第 ${Math.max(1, Math.ceil((index + 1) / 2))} 轮 · 开书讨论回复`,
       createdAt: turn.createdAt,
       reads: turn.documentReads,
     }] : []),
-    ...work.suggestions.flatMap((suggestion) => suggestion.documentReads.length ? [{
+    ...work.suggestions.flatMap((suggestion, index) => suggestion.documentReads.length ? [{
       id: suggestion.id,
-      label: `写作建议 · ${suggestion.id.slice(0, 8)} · ${suggestion.instruction}`,
+      label: `写作建议 ${index + 1} · ${suggestion.instruction}`,
       reads: suggestion.documentReads,
     }] : []),
   ];
@@ -368,9 +368,9 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
   const [confirm, setConfirm] = useState<'export' | 'delete' | null>(null);
   const conversation = character.conversations.find((item) => item.id === character.activeConversationId);
   const path = conversation ? getActiveBranchNodes(conversation) : [];
-  const documentReadEntries: DocumentReadEntry[] = path.flatMap((node) => node.documentReads?.length ? [{
+  const documentReadEntries: DocumentReadEntry[] = path.flatMap((node, index) => node.documentReads?.length ? [{
       id: node.id,
-      label: `${node.role === 'assistant' ? character.name : '玩家消息'} · ${node.id}`,
+      label: `第 ${Math.max(1, Math.ceil((index + 1) / 2))} 轮 · ${node.role === 'assistant' ? character.name : '玩家消息'}`,
       createdAt: node.createdAt,
       reads: node.documentReads,
     }] : []);

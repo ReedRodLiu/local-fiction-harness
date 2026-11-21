@@ -6,6 +6,13 @@ const modes = [
   ['character', '人机恋'],
 ] as const;
 
+interface RecentCreativeEntry {
+  id: string;
+  title: string;
+  kindLabel?: string;
+  activate: () => void;
+}
+
 interface WelcomeViewProps {
   stories: Story[];
   mode: (typeof modes)[number][0];
@@ -16,7 +23,7 @@ interface WelcomeViewProps {
   onStartScriptImport: () => void;
   onStartManuscript: () => void;
   onSelectStory: (id: string) => void;
-  recentCreative: Array<{ id: string; title: string; activate: () => void }>;
+  recentCreative: RecentCreativeEntry[];
 }
 
 export function WelcomeView({
@@ -48,15 +55,16 @@ export function WelcomeView({
             {recentCreative.map((entry) => (
               <button key={entry.id} type="button" className="recent-story-chip" onClick={entry.activate}>
                 <strong>{entry.title}</strong>
+                {entry.kindLabel && <span>{entry.kindLabel}</span>}
               </button>
             ))}
           </div>
         )}
       </div>
       <div className="welcome-mode-controls">
-        <div className="recent-story-list" role="group" aria-label="创作模式">
+        <div className="welcome-mode-pills" role="group" aria-label="创作模式">
           {modes.map(([id, label]) => (
-            <button key={id} type="button" className="btn" aria-pressed={mode === id}
+            <button key={id} type="button" className="welcome-mode-pill" aria-pressed={mode === id}
               onClick={() => onModeChange(id)}>{label}</button>
           ))}
         </div>
@@ -72,11 +80,11 @@ export function WelcomeView({
             />
           </label>
         )}
-        {mode === 'story' && <div className="recent-story-list">
-          <button type="button" className="btn btn-sm" data-testid="welcome-deepseek-import" onClick={onStartDeepSeekImport}>从 DeepSeek 导入</button>
-          <button type="button" className="btn btn-sm" data-testid="welcome-script-import" onClick={onStartScriptImport}>导入剧本文件</button>
+        {mode === 'story' && <div className="welcome-quick-actions">
+          <button type="button" className="welcome-quick-pill" data-testid="welcome-deepseek-import" onClick={onStartDeepSeekImport}>从 DeepSeek 导入</button>
+          <button type="button" className="welcome-quick-pill" data-testid="welcome-script-import" onClick={onStartScriptImport}>导入剧本文件</button>
         </div>}
-        {mode === 'writing' && <button type="button" className="btn btn-sm" onClick={onStartManuscript}>直接写正文</button>}
+        {mode === 'writing' && <button type="button" className="welcome-quick-pill" onClick={onStartManuscript}>直接写正文</button>}
       </div>
     </section>
   );

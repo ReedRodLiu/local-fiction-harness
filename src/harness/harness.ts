@@ -632,10 +632,25 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       const existing = await deps.storage.getStory(id);
       if (!existing) return null;
       const trimmedTitle = title.trim() || DEFAULT_STORY_TITLE;
+      const scoped = migrateStoryDocuments(existing) as Story & { documents: StoryDocuments };
+      const nextBlueprint: StoryBlueprint = { ...scoped.blueprint, title: trimmedTitle };
+      let withUpdatedDocument: Story = scoped;
+      if (trimmedTitle !== scoped.blueprint.title) {
+        const currentVersion = storyDocumentState(scoped, scoped.activeLeafNodeId, true).container;
+        const base = documentVersion(scoped.documents.container, currentVersion);
+        try {
+          const markdown = syncConfirmedBlueprintMarkdown(base.markdown, scoped.blueprint, nextBlueprint);
+          if (markdown !== base.markdown) {
+            withUpdatedDocument = editStoryDocument(scoped, 'container', base.id, markdown);
+          }
+        } catch {
+          // Preserve story rename even if the user manually modified the confirmed blueprint block.
+        }
+      }
       const updated: Story = {
-        ...existing,
+        ...withUpdatedDocument,
         title: trimmedTitle,
-        blueprint: { ...existing.blueprint, title: trimmedTitle },
+        blueprint: nextBlueprint,
         updatedAt: Math.max(now(), existing.updatedAt + 1),
       };
       await deps.storage.saveStory(updated, existing.updatedAt);

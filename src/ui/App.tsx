@@ -1454,12 +1454,18 @@ export function App({ runtime }: AppProps) {
         const state = await creative.read();
         if (mode === 'writing') {
           const work = state.works.find((item) => item.id === id);
-          if (work) await runtime.backupExporter.exportMarkdown?.(`${work.title}.md`, work.body);
+          if (work) {
+            const safeTitle = work.title.replace(/[\\/:*?"<>|]/g, '_').trim() || '未命名作品';
+            await runtime.backupExporter.exportMarkdown?.(`${safeTitle}.md`, work.body);
+          }
         } else {
           const character = state.characters.find((item) => item.id === id);
           const conversation = character?.conversations.find((item) => item.id === character.activeConversationId);
-          if (character) await runtime.backupExporter.exportMarkdown?.(`${character.name}.md`,
-            conversation ? conversationExport(character, conversation) : documentVersion(character.document).markdown);
+          if (character) {
+            const safeName = character.name.replace(/[\\/:*?"<>|]/g, '_').trim() || '未命名角色';
+            await runtime.backupExporter.exportMarkdown?.(`${safeName}.md`,
+              conversation ? conversationExport(character, conversation) : documentVersion(character.document).markdown);
+          }
         }
         return;
       }
@@ -1628,6 +1634,33 @@ ${history}`,
     onDelete: (id: string) => void changeCreativeItem(mode, id, 'delete'),
     onExport: (id: string) => void changeCreativeItem(mode, id, 'export'),
   });
+  const recentCreative = [
+    ...creative.workspace.works.map((work, index) => ({
+      id: `work-${work.id}`,
+      title: work.title,
+      kindLabel: '产粮',
+      recency: Math.max(
+        work.discussion.at(-1)?.createdAt ?? 0,
+        ...Object.values(work.document.versions).map((version) => version.savedAt),
+      ) + (work.id === activeWork?.id ? 1 : 0),
+      order: index,
+      activate: () => void changeCreativeItem('writing', work.id, 'select'),
+    })),
+    ...creative.workspace.characters.map((character, index) => ({
+      id: `character-${character.id}`,
+      title: character.name,
+      kindLabel: '角色',
+      recency: Math.max(
+        ...character.conversations.flatMap((conv) => Object.values(conv.nodes).map((node) => node.createdAt)),
+        ...Object.values(character.document.versions).map((version) => version.savedAt),
+      ) + (character.id === activeCharacter?.id ? 1 : 0),
+      order: index,
+      activate: () => void changeCreativeItem('character', character.id, 'select'),
+    })),
+  ]
+    .sort((a, b) => (b.recency - a.recency) || (b.order - a.order))
+    .slice(0, 3)
+    .map(({ id, title, kindLabel, activate }) => ({ id, title, kindLabel, activate }));
   const reviewState = computeActiveReviewState(story);
   const branchLabel = reviewState.activeBranchLabel === '当前主干路线'
     ? '主线'
@@ -1809,10 +1842,7 @@ ${history}`,
                   characterName={characterName}
                   onCharacterNameChange={setCharacterName}
                   onStartManuscript={() => void createStage('', true)}
-                  recentCreative={[
-                    ...(activeWork ? [{ id: activeWork.id, title: activeWork.title, activate: () => openCreativePage('writing') }] : []),
-                    ...(activeCharacter ? [{ id: activeCharacter.id, title: activeCharacter.name, activate: () => openCreativePage('character') }] : []),
-                  ]}
+                  recentCreative={recentCreative}
                 />
               ) : (
                 <>
