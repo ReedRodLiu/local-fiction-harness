@@ -113,20 +113,20 @@ describe('IndexedDB StoryStorage resilience & transaction ordering', () => {
     const storage = createIndexedDbStoryStorage();
 
     // 1. Open failure clears dbPromise so the next call retries open()
-    await expect(storage.getActiveStoryId()).rejects.toThrow(/Quota/);
+    await expect(storage.getActiveStorySelection()).rejects.toThrow(/Quota/);
     shouldFailOpen = false;
-    await expect(storage.getActiveStoryId()).resolves.toBe('story-2');
+    await expect(storage.getActiveStorySelection()).resolves.toEqual({ status: 'present', id: 'story-2' });
     expect(openCalls).toBe(2);
 
     // 2. onclose invalidates cached connection
     activeHandle!.db.onclose?.();
-    await expect(storage.getActiveStoryId()).resolves.toBe('story-3');
+    await expect(storage.getActiveStorySelection()).resolves.toEqual({ status: 'present', id: 'story-3' });
     expect(openCalls).toBe(3);
 
     // 3. onversionchange closes DB and invalidates cached connection
     activeHandle!.db.onversionchange?.();
     expect(closeSpy).toHaveBeenCalledTimes(1);
-    await expect(storage.getActiveStoryId()).resolves.toBe('story-4');
+    await expect(storage.getActiveStorySelection()).resolves.toEqual({ status: 'present', id: 'story-4' });
     expect(openCalls).toBe(4);
   });
 
@@ -248,5 +248,10 @@ describe('IndexedDB StoryStorage resilience & transaction ordering', () => {
     expect(active?.value).toBe('selected');
     await expect(storage.compareAndSetActiveStoryId('selected', 'previous')).resolves.toBe(true);
     expect(active?.value).toBe('previous');
+
+    active = undefined;
+    await expect(storage.getActiveStorySelection()).resolves.toEqual({ status: 'missing' });
+    active = { key: 'activeStoryId', value: null };
+    await expect(storage.getActiveStorySelection()).resolves.toEqual({ status: 'present', id: null });
   });
 });

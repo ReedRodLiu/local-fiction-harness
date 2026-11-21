@@ -152,12 +152,12 @@ export function createIndexedDbStoryStorage(): StoryStorage & { creativeStorage:
       });
     },
 
-    getActiveStoryId(): Promise<string | null> {
+    getActiveStorySelection() {
       return withTransaction(STORE_META, 'readonly', async (tx) => {
         const entry = (await requestToPromise(
           tx.objectStore(STORE_META).get(ACTIVE_STORY_KEY),
         )) as { key: string; value: string | null } | undefined;
-        return entry?.value ?? null;
+        return entry ? { status: 'present' as const, id: entry.value } : { status: 'missing' as const };
       });
     },
 

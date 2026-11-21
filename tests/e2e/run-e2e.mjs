@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
-import { verifyThreeModes } from './three-modes.mjs';
+import { verifyInactiveStoryReload, verifyThreeModes } from './three-modes.mjs';
 
 const require = createRequire(import.meta.url);
 const playwrightCorePath =
@@ -2978,6 +2978,10 @@ async function main() {
     }
 
     if (!process.env.LFH_UI_IMPL_05_ONLY && !process.env.LFH_IMPORT_WIZARD_ONLY) {
+      await verifyInactiveStoryReload(browser, port, {
+        newOfflineContext, startScriptImport, holdNextStoryStorageCommit, releaseHeldStoryStorageCommit,
+      });
+      console.log('INACTIVE_STORY_RELOAD_E2E_PASSED');
       await verifyThreeModes(browser, port, {
         newOfflineContext, mockSuccessfulKeyVerification, completePendingSetup, sseResponse, startScriptImport,
         holdNextStoryStorageCommit, releaseHeldStoryStorageCommit,

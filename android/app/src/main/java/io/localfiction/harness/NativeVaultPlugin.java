@@ -172,9 +172,10 @@ public class NativeVaultPlugin extends Plugin {
     @PluginMethod
     public void getActiveStoryId(PluginCall call) {
         try {
-            String activeId = storyStore.getActiveStoryId();
+            JSONObject selection = storyStore.getActiveStorySelection();
             JSObject result = new JSObject();
-            result.put("id", activeId == null ? JSONObject.NULL : activeId);
+            result.put("present", selection.getBoolean("present"));
+            result.put("id", selection.isNull("id") ? JSONObject.NULL : selection.getString("id"));
             call.resolve(result);
         } catch (Exception err) {
             call.reject("读取当前激活故事 ID 失败: " + err.getMessage(), err);

@@ -227,14 +227,14 @@ describe('Spec #25 Slice 1: Pre-turn catch-up & chunked rolling Plot Summary', (
     const calculated = await harness.calculateActiveBranchSummary(story, testConfig);
     expect(calculated.nodes['a-12'].summarySnapshot.content).toBe('滚动摘要结果');
     expect((await storage.getStory(story.id))?.nodes['a-12'].summarySnapshot).toEqual(EMPTY_SNAP);
-    expect(await storage.getActiveStoryId()).toBe('another-story');
+    expect(await storage.getActiveStorySelection()).toEqual({ status: 'present', id: 'another-story' });
 
     const ensured = await harness.ensureActiveBranchSummary(story, testConfig);
     expect(ensured.nodes['a-12'].summarySnapshot.content).toBe('滚动摘要结果');
     expect((await storage.getStory(story.id))?.nodes['a-12'].summarySnapshot.content).toBe(
       '滚动摘要结果',
     );
-    expect(await storage.getActiveStoryId()).toBe(story.id);
+    expect(await storage.getActiveStorySelection()).toEqual({ status: 'present', id: story.id });
   });
 
   it('calculates a branch rename without writing, while renameBranch keeps its existing persistence behavior', async () => {
@@ -250,12 +250,12 @@ describe('Spec #25 Slice 1: Pre-turn catch-up & chunked rolling Plot Summary', (
     const calculated = harness.calculateBranchRename(story, 'u-2', ' 新分支名称 ');
     expect(calculated.branchNames).toEqual({ 'u-2': '新分支名称' });
     expect((await storage.getStory(story.id))?.branchNames).toBeUndefined();
-    expect(await storage.getActiveStoryId()).toBe('another-story');
+    expect(await storage.getActiveStorySelection()).toEqual({ status: 'present', id: 'another-story' });
 
     const renamed = await harness.renameBranch(story, 'u-2', '新分支名称');
     expect(renamed.branchNames).toEqual({ 'u-2': '新分支名称' });
     expect((await storage.getStory(story.id))?.branchNames).toEqual({ 'u-2': '新分支名称' });
-    expect(await storage.getActiveStoryId()).toBe('another-story');
+    expect(await storage.getActiveStorySelection()).toEqual({ status: 'present', id: 'another-story' });
   });
 
   it('runs chunked rolling summary compression BEFORE main reply when runTurn starts with over-window uncovered history', async () => {

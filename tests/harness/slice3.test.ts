@@ -21,6 +21,30 @@ const testConfig = {
 };
 
 describe('Slice 3: Multi-story storage & auto-persistence', () => {
+  it('uses recent-story fallback only when the active selection is missing', async () => {
+    const storage = createInMemoryStoryStorage();
+    let tick = 0;
+    const harness = createFictionHarness({
+      transport: mockTransport,
+      storage,
+      now: () => 1700000000000 + ++tick * 1000,
+      createId: (() => {
+        let seq = 0;
+        return () => `fallback-${++seq}`;
+      })(),
+    });
+
+    await harness.createAndSaveStory({ title: '较早故事', rawScript: '旧规则' });
+    const recent = await harness.createAndSaveStory({ title: '最近故事', rawScript: '新规则' });
+
+    expect(await storage.getActiveStorySelection()).toEqual({ status: 'missing' });
+    expect((await harness.loadActiveStory())?.id).toBe(recent.id);
+
+    await storage.setActiveStoryId(null);
+    expect(await storage.getActiveStorySelection()).toEqual({ status: 'present', id: null });
+    expect(await harness.loadActiveStory()).toBeNull();
+  });
+
   it('auto-persists created stories, blueprint tweaks, turns, renames, and active selection across reloads', async () => {
     const storage = createInMemoryStoryStorage();
     const saveSpy = vi.spyOn(storage, 'saveStory');

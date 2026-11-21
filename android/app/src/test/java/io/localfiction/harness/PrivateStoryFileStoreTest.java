@@ -37,6 +37,9 @@ public class PrivateStoryFileStoreTest {
         PrivateStoryFileStore store = new PrivateStoryFileStore(root);
 
         assertNull(store.getActiveStoryId());
+        JSONObject initialSelection = store.getActiveStorySelection();
+        assertTrue(!initialSelection.getBoolean("present"));
+        assertTrue(initialSelection.isNull("id"));
         assertEquals(0, store.listStories().size());
 
         store.saveStory(makeStory("story/a:1", "故事A", 100L));
@@ -60,6 +63,9 @@ public class PrivateStoryFileStoreTest {
         store.deleteStory("story/a:1");
         assertNull(store.getStory("story/a:1"));
         assertNull(store.getActiveStoryId());
+        JSONObject inactiveSelection = store.getActiveStorySelection();
+        assertTrue(inactiveSelection.getBoolean("present"));
+        assertTrue(inactiveSelection.isNull("id"));
         assertEquals(1, store.listStories().size());
     }
 

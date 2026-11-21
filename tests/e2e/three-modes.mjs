@@ -5,6 +5,91 @@ import path from 'node:path';
 const fence = '\x60'.repeat(3);
 const proposal = (target, markdown, name) => `${fence}lfh-change\n${JSON.stringify({ target, markdown, name })}\n${fence}`;
 
+export async function verifyInactiveStoryReload(browser, port, helpers) {
+  const {
+    newOfflineContext,
+    startScriptImport,
+    holdNextStoryStorageCommit,
+    releaseHeldStoryStorageCommit,
+  } = helpers;
+
+  const readActiveSelection = (page) => page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('local-fiction-harness');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const entry = await new Promise((resolve, reject) => {
+      const request = db.transaction('meta').objectStore('meta').get('activeStoryId');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return { present: Boolean(entry), id: entry?.value ?? null };
+  });
+
+  const waitForExplicitInactiveStory = (page) => page.waitForFunction(async () => {
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('local-fiction-harness');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const entry = await new Promise((resolve, reject) => {
+      const request = db.transaction('meta').objectStore('meta').get('activeStoryId');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return Boolean(entry) && entry.value === null;
+  });
+
+  const assertWelcome = async (page, title) => {
+    const welcome = page.getByTestId('welcome-view');
+    await welcome.waitFor();
+    assert.equal(await page.getByTestId('app-topbar').getByRole('heading', { name: title, exact: true }).count(), 0);
+  };
+
+  for (const [overlay, overlayLabel, openOverlay, overlayTestId] of [
+    ['settings', '设置', (page) => page.getByTestId('desktop-settings-open').click(), 'settings-page'],
+    ['import', '导入', (page) => startScriptImport(page), 'import-panel'],
+  ]) {
+    const context = await newOfflineContext(browser, port, { viewport: { width: 1280, height: 800 } });
+    try {
+      const page = await context.newPage();
+      page.setDefaultTimeout(8000);
+      await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+      await page.getByTestId('welcome-view').waitFor();
+      assert.deepEqual(await readActiveSelection(page), { present: false, id: null });
+
+      const title = `显式无激活${overlayLabel}`;
+      await page.fill('#turn-input', `${title}。创建后激活期间打开${overlayLabel}`);
+      await holdNextStoryStorageCommit(page, 'meta');
+      await page.getByRole('button', { name: '发送行动', exact: true }).click();
+      const row = page.getByTestId('desktop-library').getByTestId('story-list-item').filter({ hasText: title });
+      await Promise.all([
+        row.waitFor({ state: 'attached' }),
+        page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function'),
+      ]);
+
+      await openOverlay(page);
+      const overlayView = page.getByTestId(overlayTestId);
+      await overlayView.waitFor();
+      await releaseHeldStoryStorageCommit(page);
+      await waitForExplicitInactiveStory(page);
+      assert.deepEqual(await readActiveSelection(page), { present: true, id: null });
+      assert.equal(await overlayView.isVisible(), true, `${overlay} should remain open after the stale activation`);
+
+      await overlayView.getByRole('button', { name: '返回', exact: true }).click();
+      await assertWelcome(page, title);
+      await page.reload({ waitUntil: 'networkidle' });
+      await assertWelcome(page, title);
+      assert.deepEqual(await readActiveSelection(page), { present: true, id: null });
+    } finally {
+      await context.close();
+    }
+  }
+}
+
 export async function verifyThreeModes(browser, port, helpers) {
   const { newOfflineContext, mockSuccessfulKeyVerification, completePendingSetup, sseResponse, startScriptImport, holdNextStoryStorageCommit, releaseHeldStoryStorageCommit } = helpers;
   const context = await newOfflineContext(browser, port, { acceptDownloads: true, viewport: { width: 1280, height: 800 } });

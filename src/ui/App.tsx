@@ -1391,7 +1391,10 @@ export function App({ runtime }: AppProps) {
         });
         await refreshStories();
         if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
-        const activeBeforeActivation = await runtime.storyStorage.getActiveStoryId();
+        const previousSelection = await runtime.storyStorage.getActiveStorySelection();
+        const activeBeforeActivation = previousSelection.status === 'present'
+          ? previousSelection.id
+          : null;
         if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
         const activated = await harness.setActiveStory(created.id);
         if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) {
