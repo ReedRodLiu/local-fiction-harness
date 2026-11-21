@@ -1,6 +1,6 @@
 import { formatConfirmedBlueprintAnchor } from './blueprint.ts';
 import { createDefaultId } from './id.ts';
-import type { DocumentRead, LlmMessage, Story } from './types.ts';
+import type { DocumentRead, LlmMessage, Story, StoryBlueprint } from './types.ts';
 
 export interface MarkdownVersion {
   id: string;
@@ -136,6 +136,38 @@ export function legacyStoryMarkdown(story: Pick<Story, 'blueprint' | 'rawScript'
     confirmed && `## 已确认的规则与资料\n\n${confirmed}`,
     story.rawScript && `## 剧本原文\n\n${story.rawScript}`,
   ].filter(Boolean).join('\n\n');
+}
+
+export function syncConfirmedBlueprintMarkdown(
+  markdown: string,
+  previousBlueprint: StoryBlueprint,
+  blueprint: StoryBlueprint,
+): string {
+  const heading = '## 已确认的规则与资料';
+  const previousAnchor = formatConfirmedBlueprintAnchor(previousBlueprint);
+  const nextAnchor = formatConfirmedBlueprintAnchor(blueprint);
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((line) => line.trim() === heading);
+  if (start < 0) {
+    return [`${heading}\n\n${nextAnchor}`, markdown].filter(Boolean).join('\n\n');
+  }
+
+  let end = start + 1;
+  while (end < lines.length && !/^##\s/.test(lines[end])) end += 1;
+  const sectionBody = lines.slice(start + 1, end).join('\n');
+  const previousAnchorStart = sectionBody.indexOf(previousAnchor);
+  const nextBody = previousAnchorStart >= 0
+    ? sectionBody.slice(0, previousAnchorStart) + nextAnchor + sectionBody.slice(previousAnchorStart + previousAnchor.length)
+    : `${sectionBody.trimEnd()}\n\n${nextAnchor}`;
+  const tail = lines.slice(end);
+  const nextBodyLines = nextBody.split('\n');
+  if (tail.length && nextBodyLines.at(-1) !== '') nextBodyLines.push('');
+  return [
+    ...lines.slice(0, start),
+    heading,
+    ...nextBodyLines,
+    ...tail,
+  ].join('\n');
 }
 
 const progressHeading = '## 当前进度';

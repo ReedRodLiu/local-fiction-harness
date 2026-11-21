@@ -1084,6 +1084,18 @@ export function App({ runtime }: AppProps) {
     );
   };
 
+  const handleSaveBlueprintTweak = async (blueprint: StoryBlueprint) => {
+    if (branchSwitchBusyRef.current) throw new Error('分支切换中，请稍后再保存。');
+    const source = storyRef.current;
+    if (!source) throw new Error('当前故事已不存在。');
+    const updated = await harness.updateStoryBlueprint(source, blueprint);
+    if (storyRef.current?.id === source.id && storyRef.current.updatedAt === source.updatedAt) {
+      storyRef.current = updated;
+      setStory(updated);
+    }
+    await refreshStories();
+  };
+
   const handleRewindToNode = (targetNodeId: string) =>
     runStoryTransition(() => harness.rewindToNode(story, targetNodeId), '回溯节点失败。');
 
@@ -1277,6 +1289,9 @@ export function App({ runtime }: AppProps) {
       const latest = documentVersion(publicDocument);
       setDocumentEdit({
         title: '公共记忆 · 保存后影响各场景的新请求',
+        description: proposal !== undefined
+          ? '作用范围：公共记忆。来源：本轮 AI 回复。'
+          : '作用范围：后续场景发起的新请求。',
         base: expected && Object.hasOwn(publicDocument.versions, expected) ? documentVersion(publicDocument, expected) : latest,
         history: documentLineage(publicDocument),
         proposal,
@@ -1309,6 +1324,11 @@ export function App({ runtime }: AppProps) {
     const { doc, head } = loadEdit(source);
     setDocumentEdit({
       title: target === 'container' ? '故事资料 · 保存后用于此处续写' : '当前路径资料',
+      description: adoptImport
+        ? `作用范围：${target === 'container' ? '整个故事' : '当前路径'}。来源：已导入的候选剧本。`
+        : proposal !== undefined
+          ? `作用范围：${target === 'container' ? '整个故事' : '当前路径'}。来源：本轮 AI 回复。`
+          : `作用范围：${target === 'container' ? '整个故事' : '当前路径'}。`,
       base: documentVersion(doc, expected ?? head),
       history: documentLineage(doc, head),
       proposal,
@@ -1348,7 +1368,7 @@ export function App({ runtime }: AppProps) {
       const sourceText = anchor ? result.story.nodes[anchor]?.content.replace(/\s+/g, ' ').trim().slice(0, 48) : '';
       setDocumentEdit({
         title: `从「${result.story.title}」建立角色 · ${proposed.name}`,
-        description: sourceText ? `来源节点：${sourceText}` : '来源：故事开头。',
+        description: `作用范围：新建角色人设。${sourceText ? `来源节点：${sourceText}` : '来源：故事开头。'}`,
         base: { id: 'new-character', previous: null, markdown: '', savedAt: Date.now(), source: 'user' },
         proposal: proposed.markdown,
         apply: async (_expected: string, markdown: string) => {
@@ -1793,6 +1813,7 @@ ${history}`,
             ? () => openStoryDocument(story, 'container', [story.documents && documentVersion(story.documents.container, storyDocumentState({ ...story, documents: story.documents }, story.activeLeafNodeId, true).container).markdown, `## 剧本原文\n\n${story.importCandidate}`].filter(Boolean).join('\n\n'), undefined, true)
             : undefined,
         } : undefined}
+        onSaveBlueprintTweak={handleSaveBlueprintTweak}
         onReextractBlueprint={() => handleReextractBlueprint()}
         isBranchSwitching={isBranchSwitching}
         onClose={() => setStoryTreeOpen(false)}

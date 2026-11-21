@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, PencilLine, RefreshCw, RotateCcw, Sparkles } from 'lucide-react';
 import type { SiblingBranchInfo, StoryAttachment, TurnNode } from '../harness/index.ts';
-import { DocumentReadDetails } from './DocumentReadDetails.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { formatDiagnosticTags } from './StoryTree.tsx';
 
@@ -264,7 +263,7 @@ export function TurnCard({
                 showChoices={isActiveLeaf}
                 disabled={isBusy}
                 onSelectChoice={onSelectChoice}
-                afterContent={<>{contentActions}<DocumentReadDetails reads={node.documentReads} /></>}
+                afterContent={contentActions}
               />
             )}
 

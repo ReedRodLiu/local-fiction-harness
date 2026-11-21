@@ -3,6 +3,7 @@ import {
   computeActiveReviewState,
   type PlotSummarySnapshot,
   type Story,
+  type StoryBlueprint,
   type ThreeZoneMetrics,
 } from '../harness/index.ts';
 import { ContextOverview } from './ContextOverview.tsx';
@@ -34,6 +35,7 @@ interface CompanionSheetProps {
   onExtractBranchGist: (branchEntryNodeId: string) => Promise<void> | void;
   onComputeSummary: () => void;
   onOpenDocuments?: { container(): void; local(): void; public(): void; adoptScript?: () => void };
+  onSaveBlueprintTweak?: (blueprint: StoryBlueprint) => Promise<boolean | void>;
   onReextractBlueprint: () => void;
   onClose: () => void;
 }
@@ -54,6 +56,7 @@ export function CompanionSheet({
   onExtractBranchGist,
   onComputeSummary,
   onOpenDocuments,
+  onSaveBlueprintTweak,
   onReextractBlueprint,
   onClose,
 }: CompanionSheetProps) {
@@ -158,21 +161,14 @@ export function CompanionSheet({
           data-testid="companion-panel-blueprint"
           hidden={activeTab !== 'blueprint'}
         >
-          {onOpenDocuments && <div className="btn-group creative-role-entry">
-            <button type="button" className="btn" disabled={isStreaming || isSummarizing}
-              onClick={onOpenDocuments.container}>故事资料</button>
-            <button type="button" className="btn" disabled={isStreaming || isSummarizing}
-              onClick={onOpenDocuments.local}>当前路径资料</button>
-            <button type="button" className="btn" onClick={onOpenDocuments.public}>公共记忆</button>
-            {onOpenDocuments.adoptScript && <button type="button" className="btn" disabled={isStreaming || isSummarizing}
-              onClick={onOpenDocuments.adoptScript}>核对候选剧本</button>}
-          </div>}
           <ContextOverview
             story={story}
             summarySnapshot={summarySnapshot}
             metrics={metrics}
             isStreaming={isStreaming || isSummarizing || isBranchSwitching}
             isReextracting={isBlueprintReextracting}
+            onOpenDocuments={onOpenDocuments}
+            onSaveBlueprintTweak={onSaveBlueprintTweak}
             onReextractBlueprint={() => {
               if (!hasCredentials) onClose();
               onReextractBlueprint();

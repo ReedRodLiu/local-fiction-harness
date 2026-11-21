@@ -73,36 +73,41 @@ export function DocumentDialog({ edit, onClose }: { edit: DocumentEdit | null; o
           <h2>{edit.title}</h2>
           {edit.description && <p className="status-text">{edit.description}</p>}
           {error && <BannerAlert tone="danger">{error}</BannerAlert>}
-          {preview && base && <details className="reasoning-details"><summary>查看修改前的内容</summary>
-            <pre>{base.markdown || '（空白文档）'}</pre>
-          </details>}
-          <label className="field">
-            {preview ? '拟保存的 Markdown' : 'Markdown'}
-            <textarea value={draft} rows={10} disabled={saving} onChange={(event) => setDraft(event.target.value)} />
-          </label>
-          {olderDraft !== null && <details className="reasoning-details">
-            <summary>查看之前拟保存的草稿</summary>
-            <pre>{olderDraft}</pre>
-          </details>}
-          {history.length > 1 && (
-            <details className="reasoning-details">
-              <summary>版本历史</summary>
-              {history.map((version) => <div className="local-document-history" key={version.id}>
-                <span>{new Date(version.savedAt).toLocaleString()} · {version.source === 'automatic' ? '自动进度' : version.source === 'migration' ? '旧档重建' : '用户保存'}</span>
-                <button type="button" className="btn" disabled={saving} onClick={() => { setDraft(version.markdown); setPreview(true); }}>
-                  用此版本创建新版本
-                </button>
-              </div>)}
-            </details>
+          {error && edit.reload && <button type="button" className="btn" disabled={saving} onClick={() => void reload()}>重新核对</button>}
+          {preview && base ? (
+            <section className="document-proposal-preview" data-testid="document-proposal-preview">
+              <h3>拟保存的 Markdown</h3>
+              <pre>{draft || '（空白文档）'}</pre>
+            </section>
+          ) : (
+            <label className="field">
+              Markdown
+              <textarea value={draft} rows={10} disabled={saving} onChange={(event) => setDraft(event.target.value)} />
+            </label>
           )}
           <div className="btn-group">
-            <button type="button" className="btn" disabled={saving} onClick={onClose}>取消</button>
-            {error && edit.reload && <button type="button" className="btn" disabled={saving} onClick={() => void reload()}>重新核对</button>}
             <button type="button" className="btn btn-primary" disabled={saving || !base || draft === base.markdown}
-              onClick={() => preview ? void save() : setPreview(true)}>
-              {preview ? '确认保存' : '核对修改'}
-            </button>
+              onClick={() => void save()}>确认保存</button>
+            {preview && <button type="button" className="btn" disabled={saving} onClick={() => setPreview(false)}>
+              编辑微调
+            </button>}
+            <button type="button" className="btn" disabled={saving} onClick={onClose}>取消</button>
           </div>
+          {(history.length > 1 || olderDraft !== null) && <details className="reasoning-details">
+            <summary>历史版本</summary>
+            {olderDraft !== null && <div className="local-document-history">
+              <span>重新核对前的拟保存草稿</span>
+              <button type="button" className="btn" disabled={saving} onClick={() => { setDraft(olderDraft); setPreview(true); }}>
+                预览并恢复草稿
+              </button>
+            </div>}
+            {history.map((version) => <div className="local-document-history" key={version.id}>
+              <span>{new Date(version.savedAt).toLocaleString()} · {version.source === 'automatic' ? '自动进度' : version.source === 'migration' ? '旧档重建' : '用户保存'}</span>
+              <button type="button" className="btn" disabled={saving} onClick={() => { setDraft(version.markdown); setPreview(true); }}>
+                预览并恢复此版
+              </button>
+            </div>)}
+          </details>}
         </div>
       )}
     </ModalDialog>

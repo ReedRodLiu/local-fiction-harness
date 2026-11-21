@@ -3377,7 +3377,8 @@ async function main() {
     await page.setViewportSize({ width: 390, height: 844 });
     let reviewSheet = await openStoryReview(page);
     await reviewSheet.getByText('将在续写时补齐进度', { exact: false }).waitFor();
-    await reviewSheet.getByText('资料审计', { exact: true }).click();
+    await reviewSheet.getByLabel('剧情摘要指标').waitFor();
+    await reviewSheet.getByRole('button', { name: '立即补算剧情摘要' }).waitFor();
     await reviewSheet.getByRole('button', { name: '立即补算剧情摘要' }).click();
     await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
     await page.fill('#byok-api-key', 'sk-e2e-inline');
@@ -3437,6 +3438,11 @@ async function main() {
     const storyPanel = await openStoryBlueprint(page);
     await storyPanel.getByRole('button', { name: /核对.*剧本/ }).click();
     const markdownDialog = page.getByTestId('markdown-document');
+    await markdownDialog.getByTestId('document-proposal-preview').waitFor();
+    if (await markdownDialog.getByRole('textbox').count()) {
+      throw new Error('Imported script proposals should open in a read-only preview.');
+    }
+    await markdownDialog.getByText('候选剧本', { exact: false }).waitFor();
     await markdownDialog.getByRole('button', { name: '确认保存' }).click();
     await markdownDialog.waitFor({ state: 'hidden' });
     await closeCompanionSheet(page);
@@ -3707,10 +3713,19 @@ async function main() {
     if (await contextDetails.evaluate((element) => element.open)) {
       throw new Error('Three-zone context details should be collapsed by default.');
     }
+    await blueprintCard.getByRole('button', { name: '微调', exact: true }).click();
+    await blueprintCard.getByLabel('微调主角设定').fill('E2E调整主角');
+    await blueprintCard.getByLabel('背景规则（每行一条）').fill('每轮输出状态面板\nE2E补充规则');
+    await blueprintCard.getByRole('button', { name: '保存蓝图微调' }).click();
+    await blueprintCard.getByText('E2E调整主角', { exact: true }).waitFor();
     await savedBlueprintSheet.getByRole('button', { name: '故事资料', exact: true }).click();
     const storyMarkdown = page.getByTestId('markdown-document');
+    const blueprintMarkdown = await storyMarkdown.getByRole('textbox').inputValue();
+    if (!blueprintMarkdown.includes('主角设定：E2E调整主角') ||
+        !blueprintMarkdown.includes('核心规则：\n- 每轮输出状态面板\n- E2E补充规则')) {
+      throw new Error(`Blueprint edits were not saved into the story document: ${blueprintMarkdown}`);
+    }
     await storyMarkdown.getByRole('textbox').fill('## 剧本补充\n练习生甲未经同意不离开训练营');
-    await storyMarkdown.getByRole('button', { name: '核对修改' }).click();
     await storyMarkdown.getByRole('button', { name: '确认保存' }).click();
     await storyMarkdown.waitFor({ state: 'hidden' });
     await contextDetails.locator('summary').click();

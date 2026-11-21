@@ -8,7 +8,7 @@ import {
   type TurnNode, type WritingSuggestion,
 } from '../harness/index.ts';
 import type { DocumentEdit } from './DocumentDialog.tsx';
-import { DocumentReadDetails } from './DocumentReadDetails.tsx';
+import { DocumentReadDetails, type DocumentReadEntry } from './DocumentReadDetails.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { ModalDialog } from './primitives/ModalDialog.tsx';
@@ -106,6 +106,19 @@ function DraftPane(props: Props & { work: DraftWork }) {
   const [excerpt, setExcerpt] = useState('');
   const [exported, setExported] = useState(false);
   const [selectedSuggestion, setSelectedSuggestion] = useState<{ suggestion: WritingSuggestion; target: WritingSuggestion } | null>(null);
+  const documentReadEntries: DocumentReadEntry[] = [
+    ...work.discussion.flatMap((turn) => turn.documentReads?.length ? [{
+      id: turn.id,
+      label: '开书讨论回复',
+      createdAt: turn.createdAt,
+      reads: turn.documentReads,
+    }] : []),
+    ...work.suggestions.flatMap((suggestion) => suggestion.documentReads.length ? [{
+      id: suggestion.id,
+      label: `写作建议 · ${suggestion.instruction}`,
+      reads: suggestion.documentReads,
+    }] : []),
+  ];
   const textarea = useRef<HTMLTextAreaElement>(null);
   const selection = useRef({ start: 0, end: 0 });
   const unsaved = useRef(work.body);
@@ -116,6 +129,9 @@ function DraftPane(props: Props & { work: DraftWork }) {
     const base = documentVersion(document);
     openDocument({
       title: '作品资料', base, proposal,
+      description: proposal !== undefined
+        ? '作用范围：当前作品资料。来源：本轮 AI 回复。'
+        : '作用范围：当前作品。',
       history: documentLineage(document),
       reload: async () => {
         const found = (await read()).works.find((item) => item.id === work.id);
@@ -253,7 +269,6 @@ function DraftPane(props: Props & { work: DraftWork }) {
             {work.discussion.map((turn) => <div key={turn.id} className="creative-turn">
               <p className="creative-text">{turn.role === 'user' ? '你' : 'AI'} · {turn.content}</p>
               {editing && <button type="button" className="btn" onClick={() => { setUseDiscussion(true); setExcerpt(turn.content); }}>引用这一段</button>}
-              {turn.role === 'assistant' && <DocumentReadDetails reads={turn.documentReads} />}
             </div>)}
           </details>
         )}
@@ -265,7 +280,6 @@ function DraftPane(props: Props & { work: DraftWork }) {
               const chosen = window.getSelection()?.toString().trim();
               void chooseSuggestion(suggestion, chosen && suggestion.text.includes(chosen) ? chosen : suggestion.text).catch(reply.fail);
             }}>采纳建议</button>
-            <DocumentReadDetails reads={suggestion.documentReads} />
           </div>
         ))}
         {reply.error && <BannerAlert tone="danger">{reply.error}</BannerAlert>}
@@ -283,6 +297,7 @@ function DraftPane(props: Props & { work: DraftWork }) {
           </div>
         </form>
       </section>
+      {documentReadEntries.length > 0 && <DocumentReadDetails entries={documentReadEntries} testId="creative-document-reads" />}
       <ModalDialog open={Boolean(selectedSuggestion)} label="核对正文位置" onClose={() => setSelectedSuggestion(null)}>
         {selectedSuggestion && <div className="local-document-dialog">
           <h2>核对正文位置</h2>
@@ -310,10 +325,21 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
   const [confirm, setConfirm] = useState<'export' | 'delete' | null>(null);
   const conversation = character.conversations.find((item) => item.id === character.activeConversationId);
   const path = conversation ? getActiveBranchNodes(conversation) : [];
+  const documentReadEntries: DocumentReadEntry[] = character.conversations.flatMap((item) =>
+    Object.values(item.nodes).flatMap((node) => node.documentReads?.length ? [{
+      id: `${item.id}-${node.id}`,
+      label: `${conversationLabel(item.kind)} · ${node.role === 'assistant' ? character.name : '玩家消息'}`,
+      createdAt: node.createdAt,
+      reads: node.documentReads,
+    }] : []),
+  );
 
   function editCharacter(proposal?: string, expected?: string) {
     openDocument({
       title: '角色人设 · 新对话采用新版',
+      description: proposal !== undefined
+        ? '作用范围：角色人设。来源：本轮 AI 回复。'
+        : '作用范围：当前角色及之后的新对话。',
       base: documentVersion(character.document, expected ?? character.document.head),
       history: documentLineage(character.document), proposal,
       reload: async () => {
@@ -334,6 +360,9 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
     const base = conversationLocalVersion(target);
     openDocument({
       title: '当前对话资料', base: documentVersion(target.document, base),
+      description: proposal !== undefined
+        ? '作用范围：当前对话。来源：本轮 AI 回复。'
+        : '作用范围：当前角色对话。',
       history: documentLineage(target.document, base), proposal,
       apply: async (expected, markdown) => {
         await save((state) => updateCharacter(state, character.id, (current) => updateConversation(current, target.id, (live) => {
@@ -439,7 +468,6 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
           <details className="reasoning-details">
             <summary>对话操作</summary>
             <button className="btn" type="button" disabled={reply.busy} onClick={() => navigate(conversation.id, node.id)}>从这里继续</button>
-            {node.role === 'assistant' && <DocumentReadDetails reads={node.documentReads} />}
           </details>
         </article>)}
         {Object.values(conversation.nodes).some((node) => !path.some((active) => active.id === node.id)) && (
@@ -470,6 +498,7 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
             <button type="button" className="btn" disabled={reply.busy} onClick={() => void startConversation(conversation.kind, '', false).catch(reply.fail)}>空白开聊</button>
             <button type="button" className="btn" disabled={reply.busy} onClick={() => openDocument({
               title: '核对要带入新对话的资料',
+              description: '作用范围：新对话的初始资料。',
               base: { id: 'new-conversation', previous: null, markdown: '', savedAt: Date.now(), source: 'user' },
               apply: async (_version, markdown) => {
                 if (!markdown.trim()) throw new Error('请填入要带入的资料。');
@@ -481,6 +510,7 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
           </div>
         </details>
       </section>}
+      {documentReadEntries.length > 0 && <DocumentReadDetails entries={documentReadEntries} testId="creative-document-reads" />}
       <ModalDialog open={Boolean(confirm)} label={confirm === 'delete' ? '删除这段对话及其分叉' : '对话导出预览'} onClose={() => setConfirm(null)}>
         {conversation && confirm && <div className="local-document-dialog">
           <h2>{confirm === 'delete' ? '删除这段对话及其分叉' : '对话导出预览'}</h2>

@@ -77,6 +77,24 @@ describe('TurnCard', () => {
     expect(markup).not.toMatch(/<details[^>]* open=/);
   });
 
+  it('keeps document version reads out of the story reply', () => {
+    const markup = renderCard({
+      isLatestTurn: true,
+      node: {
+        ...node,
+        documentReads: [{
+          scope: 'container',
+          name: '雨夜车站',
+          versionId: 'container-v3',
+          readAt: 10,
+        }],
+      },
+    });
+
+    expect(markup).not.toContain('资料审计');
+    expect(markup).not.toContain('container-v3');
+  });
+
   it('keeps completed reasoning collapsed when another operation is busy', () => {
     const markup = renderCard({
       isLatestTurn: true,
