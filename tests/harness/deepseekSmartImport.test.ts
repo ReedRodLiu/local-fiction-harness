@@ -3,6 +3,8 @@ import { strToU8, zipSync } from 'fflate';
 import {
   createFictionHarness,
   createInMemoryStoryStorage,
+  documentVersion,
+  editStoryDocument,
   getActiveSummarySnapshot,
   importDeepSeekSessions,
   locateDeepSeekScriptBoundary,
@@ -303,9 +305,13 @@ describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path s
 
     const importedStory = result.stories[0];
     expect(importedStory.sourceKind).toBe('deepseek_import');
+    expect(importedStory.sourceSessionId).toBe('sess-ambiguous-long');
     expect(importedStory.rawScript).toBe('');
-    expect(importedStory.importCandidate).toContain('【雾隐山庄剧本】');
-    expect(importedStory.importCandidate).not.toContain('在吗？想玩个古风推理文游');
+    expect(importedStory.importCandidate).toBeUndefined();
+    expect(importedStory.v2Migrated).toBe(true);
+    const settingMarkdown = documentVersion(importedStory.documents!.container, 'story-original').markdown;
+    expect(settingMarkdown).toContain('【雾隐山庄剧本】');
+    expect(settingMarkdown).not.toContain('在吗？想玩个古风推理文游');
     expect(result.summaryStatuses[importedStory.id]).toBe('pending_summary');
     expect(getActiveSummarySnapshot(importedStory).content).toBe('');
 
@@ -315,14 +321,14 @@ describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path s
     );
     expect(branchBLeaf?.summarySnapshot.content).toBe('');
 
-    // Continue one turn -> prompt includes both anchored rawScript and compressed Plot Summary
+    // Continue one turn -> prompt includes canonical 「故事设定」 Markdown and compressed Plot Summary
     captured.length = 0;
     await harness.runTurn(importedStory, '翻开账册第一页', testConfig);
     const turnReq = captured.find((r) =>
       r.messages.some((m) => m.content === '翻开账册第一页'),
     )!;
     const fullPrompt = turnReq.messages.map((m) => m.content).join('\n');
-    expect(turnReq.messages[0].content).not.toContain('【雾隐山庄剧本】');
+    expect(turnReq.messages[0].content).toContain('【雾隐山庄剧本】');
     expect(fullPrompt).toContain('【激活线摘要】顾长风自庄主处得铜钥匙。');
   });
 
@@ -369,11 +375,10 @@ describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path s
     expect(keylessResult.summaryStatuses[story.id]).toBe('pending_key');
     expect(story.blueprint.extractionStatus).toBe('partial_fallback');
 
-    // Later after configuring key, both blueprint extraction and lazy summary completion succeed
-    const bp = await harness.extractStoryBlueprint(story.importCandidate ?? '', testConfig, story.title);
-    expect(bp.extractionStatus).toBe('complete');
-    const withBp = await harness.updateStoryBlueprint(story, bp);
-    const completed = await harness.ensureActiveBranchSummary(withBp, testConfig);
+    // Later after configuring key, canonical 「故事设定」 can be edited directly as Markdown and lazy summary completion succeeds
+    const settingText = documentVersion(story.documents!.container, 'story-original').markdown;
+    const edited = editStoryDocument(story, 'container', 'story-original', `${settingText}\n\n## 补充规则\n每轮需记录线索。`);
+    const completed = await harness.ensureActiveBranchSummary(edited, testConfig);
     expect(getActiveSummarySnapshot(completed).content).toBe('补算后摘要');
 
     // Direct call to locateDeepSeekScriptBoundary handles empty/invalid fallback gracefully
