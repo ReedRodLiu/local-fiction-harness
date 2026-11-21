@@ -3,12 +3,14 @@ import { strToU8, zipSync } from 'fflate';
 import {
   createFictionHarness,
   createInMemoryStoryStorage,
+  documentVersion,
   scanDeepSeekExportZip,
   previewDeepSeekSessions,
   importDeepSeekSessions,
   exportStoryBackup,
   importStoryBackup,
   assistFilterDeepSeekSessions,
+  markDuplicateImportSessions,
   type LlmStreamRequest,
   type LlmTransport,
 } from '../../src/harness/index.ts';
@@ -358,20 +360,28 @@ describe('Slice 2 (#20): DeepSeek v3 two-stage .zip scan, sanitization, Node Dia
     expect(savedList).toHaveLength(2);
     const restoredFiction = savedList.find((s) => s.title === '深宫棋局（合成测试）')!;
     expect(restoredFiction.blueprint.extractionStatus).toBe('partial_fallback');
-
+    expect(restoredFiction.sourceSessionId).toBe('sess-fiction-1');
+    expect(restoredFiction.v2Migrated).toBe(true);
     expect(restoredFiction.rawScript).toBe('');
-    expect(restoredFiction.importCandidate).toContain('【宫廷剧本】主角：沈知微');
+    expect(restoredFiction.importCandidate).toBeUndefined();
+
+    const settingDoc = restoredFiction.documents!.container;
+    expect(settingDoc.head).toBe('story-original');
+    const settingMarkdown = documentVersion(settingDoc, 'story-original').markdown;
+    expect(settingMarkdown).toContain('【宫廷剧本】主角：沈知微');
+    expect(settingMarkdown).toContain('补充设定：每晚子时触发随机事件');
+
     const reference = Object.values(restoredFiction.nodes).flatMap((node) => node.attachmentIds ?? [])[0];
     const original = restoredFiction.attachments![reference];
     expect(original.fileName).toMatch(/\.docx$/);
     const archive = importStoryBackup(exportStoryBackup(restoredFiction), []);
     expect(archive.attachments?.[reference]).toEqual(original);
+    expect(archive.sourceSessionId).toBe('sess-fiction-1');
 
-
-    // Context assembly strictly excludes NodeDiagnostics and THINK reasoningContent
+    // Context assembly immediately uses canonical 「故事设定」 Markdown and strictly excludes NodeDiagnostics and THINK reasoningContent
     const ctx = harness.assembleContext(restoredFiction, restoredFiction.activeLeafNodeId, '询问故人身份');
     const promptText = ctx.messages.map((m) => m.content).join('\n');
-    expect(ctx.messages[0].content).not.toContain('【宫廷剧本】主角：沈知微');
+    expect(ctx.messages[0].content).toContain('【宫廷剧本】主角：沈知微');
     expect(promptText).toContain('落款写着“旧日故人”');
     expect(promptText).not.toContain('CONTENT_FILTER');
     expect(promptText).not.toContain('CONTENT_RISK');
@@ -442,5 +452,188 @@ describe('Slice 2 (#20): DeepSeek v3 two-stage .zip scan, sanitization, Node Dia
     const leaf = story.nodes[story.activeLeafNodeId!];
     expect(leaf.content).toBe('回复节点');
     expect(leaf.parentId).toBe(story.rootNodeIds[0]);
+  });
+
+  it('V0.2: stamps sourceSessionId, detects duplicate imports via markDuplicateImportSessions, and creates non-destructive copies on re-import', async () => {
+    const zipBytes = buildSyntheticDeepSeekZip();
+    const scan = scanDeepSeekExportZip(zipBytes);
+    const storage = createInMemoryStoryStorage();
+    let seq = 0;
+    const harness = createFictionHarness({
+      transport: {
+        async *streamChat() {
+          yield { contentDelta: '续写内容', finishReason: 'stop' };
+        },
+      },
+      storage,
+      createId: () => `dup-story-${++seq}`,
+    });
+
+    // Initially none are marked as imported
+    const beforeMark = markDuplicateImportSessions(scan.sessions, await harness.listStories());
+    expect(beforeMark.every((s) => !s.alreadyImported)).toBe(true);
+
+    // First import
+    const first = await importDeepSeekSessions(zipBytes, ['sess-fiction-1'], harness);
+    expect(first.stories).toHaveLength(1);
+    const originalStory = first.stories[0];
+    expect(originalStory.sourceSessionId).toBe('sess-fiction-1');
+    expect(originalStory.title).toBe('深宫棋局（合成测试）');
+
+    // Progress on original story must remain intact when re-importing
+    const progressed = await harness.saveStory({
+      ...originalStory,
+      activeLeafNodeId: originalStory.rootNodeIds[0],
+      updatedAt: originalStory.updatedAt + 5000,
+    });
+
+    const afterMark = markDuplicateImportSessions(scan.sessions, await harness.listStories());
+    expect(afterMark.find((s) => s.sessionId === 'sess-fiction-1')?.alreadyImported).toBe(true);
+    expect(afterMark.find((s) => s.sessionId === 'sess-daily-2')?.alreadyImported).toBe(false);
+
+    // Second import creates independent copy with (副本)
+    const second = await importDeepSeekSessions(zipBytes, ['sess-fiction-1'], harness);
+    expect(second.stories).toHaveLength(1);
+    expect(second.stories[0].id).not.toBe(originalStory.id);
+    expect(second.stories[0].sourceSessionId).toBe('sess-fiction-1');
+    expect(second.stories[0].title).toBe('深宫棋局（合成测试） (副本)');
+
+    // Third import creates numbered copy (副本 2)
+    const third = await importDeepSeekSessions(zipBytes, ['sess-fiction-1'], harness);
+    expect(third.stories[0].title).toBe('深宫棋局（合成测试） (副本 2)');
+
+    // Original story progress was never overwritten
+    const allSaved = await harness.listStories();
+    expect(allSaved).toHaveLength(3);
+    const originalReloaded = allSaved.find((s) => s.id === originalStory.id)!;
+    expect(originalReloaded.title).toBe('深宫棋局（合成测试）');
+    expect(originalReloaded.activeLeafNodeId).toBe(progressed.activeLeafNodeId);
+  });
+
+  it('V0.2: merges .md/.txt/.docx attachments across setup turns into single story-original Markdown while keeping original attachments', async () => {
+    const mdBytes = strToU8('# 哨兵向导世界观\n向导素阈值：85%。');
+    const txtBytes = strToU8('主角档案：林野，S级向导。');
+    const docxBytes = buildMinimalDocxBytes('禁区规则：禁止单独进入黑塔。');
+    const pngBytes = strToU8('fake-png-bytes');
+
+    const session = {
+      id: 'sess-sentinel',
+      title: '哨兵向导测试档',
+      current_message_id: 4,
+      inserted_at: '2026-10-15T10:00:00Z',
+      updated_at: '2026-10-15T12:00:00Z',
+      messages: [
+        {
+          id: 1,
+          parent_id: null,
+          role: 'USER',
+          status: 'FINISHED',
+          inserted_at: '2026-10-15T10:00:00Z',
+          fragments: [
+            {
+              type: 'FILE',
+              files: [
+                { id: 'f1', file_name: '世界观.md', file_size: mdBytes.length, export_path: 'chat_sessions/sess-sentinel/世界观.md', is_image: false },
+                { id: 'f2', file_name: '配图.png', file_size: pngBytes.length, export_path: 'chat_sessions/sess-sentinel/配图.png', is_image: true },
+              ],
+            },
+            { type: 'REQUEST', content: '先看看这两份。' },
+          ],
+        },
+        {
+          id: 2,
+          parent_id: 1,
+          role: 'ASSISTANT',
+          status: 'FINISHED',
+          inserted_at: '2026-10-15T10:01:00Z',
+          fragments: [{ type: 'RESPONSE', content: '收到，请补充人物与规则。' }],
+        },
+        {
+          id: 3,
+          parent_id: 2,
+          role: 'USER',
+          status: 'FINISHED',
+          inserted_at: '2026-10-15T10:02:00Z',
+          fragments: [
+            {
+              type: 'FILE',
+              files: [
+                { id: 'f3', file_name: '档案.txt', file_size: txtBytes.length, export_path: 'chat_sessions/sess-sentinel/档案.txt', is_image: false },
+                { id: 'f4', file_name: '规则.docx', file_size: docxBytes.length, export_path: 'chat_sessions/sess-sentinel/规则.docx', is_image: false },
+              ],
+            },
+            { type: 'REQUEST', content: '按以上全部设定正式开局！' },
+          ],
+        },
+        {
+          id: 4,
+          parent_id: 3,
+          role: 'ASSISTANT',
+          status: 'FINISHED',
+          inserted_at: '2026-10-15T10:03:00Z',
+          fragments: [{ type: 'RESPONSE', content: '第一幕：黑塔警报拉响。' }],
+        },
+      ],
+    };
+
+    const zipBytes = zipSync({
+      'manifest.json': strToU8(JSON.stringify({ export_format_version: 3 })),
+      'chat_sessions/sess-sentinel.json': strToU8(JSON.stringify(session)),
+      'chat_sessions/sess-sentinel/世界观.md': mdBytes,
+      'chat_sessions/sess-sentinel/配图.png': pngBytes,
+      'chat_sessions/sess-sentinel/档案.txt': txtBytes,
+      'chat_sessions/sess-sentinel/规则.docx': docxBytes,
+    });
+
+    const harness = createFictionHarness({
+      transport: { async *streamChat() { yield { contentDelta: 'ok', finishReason: 'stop' }; } },
+      storage: createInMemoryStoryStorage(),
+    });
+
+    const result = await importDeepSeekSessions(zipBytes, ['sess-sentinel'], harness);
+    const story = result.stories[0];
+    expect(story.documents?.container.head).toBe('story-original');
+    const settingMd = documentVersion(story.documents!.container, 'story-original').markdown;
+    expect(settingMd).toContain('哨兵向导世界观');
+    expect(settingMd).toContain('主角档案：林野');
+    expect(settingMd).toContain('禁区规则：禁止单独进入黑塔');
+    expect(Object.keys(story.attachments ?? {})).toHaveLength(4);
+    expect(story.attachments?.['chat_sessions/sess-sentinel/配图.png']).toBeDefined();
+  });
+
+  it('V0.2: passes natural-language query to assistFilterDeepSeekSessions', async () => {
+    const zipBytes = buildSyntheticDeepSeekZip();
+    const scan = scanDeepSeekExportZip(zipBytes);
+    const capturedRequests: LlmStreamRequest[] = [];
+    const transport: LlmTransport = {
+      async *streamChat(req) {
+        capturedRequests.push(req);
+        yield {
+          contentDelta: '{"fictionSessionIds":["sess-fiction-1"]}',
+          finishReason: 'stop',
+        };
+      },
+    };
+
+    const matchedIds = await assistFilterDeepSeekSessions(
+      scan.sessions,
+      transport,
+      {
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-chat',
+        apiKey: 'k',
+        memoryOnly: true,
+      },
+      undefined,
+      '找回上个月写的哨兵向导文游',
+    );
+    expect(matchedIds).toEqual(['sess-fiction-1']);
+    expect(capturedRequests).toHaveLength(1);
+    const userPayload = JSON.parse(capturedRequests[0].messages[1].content) as {
+      query: string;
+      sessions: Array<{ id: string; updatedAt: string }>;
+    };
+    expect(userPayload.query).toBe('找回上个月写的哨兵向导文游');
+    expect(userPayload.sessions[0].updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });
