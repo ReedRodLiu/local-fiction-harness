@@ -20,7 +20,7 @@ interface FakeTransaction {
   objectStore: () => {
     get: () => FakeRequest<unknown>;
     getAll: () => FakeRequest<unknown[]>;
-    put: () => void;
+    put: (value?: unknown) => void;
     delete: () => void;
   };
 }
@@ -181,5 +181,72 @@ describe('IndexedDB StoryStorage resilience & transaction ordering', () => {
     ]);
 
     expect(result).toBe('completed');
+  });
+
+  it('compares and sets the active story in one readwrite transaction', async () => {
+    let active: { key: string; value: string | null } | undefined = {
+      key: 'activeStoryId',
+      value: 'selected',
+    };
+    const fakeIndexedDb = {
+      open: vi.fn(() => {
+        const req: FakeRequest<unknown> & { onupgradeneeded: (() => void) | null } = {
+          result: undefined,
+          error: null,
+          onsuccess: null,
+          onerror: null,
+          onupgradeneeded: null,
+        };
+        queueMicrotask(() => {
+          req.result = {
+            objectStoreNames: { contains: () => true },
+            createObjectStore: () => {},
+            close: () => {},
+            onclose: null,
+            onversionchange: null,
+            transaction: () => {
+              const tx: FakeTransaction = {
+                oncomplete: null,
+                onerror: null,
+                onabort: null,
+                error: null,
+                objectStore: () => ({
+                  get: () => {
+                    const getReq: FakeRequest<unknown> = {
+                      result: active,
+                      error: null,
+                      onsuccess: null,
+                      onerror: null,
+                    };
+                    queueMicrotask(() => {
+                      getReq.onsuccess?.();
+                      queueMicrotask(() => tx.oncomplete?.());
+                    });
+                    return getReq;
+                  },
+                  getAll: () => ({} as FakeRequest<unknown[]>),
+                  put: (value: unknown) => {
+                    active = value as { key: string; value: string | null };
+                    queueMicrotask(() => tx.oncomplete?.());
+                  },
+                  delete: () => {},
+                }),
+              };
+              return tx;
+            },
+          };
+          req.onsuccess?.();
+        });
+        return req;
+      }),
+    };
+
+    (globalThis as { window: unknown }).window = { indexedDB: fakeIndexedDb };
+    const storage = createIndexedDbStoryStorage();
+
+    await expect(storage.compareAndSetActiveStoryId('created', 'previous')).resolves.toBe(false);
+    expect(active?.value).toBe('selected');
+    await expect(storage.compareAndSetActiveStoryId('selected', 'previous')).resolves.toBe(true);
+    expect(active?.value).toBe('previous');
   });
 });

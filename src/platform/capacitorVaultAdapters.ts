@@ -92,6 +92,14 @@ export function createAndroidStoryStorage(
     setActiveStoryId(id: string | null): Promise<void> {
       return enqueue(() => plugin.setActiveStoryId({ id }));
     },
+    compareAndSetActiveStoryId(expected: string | null, next: string | null): Promise<boolean> {
+      return enqueue(async () => {
+        const current = (await plugin.getActiveStoryId()).id ?? null;
+        if (current !== expected) return false;
+        await plugin.setActiveStoryId({ id: next });
+        return true;
+      });
+    },
   };
 }
 

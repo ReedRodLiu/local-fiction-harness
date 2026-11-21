@@ -207,6 +207,7 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
         deleteStory: async () => {},
         getActiveStoryId: async () => null,
         setActiveStoryId: async () => {},
+        compareAndSetActiveStoryId: async () => false,
       },
     });
     expect(typeof runtime.transport.streamChat).toBe('function');

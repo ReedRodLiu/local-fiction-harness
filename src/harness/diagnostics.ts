@@ -839,5 +839,9 @@ export function createDiagnosticStoryStorage(
     deleteStory: (id) => track('delete_story', () => inner.deleteStory(id)),
     getActiveStoryId: () => track('get_active_story_id', () => inner.getActiveStoryId()),
     setActiveStoryId: (id) => track('set_active_story_id', () => inner.setActiveStoryId(id)),
+    compareAndSetActiveStoryId: (expected, next) => track(
+      'compare_and_set_active_story_id',
+      () => inner.compareAndSetActiveStoryId(expected, next),
+    ),
   };
 }

@@ -53,6 +53,12 @@ export function createInMemoryStoryStorage(): StoryStorage {
     async setActiveStoryId(id: string | null): Promise<void> {
       activeStoryId = id;
     },
+
+    async compareAndSetActiveStoryId(expected: string | null, next: string | null): Promise<boolean> {
+      if (activeStoryId !== expected) return false;
+      activeStoryId = next;
+      return true;
+    },
   };
 }
 

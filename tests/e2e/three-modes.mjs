@@ -478,6 +478,20 @@ export async function verifyThreeModes(browser, port, helpers) {
       db.close();
       return active;
     });
+    const waitForActiveStoryId = (expected) => page.waitForFunction(async (expected) => {
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('local-fiction-harness');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const active = await new Promise((resolve, reject) => {
+        const request = db.transaction('meta').objectStore('meta').get('activeStoryId');
+        request.onsuccess = () => resolve(request.result?.value ?? null);
+        request.onerror = () => reject(request.error);
+      });
+      db.close();
+      return active === expected;
+    }, expected);
     const waitForStoredCreativeItemMissing = (title, collection) => page.waitForFunction(async ({ title, collection }) => {
       const db = await new Promise((resolve, reject) => {
         const request = indexedDB.open('local-fiction-harness');
@@ -513,6 +527,9 @@ export async function verifyThreeModes(browser, port, helpers) {
       assert.equal(await page.locator('#turn-input').isVisible(), true);
       if (deletedTitle) assert.equal((await page.getByTestId('main-stage').innerText()).includes(deletedTitle), false);
     };
+    const newerStoryRow = polishLibrary.getByTestId('story-list-item').filter({
+      has: page.locator('.story-list-title', { hasText: /^浮灯渡口$/ }),
+    });
 
     // A slow story save stays on the welcome stage when settings opens after creation starts.
     await polishLibrary.getByRole('button', { name: '文游', exact: true }).click();
@@ -536,15 +553,61 @@ export async function verifyThreeModes(browser, port, helpers) {
     await polishLibrary.getByRole('button', { name: '文游', exact: true }).click();
     await slowStoryRow.waitFor();
 
+    // A navigation change during the activation transaction rolls back to the previous active story.
+    await openCreationMode('文游');
+    await page.fill('#turn-input', '慢速激活。激活写入期间的设置不能被关闭');
+    const requestsBeforeDelayedActivation = requests.length;
+    await holdNextStoryStorageCommit(page, 'meta');
+    await button('发送行动').click();
+    const delayedActivationRow = polishLibrary.getByTestId('story-list-item').filter({ hasText: '慢速激活' });
+    await Promise.all([delayedActivationRow.waitFor({ state: 'attached' }), waitForHeldCommit()]);
+    await page.getByTestId('desktop-settings-open').click();
+    await settingsPage.waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await waitForActiveStoryId(activeBeforeSlowStory);
+    assert.equal(await settingsPage.isVisible(), true, 'A stale activation must not close newer settings navigation');
+    assert.equal(requests.length, requestsBeforeDelayedActivation, 'A stale activation must not start an opening turn');
+    await settingsPage.getByRole('button', { name: '返回' }).click();
+    await assertWelcomeStage();
+    await go();
+    assert.equal(
+      await page.getByTestId('app-topbar').getByRole('heading', { name: '慢速激活', exact: true }).count(),
+      0,
+      'Reload must not open the story whose activation was rolled back',
+    );
+
+    // A later user selection wins even when the stale activation rollback finishes after it.
+    await openCreationMode('文游');
+    await page.fill('#turn-input', '慢速激活选择。用户选择不能被迟到回滚覆盖');
+    const requestsBeforeSelectionDuringActivation = requests.length;
+    await holdNextStoryStorageCommit(page, 'meta');
+    await button('发送行动').click();
+    const selectionDuringActivationRow = polishLibrary.getByTestId('story-list-item').filter({
+      hasText: '慢速激活选择',
+    });
+    await Promise.all([selectionDuringActivationRow.waitFor({ state: 'attached' }), waitForHeldCommit()]);
+    await newerStoryRow.getByTestId('story-select-button').click();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '浮灯渡口', exact: true }).waitFor();
+    const selectedActiveStoryId = await readActiveStoryId();
+    await releaseHeldStoryStorageCommit(page);
+    await selectionDuringActivationRow.waitFor();
+    assert.equal(
+      await page.getByTestId('app-topbar').getByRole('heading').innerText(),
+      '浮灯渡口',
+      'A stale activation rollback must not replace the newer story selection',
+    );
+    assert.equal(await readActiveStoryId(), selectedActiveStoryId);
+    assert.equal(requests.length, requestsBeforeSelectionDuringActivation);
+    await go();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '浮灯渡口', exact: true }).waitFor();
+    assert.equal(await readActiveStoryId(), selectedActiveStoryId);
+
     // A delayed story save cannot replace a newer story selection, in memory or after reload.
     await openCreationMode('文游');
     await page.fill('#turn-input', '慢速导航。迟到创建不能抢走用户选择');
     await holdNextStoryStorageCommit(page, 'stories');
     await button('发送行动').click();
     await waitForHeldCommit();
-    const newerStoryRow = polishLibrary.getByTestId('story-list-item').filter({
-      has: page.locator('.story-list-title', { hasText: /^浮灯渡口$/ }),
-    });
     await newerStoryRow.getByTestId('story-select-button').click();
     await page.getByTestId('app-topbar').getByRole('heading', { name: '浮灯渡口', exact: true }).waitFor();
     const newerActiveStoryId = await readActiveStoryId();

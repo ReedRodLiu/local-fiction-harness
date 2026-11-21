@@ -166,5 +166,16 @@ export function createIndexedDbStoryStorage(): StoryStorage & { creativeStorage:
         tx.objectStore(STORE_META).put({ key: ACTIVE_STORY_KEY, value: id });
       });
     },
+
+    compareAndSetActiveStoryId(expected: string | null, next: string | null): Promise<boolean> {
+      return withTransaction(STORE_META, 'readwrite', async (tx) => {
+        const store = tx.objectStore(STORE_META);
+        const entry = (await requestToPromise(store.get(ACTIVE_STORY_KEY))) as
+          { key: string; value: string | null } | undefined;
+        if ((entry?.value ?? null) !== expected) return false;
+        store.put({ key: ACTIVE_STORY_KEY, value: next });
+        return true;
+      });
+    },
   };
 }

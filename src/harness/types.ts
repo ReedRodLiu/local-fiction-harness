@@ -113,6 +113,7 @@ export interface StoryStorage {
   deleteStory(id: string): Promise<void>;
   getActiveStoryId(): Promise<string | null>;
   setActiveStoryId(id: string | null): Promise<void>;
+  compareAndSetActiveStoryId(expected: string | null, next: string | null): Promise<boolean>;
 }
 
 export interface StoryBackupEnvelope {

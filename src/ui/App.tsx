@@ -1391,8 +1391,13 @@ export function App({ runtime }: AppProps) {
         });
         await refreshStories();
         if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
-        const activated = await harness.setActiveStory(created.id);
+        const activeBeforeActivation = await runtime.storyStorage.getActiveStoryId();
         if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
+        const activated = await harness.setActiveStory(created.id);
+        if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) {
+          await runtime.storyStorage.compareAndSetActiveStoryId(created.id, activeBeforeActivation);
+          return;
+        }
         const currentStory = activated ?? created;
         storyRef.current = currentStory;
         setStory(currentStory);
@@ -1423,7 +1428,9 @@ export function App({ runtime }: AppProps) {
         openCreativePage('character');
       }
     } catch (error) {
-      setErrorMsg(toErrorMessage(error, '新建创作失败。'));
+      if (isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) {
+        setErrorMsg(toErrorMessage(error, '新建创作失败。'));
+      }
     } finally {
       creationPending.current = false;
       setCreating(false);

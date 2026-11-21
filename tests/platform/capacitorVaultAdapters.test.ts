@@ -234,6 +234,9 @@ describe('Android NativeVault TS adapters & PlatformRuntime parity', () => {
     await runtime.storyStorage.saveStory(makeStory('s2', '安卓存档', 300));
     await runtime.storyStorage.setActiveStoryId('s2');
     expect(await runtime.storyStorage.getActiveStoryId()).toBe('s2');
+    await expect(runtime.storyStorage.compareAndSetActiveStoryId('other', 's1')).resolves.toBe(false);
+    await expect(runtime.storyStorage.compareAndSetActiveStoryId('s2', 's1')).resolves.toBe(true);
+    expect(await runtime.storyStorage.getActiveStoryId()).toBe('s1');
     expect((await runtime.storyStorage.listStories()).map((s) => s.id)).toEqual(['s2']);
   });
 });
