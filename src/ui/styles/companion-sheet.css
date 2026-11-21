@@ -117,6 +117,15 @@
   cursor: not-allowed;
 }
 
+.companion-document-row[aria-pressed="true"] {
+  color: var(--accent-fiction);
+  font-weight: 600;
+}
+
+.companion-document-row.danger-menu-item {
+  color: var(--status-danger);
+}
+
 .context-document-reads {
   display: flex;
   flex-direction: column;

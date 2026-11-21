@@ -815,7 +815,7 @@ export function DraftPane(props: DraftPaneProps) {
                             onClick={() => {
                               setUseDiscussion(true);
                               setExcerpt(turn.content);
-                              if (window.innerWidth < 768) setCompanionOpen(false);
+                              setCompanionOpen(false);
                             }}
                           >
                             引用这一段
@@ -845,7 +845,7 @@ export function DraftPane(props: DraftPaneProps) {
                               className="btn btn-sm"
                               onClick={() => {
                                 void chooseSuggestion(suggestion, suggestion.text).catch(reply.fail);
-                                if (window.innerWidth < 768) setCompanionOpen(false);
+                                setCompanionOpen(false);
                               }}
                             >
                               重新采纳
