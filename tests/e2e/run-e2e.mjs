@@ -560,10 +560,34 @@ async function verifySliceOneViewportMatrix(page) {
           await libraryToggle.click();
           await libraryClose.waitFor({ state: 'visible' });
         }
+        if ((await libraryToggle.count()) !== 0) {
+          throw new Error(`${cell} desktop topbar showed duplicate library toggle while sidebar was expanded.`);
+        }
+        const importAlignment = await page.evaluate(() => {
+          const newBtn = document.querySelector('[data-testid="desktop-library-new-creation"]');
+          const picker = document.querySelector('[data-testid="desktop-library"] .library-import-picker');
+          const summary = picker?.querySelector('summary');
+          if (!newBtn || !picker || !summary) return null;
+          return {
+            newWidth: Math.round(newBtn.getBoundingClientRect().width),
+            pickerWidth: Math.round(picker.getBoundingClientRect().width),
+            summaryWidth: Math.round(summary.getBoundingClientRect().width),
+          };
+        });
+        if (
+          !importAlignment ||
+          Math.abs(importAlignment.newWidth - importAlignment.pickerWidth) > 1 ||
+          Math.abs(importAlignment.newWidth - importAlignment.summaryWidth) > 1
+        ) {
+          throw new Error(`${cell} desktop import picker width (${JSON.stringify(importAlignment)}) does not match new creation button.`);
+        }
         await libraryClose.click();
         await libraryToggle.waitFor({ state: 'visible' });
         await libraryToggle.click();
         await libraryClose.waitFor({ state: 'visible' });
+        if ((await libraryToggle.count()) !== 0) {
+          throw new Error(`${cell} desktop topbar kept library toggle visible after re-expanding sidebar.`);
+        }
         if ((await page.getByRole('button', { name: '设置与模型密钥' }).count()) !== 1) {
           throw new Error(`${cell} collapsed Settings button has no accessible name.`);
         }

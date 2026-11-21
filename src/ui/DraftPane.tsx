@@ -458,7 +458,7 @@ export function DraftPane(props: DraftPaneProps) {
               aria-label="讨论内容"
               rows={1}
               value={discussionInput}
-              placeholder="聊聊人物、设定或开篇方向（Enter 发送，Shift+Enter 换行）…"
+              placeholder="聊聊人物、设定或开篇方向…"
               onChange={(event) => {
                 setDiscussionInput(event.target.value);
                 syncTextareaHeight(event.currentTarget);
@@ -493,6 +493,9 @@ export function DraftPane(props: DraftPaneProps) {
       ) : (
         <>
           <div className="writing-manuscript-canvas">
+            <div className="writing-manuscript-status" data-testid="manuscript-status" role="status">
+              {text.length} 字 · {text !== saved.current ? '保存中…' : '已本地保存'}
+            </div>
             <label className="visually-hidden" htmlFor="creative-manuscript-editor">
               正文
             </label>
@@ -718,7 +721,7 @@ export function DraftPane(props: DraftPaneProps) {
                     aria-label="写作要求"
                     rows={1}
                     value={manuscriptInput}
-                    placeholder="输入续写、润色或改写要求（基于光标/选区）…"
+                    placeholder="输入续写或改写要求…"
                     onChange={(event) => {
                       setManuscriptInput(event.target.value);
                       syncTextareaHeight(event.currentTarget);

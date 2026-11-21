@@ -1687,6 +1687,7 @@ ${history}`,
             : creativePage === 'character'
               ? (creative.workspace.characters.find((item) => item.id === creative.workspace.activeCharacterId)?.name ?? '本地文游')
               : !isWelcome ? story.title : '本地文游播放器'}
+          stageMode={creativePage ?? 'story'}
           hasStory={storyExists && !isWelcome && !creativePage}
           hideStoryTools={Boolean(creativePage)}
           stageControls={creativePage === 'writing' && activeWork ? (
@@ -1978,7 +1979,7 @@ ${history}`,
                   value={input}
                   placeholder={isWelcome
                     ? ({ story: '输入故事设定或第一步行动…', writing: '输入灵感，开始讨论…', character: '输入角色人设…' })[newCreationMode]
-                    : '输入你的抉择、对话或行动（Enter 发送，Shift+Enter 换行）…'}
+                    : '输入你的行动或对话…'}
                   disabled={creating}
                   onChange={(event) => {
                     const textarea = event.currentTarget;

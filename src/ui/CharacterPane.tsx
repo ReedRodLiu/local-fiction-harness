@@ -398,7 +398,7 @@ export function CharacterPane(props: CharacterPaneProps) {
           aria-label="发消息"
           rows={1}
           value={input}
-          placeholder={`向 ${character.name} 发消息（Enter 发送，Shift+Enter 换行）…`}
+          placeholder={`给 ${character.name} 发消息…`}
           onChange={(event) => {
             setInput(event.target.value);
             syncTextareaHeight(event.currentTarget);

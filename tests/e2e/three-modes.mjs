@@ -174,7 +174,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     assert.doesNotMatch(await writing.innerText(), /资料审计/);
     assert.equal(await page.getByTestId('creative-document-reads').count(), 1);
     assert.equal(await page.getByTestId('creative-document-reads').isVisible(), false);
-    await page.getByTestId('app-topbar').getByRole('button', { name: '创作资料' }).click();
+    await page.getByTestId('app-topbar').getByRole('button', { name: '灵感与作品资料' }).click();
     const writingSheet = page.getByRole('dialog', { name: '创作资料' });
     await writingSheet.getByRole('tab', { name: '作品资料' }).click();
     const writingReads = writingSheet.getByTestId('creative-document-reads');
@@ -198,7 +198,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     assert.match(await dialog.innerText(), /失物招领员认出了自己的旧行李/);
     await dialog.getByRole('button', { name: '确认保存' }).click();
     await dialog.waitFor({ state: 'hidden' });
-    await page.getByTestId('app-topbar').getByRole('button', { name: '创作资料' }).click();
+    await page.getByTestId('app-topbar').getByRole('button', { name: '灵感与作品资料' }).click();
     await writingSheet.getByRole('tab', { name: '作品资料' }).click();
     await writingSheet.getByRole('button', { name: '编辑作品资料' }).click();
     await page.waitForFunction(() => document.querySelector('[data-testid=markdown-document] textarea')?.value.includes('失物招领员'));
@@ -208,6 +208,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     await writingSheet.waitFor({ state: 'hidden' });
     await page.getByRole('group', { name: '作品视图' }).getByRole('button', { name: '正文' }).click();
     await writing.getByTestId('creative-manuscript').fill('纸月照进车站。');
+    await writing.getByTestId('manuscript-status').getByText('7 字 · 已本地保存', { exact: true }).waitFor();
     assert.equal(await writing.getByRole('button', { name: '导出正文', exact: true }).count(), 0);
     await writing.getByRole('button', { name: '引用讨论', exact: true }).click();
     await writing.getByRole('button', { name: '挑选原话', exact: true }).click();
@@ -222,7 +223,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     await page.getByTestId('app-topbar').getByRole('heading', { name: '岑灯', exact: true }).waitFor();
     assert.doesNotMatch(await character.innerText(), /资料审计/);
     assert.equal(await page.getByTestId('creative-document-reads').isVisible(), false);
-    await page.getByTestId('app-topbar').getByRole('button', { name: '创作资料' }).click();
+    await page.getByTestId('app-topbar').getByRole('button', { name: '对话与角色资料' }).click();
     const characterSheet = page.getByRole('dialog', { name: '创作资料' });
     await characterSheet.getByRole('tab', { name: '角色与资料' }).click();
     const characterReads = characterSheet.getByTestId('creative-document-reads');
@@ -275,7 +276,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     assert.doesNotMatch(await character.innerText(), /对话操作/);
     await character.getByTestId('turn-history-toggle').first().click();
     await character.getByRole('button', { name: '从这里继续' }).first().waitFor();
-    await page.getByTestId('app-topbar').getByRole('button', { name: '创作资料' }).click();
+    await page.getByTestId('app-topbar').getByRole('button', { name: '对话与角色资料' }).click();
     await characterSheet.getByRole('tab', { name: '对话与分支' }).click();
     await characterSheet.getByRole('button', { name: '空白开聊' }).click();
     await characterSheet.waitFor({ state: 'hidden' });
@@ -284,7 +285,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     await button('发送').click();
     await character.getByText('初次见面。', { exact: true }).waitFor();
     assert.doesNotMatch(lastRequest(), /PRIVATE-HISTORY/);
-    await page.getByTestId('app-topbar').getByRole('button', { name: '创作资料' }).click();
+    await page.getByTestId('app-topbar').getByRole('button', { name: '对话与角色资料' }).click();
     await characterSheet.getByRole('button', { name: '预览导出' }).click();
     const exportPreview = page.getByRole('dialog', { name: '对话导出预览' });
     assert.doesNotMatch(await exportPreview.innerText(), /PRIVATE-HISTORY/);
@@ -303,11 +304,11 @@ export async function verifyThreeModes(browser, port, helpers) {
     await button('发送').click();
     await character.getByText('岑灯接过信，问起你的名字。', { exact: true }).waitFor();
     assert.doesNotMatch(lastRequest(), /PRIVATE-HISTORY/);
-    await page.getByTestId('app-topbar').getByRole('button', { name: '创作资料' }).click();
+    await page.getByTestId('app-topbar').getByRole('button', { name: '对话与角色资料' }).click();
     await characterSheet.getByRole('button', { name: '本人聊天 1' }).click();
     await characterSheet.waitFor({ state: 'hidden' });
     await character.getByText('需要隔离的私密文本 PRIVATE-HISTORY', { exact: true }).waitFor();
-    await page.getByTestId('app-topbar').getByRole('button', { name: '创作资料' }).click();
+    await page.getByTestId('app-topbar').getByRole('button', { name: '对话与角色资料' }).click();
     await characterSheet.getByRole('button', { name: '扮演对戏 2' }).click();
     await characterSheet.waitFor({ state: 'hidden' });
     await page.getByTestId('desktop-library-new-creation').click();
@@ -412,7 +413,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     await page.waitForFunction(() => document.querySelector('[data-testid=creative-manuscript]')?.value.includes('第三声钟响'));
     assert.match(lastRequest(), /SCRIPT-END/);
     assert.match(lastRequest(), /第二声钟刚停/);
-    await page.getByTestId('app-topbar').getByRole('button', { name: '创作资料' }).click();
+    await page.getByTestId('app-topbar').getByRole('button', { name: '灵感与作品资料' }).click();
     await writingSheet.getByRole('tab', { name: '作品资料' }).click();
     const [draftDownload] = await Promise.all([
       page.waitForEvent('download'),
@@ -447,8 +448,8 @@ export async function verifyThreeModes(browser, port, helpers) {
         assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
         for (const [name, category, title, target, actionLabel] of [
           ['文游', '文游', '浮灯渡口', page.getByTestId('story-timeline'), '打开剧情树'],
-          ['产粮', '产粮', '纸月车站', writing, '创作资料'],
-          ['人机恋', '角色', '岑灯', character, '创作资料'],
+          ['产粮', '产粮', '纸月车站', writing, '灵感与作品资料'],
+          ['人机恋', '角色', '岑灯', character, '对话与角色资料'],
         ]) {
           if (viewport.width < 960) await page.getByTestId('library-drawer-trigger').click();
           const library = page.getByTestId(viewport.width < 960 ? 'mobile-library-dialog' : 'desktop-library');
@@ -474,7 +475,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     await dialog.getByText(/来源节点.*第二声钟响/).waitFor();
     await dialog.getByRole('button', { name: '确认保存' }).click();
     await page.getByTestId('app-topbar').getByRole('heading', { name: '收灯人', exact: true }).waitFor();
-    await page.getByTestId('app-topbar').getByRole('button', { name: '创作资料' }).click();
+    await page.getByTestId('app-topbar').getByRole('button', { name: '对话与角色资料' }).click();
     await characterSheet.getByRole('tab', { name: '角色与资料' }).click();
     await characterSheet.getByRole('button', { name: '角色人设 · 新对话采用新版' }).click();
     await page.waitForFunction(() => document.querySelector('[data-testid=markdown-document] textarea')?.value.includes('SOURCE-COPY'));
