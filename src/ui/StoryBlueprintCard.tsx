@@ -7,8 +7,15 @@ export interface StoryBlueprintCardProps {
   story: Story;
   isBusy?: boolean;
   isReextracting?: boolean;
-  onSaveBlueprintTweak?: (updatedBlueprint: StoryBlueprint) => Promise<boolean | void>;
+  onSaveBlueprintTweak?: (updatedBlueprint: StoryBlueprint, baseline: Story) => Promise<boolean | void>;
   onReextractBlueprint?: () => void;
+}
+
+export function isBlueprintEditCurrent(current: Story, baseline: Story): boolean {
+  return current.id === baseline.id && current.updatedAt === baseline.updatedAt &&
+    JSON.stringify(current.blueprint) === JSON.stringify(baseline.blueprint) &&
+    current.activeLeafNodeId === baseline.activeLeafNodeId &&
+    current.documents?.container.head === baseline.documents?.container.head;
 }
 
 export function StoryBlueprintCard({
@@ -19,8 +26,8 @@ export function StoryBlueprintCard({
   onReextractBlueprint,
 }: StoryBlueprintCardProps) {
   const [editing, setEditing] = useState(false);
-  const [protagonistDraft, setProtagonistDraft] = useState('');
-  const [taboosDraft, setTaboosDraft] = useState('');
+  const [draft, setDraft] = useState<StoryBlueprint | null>(null);
+  const [baseline, setBaseline] = useState<Story | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,11 +41,8 @@ export function StoryBlueprintCard({
     setIsSaving(true);
     setError(null);
     try {
-      const saved = await onSaveBlueprintTweak({
-        ...story.blueprint,
-        protagonist: protagonistDraft.trim(),
-        taboos: splitNonEmptyLines(taboosDraft),
-      });
+      if (!draft || !baseline) return;
+      const saved = await onSaveBlueprintTweak({ ...draft, worldRules: splitNonEmptyLines(draft.worldRules.join('\n')), taboos: splitNonEmptyLines(draft.taboos.join('\n')) }, baseline);
       if (saved !== false) setEditing(false);
     } catch (err) {
       setError(toErrorMessage(err, '保存蓝图微调失败。'));
@@ -60,12 +64,17 @@ export function StoryBlueprintCard({
             className="btn btn-sm"
             disabled={isBusy}
             onClick={() => {
-              setProtagonistDraft(story.blueprint.protagonist);
-              setTaboosDraft(story.blueprint.taboos.join('\n'));
+              setBaseline(story);
+              setDraft({
+                ...story.blueprint,
+                worldRules: [...story.blueprint.worldRules],
+                npcs: story.blueprint.npcs.map((npc) => ({ ...npc })),
+                taboos: [...story.blueprint.taboos],
+              });
               setEditing(true);
             }}
           >
-            微调蓝图
+            微调
           </button>
         )}
       </header>
@@ -73,23 +82,87 @@ export function StoryBlueprintCard({
       {error && <BannerAlert tone="danger">{error}</BannerAlert>}
 
       {editing ? (
-        <div className="story-blueprint-editor">
+        <div className="story-blueprint-editor" data-testid="story-blueprint-editor">
           <div className="field">
             <label htmlFor="tweak-protagonist">微调主角设定</label>
             <input
               id="tweak-protagonist"
               type="text"
-              value={protagonistDraft}
-              onChange={(event) => setProtagonistDraft(event.target.value)}
+              value={draft?.protagonist ?? ''}
+              onChange={(event) => setDraft((current) => current
+                ? { ...current, protagonist: event.target.value }
+                : current)}
             />
           </div>
+          <div className="field">
+            <label htmlFor="tweak-world-rules">背景规则（每行一条）</label>
+            <textarea
+              id="tweak-world-rules"
+              rows={3}
+              value={draft?.worldRules.join('\n') ?? ''}
+              onChange={(event) => setDraft((current) => current
+                ? { ...current, worldRules: event.target.value.split('\n') }
+                : current)}
+            />
+          </div>
+          <fieldset className="story-blueprint-editor-npcs" aria-label="关键角色">
+            <legend>关键角色</legend>
+            {draft?.npcs.map((npc, index) => (
+              <div className="story-blueprint-editor-npc" key={index}>
+                <label className="field">姓名
+                  <input value={npc.name} onChange={(event) => setDraft((current) => current ? {
+                    ...current,
+                    npcs: current.npcs.map((item, itemIndex) => itemIndex === index
+                      ? { ...item, name: event.target.value }
+                      : item),
+                  } : current)} />
+                </label>
+                <label className="field">身份
+                  <input value={npc.role} onChange={(event) => setDraft((current) => current ? {
+                    ...current,
+                    npcs: current.npcs.map((item, itemIndex) => itemIndex === index
+                      ? { ...item, role: event.target.value }
+                      : item),
+                  } : current)} />
+                </label>
+                <label className="field">特征
+                  <input value={npc.traits} onChange={(event) => setDraft((current) => current ? {
+                    ...current,
+                    npcs: current.npcs.map((item, itemIndex) => itemIndex === index
+                      ? { ...item, traits: event.target.value }
+                      : item),
+                  } : current)} />
+                </label>
+                <button type="button" className="btn btn-sm" aria-label={`删除角色 ${npc.name || index + 1}`}
+                  onClick={() => setDraft((current) => current ? {
+                    ...current, npcs: current.npcs.filter((_, itemIndex) => itemIndex !== index),
+                  } : current)}>删除角色</button>
+              </div>
+            ))}
+            <button type="button" className="btn btn-sm" onClick={() => setDraft((current) => current
+              ? { ...current, npcs: [...current.npcs, { name: '', role: '', traits: '' }] }
+              : current)}>添加角色</button>
+          </fieldset>
           <div className="field">
             <label htmlFor="tweak-taboos">微调禁忌条款（每行一条）</label>
             <textarea
               id="tweak-taboos"
               rows={2}
-              value={taboosDraft}
-              onChange={(event) => setTaboosDraft(event.target.value)}
+              value={draft?.taboos.join('\n') ?? ''}
+              onChange={(event) => setDraft((current) => current
+                ? { ...current, taboos: event.target.value.split('\n') }
+                : current)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="tweak-opening-hook">开场提示</label>
+            <textarea
+              id="tweak-opening-hook"
+              rows={3}
+              value={draft?.openingHook ?? ''}
+              onChange={(event) => setDraft((current) => current
+                ? { ...current, openingHook: event.target.value }
+                : current)}
             />
           </div>
           <div className="btn-group">

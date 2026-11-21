@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   adoptSuggestion, characterContext, createFictionHarness, documentVersion, editStoryDocument, exportStoryBackup,
-  importStoryBackup, newCharacter, newConversation, newDocument, newWork, splitMarkdownReply, visibleReplyPrefix, writeDocument,
+  importStoryBackup, newCharacter, newConversation, newDocument, newWork, splitMarkdownReply, storyDocumentState,
+  visibleReplyPrefix, writeDocument,
   type LlmStreamRequest, type Story, type StoryDocuments, type TurnExecutionResult,
 } from '../../src/harness/index.ts';
 
@@ -9,6 +10,60 @@ const config = { apiKey: 'fixture', baseUrl: 'https://api.deepseek.com', model: 
 const withDocs = (story: Story) => story as Story & { documents: StoryDocuments };
 
 describe('three-mode Markdown Harness', () => {
+  it('syncs a confirmed blueprint edit into story Markdown without replacing user material', async () => {
+    const harness = createFictionHarness({ transport: { async *streamChat() { yield { contentDelta: 'ok', finishReason: 'stop' }; } } });
+    const originalBlueprint = {
+      title: '渡口', worldRules: ['旧规则'], protagonist: '旧主角', npcs: [], taboos: [], openingHook: '',
+      extractionStatus: 'complete' as const,
+    };
+    const saved = withDocs(await harness.saveStory(harness.createStory({
+      title: '渡口', rawScript: '原始剧本不可丢失', blueprint: originalBlueprint,
+    })));
+    const version = documentVersion(saved.documents.container);
+    const markdownWithUserMaterial = version.markdown
+      .replace('\n\n## 剧本原文', '\n\n玩家补充的确认区资料。\n\n## 剧本原文')
+      + '\n\n## 用户补充\n\n这段手工资料要保留。';
+    const withUserMaterial = withDocs(editStoryDocument(saved, 'container', version.id,
+      markdownWithUserMaterial));
+    const updated = withDocs(await harness.updateStoryBlueprint(withUserMaterial, {
+      ...originalBlueprint,
+      worldRules: ['新规则'],
+      protagonist: '新主角',
+      taboos: ['第三声钟响前不能离岸'],
+    }));
+    const currentVersion = storyDocumentState(updated, updated.activeLeafNodeId, true).container;
+    const markdown = documentVersion(updated.documents.container, currentVersion).markdown;
+
+    expect(markdown).toContain('主角设定：新主角');
+    expect(markdown).toContain('核心规则：\n- 新规则');
+    expect(markdown).toContain('第三声钟响前不能离岸');
+    expect(markdown).toContain('原始剧本不可丢失');
+    expect(markdown).toContain('玩家补充的确认区资料。');
+    expect(markdown).toContain('这段手工资料要保留。');
+    expect(markdown).not.toContain('旧主角');
+  });
+
+  it('rejects a manually changed confirmed anchor without changing the document', async () => {
+    const harness = createFictionHarness({ transport: { async *streamChat() { yield { contentDelta: 'ok', finishReason: 'stop' }; } } });
+    const saved = withDocs(await harness.saveStory(harness.createStory({ title: '渡口', rawScript: '原文' })));
+    const version = documentVersion(saved.documents.container);
+    const changed = withDocs(editStoryDocument(saved, 'container', version.id, version.markdown.replace('标题：渡口', '标题：手工修改')));
+    const before = documentVersion(changed.documents.container).markdown;
+    await expect(harness.updateStoryBlueprint(changed, { ...changed.blueprint, protagonist: '新主角' })).rejects.toThrow(/备份手工内容/);
+    expect(documentVersion(changed.documents.container).markdown).toBe(before);
+  });
+
+  it.each(['标题：另一个标题\n\n主角设定：另一位主角', '核心规则：\n- 另一条规则'])('rejects blueprint fields appended outside the original anchor: %s', async (extra) => {
+    const harness = createFictionHarness({ transport: { async *streamChat() { yield { contentDelta: 'ok', finishReason: 'stop' }; } } });
+    const saved = withDocs(await harness.saveStory(harness.createStory({ title: '渡口', rawScript: '原文' })));
+    const version = documentVersion(saved.documents.container);
+    const changed = withDocs(editStoryDocument(saved, 'container', version.id,
+      version.markdown.replace('\n\n## 剧本原文', `\n\n${extra}\n\n## 剧本原文`)));
+    const before = documentVersion(changed.documents.container).markdown;
+    await expect(harness.updateStoryBlueprint(changed, { ...changed.blueprint, protagonist: '新主角' })).rejects.toThrow(/备份手工内容/);
+    expect(documentVersion(changed.documents.container).markdown).toBe(before);
+  });
+
   it('reads the latest public version on a historical fork and keeps local edits on their own path', async () => {
     let publicDocument = newDocument('OLD-PUBLIC');
     const captured: LlmStreamRequest[] = [];

@@ -8,11 +8,13 @@ import {
   type TurnNode, type WritingSuggestion,
 } from '../harness/index.ts';
 import type { DocumentEdit } from './DocumentDialog.tsx';
-import { DocumentReadDetails } from './DocumentReadDetails.tsx';
+import { DocumentReadDetails, type DocumentReadEntry } from './DocumentReadDetails.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { ModalDialog } from './primitives/ModalDialog.tsx';
 import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
+import { SheetDialog } from './primitives/SheetDialog.tsx';
+import type { ReactNode } from 'react';
 import { toErrorMessage } from './textHelpers.ts';
 import type { SaveWorkspace } from './useCreativeWorkspace.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
@@ -96,6 +98,18 @@ function replyContent(content: string, proposal?: MarkdownProposal) {
   return content.trim() || (proposal ? '请核对拟保存的文档。' : '');
 }
 
+function CreativeCompanion({ entries, children }: { entries: DocumentReadEntry[]; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  useWebHistoryLayer('creative-companion', 40, open, () => setOpen(false));
+  return <>
+    <button type="button" className="btn" aria-haspopup="dialog" onClick={() => setOpen(true)}>创作资料</button>
+    <SheetDialog open={open} title="创作资料" label="创作资料" panelName="创作资料" testId="creative-companion" onClose={() => setOpen(false)}>
+      <div className="btn-group">{children}</div>
+      <DocumentReadDetails entries={entries} testId="creative-document-reads" />
+    </SheetDialog>
+  </>;
+}
+
 function DraftPane(props: Props & { work: DraftWork }) {
   const { work, save, read, runtime, openDocument, openPublic } = props;
   const reply = useCreativeReply(runtime, props.requestModel);
@@ -106,6 +120,19 @@ function DraftPane(props: Props & { work: DraftWork }) {
   const [excerpt, setExcerpt] = useState('');
   const [exported, setExported] = useState(false);
   const [selectedSuggestion, setSelectedSuggestion] = useState<{ suggestion: WritingSuggestion; target: WritingSuggestion } | null>(null);
+  const documentReadEntries: DocumentReadEntry[] = [
+    ...work.discussion.flatMap((turn) => turn.documentReads?.length ? [{
+      id: turn.id,
+      label: `开书讨论回复 · ${turn.id.slice(0, 8)}`,
+      createdAt: turn.createdAt,
+      reads: turn.documentReads,
+    }] : []),
+    ...work.suggestions.flatMap((suggestion) => suggestion.documentReads.length ? [{
+      id: suggestion.id,
+      label: `写作建议 · ${suggestion.id.slice(0, 8)} · ${suggestion.instruction}`,
+      reads: suggestion.documentReads,
+    }] : []),
+  ];
   const textarea = useRef<HTMLTextAreaElement>(null);
   const selection = useRef({ start: 0, end: 0 });
   const unsaved = useRef(work.body);
@@ -116,6 +143,9 @@ function DraftPane(props: Props & { work: DraftWork }) {
     const base = documentVersion(document);
     openDocument({
       title: '作品资料', base, proposal,
+      description: proposal !== undefined
+        ? '作用范围：当前作品资料。来源：本轮 AI 回复。'
+        : '作用范围：当前作品。',
       history: documentLineage(document),
       reload: async () => {
         const found = (await read()).works.find((item) => item.id === work.id);
@@ -220,6 +250,10 @@ function DraftPane(props: Props & { work: DraftWork }) {
       <section className="creative-section" data-testid="writing-workspace">
         <div className="creative-toolbar">
           <h2>{work.title}</h2>
+          <CreativeCompanion entries={documentReadEntries}>
+            <button type="button" className="btn" onClick={() => editDocument()}>作品资料</button>
+            <button type="button" className="btn" onClick={() => openPublic()}>公共记忆</button>
+          </CreativeCompanion>
           <button type="button" className="btn" onClick={() => editDocument()}>作品资料</button>
         </div>
         {work.source && <p className="status-text">已保存开稿时采用的文游资料。</p>}
@@ -253,7 +287,6 @@ function DraftPane(props: Props & { work: DraftWork }) {
             {work.discussion.map((turn) => <div key={turn.id} className="creative-turn">
               <p className="creative-text">{turn.role === 'user' ? '你' : 'AI'} · {turn.content}</p>
               {editing && <button type="button" className="btn" onClick={() => { setUseDiscussion(true); setExcerpt(turn.content); }}>引用这一段</button>}
-              {turn.role === 'assistant' && <DocumentReadDetails reads={turn.documentReads} />}
             </div>)}
           </details>
         )}
@@ -265,7 +298,6 @@ function DraftPane(props: Props & { work: DraftWork }) {
               const chosen = window.getSelection()?.toString().trim();
               void chooseSuggestion(suggestion, chosen && suggestion.text.includes(chosen) ? chosen : suggestion.text).catch(reply.fail);
             }}>采纳建议</button>
-            <DocumentReadDetails reads={suggestion.documentReads} />
           </div>
         ))}
         {reply.error && <BannerAlert tone="danger">{reply.error}</BannerAlert>}
@@ -310,10 +342,19 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
   const [confirm, setConfirm] = useState<'export' | 'delete' | null>(null);
   const conversation = character.conversations.find((item) => item.id === character.activeConversationId);
   const path = conversation ? getActiveBranchNodes(conversation) : [];
+  const documentReadEntries: DocumentReadEntry[] = path.flatMap((node) => node.documentReads?.length ? [{
+      id: node.id,
+      label: `${node.role === 'assistant' ? character.name : '玩家消息'} · ${node.id}`,
+      createdAt: node.createdAt,
+      reads: node.documentReads,
+    }] : []);
 
   function editCharacter(proposal?: string, expected?: string) {
     openDocument({
       title: '角色人设 · 新对话采用新版',
+      description: proposal !== undefined
+        ? '作用范围：角色人设。来源：本轮 AI 回复。'
+        : '作用范围：当前角色及之后的新对话。',
       base: documentVersion(character.document, expected ?? character.document.head),
       history: documentLineage(character.document), proposal,
       reload: async () => {
@@ -334,6 +375,9 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
     const base = conversationLocalVersion(target);
     openDocument({
       title: '当前对话资料', base: documentVersion(target.document, base),
+      description: proposal !== undefined
+        ? '作用范围：当前对话。来源：本轮 AI 回复。'
+        : '作用范围：当前角色对话。',
       history: documentLineage(target.document, base), proposal,
       apply: async (expected, markdown) => {
         await save((state) => updateCharacter(state, character.id, (current) => updateConversation(current, target.id, (live) => {
@@ -414,6 +458,11 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
       <section className="creative-section" data-testid="character-workspace">
         <div className="creative-toolbar">
           <h2>{character.name}</h2>
+          <CreativeCompanion entries={documentReadEntries}>
+            <button type="button" className="btn" onClick={() => editCharacter()}>角色人设</button>
+            {conversation && <button type="button" className="btn" disabled={reply.busy} onClick={() => editConversation(conversation)}>当前对话资料</button>}
+            <button type="button" className="btn" onClick={() => openPublic()}>公共记忆</button>
+          </CreativeCompanion>
           <button type="button" className="btn" onClick={() => editCharacter()}>角色人设</button>
         </div>
         <div className="btn-group">
@@ -439,7 +488,6 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
           <details className="reasoning-details">
             <summary>对话操作</summary>
             <button className="btn" type="button" disabled={reply.busy} onClick={() => navigate(conversation.id, node.id)}>从这里继续</button>
-            {node.role === 'assistant' && <DocumentReadDetails reads={node.documentReads} />}
           </details>
         </article>)}
         {Object.values(conversation.nodes).some((node) => !path.some((active) => active.id === node.id)) && (
@@ -470,6 +518,7 @@ function CharacterPane(props: Props & { character: LocalCharacter }) {
             <button type="button" className="btn" disabled={reply.busy} onClick={() => void startConversation(conversation.kind, '', false).catch(reply.fail)}>空白开聊</button>
             <button type="button" className="btn" disabled={reply.busy} onClick={() => openDocument({
               title: '核对要带入新对话的资料',
+              description: '作用范围：新对话的初始资料。',
               base: { id: 'new-conversation', previous: null, markdown: '', savedAt: Date.now(), source: 'user' },
               apply: async (_version, markdown) => {
                 if (!markdown.trim()) throw new Error('请填入要带入的资料。');

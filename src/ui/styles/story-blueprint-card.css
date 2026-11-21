@@ -62,6 +62,42 @@
   gap: 12px;
 }
 
+.story-blueprint-editor-npcs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+}
+
+.story-blueprint-editor-npcs legend {
+  padding-inline: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.story-blueprint-editor-npc {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.story-blueprint-editor-npc input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.story-blueprint-editor-npc .btn {
+  justify-self: start;
+}
+
 .story-blueprint-reextract {
   align-self: flex-start;
 }

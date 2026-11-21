@@ -48,45 +48,42 @@ export function StoryReview({
         )}
       </div>
 
-      <details className="reasoning-details">
-        <summary>资料审计</summary>
-        <div className="story-review-metrics" aria-label="剧情摘要指标">
-          <div className="story-review-metric story-review-card">
-            <strong>{story.rawScript.length}</strong>
-            <span>锚定字数</span>
-          </div>
-          <div className="story-review-metric story-review-card">
-            <strong>{summarySnapshot.summarizedTurnCount}</strong>
-            <span>摘要覆盖节点</span>
-          </div>
-          <div className="story-review-metric story-review-card">
-            <strong>{metrics.totalEstimatedTokens}</strong>
-            <span>上下文预算 Token</span>
-          </div>
+      <div className="story-review-metrics" aria-label="剧情摘要指标">
+        <div className="story-review-metric story-review-card">
+          <strong>{story.rawScript.length}</strong>
+          <span>锚定字数</span>
         </div>
-
-        <div className="story-review-meta">
-          <span>{coveredLabel}</span>
-          <span>{recentLabel}</span>
+        <div className="story-review-metric story-review-card">
+          <strong>{summarySnapshot.summarizedTurnCount}</strong>
+          <span>摘要覆盖节点</span>
         </div>
+        <div className="story-review-metric story-review-card">
+          <strong>{metrics.totalEstimatedTokens}</strong>
+          <span>上下文预算 Token</span>
+        </div>
+      </div>
 
-        {review.needsSummaryCompression && onComputeSummary && (
-          <div className="story-review-summary-action story-review-card">
-            <div>
-              <strong>为当前分支补齐剧情摘要</strong>
-              <p>摘要仅沿当前路线生成，不会混入其他分支的剧情。</p>
-            </div>
-            <button
-              type="button"
-              className="btn btn-sm btn-primary"
-              disabled={isBusy || isSummarizing}
-              onClick={onComputeSummary}
-            >
-              {isSummarizing ? '补算摘要中…' : '立即补算剧情摘要'}
-            </button>
+      <div className="story-review-meta">
+        <span>{coveredLabel}</span>
+        <span>{recentLabel}</span>
+      </div>
+
+      {review.needsSummaryCompression && onComputeSummary && (
+        <div className="story-review-summary-action story-review-card">
+          <div>
+            <strong>为当前分支补齐剧情摘要</strong>
+            <p>摘要仅沿当前路线生成，不会混入其他分支的剧情。</p>
           </div>
-        )}
-      </details>
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            disabled={isBusy || isSummarizing}
+            onClick={onComputeSummary}
+          >
+            {isSummarizing ? '补算摘要中…' : '立即补算剧情摘要'}
+          </button>
+        </div>
+      )}
     </section>
   );
 }

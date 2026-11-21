@@ -1,7 +1,8 @@
 import { createDefaultId } from './id.ts';
 import {
-  documentProgress, documentVersion, migrateStoryDocuments, referenceDocument,
-  replaceDocumentProgress, splitMarkdownReply, storyDocumentState, visibleReplyPrefix, writeDocument,
+  documentProgress, documentVersion, editStoryDocument, migrateStoryDocuments, referenceDocument,
+  replaceDocumentProgress, splitMarkdownReply, storyDocumentState, syncConfirmedBlueprintMarkdown,
+  visibleReplyPrefix, writeDocument,
   type MarkdownDocument, type StoryDocuments, type StoryDocumentState,
 } from './markdownDocuments.ts';
 import { DEFAULT_STORY_TITLE } from './scriptParser.ts';
@@ -697,12 +698,16 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     },
 
     async updateStoryBlueprint(story: Story, blueprint: StoryBlueprint): Promise<Story> {
-      const scoped = migrateStoryDocuments(story);
+      const scoped = migrateStoryDocuments(story) as Story & { documents: StoryDocuments };
+      const currentVersion = storyDocumentState(scoped, scoped.activeLeafNodeId, true).container;
+      const base = documentVersion(scoped.documents.container, currentVersion);
+      const markdown = syncConfirmedBlueprintMarkdown(base.markdown, scoped.blueprint, blueprint);
+      const withUpdatedDocument = editStoryDocument(scoped, 'container', base.id, markdown);
       const updated: Story = {
-        ...scoped, blueprint,
+        ...withUpdatedDocument, blueprint,
         updatedAt: Math.max(now(), scoped.updatedAt + 1),
       };
-      return persistStory(updated, false);
+      return persistStory(updated, false, scoped.updatedAt);
     },
 
     async deleteStory(id: string): Promise<void> {
