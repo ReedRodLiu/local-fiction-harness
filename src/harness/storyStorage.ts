@@ -1,3 +1,4 @@
+import { createDefaultBlueprint } from './blueprint.ts';
 import { documentVersion, migrateStoryDocuments, replaceDocumentProgress, validateDocumentReads, validateMarkdownDocument, writeDocument, type StoryDocuments } from './markdownDocuments.ts';
 import { createDefaultId } from './id.ts';
 import type {
@@ -11,6 +12,10 @@ import type {
   StoryBlueprint,
   StoryStorage,
   TurnNode,
+  TurnProposalOp,
+  TurnProposalRecord,
+  TurnProposalStatus,
+  TurnProposalTarget,
 } from './types.ts';
 
 function cloneStory(story: Story): Story {
@@ -180,44 +185,139 @@ function validateOptionalStringMap(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function validateNodes(raw: unknown): Record<string, TurnNode> {
+const VALID_PROPOSAL_STATUSES = new Set<TurnProposalStatus>([
+  'pending',
+  'applied',
+  'dismissed',
+  'reverted',
+  'needs_review',
+]);
+
+const VALID_PROPOSAL_TARGETS = new Set<TurnProposalTarget>([
+  'setting',
+  'memory',
+  'note',
+  'character',
+  'draft',
+  'container',
+  'public',
+  'local',
+]);
+
+const VALID_PROPOSAL_OPS = new Set<TurnProposalOp>(['patch', 'append', 'section', 'full']);
+
+function validateProposals(raw: unknown, nodeId: string): TurnProposalRecord[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new Error(`备份文件节点 ${nodeId} 的 proposals 必须为数组。`);
+  }
+  if (raw.length === 0) return undefined;
+  return raw.map((item, idx) => {
+    if (
+      !isRecord(item) ||
+      typeof item.id !== 'string' ||
+      !item.id.trim() ||
+      typeof item.target !== 'string' ||
+      !VALID_PROPOSAL_TARGETS.has(item.target as TurnProposalTarget) ||
+      typeof item.op !== 'string' ||
+      !VALID_PROPOSAL_OPS.has(item.op as TurnProposalOp) ||
+      typeof item.summary !== 'string' ||
+      typeof item.status !== 'string' ||
+      !VALID_PROPOSAL_STATUSES.has(item.status as TurnProposalStatus) ||
+      typeof item.body !== 'string'
+    ) {
+      throw new Error(`备份文件节点 ${nodeId} 的 proposals[${idx}] 结构无效。`);
+    }
+    const optionalString = (val: unknown, field: string): string | undefined => {
+      if (val === undefined) return undefined;
+      if (typeof val !== 'string') {
+        throw new Error(`备份文件节点 ${nodeId} 的 proposals[${idx}].${field} 必须为字符串。`);
+      }
+      return val;
+    };
+    const optionalNumber = (val: unknown, field: string): number | undefined => {
+      if (val === undefined) return undefined;
+      if (typeof val !== 'number' || !Number.isFinite(val)) {
+        throw new Error(`备份文件节点 ${nodeId} 的 proposals[${idx}].${field} 必须为有限数字。`);
+      }
+      return val;
+    };
+    const heading = optionalString(item.heading, 'heading');
+    const name = optionalString(item.name, 'name');
+    const baseVersionId = optionalString(item.baseVersionId, 'baseVersionId');
+    const appliedVersionId = optionalString(item.appliedVersionId, 'appliedVersionId');
+    const previousVersionId = optionalString(item.previousVersionId, 'previousVersionId');
+    const rawText = optionalString(item.raw, 'raw');
+    const reason = optionalString(item.reason, 'reason');
+    const createdAt = optionalNumber(item.createdAt, 'createdAt');
+    const updatedAt = optionalNumber(item.updatedAt, 'updatedAt');
+    return {
+      id: item.id,
+      target: item.target as TurnProposalTarget,
+      op: item.op as TurnProposalOp,
+      summary: item.summary,
+      status: item.status as TurnProposalStatus,
+      body: item.body,
+      ...(heading !== undefined ? { heading } : {}),
+      ...(name !== undefined ? { name } : {}),
+      ...(baseVersionId !== undefined ? { baseVersionId } : {}),
+      ...(appliedVersionId !== undefined ? { appliedVersionId } : {}),
+      ...(previousVersionId !== undefined ? { previousVersionId } : {}),
+      ...(rawText !== undefined ? { raw: rawText } : {}),
+      ...(reason !== undefined ? { reason } : {}),
+      ...(createdAt !== undefined ? { createdAt } : {}),
+      ...(updatedAt !== undefined ? { updatedAt } : {}),
+    };
+  });
+}
+
+export function validateTurnNodeEntry(entry: unknown, expectedId?: string): TurnNode {
+  if (
+    !isRecord(entry) ||
+    typeof entry.id !== 'string' ||
+    !entry.id.trim() ||
+    (expectedId !== undefined && entry.id !== expectedId) ||
+    (entry.parentId !== null && typeof entry.parentId !== 'string') ||
+    (entry.role !== 'user' && entry.role !== 'assistant') ||
+    typeof entry.content !== 'string' ||
+    typeof entry.createdAt !== 'number' ||
+    !Number.isFinite(entry.createdAt) ||
+    (entry.reasoningContent !== undefined && typeof entry.reasoningContent !== 'string')
+  ) {
+    throw new Error(`备份文件中的节点 ${expectedId ?? '(unknown)'} 格式无效。`);
+  }
+  const diagnostics = validateDiagnostics(entry.diagnostics, entry.id);
+  const attachmentIds = entry.attachmentIds === undefined ? undefined : assertStringArray(entry.attachmentIds, 'node.attachmentIds');
+  const reads = validateDocumentReads(entry.documentReads);
+  const proposals = validateProposals(entry.proposals, entry.id);
+  const documents = entry.documents;
+  if (documents !== undefined && (!isRecord(documents) ||
+    typeof documents.local !== 'string' || typeof documents.container !== 'string')) {
+    throw new Error('备份中的节点文档引用无效。');
+  }
+  return {
+    id: entry.id,
+    parentId: entry.parentId,
+    role: entry.role,
+    content: entry.content,
+    ...(entry.reasoningContent !== undefined ? { reasoningContent: entry.reasoningContent } : {}),
+    ...(diagnostics ? { diagnostics } : {}),
+    ...(attachmentIds ? { attachmentIds } : {}),
+    createdAt: entry.createdAt,
+    summarySnapshot: validateSummarySnapshot(entry.summarySnapshot, entry.id),
+    ...(documents && isRecord(documents) ? { documents: { local: documents.local as string, container: documents.container as string } } : {}),
+    ...(reads ? { documentReads: reads } : {}),
+    ...(proposals ? { proposals } : {}),
+  };
+}
+
+export function validateNodes(raw: unknown): Record<string, TurnNode> {
   if (!isRecord(raw)) {
     throw new Error('备份文件缺少有效的节点树记录。');
   }
   const nodes: Record<string, TurnNode> = Object.create(null);
   for (const [id, entry] of Object.entries(raw)) {
-    if (
-      !isRecord(entry) ||
-      entry.id !== id ||
-      (entry.parentId !== null && typeof entry.parentId !== 'string') ||
-      (entry.role !== 'user' && entry.role !== 'assistant') ||
-      typeof entry.content !== 'string' ||
-      typeof entry.createdAt !== 'number' ||
-      (entry.reasoningContent !== undefined && typeof entry.reasoningContent !== 'string')
-    ) {
-      throw new Error(`备份文件中的节点 ${id} 格式无效。`);
-    }
-    const diagnostics = validateDiagnostics(entry.diagnostics, id);
-    const attachmentIds = entry.attachmentIds === undefined ? undefined : assertStringArray(entry.attachmentIds, 'node.attachmentIds');
-    const reads = validateDocumentReads(entry.documentReads);
-    const documents = entry.documents;
-    if (documents !== undefined && (!isRecord(documents) ||
-      typeof documents.local !== 'string' || typeof documents.container !== 'string')) {
-      throw new Error('备份中的节点文档引用无效。');
-    }
-    nodes[id] = {
-      id: entry.id,
-      parentId: entry.parentId,
-      role: entry.role,
-      content: entry.content,
-      ...(entry.reasoningContent !== undefined ? { reasoningContent: entry.reasoningContent } : {}),
-      ...(diagnostics ? { diagnostics } : {}),
-      ...(attachmentIds ? { attachmentIds } : {}),
-      createdAt: entry.createdAt,
-      summarySnapshot: validateSummarySnapshot(entry.summarySnapshot, id),
-      ...(documents && isRecord(documents) ? { documents: { local: documents.local as string, container: documents.container as string } } : {}),
-      ...(reads ? { documentReads: reads } : {}),
-    };
+    nodes[id] = validateTurnNodeEntry(entry, id);
   }
 
   const checked = new Set<string>();
@@ -253,27 +353,11 @@ export function exportStoryBackup(story: Story, now: () => number = () => Date.n
 }
 
 /**
- * Validates a versioned Story JSON backup and remaps its story ID if it collides with existing stories.
+ * Validates and normalizes a raw Story record from schema version 1, 2, or 3.
  */
-export function importStoryBackup(
-  jsonText: string,
-  existingStoryIds: Iterable<string>,
-  createId: () => string = createDefaultId,
-  now: () => number = () => Date.now(),
-): Story {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonText);
-  } catch {
-    throw new Error('备份文件不是有效的 JSON 格式。');
-  }
-
-  if (!isRecord(parsed) || (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) || !isRecord(parsed.story)) {
-    throw new Error('不支持的备份版本或缺少 story 主体。');
-  }
-
-  const rawStory = parsed.story;
+export function validateStoryPayload(rawStory: unknown, schemaVersion: 1 | 2 | 3): Story {
   if (
+    !isRecord(rawStory) ||
     typeof rawStory.id !== 'string' ||
     !rawStory.id.trim() ||
     typeof rawStory.title !== 'string' ||
@@ -292,9 +376,18 @@ export function importStoryBackup(
   if (rawStory.sourceKind !== undefined && sourceKind === undefined) {
     throw new Error('备份文件中的故事来源类型无效。');
   }
+  if (rawStory.sourceSessionId !== undefined && typeof rawStory.sourceSessionId !== 'string') {
+    throw new Error('备份文件中的故事 sourceSessionId 无效。');
+  }
+  if (rawStory.v2Migrated !== undefined && typeof rawStory.v2Migrated !== 'boolean') {
+    throw new Error('备份文件中的故事 v2Migrated 标记无效。');
+  }
 
   const rootNodeIds = assertStringArray(rawStory.rootNodeIds, 'story.rootNodeIds');
-  const blueprint = validateBlueprint(rawStory.blueprint);
+  const blueprint =
+    schemaVersion === 3 && rawStory.blueprint === undefined
+      ? createDefaultBlueprint(rawStory.title)
+      : validateBlueprint(rawStory.blueprint);
   const nodes = validateNodes(rawStory.nodes);
   const attachments: Record<string, StoryAttachment> = Object.create(null);
   if (rawStory.attachments !== undefined) {
@@ -311,7 +404,7 @@ export function importStoryBackup(
     throw new Error('备份缺少节点引用的附件。');
   }
   let documents: StoryDocuments | undefined;
-  if (parsed.schemaVersion === 2) {
+  if (schemaVersion === 2 || (schemaVersion === 3 && rawStory.documents !== undefined)) {
     if (!isRecord(rawStory.documents)) throw new Error('备份缺少 Markdown 文档版本。');
     const container = validateMarkdownDocument(rawStory.documents.container);
     let local = validateMarkdownDocument(rawStory.documents.local);
@@ -389,15 +482,14 @@ export function importStoryBackup(
     }
   }
 
-  const existingSet = new Set(existingStoryIds);
-  const hasCollision = existingSet.has(rawStory.id);
-
-  const restored: Story = {
+  return {
     ...(documents ? { documents } : {}),
     ...(Object.keys(attachments).length > 0 ? { attachments } : {}),
     ...(typeof rawStory.importCandidate === 'string' ? { importCandidate: rawStory.importCandidate } : {}),
-    id: hasCollision ? createId() : rawStory.id,
-    title: hasCollision ? `${rawStory.title}（导入副本）` : rawStory.title,
+    ...(typeof rawStory.sourceSessionId === 'string' ? { sourceSessionId: rawStory.sourceSessionId } : {}),
+    ...(rawStory.v2Migrated === true ? { v2Migrated: true } : {}),
+    id: rawStory.id,
+    title: rawStory.title,
     ...(sourceKind ? { sourceKind } : {}),
     rawScript: rawStory.rawScript,
     blueprint,
@@ -408,7 +500,39 @@ export function importStoryBackup(
     ...(branchNames ? { branchNames } : {}),
     ...(branchSummaries ? { branchSummaries } : {}),
     createdAt: rawStory.createdAt,
-    updatedAt: hasCollision ? now() : rawStory.updatedAt,
+    updatedAt: rawStory.updatedAt,
   };
-  return documents ? restored : migrateStoryDocuments(restored);
+}
+
+/**
+ * Validates a versioned Story JSON backup and remaps its story ID if it collides with existing stories.
+ */
+export function importStoryBackup(
+  jsonText: string,
+  existingStoryIds: Iterable<string>,
+  createId: () => string = createDefaultId,
+  now: () => number = () => Date.now(),
+): Story {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    throw new Error('备份文件不是有效的 JSON 格式。');
+  }
+
+  if (!isRecord(parsed) || (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) || !isRecord(parsed.story)) {
+    throw new Error('不支持的备份版本或缺少 story 主体。');
+  }
+
+  const validated = validateStoryPayload(parsed.story, parsed.schemaVersion);
+  const existingSet = new Set(existingStoryIds);
+  const hasCollision = existingSet.has(validated.id);
+
+  const restored: Story = {
+    ...validated,
+    id: hasCollision ? createId() : validated.id,
+    title: hasCollision ? `${validated.title}（导入副本）` : validated.title,
+    updatedAt: hasCollision ? now() : validated.updatedAt,
+  };
+  return validated.documents ? restored : migrateStoryDocuments(restored);
 }

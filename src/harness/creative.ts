@@ -1,17 +1,40 @@
 import { createDefaultId } from './id.ts';
-import { getActiveBranchNodes } from './context.ts';
+import {
+  EMPTY_SUMMARY_SNAPSHOT,
+  assembleCreativeThreeZoneContext,
+  getActiveBranchNodes,
+  getActiveSummarySnapshot,
+  summarizeCreativeTurnNodes,
+  type ContextBudgetConfig,
+  type TurnTreeState,
+} from './context.ts';
 import {
   CHANGE_PROMPT,
   documentMessages,
   documentVersion,
   newDocument,
   referenceDocument,
+  replaceDocumentProgress,
   splitMarkdownReply,
+  storyDocumentState,
   visibleReplyPrefix,
+  writeDocument,
   type MarkdownDocument,
   type MarkdownVersion,
+  type StoryDocuments,
 } from './markdownDocuments.ts';
-import type { LlmMessage, LlmTransport, ModelConfig, TurnCallbacks, TurnNode } from './types.ts';
+import type {
+  AbortSignalLike,
+  DocumentRead,
+  LlmMessage,
+  LlmTransport,
+  ModelConfig,
+  PlotSummarySnapshot,
+  Story,
+  TurnCallbacks,
+  TurnNode,
+  TurnProposalRecord,
+} from './types.ts';
 
 export type InteractionMode = 'personal' | 'roleplay';
 
@@ -33,12 +56,15 @@ export interface DraftWork {
   writingStarted?: boolean;
   bodyRevision: number;
   discussion: TurnNode[];
+  discussionNodes?: Record<string, TurnNode>;
+  activeDiscussionLeafId?: string | null;
   suggestions: WritingSuggestion[];
   source?: { storyId: string; nodeId: string | null };
 }
 
 export interface CharacterConversation {
   id: string;
+  title?: string;
   kind: InteractionMode;
   characterVersion: string;
   document: MarkdownDocument;
@@ -62,6 +88,7 @@ export interface CreativeWorkspaceState {
   characters: LocalCharacter[];
   activeWorkId?: string;
   activeCharacterId?: string;
+  v2Migrated?: boolean;
 }
 
 export interface CreativeStorage {
@@ -79,7 +106,8 @@ export const emptyWorkspace = (): CreativeWorkspaceState => ({
 export function newWork(title: string, markdown = '', source?: DraftWork['source']): DraftWork {
   return {
     id: createDefaultId(), title: title.trim() || '未命名作品', document: newDocument(markdown),
-    body: '', bodyRevision: 0, discussion: [], suggestions: [], ...(source ? { source } : {}),
+    body: '', bodyRevision: 0, discussion: [], discussionNodes: {}, activeDiscussionLeafId: null,
+    suggestions: [], ...(source ? { source } : {}),
   };
 }
 
@@ -90,11 +118,116 @@ export function newCharacter(name: string, markdown: string): LocalCharacter {
   };
 }
 
-export function newConversation(character: LocalCharacter, kind: InteractionMode, markdown = ''): CharacterConversation {
+export function newConversation(
+  character: LocalCharacter,
+  kind: InteractionMode,
+  markdown = '',
+  title?: string,
+): CharacterConversation {
   return {
-    id: createDefaultId(), kind, characterVersion: character.document.head, document: newDocument(markdown),
-    edits: {}, nodes: {}, activeLeafNodeId: null,
+    id: createDefaultId(),
+    title: title?.trim() || (kind === 'roleplay' ? '扮演对戏' : '本人聊天'),
+    kind,
+    characterVersion: character.document.head,
+    document: newDocument(markdown),
+    edits: {},
+    nodes: {},
+    activeLeafNodeId: null,
   };
+}
+
+/**
+ * Resolves a DraftWork's discussion TurnNode tree from V0.2 `discussionNodes` or legacy `discussion`.
+ */
+export function getWorkDiscussionTree(work: DraftWork): TurnTreeState {
+  if (work.discussionNodes) {
+    return {
+      nodes: work.discussionNodes,
+      activeLeafNodeId: work.activeDiscussionLeafId ?? null,
+    };
+  }
+  const nodes: Record<string, TurnNode> = {};
+  let prevId: string | null = null;
+  for (const item of work.discussion) {
+    const parentId =
+      item.parentId && Object.hasOwn(nodes, item.parentId)
+        ? item.parentId
+        : item.parentId === null && prevId === null
+          ? null
+          : prevId;
+    nodes[item.id] = {
+      ...item,
+      parentId,
+      summarySnapshot: item.summarySnapshot ?? EMPTY_SUMMARY_SNAPSHOT,
+    };
+    prevId = item.id;
+  }
+  return {
+    nodes,
+    activeLeafNodeId: work.discussion.length > 0 ? work.discussion[work.discussion.length - 1].id : null,
+  };
+}
+
+export function getWorkActiveDiscussionNodes(
+  work: DraftWork,
+  leafId?: string | null,
+): TurnNode[] {
+  const tree = getWorkDiscussionTree(work);
+  return getActiveBranchNodes(tree, leafId === undefined ? tree.activeLeafNodeId : leafId);
+}
+
+export function appendWorkDiscussionTurn(
+  work: DraftWork,
+  nodeInput: {
+    role: TurnNode['role'];
+    content: string;
+    parentId?: string | null;
+    id?: string;
+    createdAt?: number;
+    summarySnapshot?: PlotSummarySnapshot;
+    documentReads?: DocumentRead[];
+    proposals?: TurnProposalRecord[];
+  },
+): { work: DraftWork; node: TurnNode } {
+  const tree = getWorkDiscussionTree(work);
+  const parentId = nodeInput.parentId === undefined ? tree.activeLeafNodeId : nodeInput.parentId;
+  const parentSnapshot =
+    nodeInput.summarySnapshot ??
+    (parentId ? tree.nodes[parentId]?.summarySnapshot : undefined) ??
+    EMPTY_SUMMARY_SNAPSHOT;
+  const node: TurnNode = {
+    id: nodeInput.id ?? createDefaultId(),
+    parentId,
+    role: nodeInput.role,
+    content: nodeInput.content,
+    createdAt: nodeInput.createdAt ?? Date.now(),
+    summarySnapshot: parentSnapshot,
+    ...(nodeInput.documentReads ? { documentReads: nodeInput.documentReads } : {}),
+    ...(nodeInput.proposals ? { proposals: nodeInput.proposals } : {}),
+  };
+  const nextNodes = { ...tree.nodes, [node.id]: node };
+  const nextActiveBranch = getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: node.id }, node.id);
+  return {
+    node,
+    work: {
+      ...work,
+      discussionNodes: nextNodes,
+      activeDiscussionLeafId: node.id,
+      discussion: nextActiveBranch,
+    },
+  };
+}
+
+export function workBodyWindow(work: DraftWork, maxChars = 4000, cursorPos?: number): string {
+  const body = work.body;
+  if (!body) return '';
+  if (body.length <= maxChars) return body;
+  if (cursorPos === undefined) {
+    return body.slice(body.length - maxChars);
+  }
+  const half = Math.floor(maxChars / 2);
+  const start = Math.max(0, Math.min(body.length - maxChars, cursorPos - half));
+  return body.slice(start, start + maxChars);
 }
 
 export function conversationLocalVersion(conversation: CharacterConversation): string {
@@ -126,6 +259,7 @@ export function characterContext(
   character: LocalCharacter,
   conversation: CharacterConversation,
   input: string,
+  budgetOverrides?: Partial<ContextBudgetConfig>,
 ) {
   const publicVersion = documentVersion(global);
   const persona = documentVersion(character.document, conversation.characterVersion);
@@ -133,14 +267,189 @@ export function characterContext(
   const prompt = conversation.kind === 'personal'
     ? '和用户以本人身份聊天。自然延续关系；不清楚对方身份时可自然询问。'
     : '和用户共同扮演对戏。维持人设，用户自己决定关键行动。自然承接旧事件及当时的参与者，新身份按初见交流。';
-  const path = getActiveBranchNodes(conversation);
+  const assembled = assembleCreativeThreeZoneContext({
+    systemPrompt: `${prompt}\n${CHANGE_PROMPT}`,
+    documents: [
+      ['公共记忆', publicVersion],
+      ['角色人设', persona],
+    ],
+    localDocument: local,
+    nodes: conversation.nodes,
+    targetParentId: conversation.activeLeafNodeId,
+    userInput: input || '按当前人设和身份自然开场，由你先说第一句。',
+    budgetOverrides,
+  });
   return {
-    messages: creativeContext(prompt, [['公共记忆', publicVersion], ['角色人设', persona], ['当前对话', local]], path,
-      input || '按当前人设和身份自然开场，由你先说第一句。'),
+    messages: assembled.messages,
+    metrics: assembled.metrics,
     reads: [referenceDocument('public', '公共记忆', publicVersion),
       referenceDocument('container', character.name, persona), referenceDocument('local', '当前对话', local)],
     localVersion: local.id,
   };
+}
+
+export interface WorkContextOptions {
+  systemPrompt?: string;
+  cursorPos?: number;
+  bodyWindowMaxChars?: number;
+  budgetOverrides?: Partial<ContextBudgetConfig>;
+  targetParentId?: string | null;
+}
+
+/**
+ * Automatically assembles 写故事 context from 我的记忆, 作品设定, current body window,
+ * and active discussion branch (with rolling summary protection).
+ */
+export function workContext(
+  global: MarkdownDocument,
+  work: DraftWork,
+  input: string,
+  options: WorkContextOptions = {},
+) {
+  const publicVersion = documentVersion(global);
+  const workVersion = documentVersion(work.document);
+  const tree = getWorkDiscussionTree(work);
+  const targetParentId = options.targetParentId === undefined ? tree.activeLeafNodeId : options.targetParentId;
+  const prompt = options.systemPrompt ??
+    '和作者自由讨论开书想法、原作设定、正文段落与续写方向。自动结合作品设定与正文现状；用户明确要求持久修改设定或记忆时再附提案。';
+  const assembled = assembleCreativeThreeZoneContext({
+    systemPrompt: `${prompt}\n${CHANGE_PROMPT}`,
+    documents: [
+      ['我的记忆', publicVersion],
+      ['作品设定', workVersion],
+    ],
+    manuscriptWindow: workBodyWindow(work, options.bodyWindowMaxChars, options.cursorPos),
+    nodes: tree.nodes,
+    targetParentId,
+    userInput: input,
+    budgetOverrides: options.budgetOverrides,
+  });
+  return {
+    messages: assembled.messages,
+    metrics: assembled.metrics,
+    reads: [
+      referenceDocument('public', '我的记忆', publicVersion),
+      referenceDocument('container', work.title, workVersion),
+    ],
+    activeLeafNodeId: targetParentId,
+  };
+}
+
+export interface CreativeSummaryOptions {
+  targetLeafId?: string | null;
+  budget?: Partial<ContextBudgetConfig>;
+  signal?: AbortSignalLike;
+}
+
+export async function summarizeWorkDiscussion(
+  work: DraftWork,
+  transport: LlmTransport,
+  config: ModelConfig,
+  options: CreativeSummaryOptions = {},
+) {
+  const tree = getWorkDiscussionTree(work);
+  const targetLeafId = options.targetLeafId === undefined ? tree.activeLeafNodeId : options.targetLeafId;
+  const result = await summarizeCreativeTurnNodes({
+    nodes: tree.nodes,
+    targetLeafId,
+    transport,
+    config,
+    budget: options.budget,
+    signal: options.signal,
+  });
+  const activeLeaf = work.activeDiscussionLeafId ?? tree.activeLeafNodeId;
+  const activeDiscussion = getActiveBranchNodes({ nodes: result.nodes, activeLeafNodeId: activeLeaf }, activeLeaf);
+  return {
+    ...result,
+    work: {
+      ...work,
+      discussionNodes: result.nodes,
+      activeDiscussionLeafId: activeLeaf,
+      discussion: activeDiscussion,
+    },
+  };
+}
+
+export async function summarizeCharacterConversation(
+  conversation: CharacterConversation,
+  transport: LlmTransport,
+  config: ModelConfig,
+  options: CreativeSummaryOptions = {},
+) {
+  const targetLeafId =
+    options.targetLeafId === undefined ? conversation.activeLeafNodeId : options.targetLeafId;
+  const result = await summarizeCreativeTurnNodes({
+    nodes: conversation.nodes,
+    targetLeafId,
+    transport,
+    config,
+    budget: options.budget,
+    signal: options.signal,
+  });
+  return {
+    ...result,
+    conversation: result.updated
+      ? {
+          ...conversation,
+          nodes: result.nodes,
+        }
+      : conversation,
+  };
+}
+
+/**
+ * Silently compresses uncovered turns on a 文游 Story branch without throwing on failure or abort.
+ */
+export async function summarizeStoryBranchSilent(
+  story: Story,
+  targetLeafId: string | null,
+  transport: LlmTransport,
+  config: ModelConfig,
+  options: Omit<CreativeSummaryOptions, 'targetLeafId'> = {},
+): Promise<Story> {
+  if (!targetLeafId || !story.nodes[targetLeafId]) return story;
+  const baseSnapshot = getActiveSummarySnapshot(story, targetLeafId);
+  const result = await summarizeCreativeTurnNodes({
+    nodes: story.nodes,
+    targetLeafId,
+    transport,
+    config,
+    budget: options.budget,
+    signal: options.signal,
+    baseSnapshot,
+  });
+  if (!result.updated) return story;
+
+  let nextStory: Story = {
+    ...story,
+    nodes: result.nodes,
+  };
+  if (story.documents && !story.documents.edits[targetLeafId]) {
+    const scoped = nextStory as Story & { documents: StoryDocuments };
+    const state = storyDocumentState(scoped, targetLeafId, targetLeafId === story.activeLeafNodeId);
+    const currentLocal = documentVersion(scoped.documents.local, state.local);
+    const revisedLocal = writeDocument(
+      scoped.documents.local,
+      state.local,
+      replaceDocumentProgress(currentLocal.markdown, result.snapshot.content),
+      'automatic',
+    );
+    nextStory = {
+      ...scoped,
+      documents: {
+        ...scoped.documents,
+        local: { ...revisedLocal, head: scoped.documents.local.head },
+      },
+      nodes: {
+        ...scoped.nodes,
+        [targetLeafId]: {
+          ...scoped.nodes[targetLeafId],
+          documents: { ...state, local: revisedLocal.head },
+        },
+      },
+    };
+  }
+  return nextStory;
 }
 
 export function writingInput(work: DraftWork, start: number, end: number, instruction: string): string {
