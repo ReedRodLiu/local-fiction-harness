@@ -1691,11 +1691,11 @@ ${history}`,
           hideStoryTools={Boolean(creativePage)}
           stageControls={creativePage === 'writing' && activeWork ? (
             <div className="topbar-stage-controls" role="group" aria-label="作品视图">
-              <button type="button" className="btn btn-sm" aria-pressed={!showManuscript} onClick={() => selectWritingView(false)}>讨论</button>
-              <button type="button" className="btn btn-sm" aria-pressed={showManuscript} onClick={() => selectWritingView(true)}>正文</button>
+              <button type="button" className="topbar-segment-btn" aria-pressed={!showManuscript} onClick={() => selectWritingView(false)}>讨论</button>
+              <button type="button" className="topbar-segment-btn" aria-pressed={showManuscript} onClick={() => selectWritingView(true)}>正文</button>
             </div>
           ) : creativePage === 'character' && activeCharacter ? (
-            <button type="button" className="btn btn-sm topbar-mode-chip" onClick={() => setCreativeCompanionOpen(true)}>
+            <button type="button" className="topbar-mode-chip" onClick={() => setCreativeCompanionOpen(true)}>
               {activeConversation?.kind === 'roleplay' ? '扮演对戏' : '本人聊天'}
             </button>
           ) : undefined}
@@ -1746,7 +1746,7 @@ ${history}`,
 
         <main
           ref={mainStageRef}
-          className={`main-stage${storyExists && !isWelcome && !showSettings && !showImport && !creativePage ? ' is-playing' : ''}`}
+          className={`main-stage${storyExists && !isWelcome && !showSettings && !showImport && !creativePage ? ' is-playing' : ''}${creativePage && !showSettings && !showImport ? ' is-creative' : ''}`}
           data-testid="main-stage"
           {...edgeSwipeHandlers}
           onScroll={handleMainStageScroll}

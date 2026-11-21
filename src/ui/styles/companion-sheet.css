@@ -17,6 +17,10 @@
   background: var(--bg-surface);
 }
 
+.companion-tabs.companion-tabs-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .companion-tab {
   position: relative;
   display: flex;
