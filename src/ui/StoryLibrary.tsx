@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { getActiveBranchNodes, projectStoryTreeSpine, type Story } from '../harness/index.ts';
+import { ModalDialog } from './primitives/ModalDialog.tsx';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 
 /** A work or character displayed in the library. Subtitle is already formatted for display. */
@@ -48,6 +49,8 @@ export function StoryLibrary({
   onExportStoryBackup,
 }: StoryLibraryProps) {
   const [category, setCategory] = useState<'story' | 'work' | 'character'>('story');
+  const [deleteItem, setDeleteItem] = useState<{ id: string; title: string; category: 'work' | 'character' } | null>(null);
+  useWebHistoryLayer('creative-delete', 110, Boolean(deleteItem), () => setDeleteItem(null));
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -265,8 +268,13 @@ export function StoryLibrary({
                             role="menuitem"
                             className="danger-menu-item"
                             onClick={() => {
-                              closeMenu();
-                              actions?.onDelete(item.id);
+                              if (category === 'story') {
+                                closeMenu();
+                                actions?.onDelete(item.id);
+                              } else {
+                                closeMenu(false);
+                                setDeleteItem({ id: item.id, title: item.title, category });
+                              }
                             }}
                           >
                             删除{category === 'story' ? '故事' : category === 'work' ? '作品' : '角色'}
@@ -281,6 +289,20 @@ export function StoryLibrary({
           })}
         </ul>
       )}
+      <ModalDialog open={Boolean(deleteItem)} label="确认删除" onClose={() => setDeleteItem(null)}>
+        {deleteItem && <div className="local-document-dialog">
+          <h2>确认删除{deleteItem.category === 'work' ? '作品' : '角色'}</h2>
+          <p>将永久删除本机的“{deleteItem.title}”及其相关内容，此操作无法撤销。</p>
+          <div className="btn-group">
+            <button type="button" className="btn" onClick={() => setDeleteItem(null)}>取消</button>
+            <button type="button" className="btn btn-primary" onClick={() => {
+              const target = deleteItem;
+              setDeleteItem(null);
+              (target.category === 'work' ? workActions : characterActions)?.onDelete(target.id);
+            }}>确认删除</button>
+          </div>
+        </div>}
+      </ModalDialog>
     </section>
   );
 }

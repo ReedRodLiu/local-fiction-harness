@@ -1289,6 +1289,8 @@ export function App({ runtime }: AppProps) {
       if (storyOpSeqRef.current !== opSeq) return;
       await commitStoryState(restored);
       setNewCreationOpen(false);
+      setCreativePage(null);
+      setCreativeCompanionOpen(false);
       setShowImport(false);
       setShowSettings(false);
     } catch (err) {
@@ -1319,12 +1321,14 @@ export function App({ runtime }: AppProps) {
   }
 
   function openNewCreation() {
-    if (creationPending.current) return;
+    if (creationPending.current || deepSeekImportBusyRef.current) return;
     abortActiveStream(true);
     invalidateSummaryTask();
     setNewCreationMode(creativePage ?? 'story');
     setCreativePage(null);
     setCreativeCompanionOpen(false);
+    setShowSettings(false);
+    setShowImport(false);
     setStoryTreeOpen(false);
     setMobileLibraryOpen(false);
     setNewCreationOpen(true);

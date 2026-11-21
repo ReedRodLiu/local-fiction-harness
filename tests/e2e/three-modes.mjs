@@ -246,6 +246,57 @@ export async function verifyThreeModes(browser, port, helpers) {
     await character.getByRole('heading', { name: '收灯人' }).waitFor();
     await character.getByRole('button', { name: '角色人设' }).click();
     await page.waitForFunction(() => document.querySelector('[data-testid=markdown-document] textarea')?.value.includes('SOURCE-COPY'));
+
+    await dialog.getByRole('button', { name: '取消' }).click();
+    // A story backup restored while a creative page is active must replace that page.
+    await page.getByTestId('desktop-library').getByRole('button', { name: '文游', exact: true }).click();
+    await page.getByTestId('desktop-library').getByTestId('story-select-button').filter({ hasText: '浮灯渡口' }).click();
+    await page.getByTestId('desktop-settings-open').click();
+    const [backup] = await Promise.all([page.waitForEvent('download'), page.getByTestId('export-current-story').click()]);
+    const backupPath = await backup.path();
+    await page.getByTestId('settings-page').getByRole('button', { name: '返回' }).click();
+    await page.getByTestId('desktop-library').getByRole('button', { name: '角色', exact: true }).click();
+    await page.getByTestId('desktop-library').getByTestId('story-select-button').filter({ hasText: '岑灯' }).click();
+    await character.waitFor();
+    await page.getByTestId('desktop-settings-open').click();
+    await page.setInputFiles('[data-testid="backup-import-input"]', backupPath);
+    await character.waitFor({ state: 'detached' });
+    await page.getByTestId('story-timeline').waitFor();
+
+    // New creation is reachable from the library on both screen sizes.
+    for (const mobile of [false, true]) {
+      await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1280, height: 800 });
+      if (mobile) await page.getByTestId('library-drawer-trigger').click();
+      await page.getByTestId(`${mobile ? 'mobile' : 'desktop'}-library-new-creation`).click();
+      await page.getByTestId('welcome-view').waitFor();
+      await page.waitForFunction(() => document.activeElement?.id === 'turn-input');
+    }
+    // Exercise both categories, including a confirmation nested in the mobile drawer.
+    for (const [mobile, category, title] of [[false, '产粮', '纸月车站'], [true, '角色', '岑灯']]) {
+      await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1280, height: 800 });
+      if (mobile) await page.getByTestId('library-drawer-trigger').click();
+      const library = page.getByTestId(mobile ? 'mobile-library-dialog' : 'desktop-library');
+      await library.getByRole('button', { name: category, exact: true }).click();
+      const row = library.getByTestId('story-list-item').filter({ hasText: title });
+      await row.getByTestId('story-menu-trigger').click();
+      await row.getByRole('menuitem', { name: /删除/ }).click();
+      const confirmation = page.getByRole('dialog', { name: '确认删除' });
+      await confirmation.getByRole('button', { name: '取消' }).click();
+      await confirmation.waitFor({ state: 'hidden' });
+      await row.waitFor();
+      await row.getByTestId('story-menu-trigger').click();
+      await row.getByRole('menuitem', { name: /删除/ }).click();
+      if (mobile) {
+        await page.goBack();
+        await confirmation.waitFor({ state: 'hidden' });
+        await row.waitFor();
+        await row.getByTestId('story-menu-trigger').click();
+        await row.getByRole('menuitem', { name: /删除/ }).click();
+      }
+      await confirmation.getByRole('button', { name: '确认删除' }).click();
+      await row.waitFor({ state: 'detached' });
+    }
+
   } finally {
     await context.close();
   }
