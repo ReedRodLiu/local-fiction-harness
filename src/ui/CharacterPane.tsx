@@ -477,160 +477,172 @@ export function CharacterPane(props: CharacterPaneProps) {
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
     let createdAsset: { kind: 'character' | 'work'; id: string; label: string } | null = null;
 
-    await save((state) => {
-      if (normalized === 'memory') {
-        const prevId = state.publicDocument.head;
-        const nextPublicDoc = writeDocument(state.publicDocument, prevId, resolvedMarkdown, 'user');
-        return updateCharacter(
-          { ...state, publicDocument: nextPublicDoc },
-          character.id,
-          (live) =>
+    try {
+      await save((state) => {
+        if (normalized === 'memory') {
+          const prevId = state.publicDocument.head;
+          const nextPublicDoc = writeDocument(state.publicDocument, prevId, resolvedMarkdown, 'user');
+          return updateCharacter(
+            { ...state, publicDocument: nextPublicDoc },
+            character.id,
+            (live) =>
+              updateConversation(live, conversation.id, (conv) => ({
+                ...conv,
+                nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
+                  ...p,
+                  status: 'applied',
+                  previousVersionId: prevId,
+                  appliedVersionId: nextPublicDoc.head,
+                })),
+              })),
+          );
+        }
+
+        if (normalized === 'character' || normalized === 'draft') {
+          const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
+          createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+          return updateCharacter(derived.nextState, character.id, (live) =>
             updateConversation(live, conversation.id, (conv) => ({
               ...conv,
               nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
                 ...p,
                 status: 'applied',
-                previousVersionId: prevId,
-                appliedVersionId: nextPublicDoc.head,
               })),
             })),
-        );
-      }
+          );
+        }
 
-      if (normalized === 'character' || normalized === 'draft') {
-        const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
-        createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
-        return updateCharacter(derived.nextState, character.id, (live) =>
-          updateConversation(live, conversation.id, (conv) => ({
-            ...conv,
-            nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
-              ...p,
-              status: 'applied',
-            })),
-          })),
-        );
-      }
+        if (normalized === 'note') {
+          return updateCharacter(state, character.id, (live) =>
+            updateConversation(live, conversation.id, (conv) => {
+              const baseId = conversationLocalVersion(conv);
+              const revised = writeDocument(conv.document, baseId, resolvedMarkdown, 'user');
+              return {
+                ...conv,
+                document: { ...revised, head: conv.document.head },
+                edits: { ...conv.edits, [conv.activeLeafNodeId ?? '']: revised.head },
+                nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
+                  ...p,
+                  status: 'applied',
+                  previousVersionId: baseId,
+                  appliedVersionId: revised.head,
+                })),
+              };
+            }),
+          );
+        }
 
-      if (normalized === 'note') {
-        return updateCharacter(state, character.id, (live) =>
-          updateConversation(live, conversation.id, (conv) => {
-            const baseId = conversationLocalVersion(conv);
-            const revised = writeDocument(conv.document, baseId, resolvedMarkdown, 'user');
-            return {
+        return updateCharacter(state, character.id, (live) => {
+          const prevId = live.document.head;
+          const nextDoc = writeDocument(live.document, prevId, resolvedMarkdown, 'user');
+          return updateConversation(
+            { ...live, document: nextDoc },
+            conversation.id,
+            (conv) => ({
               ...conv,
-              document: { ...revised, head: conv.document.head },
-              edits: { ...conv.edits, [conv.activeLeafNodeId ?? '']: revised.head },
+              characterVersion: nextDoc.head,
               nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
                 ...p,
                 status: 'applied',
-                previousVersionId: baseId,
-                appliedVersionId: revised.head,
+                previousVersionId: prevId,
+                appliedVersionId: nextDoc.head,
               })),
-            };
-          }),
-        );
-      }
-
-      return updateCharacter(state, character.id, (live) => {
-        const prevId = live.document.head;
-        const nextDoc = writeDocument(live.document, prevId, resolvedMarkdown, 'user');
-        return updateConversation(
-          { ...live, document: nextDoc },
-          conversation.id,
-          (conv) => ({
-            ...conv,
-            characterVersion: nextDoc.head,
-            nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
-              ...p,
-              status: 'applied',
-              previousVersionId: prevId,
-              appliedVersionId: nextDoc.head,
-            })),
-          }),
-        );
+            }),
+          );
+        });
       });
-    });
 
-    recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
-    if (createdAsset) setCreatedAssetNotice(createdAsset);
+      recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
+      if (createdAsset) setCreatedAssetNotice(createdAsset);
+    } catch (err) {
+      reply.fail(err);
+    }
   };
 
   const handleDismissProposal = async (nodeId: string, proposal: TurnProposalRecord) => {
     if (!conversation) return;
-    await save((state) =>
-      updateCharacter(state, character.id, (live) =>
-        updateConversation(live, conversation.id, (conv) => ({
-          ...conv,
-          nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
-            ...p,
-            status: 'dismissed',
+    try {
+      await save((state) =>
+        updateCharacter(state, character.id, (live) =>
+          updateConversation(live, conversation.id, (conv) => ({
+            ...conv,
+            nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
+              ...p,
+              status: 'dismissed',
+            })),
           })),
-        })),
-      ),
-    );
-    recordProposalDiagnostic(runtime.diagnostics, 'proposal_dismissed', proposal);
+        ),
+      );
+      recordProposalDiagnostic(runtime.diagnostics, 'proposal_dismissed', proposal);
+    } catch (err) {
+      reply.fail(err);
+    }
   };
 
   const handleRevertProposal = async (nodeId: string, proposal: TurnProposalRecord) => {
     if (!conversation) return;
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
-    await save((state) => {
-      if (normalized === 'memory') {
-        const { nextDocument } = revertDocumentToVersion(state.publicDocument, proposal);
-        return updateCharacter(
-          { ...state, publicDocument: nextDocument },
-          character.id,
-          (live) =>
-            updateConversation(live, conversation.id, (conv) => ({
+    try {
+      await save((state) => {
+        if (normalized === 'memory') {
+          const { nextDocument } = revertDocumentToVersion(state.publicDocument, proposal);
+          return updateCharacter(
+            { ...state, publicDocument: nextDocument },
+            character.id,
+            (live) =>
+              updateConversation(live, conversation.id, (conv) => ({
+                ...conv,
+                nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
+                  ...p,
+                  status: 'reverted',
+                })),
+              })),
+          );
+        }
+
+        if (normalized === 'note') {
+          return updateCharacter(state, character.id, (live) =>
+            updateConversation(live, conversation.id, (conv) => {
+              const baseId = conversationLocalVersion(conv);
+              const prevId = proposal.previousVersionId;
+              if (!prevId || !Object.hasOwn(conv.document.versions, prevId)) {
+                throw new Error('找不到可用于撤销的历史版本。');
+              }
+              const prevMd = documentVersion(conv.document, prevId).markdown;
+              const revised = writeDocument(conv.document, baseId, prevMd, 'user');
+              return {
+                ...conv,
+                document: { ...revised, head: conv.document.head },
+                edits: { ...conv.edits, [conv.activeLeafNodeId ?? '']: revised.head },
+                nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
+                  ...p,
+                  status: 'reverted',
+                })),
+              };
+            }),
+          );
+        }
+
+        return updateCharacter(state, character.id, (live) => {
+          const { nextDocument } = revertDocumentToVersion(live.document, proposal);
+          return updateConversation(
+            { ...live, document: nextDocument },
+            conversation.id,
+            (conv) => ({
               ...conv,
+              characterVersion: nextDocument.head,
               nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
                 ...p,
                 status: 'reverted',
               })),
-            })),
-        );
-      }
-
-      if (normalized === 'note') {
-        return updateCharacter(state, character.id, (live) =>
-          updateConversation(live, conversation.id, (conv) => {
-            const baseId = conversationLocalVersion(conv);
-            const prevId = proposal.previousVersionId;
-            if (!prevId || !Object.hasOwn(conv.document.versions, prevId)) {
-              throw new Error('找不到可用于撤销的历史版本。');
-            }
-            const prevMd = documentVersion(conv.document, prevId).markdown;
-            const revised = writeDocument(conv.document, baseId, prevMd, 'user');
-            return {
-              ...conv,
-              document: { ...revised, head: conv.document.head },
-              edits: { ...conv.edits, [conv.activeLeafNodeId ?? '']: revised.head },
-              nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
-                ...p,
-                status: 'reverted',
-              })),
-            };
-          }),
-        );
-      }
-
-      return updateCharacter(state, character.id, (live) => {
-        const { nextDocument } = revertDocumentToVersion(live.document, proposal);
-        return updateConversation(
-          { ...live, document: nextDocument },
-          conversation.id,
-          (conv) => ({
-            ...conv,
-            characterVersion: nextDocument.head,
-            nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
-              ...p,
-              status: 'reverted',
-            })),
-          }),
-        );
+            }),
+          );
+        });
       });
-    });
-    recordProposalDiagnostic(runtime.diagnostics, 'proposal_reverted', proposal);
+      recordProposalDiagnostic(runtime.diagnostics, 'proposal_reverted', proposal);
+    } catch (err) {
+      reply.fail(err);
+    }
   };
 
   const handleOpenProposalEditor = (proposal: TurnProposalRecord) => {

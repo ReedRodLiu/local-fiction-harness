@@ -271,7 +271,7 @@ public class NativeVaultPlugin extends Plugin {
                     ? "导出 Markdown"
                     : diagnosticLog
                         ? "分享排障日志"
-                        : "导出故事 JSON 备份";
+                        : "导出 Folio 备份";
             Intent chooser = Intent.createChooser(sendIntent, chooserTitle);
             Activity activity = getActivity();
             if (activity != null) {

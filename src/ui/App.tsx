@@ -878,11 +878,23 @@ export function App({ runtime }: AppProps) {
   const persistMaterializedAsset = async (
     targetMode: StageAssetMode,
     materialized: ReturnType<typeof materializeAssetFromNodes>,
+    guard?: { storySeqAtStart: number; overlaySeqAtStart: number },
   ) => {
+    const stillCurrent = () =>
+      !guard || isNavigationCurrent(guard.storySeqAtStart, guard.overlaySeqAtStart);
+
     if (targetMode === 'story' && materialized.story) {
       const saved = await harness.saveStory(migrateStoryToV02(materialized.story));
       await refreshStories();
+      if (!stillCurrent()) return;
+      const prevSel = await runtime.storyStorage.getActiveStorySelection();
+      const activeBeforeActivation = prevSel.status === 'present' ? prevSel.id : null;
+      if (!stillCurrent()) return;
       const activated = await harness.setActiveStory(saved.id);
+      if (!stillCurrent()) {
+        await runtime.storyStorage.compareAndSetActiveStoryId(saved.id, activeBeforeActivation);
+        return;
+      }
       const active = migrateStoryToV02(activated ?? saved);
       storyRef.current = active;
       setStory(active);
@@ -896,8 +908,9 @@ export function App({ runtime }: AppProps) {
       await creative.save((state) => ({
         ...state,
         works: [...state.works, work],
-        activeWorkId: work.id,
+        activeWorkId: stillCurrent() ? work.id : state.activeWorkId,
       }));
+      if (!stillCurrent()) return;
       setNeutralTurns([]);
       setWritingView({ id: work.id, manuscript: Boolean(work.body.trim()) });
       openCreativePage('writing');
@@ -908,8 +921,9 @@ export function App({ runtime }: AppProps) {
       await creative.save((state) => ({
         ...state,
         characters: [...state.characters, ch],
-        activeCharacterId: ch.id,
+        activeCharacterId: stillCurrent() ? ch.id : state.activeCharacterId,
       }));
+      if (!stillCurrent()) return;
       setNeutralTurns([]);
       openCreativePage('character');
     }
@@ -1184,7 +1198,10 @@ export function App({ runtime }: AppProps) {
             turns: allTurns,
             characterName: routed.characterName,
           });
-          await persistMaterializedAsset(routed.mode, materialized);
+          await persistMaterializedAsset(routed.mode, materialized, {
+            storySeqAtStart,
+            overlaySeqAtStart,
+          });
 
           try {
             runtime.diagnostics.recordEvent({
@@ -1229,6 +1246,8 @@ export function App({ runtime }: AppProps) {
 
   const handleStartBlankManuscript = async () => {
     if (creationPending.current) return;
+    const storySeqAtStart = ++storyOpSeqRef.current;
+    const overlaySeqAtStart = overlayNavigationSeqRef.current;
     setPlusMenuOpen(false);
     creationPending.current = true;
     setCreating(true);
@@ -1238,8 +1257,9 @@ export function App({ runtime }: AppProps) {
       await creative.save((state) => ({
         ...state,
         works: [...state.works, work],
-        activeWorkId: work.id,
+        activeWorkId: isNavigationCurrent(storySeqAtStart, overlaySeqAtStart) ? work.id : state.activeWorkId,
       }));
+      if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
       setNeutralTurns([]);
       setInput('');
       setWritingView({ id: work.id, manuscript: true });

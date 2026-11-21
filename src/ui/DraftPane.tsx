@@ -720,126 +720,138 @@ export function DraftPane(props: DraftPaneProps) {
   ) => {
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
     let createdAsset: { kind: 'character' | 'work'; id: string; label: string } | null = null;
-    await save((state) => {
-      if (normalized === 'memory') {
-        const prevId = state.publicDocument.head;
-        const nextPublicDoc = writeDocument(state.publicDocument, prevId, resolvedMarkdown, 'user');
-        const nextWorks = state.works.map((item) => {
-          if (item.id !== work.id) return item;
-          const tree = getWorkDiscussionTree(item);
-          const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
-            ...p,
-            status: 'applied',
-            previousVersionId: prevId,
-            appliedVersionId: nextPublicDoc.head,
-          }));
-          return {
-            ...item,
-            discussionNodes: nextNodes,
-            discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
-          };
-        });
-        return { ...state, publicDocument: nextPublicDoc, works: nextWorks };
-      }
+    try {
+      await save((state) => {
+        if (normalized === 'memory') {
+          const prevId = state.publicDocument.head;
+          const nextPublicDoc = writeDocument(state.publicDocument, prevId, resolvedMarkdown, 'user');
+          const nextWorks = state.works.map((item) => {
+            if (item.id !== work.id) return item;
+            const tree = getWorkDiscussionTree(item);
+            const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
+              ...p,
+              status: 'applied',
+              previousVersionId: prevId,
+              appliedVersionId: nextPublicDoc.head,
+            }));
+            return {
+              ...item,
+              discussionNodes: nextNodes,
+              discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
+            };
+          });
+          return { ...state, publicDocument: nextPublicDoc, works: nextWorks };
+        }
 
-      if (normalized === 'character' || normalized === 'draft') {
-        const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
-        createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
-        return updateWork(derived.nextState, work.id, (live) => {
+        if (normalized === 'character' || normalized === 'draft') {
+          const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
+          createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+          return updateWork(derived.nextState, work.id, (live) => {
+            const tree = getWorkDiscussionTree(live);
+            const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
+              ...p,
+              status: 'applied',
+            }));
+            return {
+              ...live,
+              discussionNodes: nextNodes,
+              discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
+            };
+          });
+        }
+
+        return updateWork(state, work.id, (live) => {
+          const prevId = live.document.head;
+          const nextDoc = writeDocument(live.document, prevId, resolvedMarkdown, 'user');
           const tree = getWorkDiscussionTree(live);
           const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
             ...p,
             status: 'applied',
+            previousVersionId: prevId,
+            appliedVersionId: nextDoc.head,
+          }));
+          return {
+            ...live,
+            document: nextDoc,
+            discussionNodes: nextNodes,
+            discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
+          };
+        });
+      });
+
+      if (proposal.baseVersionId && proposal.baseVersionId !== resolveProposalTarget(proposal).currentVersionId) {
+        recordProposalDiagnostic(runtime.diagnostics, 'patch_reapplied', proposal);
+      }
+      recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
+      if (createdAsset) setCreatedAssetNotice(createdAsset);
+    } catch (err) {
+      reply.fail(err);
+    }
+  };
+
+  const handleDismissProposal = async (nodeId: string, proposal: TurnProposalRecord) => {
+    try {
+      await save((state) =>
+        updateWork(state, work.id, (live) => {
+          const tree = getWorkDiscussionTree(live);
+          const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
+            ...p,
+            status: 'dismissed',
           }));
           return {
             ...live,
             discussionNodes: nextNodes,
             discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
           };
-        });
-      }
-
-      return updateWork(state, work.id, (live) => {
-        const prevId = live.document.head;
-        const nextDoc = writeDocument(live.document, prevId, resolvedMarkdown, 'user');
-        const tree = getWorkDiscussionTree(live);
-        const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
-          ...p,
-          status: 'applied',
-          previousVersionId: prevId,
-          appliedVersionId: nextDoc.head,
-        }));
-        return {
-          ...live,
-          document: nextDoc,
-          discussionNodes: nextNodes,
-          discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
-        };
-      });
-    });
-
-    if (proposal.baseVersionId && proposal.baseVersionId !== resolveProposalTarget(proposal).currentVersionId) {
-      recordProposalDiagnostic(runtime.diagnostics, 'patch_reapplied', proposal);
+        }),
+      );
+      recordProposalDiagnostic(runtime.diagnostics, 'proposal_dismissed', proposal);
+    } catch (err) {
+      reply.fail(err);
     }
-    recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
-    if (createdAsset) setCreatedAssetNotice(createdAsset);
-  };
-
-  const handleDismissProposal = async (nodeId: string, proposal: TurnProposalRecord) => {
-    await save((state) =>
-      updateWork(state, work.id, (live) => {
-        const tree = getWorkDiscussionTree(live);
-        const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
-          ...p,
-          status: 'dismissed',
-        }));
-        return {
-          ...live,
-          discussionNodes: nextNodes,
-          discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
-        };
-      }),
-    );
-    recordProposalDiagnostic(runtime.diagnostics, 'proposal_dismissed', proposal);
   };
 
   const handleRevertProposal = async (nodeId: string, proposal: TurnProposalRecord) => {
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
-    await save((state) => {
-      if (normalized === 'memory') {
-        const { nextDocument } = revertDocumentToVersion(state.publicDocument, proposal);
-        const nextWorks = state.works.map((item) => {
-          if (item.id !== work.id) return item;
-          const tree = getWorkDiscussionTree(item);
+    try {
+      await save((state) => {
+        if (normalized === 'memory') {
+          const { nextDocument } = revertDocumentToVersion(state.publicDocument, proposal);
+          const nextWorks = state.works.map((item) => {
+            if (item.id !== work.id) return item;
+            const tree = getWorkDiscussionTree(item);
+            const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
+              ...p,
+              status: 'reverted',
+            }));
+            return {
+              ...item,
+              discussionNodes: nextNodes,
+              discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
+            };
+          });
+          return { ...state, publicDocument: nextDocument, works: nextWorks };
+        }
+
+        return updateWork(state, work.id, (live) => {
+          const { nextDocument } = revertDocumentToVersion(live.document, proposal);
+          const tree = getWorkDiscussionTree(live);
           const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
             ...p,
             status: 'reverted',
           }));
           return {
-            ...item,
+            ...live,
+            document: nextDocument,
             discussionNodes: nextNodes,
             discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
           };
         });
-        return { ...state, publicDocument: nextDocument, works: nextWorks };
-      }
-
-      return updateWork(state, work.id, (live) => {
-        const { nextDocument } = revertDocumentToVersion(live.document, proposal);
-        const tree = getWorkDiscussionTree(live);
-        const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
-          ...p,
-          status: 'reverted',
-        }));
-        return {
-          ...live,
-          document: nextDocument,
-          discussionNodes: nextNodes,
-          discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
-        };
       });
-    });
-    recordProposalDiagnostic(runtime.diagnostics, 'proposal_reverted', proposal);
+      recordProposalDiagnostic(runtime.diagnostics, 'proposal_reverted', proposal);
+    } catch (err) {
+      reply.fail(err);
+    }
   };
 
   const handleOpenProposalEditor = (proposal: TurnProposalRecord) => {

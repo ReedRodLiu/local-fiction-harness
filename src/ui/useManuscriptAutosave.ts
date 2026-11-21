@@ -64,6 +64,7 @@ export interface ManuscriptAutosaveManager {
   flush(): Promise<void>;
   waitForIdle(): Promise<void>;
   syncExternal(nextWorkId: string, nextPersistedText: string): void;
+  activate(): void;
   dispose(): void;
 }
 
@@ -120,14 +121,14 @@ export function createManuscriptAutosaveManager(
   const drainSaveQueue = (reason: 'debounce' | 'flush'): Promise<void> => {
     const workIdAtEnqueue = currentWorkId;
     const runNext = async (): Promise<void> => {
-      if (disposed || currentWorkId !== workIdAtEnqueue) return;
+      if ((disposed && reason === 'debounce') || currentWorkId !== workIdAtEnqueue) return;
       if (currentText === lastPersistedText) return;
 
       const targetText = currentText;
       const expectedPrev = lastPersistedText;
       saving = true;
       saveError = null;
-      emit();
+      if (!disposed) emit();
 
       try {
         await options.onSave(targetText, expectedPrev);
@@ -146,10 +147,15 @@ export function createManuscriptAutosaveManager(
         }
       } finally {
         saving = false;
-        emit();
+        if (!disposed) emit();
       }
 
-      if (!disposed && currentWorkId === workIdAtEnqueue && !saveError && currentText !== lastPersistedText) {
+      if (
+        (!disposed || reason === 'flush') &&
+        currentWorkId === workIdAtEnqueue &&
+        !saveError &&
+        currentText !== lastPersistedText
+      ) {
         await runNext();
       }
     };
@@ -328,6 +334,10 @@ export function createManuscriptAutosaveManager(
       }
     },
 
+    activate() {
+      disposed = false;
+    },
+
     dispose() {
       disposed = true;
       clearDebounce();
@@ -373,6 +383,8 @@ export function useManuscriptAutosave(
 
   useEffect(() => {
     const manager = managerRef.current!;
+    // React StrictMode runs cleanup + re-setup on the same ref instance; reactivate before subscribing.
+    manager.activate();
     setSnapshot(manager.getSnapshot());
     const unsubscribe = manager.subscribe(() => {
       setSnapshot(manager.getSnapshot());

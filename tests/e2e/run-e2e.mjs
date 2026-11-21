@@ -365,7 +365,7 @@ async function expectCompactPseudoTouchTarget(locator, label, maxVisualHeight) {
 
 async function assertSessionFilterTabState(page, tabId, expectedResultCount, label) {
   const readState = () => page.evaluate(({ tabId, expectedResultCount }) => {
-    const tablist = document.querySelector('[role="tablist"][aria-label="筛选会话"]');
+    const tablist = document.querySelector('[role="tablist"][aria-label="筛选历史对话"]');
     const tabs = tablist ? Array.from(tablist.querySelectorAll('[role="tab"]')) : [];
     const activeTab = document.getElementById(tabId);
     const selectedTabs = tabs.filter((tab) => tab.getAttribute('aria-selected') === 'true');
@@ -394,7 +394,7 @@ async function assertSessionFilterTabState(page, tabId, expectedResultCount, lab
   }, { tabId, expectedResultCount });
 
   await page.waitForFunction(({ tabId, expectedResultCount }) => {
-    const tablist = document.querySelector('[role="tablist"][aria-label="筛选会话"]');
+    const tablist = document.querySelector('[role="tablist"][aria-label="筛选历史对话"]');
     const tabs = tablist ? Array.from(tablist.querySelectorAll('[role="tab"]')) : [];
     const activeTab = document.getElementById(tabId);
     const selectedTabs = tabs.filter((tab) => tab.getAttribute('aria-selected') === 'true');
@@ -561,11 +561,12 @@ async function verifySliceOneViewportMatrix(page) {
           await libraryClose.waitFor({ state: 'visible' });
         }
         if ((await libraryToggle.count()) !== 0) {
-          throw new Error(`${cell} desktop topbar showed duplicate library toggle while sidebar was expanded.`);
+          throw new Error(`${theme} desktop topbar showed duplicate library toggle while sidebar was expanded.`);
         }
         const importAlignment = await page.evaluate(() => {
           const newBtn = document.querySelector('[data-testid="desktop-library-new-creation"]');
-          const picker = document.querySelector('[data-testid="desktop-library"] .library-import-picker');
+          const picker = document.querySelector('[data-testid="desktop-library"] [aria-label="导入外部会话 / 剧本"]')?.closest('details')
+            ?? document.querySelector('[data-testid="desktop-library"] details');
           const summary = picker?.querySelector('summary');
           if (!newBtn || !picker || !summary) return null;
           return {
@@ -579,17 +580,17 @@ async function verifySliceOneViewportMatrix(page) {
           Math.abs(importAlignment.newWidth - importAlignment.pickerWidth) > 1 ||
           Math.abs(importAlignment.newWidth - importAlignment.summaryWidth) > 1
         ) {
-          throw new Error(`${cell} desktop import picker width (${JSON.stringify(importAlignment)}) does not match new creation button.`);
+          throw new Error(`${theme} desktop import picker width (${JSON.stringify(importAlignment)}) does not match new creation button.`);
         }
         await libraryClose.click();
         await libraryToggle.waitFor({ state: 'visible' });
         await libraryToggle.click();
         await libraryClose.waitFor({ state: 'visible' });
         if ((await libraryToggle.count()) !== 0) {
-          throw new Error(`${cell} desktop topbar kept library toggle visible after re-expanding sidebar.`);
+          throw new Error(`${theme} desktop topbar kept library toggle visible after re-expanding sidebar.`);
         }
-        if ((await page.getByRole('button', { name: '设置与模型密钥' }).count()) !== 1) {
-          throw new Error(`${cell} collapsed Settings button has no accessible name.`);
+        if ((await page.getByRole('button', { name: '设置与连接' }).count()) !== 1) {
+          throw new Error(`${theme} collapsed Settings button has no accessible name.`);
         }
       }
 
@@ -620,9 +621,13 @@ async function verifySliceOneViewportMatrix(page) {
 
 async function startDeepSeekImport(page) {
   await leaveImportView(page);
-  const welcomeAction = page.getByTestId('welcome-deepseek-import');
-  if (await welcomeAction.isVisible()) {
-    await welcomeAction.click();
+  const plusTrigger = page.getByTestId('welcome-plus-menu-trigger');
+  if (
+    await plusTrigger.isVisible().catch(() => false) &&
+    await plusTrigger.isEnabled().catch(() => false)
+  ) {
+    await plusTrigger.click();
+    await page.getByTestId('welcome-deepseek-import').click();
     return;
   }
   const desktopAction = page.getByTestId('desktop-library-start-deepseek');
@@ -638,9 +643,13 @@ async function startDeepSeekImport(page) {
 
 async function startScriptImport(page) {
   await leaveImportView(page);
-  const welcomeAction = page.getByTestId('welcome-script-import');
-  if (await welcomeAction.isVisible()) {
-    await welcomeAction.click();
+  const plusTrigger = page.getByTestId('welcome-plus-menu-trigger');
+  if (
+    await plusTrigger.isVisible().catch(() => false) &&
+    await plusTrigger.isEnabled().catch(() => false)
+  ) {
+    await plusTrigger.click();
+    await page.getByTestId('welcome-script-import').click();
     return;
   }
   const desktopAction = page.getByTestId('desktop-library-start-script');
@@ -664,9 +673,11 @@ async function leaveImportView(page) {
         ? script
         : null;
     if (!shell) return;
-    const currentStep = Number(await shell.getByRole('progressbar').getAttribute('aria-valuenow'));
+    const progress = shell.getByRole('progressbar');
+    const hasProgress = (await progress.count()) > 0;
+    const currentStep = hasProgress ? Number(await progress.getAttribute('aria-valuenow')) : 1;
     await shell.getByRole('button', { name: '返回' }).click();
-    if (currentStep > 1) {
+    if (hasProgress && currentStep > 1) {
       await page.waitForFunction((expectedStep) =>
         Number(document.querySelector('[data-testid="deepseek-import-panel"] [role="progressbar"], [data-testid="import-panel"] [role="progressbar"]')?.getAttribute('aria-valuenow')) === expectedStep,
       currentStep - 1);
@@ -771,7 +782,7 @@ async function verifyKeyboardFocusMatrix(page) {
       return document.activeElement instanceof HTMLElement &&
         shell?.contains(document.activeElement) &&
         document.activeElement.getAttribute('role') === 'heading' &&
-        document.activeElement.textContent?.trim() === '从 DeepSeek 继续';
+        document.activeElement.textContent?.trim() === '从 DeepSeek 导入';
     });
     await page.keyboard.press('Escape');
     await deepseek.waitFor({ state: 'detached' });
@@ -785,7 +796,7 @@ async function verifyKeyboardFocusMatrix(page) {
       return document.activeElement instanceof HTMLElement &&
         shell?.contains(document.activeElement) &&
         document.activeElement.getAttribute('role') === 'heading' &&
-        document.activeElement.textContent?.trim() === '导入自由剧本';
+        document.activeElement.textContent?.trim() === '导入故事设定';
     });
     await page.keyboard.press('Escape');
     await scriptImport.waitFor({ state: 'detached' });
@@ -993,7 +1004,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await leaveImportView(page);
 
     await startDeepSeekImport(page);
-    await page.getByTestId('deepseek-source-url').click();
+    await page.getByTestId('deepseek-url-toggle').click();
     await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/export-fail.zip');
     await page.getByTestId('deepseek-fetch-zip').click();
     const urlError = page.getByTestId('import-error');
@@ -1016,7 +1027,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await replaceZipAction.waitFor();
     await expectTouchTarget(replaceZipAction, 'mobile ZIP replacement recovery action');
     await expectTouchTarget(
-      scanError.getByRole('button', { name: '打包排障日志' }),
+      scanError.getByRole('button', { name: '导出排障日志' }),
       'mobile import diagnostics action',
     );
     if (await scanError.getByRole('button', { name: '重试导入' }).count() !== 0) {
@@ -1092,7 +1103,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     ) {
       throw new Error(`Partial import retry did not combine both saved stories: ${partialReceiptText}`);
     }
-    await page.getByRole('button', { name: '继续这条故事' }).click();
+    await page.getByTestId('overlay-page-footer').getByRole('button', { name: '进入《合成宫斗测试档》' }).click();
     await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
     await page.getByTestId('app-topbar').getByRole('heading', { name: '合成宫斗测试档', exact: true }).waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
@@ -1107,6 +1118,27 @@ async function runImportWizardE2E(browser, port, tmpDir) {
         throw new Error(`Expected one persisted story row for ${title}.`);
       }
     }
+
+    // Re-importing the same DeepSeek archive shows '已导入过' and creates an independent copy on import.
+    if (await page.getByTestId('mobile-library-dialog').isVisible().catch(() => false)) {
+      await page.keyboard.press('Escape');
+      await page.getByTestId('mobile-library-dialog').waitFor({ state: 'hidden' });
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await startDeepSeekImport(page);
+    await page.setInputFiles('#deepseek-zip-input', {
+      name: 'duplicate-check.zip',
+      mimeType: 'application/zip',
+      buffer: Buffer.from(buildSyntheticDeepSeekZipE2E()),
+    });
+    await page.getByTestId('ds-session-list').waitFor();
+    await page.getByTestId('ds-session-already-imported').first().waitFor();
+    await page.getByTestId('ds-session-item').filter({ hasText: '合成宫斗测试档' }).first().locator('input[type="checkbox"]').check();
+    await page.getByTestId('ds-confirm-import-btn').click();
+    await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
+    await page.getByTestId('app-topbar').getByRole('heading', { name: /合成宫斗测试档 \(副本/, exact: false }).waitFor();
+
+    await page.setViewportSize({ width: 390, height: 844 });
     await deleteAllStories(page);
     const mobileLibrary = page.getByTestId('mobile-library-dialog');
     if (await mobileLibrary.isVisible().catch(() => false)) {
@@ -1119,58 +1151,15 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.getByTestId('deepseek-import-panel').waitFor();
     await assertImportThemeMatrix(page, 'deepseek-import-panel', 1, { width: 1280, height: 800 });
     const deepSeekBackButton = page.getByRole('button', { name: '返回' });
-    await assertUploadControlHasVisibleKeyboardFocus(page, deepSeekBackButton, 'deepseek-zip-picker', 3, 'DeepSeek upload card');
-    await assertUploadControlHasVisibleKeyboardFocus(page, deepSeekBackButton, 'deepseek-footer-zip-picker', 4, 'DeepSeek footer upload action');
-    const sourceTablist = page.getByRole('tablist', { name: '导入来源' });
-    const fileSourceTab = sourceTablist.getByRole('tab', { name: '本地 .zip' });
-    const urlSourceTab = sourceTablist.getByRole('tab', { name: 'HTTPS 下载链接' });
-    await fileSourceTab.focus();
-    await page.keyboard.press('ArrowRight');
-    if (
-      await urlSourceTab.getAttribute('aria-selected') !== 'true' ||
-      await urlSourceTab.getAttribute('tabindex') !== '0' ||
-      await page.evaluate(() => document.activeElement?.id) !== await urlSourceTab.getAttribute('id')
-    ) {
-      throw new Error('Import source tabs did not move selection and focus with ArrowRight.');
-    }
-    const sourcePanelId = await urlSourceTab.getAttribute('aria-controls');
-    if (!sourcePanelId || await page.locator(`#${sourcePanelId}`).getAttribute('role') !== 'tabpanel') {
-      throw new Error('Import source tab does not control a semantic tabpanel.');
-    }
-    await page.keyboard.press('ArrowLeft');
-    if (
-      await fileSourceTab.getAttribute('aria-selected') !== 'true' ||
-      await fileSourceTab.getAttribute('tabindex') !== '0' ||
-      await urlSourceTab.getAttribute('tabindex') !== '-1'
-    ) {
-      throw new Error('Import source tabs did not move back with ArrowLeft.');
-    }
-    await fileSourceTab.focus();
-    await page.keyboard.press('End');
-    if (
-      await urlSourceTab.getAttribute('aria-selected') !== 'true' ||
-      await urlSourceTab.getAttribute('tabindex') !== '0' ||
-      await fileSourceTab.getAttribute('tabindex') !== '-1' ||
-      await page.evaluate(() => document.activeElement?.id) !== await urlSourceTab.getAttribute('id')
-    ) {
-      throw new Error('Import source tabs did not select the last tab with End.');
-    }
-    await page.keyboard.press('Home');
-    if (
-      await fileSourceTab.getAttribute('aria-selected') !== 'true' ||
-      await fileSourceTab.getAttribute('tabindex') !== '0' ||
-      await urlSourceTab.getAttribute('tabindex') !== '-1' ||
-      await page.evaluate(() => document.activeElement?.id) !== await fileSourceTab.getAttribute('id')
-    ) {
-      throw new Error('Import source tabs did not select the first tab with Home.');
-    }
-    await page.getByTestId('deepseek-source-url').click();
+    await assertUploadControlHasVisibleKeyboardFocus(page, deepSeekBackButton, 'deepseek-zip-picker', 1, 'DeepSeek upload card');
+    await assertUploadControlHasVisibleKeyboardFocus(page, deepSeekBackButton, 'deepseek-url-toggle', 2, 'DeepSeek URL toggle');
+    await page.getByTestId('deepseek-url-toggle').click();
     await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/export-valid.zip');
     await page.getByTestId('deepseek-fetch-zip').click();
     await page.getByTestId('ds-session-list').waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
     await assertImportThemeMatrix(page, 'deepseek-import-panel', 2, { width: 390, height: 844 });
-    const mobileSearchHeight = await page.getByRole('searchbox', { name: '搜索外部会话' }).evaluate((input) =>
+    const mobileSearchHeight = await page.getByRole('searchbox', { name: '搜索历史对话' }).evaluate((input) =>
       input.getBoundingClientRect().height,
     );
     if (mobileSearchHeight > 52) {
@@ -1178,16 +1167,16 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     }
     await page.setViewportSize({ width: 1280, height: 800 });
     await assertImportWizardLayout(page, 'deepseek-import-panel', 2, { width: 1280, height: 800 });
-    const desktopSearchHeight = await page.getByRole('searchbox', { name: '搜索外部会话' }).evaluate((input) =>
+    const desktopSearchHeight = await page.getByRole('searchbox', { name: '搜索历史对话' }).evaluate((input) =>
       input.getBoundingClientRect().height,
     );
     if (desktopSearchHeight > 52) {
       throw new Error(`DeepSeek search field is too tall on desktop: ${desktopSearchHeight}px.`);
     }
-    const filterTablist = page.getByRole('tablist', { name: '筛选会话' });
+    const filterTablist = page.getByRole('tablist', { name: '筛选历史对话' });
     const allFilterTab = filterTablist.getByRole('tab', { name: '全部' });
-    const likelyFilterTab = filterTablist.getByRole('tab', { name: '疑似文游' });
-    const aiFilterTabAtMobile = filterTablist.getByRole('tab', { name: 'AI 辅助筛选' });
+    const likelyFilterTab = filterTablist.getByRole('tab', { name: '推荐导入' });
+    const aiFilterTabAtMobile = filterTablist.getByRole('tab', { name: 'AI 帮你挑' });
     await expectTouchTarget(allFilterTab, 'mobile session filter All tab');
     await expectTouchTarget(likelyFilterTab, 'mobile session filter Likely tab');
     await expectTouchTarget(aiFilterTabAtMobile, 'mobile session filter AI tab');
@@ -1202,69 +1191,57 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       throw new Error('Session filter tab does not control a semantic tabpanel.');
     }
     await allFilterTab.focus();
-    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowLeft');
     if (
       await likelyFilterTab.getAttribute('aria-selected') !== 'true' ||
       await likelyFilterTab.getAttribute('tabindex') !== '0' ||
       await page.evaluate(() => document.activeElement?.id) !== await likelyFilterTab.getAttribute('id')
     ) {
-      throw new Error('Session filter tabs did not move selection and focus with ArrowRight.');
+      throw new Error('Session filter tabs did not move selection and focus with ArrowLeft.');
     }
-    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowRight');
     if (await allFilterTab.getAttribute('aria-selected') !== 'true') {
-      throw new Error('Session filter tabs did not move back with ArrowLeft.');
+      throw new Error('Session filter tabs did not move back with ArrowRight.');
     }
 
     await allFilterTab.focus();
     await page.keyboard.press('End');
+    await page.getByTestId('ds-ai-filter-submit').click();
     const aiByokWizard = page.getByTestId('deepseek-setup-wizard');
     await aiByokWizard.waitFor();
     await aiByokWizard.getByRole('button', { name: '取消' }).click();
     await aiByokWizard.waitFor({ state: 'detached' });
-    if (
-      await allFilterTab.getAttribute('aria-selected') !== 'true' ||
-      await allFilterTab.getAttribute('tabindex') !== '0' ||
-      await aiFilterTabAtMobile.getAttribute('tabindex') !== '-1' ||
-      await page.evaluate(() => document.activeElement?.id) !== await allFilterTab.getAttribute('id')
-    ) {
-      throw new Error('Cancelling AI filter BYOK did not restore the prior filter tab and focus.');
+    const aiFilterTabId = await aiFilterTabAtMobile.getAttribute('id');
+    const activeTestIdAfterCancel = await page.evaluate(
+      () => document.activeElement?.getAttribute('data-testid') ?? null,
+    );
+    if (activeTestIdAfterCancel !== 'ds-ai-filter-submit') {
+      throw new Error(`Canceling AI filter BYOK did not restore focus to trigger button: ${activeTestIdAfterCancel}`);
     }
+    await aiFilterTabAtMobile.focus();
+    await assertSessionFilterTabState(
+      page,
+      aiFilterTabId,
+      0,
+      'Canceling AI filter BYOK did not keep the AI filter tab selected cleanly',
+    );
+    await allFilterTab.click();
     const allFilterTabId = await allFilterTab.getAttribute('id');
     await assertSessionFilterTabState(
       page,
       allFilterTabId,
       2,
-      'Canceling AI filter BYOK did not restore the All tab state, results, and focus',
+      'All tab did not show 2 sessions',
     );
-    await allFilterTab.focus();
-    await page.keyboard.press('ArrowRight');
-    if (
-      await likelyFilterTab.getAttribute('aria-selected') !== 'true' ||
-      await likelyFilterTab.getAttribute('tabindex') !== '0' ||
-      await page.evaluate(() => document.activeElement?.id) !== await likelyFilterTab.getAttribute('id')
-    ) {
-      throw new Error('The Likely tab did not become selected and focused with ArrowRight.');
-    }
-    await page.keyboard.press('ArrowRight');
-    await aiByokWizard.waitFor();
-    await aiByokWizard.getByRole('button', { name: '取消' }).click();
-    await aiByokWizard.waitFor({ state: 'detached' });
+    await likelyFilterTab.click();
     const likelyFilterTabId = await likelyFilterTab.getAttribute('id');
     await assertSessionFilterTabState(
       page,
       likelyFilterTabId,
       1,
-      'Canceling AI filter BYOK did not restore the Likely tab state, results, and focus',
+      'Recommended tab did not show 1 session',
     );
-    await page.keyboard.press('ArrowLeft');
-    if (
-      await allFilterTab.getAttribute('aria-selected') !== 'true' ||
-      await allFilterTab.getAttribute('tabindex') !== '0' ||
-      await likelyFilterTab.getAttribute('tabindex') !== '-1' ||
-      await page.evaluate(() => document.activeElement?.id) !== await allFilterTab.getAttribute('id')
-    ) {
-      throw new Error('The session filter tabs did not move from Likely to All with ArrowLeft.');
-    }
+    await allFilterTab.click();
 
     const firstSession = page.getByTestId('ds-session-item').filter({ hasText: '合成宫斗测试档' });
     await firstSession.getByTestId('ds-session-preview-trigger').click();
@@ -1274,11 +1251,8 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     if (!previewText?.includes('规则附件.docx') || !previewText.includes('另存为 .docx') || !previewText.includes('原进度抵达东侧练歌房')) {
       throw new Error(`DeepSeek preview omitted story, attachment, or legacy .doc guidance: ${previewText}`);
     }
-    await previewSheet.getByText('手动调整原始剧本起点/终点').click();
-    await page.fill('#ds-script-start', '2');
-    await page.fill('#ds-script-end', '2');
-    if (!(await previewSheet.getByTestId('ds-script-range-status').textContent())?.includes('已手动调整')) {
-      throw new Error('Manual script-range edits were not reflected in the preview.');
+    if ((await previewSheet.locator('#ds-script-start, #ds-script-end').count()) !== 0) {
+      throw new Error('V0.2 DeepSeek preview must not expose manual turn-range inputs.');
     }
     await page.waitForFunction(() => history.state?.lfhOverlayDepth === 2);
     await page.goBack();
@@ -1293,20 +1267,20 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       .getByTestId('ds-session-preview-trigger').click();
     await previewSheet.waitFor({ state: 'visible' });
     await previewSheet.getByRole('button', { name: '关闭剧情面板' }).click();
+    await page.getByTestId('ds-session-item').filter({ hasText: '解释一下 Promise.all 的用法' }).first().locator('input[type="checkbox"]').check();
     await page.getByTestId('ds-confirm-import-btn').click();
     await page.getByTestId('deepseek-import-receipt').waitFor();
-    await assertImportWizardLayout(page, 'deepseek-import-panel', 3, { width: 1280, height: 800 });
+    await assertImportWizardLayout(page, 'deepseek-import-panel', 2, { width: 1280, height: 800 });
     const receipt = await page.getByTestId('deepseek-import-receipt').textContent();
-    if (!receipt?.includes('老版本.doc') || !receipt.includes('已保存原始附件')) {
-      throw new Error(`DeepSeek receipt omitted the saved original attachment: ${receipt}`);
+    if (!receipt?.includes('老版本.doc') || !receipt.includes('图片与 PDF 仅保留原文件备查')) {
+      throw new Error(`DeepSeek receipt omitted the saved original attachment note: ${receipt}`);
     }
-    await page.getByRole('button', { name: '继续这条故事' }).click();
+    await page.getByTestId('overlay-page-footer').getByRole('button', { name: '进入《合成宫斗测试档》' }).click();
     await page.getByTestId('main-stage').getByText('原进度抵达东侧练歌房').waitFor();
 
     await startScriptImport(page);
     await page.getByTestId('import-panel').waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
-    await assertImportThemeMatrix(page, 'import-panel', 1, { width: 390, height: 844 });
     await assertUploadControlHasVisibleKeyboardFocus(
       page,
       page.getByRole('button', { name: '返回' }),
@@ -1330,8 +1304,10 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.fill('#import-raw-script', '【本地直接开局】\n主角：沈知夏。');
     await page.getByText('填写故事标题（可选）').click();
     await page.fill('#import-title', '无密钥开局测试');
-    await page.getByRole('button', { name: '暂不拆解，直接开始' }).click();
+    await page.getByTestId('import-script-submit').click();
     await page.getByTestId('import-panel').waitFor({ state: 'detached' });
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '无密钥开局测试', exact: true }).waitFor();
+    await page.getByRole('button', { name: '开启第一幕' }).click();
     const directStartWizard = page.getByTestId('deepseek-setup-wizard');
     await directStartWizard.waitFor();
     if (!(await directStartWizard.textContent())?.includes('完成连接后将自动继续：开启第一幕')) {
@@ -1339,13 +1315,12 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     }
     await directStartWizard.getByRole('button', { name: '关闭引导' }).click();
     await directStartWizard.waitFor({ state: 'detached' });
-    await page.getByTestId('app-topbar').getByRole('heading', { name: '无密钥开局测试', exact: true }).waitFor();
-    if (blueprintRequestCount !== 0) throw new Error('Direct start without extraction should not make a model request.');
+    if (blueprintRequestCount !== 0) throw new Error('V0.2 setting import should not make blueprint extraction requests.');
 
     await startScriptImport(page);
     await page.fill('#import-raw-script', '【创建锁定直接开局】\n主角：沈知夏。');
     await holdNextStoryStorageCommit(page);
-    await page.getByRole('button', { name: '暂不拆解，直接开始' }).click();
+    await page.getByTestId('import-script-submit').click();
     await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
     const directStartBack = page.getByTestId('import-panel').getByRole('button', { name: '返回' });
     if (
@@ -1355,63 +1330,12 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       throw new Error('Direct story creation left wizard exit controls enabled.');
     }
     await directStartBack.evaluate((button) => button.click());
-    if (
-      !(await page.getByTestId('import-panel').isVisible()) ||
-      await page.getByTestId('import-panel').getByRole('progressbar').getAttribute('aria-valuenow') !== '1'
-    ) {
-      throw new Error('Direct story creation left its current wizard step while the save was pending.');
+    if (!(await page.getByTestId('import-panel').isVisible())) {
+      throw new Error('Direct story creation left its import view while the save was pending.');
     }
     await releaseHeldStoryStorageCommit(page);
     await page.getByTestId('import-panel').waitFor({ state: 'detached' });
-    await directStartWizard.waitFor();
-    await directStartWizard.getByRole('button', { name: '关闭引导' }).click();
-    await directStartWizard.waitFor({ state: 'detached' });
     await page.getByTestId('app-topbar').getByRole('heading', { name: '创建锁定直接开局', exact: true }).waitFor();
-
-    await startScriptImport(page);
-    await page.getByTestId('import-panel').waitFor();
-    await assertImportWizardLayout(page, 'import-panel', 1, { width: 390, height: 844 });
-    await page.fill('#import-raw-script', '【合成导入剧本】\n主角：沈知夏。\n规则：每轮保留状态面板。');
-    await page.getByRole('button', { name: '拆解故事蓝图' }).click();
-    await page.getByTestId('deepseek-setup-wizard').waitFor();
-    await completePendingSetup(page, 'sk-e2e-import-wizard');
-    await page.getByTestId('import-panel').getByTestId('story-blueprint-card').waitFor();
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await assertImportThemeMatrix(page, 'import-panel', 2, { width: 1280, height: 800 });
-    const blueprint = page.getByTestId('import-panel').getByTestId('story-blueprint-card');
-    if (!(await blueprint.textContent())?.includes('导入向导合成故事')) {
-      throw new Error('The extracted story blueprint was not shown as a read-only card.');
-    }
-    await page.getByTestId('import-panel').getByRole('button', { name: '微调' }).click();
-    await page.fill('#bp-title', '已微调的合成故事');
-    await page.fill('#bp-protagonist', '沈知夏（已微调）');
-    await page.fill('#bp-npcs-name-0', '顾老师（已微调）');
-    await page.getByRole('button', { name: '保存蓝图微调' }).click();
-    if (!(await blueprint.textContent())?.includes('沈知夏（已微调）')) {
-      throw new Error('Structured blueprint edits were not reflected in the read-only card.');
-    }
-    if (blueprintRequestCount !== 1) throw new Error('BYOK resume did not issue exactly one mocked blueprint request.');
-    await holdNextStoryStorageCommit(page);
-    await page.getByRole('button', { name: '确认并开启第一幕' }).click();
-    await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
-    const confirmBack = page.getByTestId('import-panel').getByRole('button', { name: '返回' });
-    if (
-      !(await confirmBack.isDisabled()) ||
-      !(await page.getByTestId('import-step-content').evaluate((element) => element.inert))
-    ) {
-      throw new Error('Blueprint confirmation left the wizard Back action enabled.');
-    }
-    await confirmBack.evaluate((button) => button.click());
-    if (
-      !(await page.getByTestId('import-panel').isVisible()) ||
-      await page.getByTestId('import-panel').getByRole('progressbar').getAttribute('aria-valuenow') !== '2'
-    ) {
-      throw new Error('Blueprint confirmation left its current wizard step while the save was pending.');
-    }
-    await releaseHeldStoryStorageCommit(page);
-    await page.getByTestId('import-panel').waitFor({ state: 'detached' });
-    await page.getByTestId('app-topbar').getByRole('heading', { name: '已微调的合成故事', exact: true }).waitFor();
-    await page.getByTestId('turn-assistant').last().waitFor();
 
     await startDeepSeekImport(page);
     await page.setInputFiles('#deepseek-zip-input', {
@@ -1420,23 +1344,23 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       buffer: Buffer.from(buildSyntheticDeepSeekZipE2E()),
     });
     await page.getByTestId('ds-session-list').waitFor();
-    await page.getByRole('tab', { name: '疑似文游' }).click();
+    await page.getByRole('tab', { name: '推荐导入' }).click();
     failNextAiRequest = true;
-    await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
+    await page.getByRole('tab', { name: 'AI 帮你挑' }).click();
+    await page.getByTestId('ds-ai-filter-submit').click();
+    await completePendingSetup(page, 'sk-wizard-ai-filter');
     const aiFilterError = page.getByTestId('import-error');
-    await aiFilterError.getByRole('button', { name: '重试 AI 筛选' }).waitFor();
+    await aiFilterError.getByRole('button', { name: '重试 AI 帮你挑' }).waitFor();
     if (await aiFilterError.getByRole('button', { name: '重试导入' }).count() !== 0) {
       throw new Error('AI filter failure offered final import retry.');
     }
-    if (await page.getByRole('tab', { name: '疑似文游' }).getAttribute('aria-selected') !== 'true' ||
-        await page.getByTestId('ds-session-item').count() !== 1) {
-      throw new Error('A failed AI filter changed the current session category or results.');
+    if (await page.getByRole('tab', { name: 'AI 帮你挑' }).getAttribute('aria-selected') !== 'true') {
+      throw new Error('A failed AI filter did not keep the AI filter tab selected.');
     }
     await page.getByRole('tab', { name: '全部', exact: true }).click();
 
     let startHeldAllRequest;
     let releaseHeldAllRequest;
-    let heldAllRequestFinished;
     let finishHeldAllRequest;
     const heldAllRequestStarted = new Promise((resolve) => { startHeldAllRequest = resolve; });
     const heldAllRequestWait = new Promise((resolve) => { releaseHeldAllRequest = resolve; });
@@ -1447,11 +1371,12 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       onFinished: finishHeldAllRequest,
     };
     await prepareAiFilterAbortProbe(page);
-    await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
+    await page.getByRole('tab', { name: 'AI 帮你挑' }).click();
+    await page.getByTestId('ds-ai-filter-submit').click();
     await waitForFixtureGate(heldAllRequestStarted, 'heldAllRequestStarted');
     if (
-      await page.getByRole('tab', { name: 'AI 筛选中…' }).getAttribute('aria-selected') !== 'true' ||
-      await page.getByRole('tab', { name: 'AI 筛选中…' }).getAttribute('tabindex') !== '0'
+      await page.getByRole('tab', { name: 'AI 挑选中…' }).getAttribute('aria-selected') !== 'true' ||
+      await page.getByRole('tab', { name: 'AI 挑选中…' }).getAttribute('tabindex') !== '0'
     ) {
       throw new Error('AI filtering did not synchronize its selected tab and roving tabIndex.');
     }
@@ -1460,13 +1385,12 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     releaseHeldAllRequest();
     await waitForFixtureGate(heldAllRequestDone, 'heldAllRequestDone');
     await page.waitForFunction(() =>
-      document.querySelector('[role="tablist"][aria-label="筛选会话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === '全部' &&
+      document.querySelector('[role="tablist"][aria-label="筛选历史对话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === '全部' &&
       document.querySelectorAll('[data-testid="ds-session-item"]').length === 2,
     );
 
     let startHeldLikelyRequest;
     let releaseHeldLikelyRequest;
-    let heldLikelyRequestFinished;
     let finishHeldLikelyRequest;
     const heldLikelyRequestStarted = new Promise((resolve) => { startHeldLikelyRequest = resolve; });
     const heldLikelyRequestWait = new Promise((resolve) => { releaseHeldLikelyRequest = resolve; });
@@ -1476,26 +1400,26 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       waitForRelease: heldLikelyRequestWait,
       onFinished: finishHeldLikelyRequest,
     };
-    await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
+    await page.getByRole('tab', { name: 'AI 帮你挑' }).click();
+    await page.getByTestId('ds-ai-filter-submit').click();
     await waitForFixtureGate(heldLikelyRequestStarted, 'heldLikelyRequestStarted');
     if (
-      await page.getByRole('tab', { name: 'AI 筛选中…' }).getAttribute('aria-selected') !== 'true' ||
-      await page.getByRole('tab', { name: 'AI 筛选中…' }).getAttribute('tabindex') !== '0'
+      await page.getByRole('tab', { name: 'AI 挑选中…' }).getAttribute('aria-selected') !== 'true' ||
+      await page.getByRole('tab', { name: 'AI 挑选中…' }).getAttribute('tabindex') !== '0'
     ) {
       throw new Error('A second AI filtering request did not synchronize its tab state.');
     }
-    await page.getByRole('tab', { name: '疑似文游' }).click();
+    await page.getByRole('tab', { name: '推荐导入' }).click();
     await page.waitForFunction(() => window.__lfhAiFilterAbortCount === 2);
     releaseHeldLikelyRequest();
     await waitForFixtureGate(heldLikelyRequestDone, 'heldLikelyRequestDone');
     await page.waitForFunction(() =>
-      document.querySelector('[role="tablist"][aria-label="筛选会话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === '疑似文游' &&
+      document.querySelector('[role="tablist"][aria-label="筛选历史对话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === '推荐导入' &&
       document.querySelectorAll('[data-testid="ds-session-item"]').length === 1,
     );
 
     let startHeldAiRequest;
     let releaseHeldAiRequest;
-    let heldAiRequestFinished;
     let finishHeldAiRequest;
     const heldAiRequestStarted = new Promise((resolve) => { startHeldAiRequest = resolve; });
     const heldAiRequestWait = new Promise((resolve) => { releaseHeldAiRequest = resolve; });
@@ -1506,7 +1430,8 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       onFinished: finishHeldAiRequest,
     };
     await prepareAiFilterAbortProbe(page);
-    await page.getByRole('tab', { name: 'AI 辅助筛选' }).click();
+    await page.getByRole('tab', { name: 'AI 帮你挑' }).click();
+    await page.getByTestId('ds-ai-filter-submit').click();
     await waitForFixtureGate(heldAiRequestStarted, 'heldAiRequestStarted');
     await page.getByRole('button', { name: '返回' }).click();
     await page.waitForFunction(() => window.__lfhAiFilterAbortCount === 1);
@@ -1522,43 +1447,31 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     releaseHeldAiRequest();
     await waitForFixtureGate(heldAiRequestDone, 'heldAiRequestDone');
     await page.waitForFunction(() =>
-      document.querySelector('[role="tablist"][aria-label="筛选会话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === '全部' &&
+      document.querySelector('[role="tablist"][aria-label="筛选历史对话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === '全部' &&
       document.querySelector('[data-testid="ds-session-item"]')?.textContent?.includes('模糊开局超窗长档'),
     );
-    const aiFilterTab = page.getByRole('tab', { name: 'AI 辅助筛选' });
+    const aiFilterTab = page.getByRole('tab', { name: 'AI 帮你挑' });
     await allFilterTab.focus();
     await page.keyboard.press('End');
     await page.waitForFunction(() =>
-      document.querySelector('[role="tablist"][aria-label="筛选会话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === 'AI 辅助筛选',
+      document.querySelector('[role="tablist"][aria-label="筛选历史对话"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === 'AI 帮你挑',
     );
     if (
       await aiFilterTab.getAttribute('tabindex') !== '0' ||
       await allFilterTab.getAttribute('tabindex') !== '-1' ||
       await page.evaluate(() => document.activeElement?.id) !== await aiFilterTab.getAttribute('id')
     ) {
-      throw new Error(`Session filter tabs did not select the last tab with End: ${JSON.stringify({
-        aiTabIndex: await aiFilterTab.getAttribute('tabindex'),
-        allTabIndex: await allFilterTab.getAttribute('tabindex'),
-        activeId: await page.evaluate(() => document.activeElement?.id),
-        aiId: await aiFilterTab.getAttribute('id'),
-      })}`);
+      throw new Error('Session filter tabs did not select the last tab with End.');
     }
     await page.keyboard.press('Home');
+    const firstFilterTab = page.getByRole('tab', { name: '推荐导入' });
     if (
-      await allFilterTab.getAttribute('aria-selected') !== 'true' ||
-      await allFilterTab.getAttribute('tabindex') !== '0' ||
+      await firstFilterTab.getAttribute('aria-selected') !== 'true' ||
+      await firstFilterTab.getAttribute('tabindex') !== '0' ||
       await aiFilterTab.getAttribute('tabindex') !== '-1' ||
-      await page.evaluate(() => document.activeElement?.id) !== await allFilterTab.getAttribute('id')
+      await page.evaluate(() => document.activeElement?.id) !== await firstFilterTab.getAttribute('id')
     ) {
       throw new Error('Session filter tabs did not select the first tab with Home.');
-    }
-    await page.keyboard.press('End');
-    if (
-      await aiFilterTab.getAttribute('aria-selected') !== 'true' ||
-      await aiFilterTab.getAttribute('tabindex') !== '0' ||
-      await allFilterTab.getAttribute('tabindex') !== '-1'
-    ) {
-      throw new Error('Session filter tabs did not return to the cached AI result with End.');
     }
 
     await page.getByRole('button', { name: '返回' }).click();
@@ -1571,6 +1484,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       buffer: Buffer.from(buildSyntheticDeepSeekZipE2E()),
     });
     await page.getByTestId('ds-session-list').waitFor();
+    await page.getByTestId('ds-session-item').filter({ hasText: '合成宫斗测试档' }).first().locator('input[type="checkbox"]').check();
     await holdNextStoryStorageCommit(page);
     await page.getByTestId('ds-confirm-import-btn').click();
     await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
@@ -1584,8 +1498,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       throw new Error('The import wizard left its committing step while import was pending.');
     }
     await releaseHeldStoryStorageCommit(page);
-    await page.getByTestId('deepseek-import-receipt').waitFor();
-    await page.getByRole('button', { name: '继续这条故事' }).click();
+    await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
     await page.getByTestId('main-stage').getByText('原进度抵达东侧练歌房').waitFor();
 
     await openSettings(page);
@@ -1599,19 +1512,26 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       buffer: Buffer.from(buildSyntheticDeepSeekZipE2E()),
     });
     await page.getByTestId('ds-session-list').waitFor();
-    const successFilterTablist = page.getByRole('tablist', { name: '筛选会话' });
-    const successAllTab = successFilterTablist.getByRole('tab', { name: '全部', exact: true });
-    await successAllTab.focus();
-    await page.keyboard.press('End');
+    const successFilterTablist = page.getByRole('tablist', { name: '筛选历史对话' });
+    const successAiTab = successFilterTablist.getByRole('tab', { name: 'AI 帮你挑' });
+    await successAiTab.click();
+    await page.getByTestId('ds-ai-filter-submit').click();
     await page.getByTestId('deepseek-setup-wizard').waitFor();
     await completePendingSetup(page, 'sk-e2e-ai-filter-success');
-    const successAiTab = successFilterTablist.getByRole('tab', { name: 'AI 辅助筛选' });
     const successAiTabId = await successAiTab.getAttribute('id');
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="ds-session-item"]').length === 1);
+    const activeTestIdAfterSuccess = await page.evaluate(
+      () => document.activeElement?.getAttribute('data-testid') ?? null,
+    );
+    if (activeTestIdAfterSuccess !== 'ds-ai-filter-submit') {
+      throw new Error(`Completing AI filter BYOK did not restore focus to trigger button: ${activeTestIdAfterSuccess}`);
+    }
+    await successAiTab.focus();
     await assertSessionFilterTabState(
       page,
       successAiTabId,
       1,
-      'Completing AI filter BYOK did not keep the AI tab selected, focused, and showing results',
+      'Completing AI filter BYOK did not keep the AI tab selected and showing results',
     );
 
     const fixturePath = process.env.LFH_SYNTHETIC_UI_STORY_ZIP;
@@ -1625,7 +1545,7 @@ async function runImportWizardE2E(browser, port, tmpDir) {
       await page.getByTestId('deepseek-preview-card').waitFor();
       await page.getByTestId('deepseek-preview-sheet').getByRole('button', { name: '关闭剧情面板' }).click();
       await page.getByTestId('ds-confirm-import-btn').click();
-      await page.getByTestId('deepseek-import-receipt').waitFor();
+      await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
       console.log(`SYNTHETIC_LONG_IMPORT_PASSED sessions=${count}`);
     }
   } catch (error) {
@@ -1804,13 +1724,17 @@ async function verifyDiagnosticsDialog(page, port) {
     throw new Error('Diagnostics preview must use a native <dialog>.');
   }
   const text = await diagnostics.textContent();
-  for (const phrase of ['零正文', '零剧本', '零密钥']) {
+  for (const phrase of ['最近 60 分钟', '设备与版本信息', '绝不包含：你的剧本、设定正文、聊天记录与 DeepSeek 密钥']) {
     if (!text?.includes(phrase)) throw new Error(`Diagnostics safety bar omitted ${phrase}.`);
   }
   if (!(await diagnostics.locator('#diagnostics-active-story').isChecked())) {
     throw new Error('Diagnostics active-story skeleton must default to checked.');
   }
-  for (const name of ['重新载入界面', '导出 .json', '复制到剪贴板']) {
+  const rawDetails = diagnostics.getByTestId('diagnostics-raw-details');
+  if (await rawDetails.evaluate((el) => el.open)) {
+    throw new Error('Raw diagnostics JSON details must be collapsed by default.');
+  }
+  for (const name of ['重新载入界面', '分享 / 导出日志包', '复制到剪贴板']) {
     await diagnostics.getByRole('button', { name }).waitFor();
   }
   await expectControlledDialogExit(page, diagnostics, 'diagnostics-preview', async () => {
@@ -1821,12 +1745,11 @@ async function verifyDiagnosticsDialog(page, port) {
   );
   await page.goto(`http://localhost:${port}/tests/e2e/crash-fixture.html`);
   await page.getByRole('button', { name: '触发测试渲染崩溃' }).click();
-  const crashDiagnostics = page.getByTestId('diagnostics-preview');
-  await crashDiagnostics.waitFor({ state: 'visible' });
-  await crashDiagnostics.getByTestId('diagnostics-close').click();
-  await crashDiagnostics.waitFor({ state: 'detached' });
   const crashCard = page.getByTestId('crash-recovery-card');
   await crashCard.waitFor({ state: 'visible' });
+  if ((await page.getByTestId('diagnostics-preview').count()) !== 0) {
+    throw new Error('V0.2 crash recovery screen must not auto-open raw diagnostics dialog on render crash.');
+  }
   const crashText = await crashCard.textContent();
   if (!crashText?.includes('界面遇到意外波动') || !crashText.includes('本地故事存档未受损')) {
     throw new Error(`Crash recovery card copy is not reassuring: ${crashText}`);
@@ -1835,12 +1758,15 @@ async function verifyDiagnosticsDialog(page, port) {
   const crashDiagnosticsTrigger = crashCard.getByTestId('crash-open-diagnostics');
   await crashDiagnosticsTrigger.waitFor();
   await crashDiagnosticsTrigger.click();
+  const crashDiagnostics = page.getByTestId('diagnostics-preview');
   await crashDiagnostics.waitFor({ state: 'visible' });
   await expectControlledDialogExit(page, crashDiagnostics, 'diagnostics-preview', async () => {
     await page.keyboard.press('Escape');
   });
   await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'crash-open-diagnostics');
 
+  // Non-fatal async errors show a quiet dismissible toast with '导出日志' link instead of full-screen crash.
+  await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
   await page.evaluate(() => {
     history.pushState({ uiImpl05AutomaticCrashBase: true }, '', '#ui-impl-05-crash-base');
     window.dispatchEvent(new ErrorEvent('error', {
@@ -1848,6 +1774,12 @@ async function verifyDiagnosticsDialog(page, port) {
       message: 'development automatic crash history probe',
     }));
   });
+  const asyncToast = page.getByTestId('async-error-banner');
+  await asyncToast.waitFor({ state: 'visible' });
+  if ((await page.getByTestId('crash-recovery-card').count()) !== 0) {
+    throw new Error('Non-fatal window.error should show quiet toast instead of crash recovery screen.');
+  }
+  await asyncToast.getByRole('button', { name: '导出日志' }).click();
   await crashDiagnostics.waitFor({ state: 'visible' });
   await expectControlledDialogExit(page, crashDiagnostics, 'diagnostics-preview', async () => {
     await page.evaluate(() => history.back());
@@ -1860,9 +1792,10 @@ async function verifyDiagnosticsDialog(page, port) {
     retainedCrashHistory.hash !== '#ui-impl-05-crash-base' ||
     retainedCrashHistory.state?.uiImpl05AutomaticCrashBase !== true
   ) {
-    throw new Error(`Automatic crash diagnostics consumed the base history entry: ${JSON.stringify(retainedCrashHistory)}`);
+    throw new Error(`Async error diagnostics consumed the base history entry: ${JSON.stringify(retainedCrashHistory)}`);
   }
-  await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'crash-open-diagnostics');
+  await asyncToast.getByRole('button', { name: '关闭提示' }).click();
+  await asyncToast.waitFor({ state: 'detached' });
 }
 
 async function importSyntheticStoryWithoutKey(page, port) {
@@ -1880,9 +1813,9 @@ async function importSyntheticStoryWithoutKey(page, port) {
     .locator('input[type="checkbox"]')
     .uncheck();
   await page.getByTestId('ds-confirm-import-btn').click();
-  await page.getByTestId('deepseek-import-receipt').waitFor();
-  await page.getByRole('button', { name: '继续这条故事' }).click();
+  // Single-session selection opens the imported story directly without intermediate receipt screen.
   await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
+  await page.getByTestId('app-topbar').getByRole('heading', { name: '合成宫斗测试档', exact: true }).waitFor();
 }
 
 async function verifyOverlayHistoryAndShortcuts(page, port) {
@@ -1902,9 +1835,9 @@ async function verifyOverlayHistoryAndShortcuts(page, port) {
     name: currentStoryDownload.suggestedFilename(),
     buffer: fs.readFileSync(await currentStoryDownload.path()),
   };
-  const exportedStory = JSON.parse(exportedBackup.buffer.toString('utf8'));
-  if (exportedStory.story?.title !== '合成宫斗测试档' || !exportedStory.story?.nodes) {
-    throw new Error('Settings current-story export was not an .lfh.json story backup.');
+  const exportedPayload = JSON.parse(exportedBackup.buffer.toString('utf8'));
+  if (!exportedBackup.name.endsWith('.folio.json') || exportedPayload.schemaVersion !== 3 || exportedPayload.stories?.[0]?.title !== '合成宫斗测试档') {
+    throw new Error(`Settings full backup export was not a .folio.json v3 backup: ${exportedBackup.name}`);
   }
   await closeSettings(page);
 
@@ -2133,8 +2066,8 @@ async function verifyDisplayPreferenceMatrix(page, port) {
   await settings.getByTestId('settings-appearance-preview').waitFor();
   await settings.getByTestId('dev-proxy-toggle').waitFor();
   const versionText = await settings.getByTestId('settings-app-version').textContent();
-  if (!versionText?.includes('APP_VERSION') || !versionText.match(/\d+\.\d+\.\d+/)) {
-    throw new Error(`Settings did not expose APP_VERSION: ${versionText}`);
+  if (!versionText?.includes('0.2.0')) {
+    throw new Error(`Settings did not expose v0.2.0 APP_VERSION: ${versionText}`);
   }
   for (const [label, value] of [['14px', 14], ['16px', 16], ['18px', 18], ['20px', 20]]) {
     await settings.getByRole('button', { name: label }).click();
@@ -2217,9 +2150,16 @@ async function verifyDisplayPreferenceMatrix(page, port) {
     throw new Error('Settings controls did not restore persisted preferences.');
   }
   await page.getByTestId('open-diagnostics').click();
+  const rawDetails = page.getByTestId('diagnostics-raw-details');
+  if (await rawDetails.evaluate((el) => el.open)) {
+    throw new Error('Raw JSON details should be collapsed by default.');
+  }
   const diagnosticBundle = JSON.parse(await page.getByTestId('diagnostics-json').textContent());
-  if (!['story', 'unknown'].includes(diagnosticBundle.appEnv?.activeView)) {
+  if (!['welcome', 'story', 'settings', 'unknown'].includes(diagnosticBundle.appEnv?.activeView)) {
     throw new Error(`Settings diagnostics exposed activeView=${diagnosticBundle.appEnv?.activeView}`);
+  }
+  if (diagnosticBundle.schemaVersion !== 2 || diagnosticBundle.appEnv?.appVersion !== '0.2.0') {
+    throw new Error(`Diagnostics bundle expected schemaVersion 2 and appVersion 0.2.0: ${JSON.stringify(diagnosticBundle.appEnv)}`);
   }
   await page.keyboard.press('Escape');
   await page.getByTestId('diagnostics-preview').waitFor({ state: 'detached' });
@@ -2269,25 +2209,27 @@ async function verifyUiImplFixContracts(page) {
   await page.setViewportSize({ width: 390, height: 844 });
   const measurements = {};
 
-  const blueprint = await openStoryBlueprint(page);
-  const contextSummary = page.locator('#context-overview > summary');
-  await contextSummary.waitFor();
-  const contextMetrics = await contextSummary.evaluate((element) => {
+  const settingsSheet = await openCompanionTab(page, '设定');
+  const branchNoteSummary = settingsSheet.locator('[data-testid="branch-note-details"] > summary');
+  await branchNoteSummary.waitFor();
+  const contextMetrics = await branchNoteSummary.evaluate((element) => {
     const style = getComputedStyle(element);
     return {
-      matchesTarget: element.matches('#context-overview > summary'),
+      matchesTarget: element.matches('[data-testid="branch-note-details"] > summary'),
       minHeight: style.minHeight,
       height: element.getBoundingClientRect().height,
     };
   });
-  measurements.contextOverviewSummary = contextMetrics;
+  measurements.branchNoteSummary = contextMetrics;
   if (
     !contextMetrics.matchesTarget ||
     contextMetrics.minHeight !== '44px' ||
     contextMetrics.height < 43.99
   ) {
-    throw new Error(`Context overview summary is not a 44px target: ${JSON.stringify(contextMetrics)}`);
+    throw new Error(`Branch note summary is not a 44px target: ${JSON.stringify(contextMetrics)}`);
   }
+  await settingsSheet.getByTestId('edit-story-setting-btn').waitFor();
+  await settingsSheet.getByTestId('export-story-markdown-row').waitFor();
   await closeCompanionSheet(page);
 
   await page.getByTestId('library-drawer-trigger').click();
@@ -2351,7 +2293,7 @@ async function verifyUiImplFixContracts(page) {
   const darkThemeMetrics = await settings.evaluate((element) => {
     const option = element.querySelector('[data-testid="theme-option-dark"]');
     const swatches = option
-      ? Array.from(option.querySelectorAll('.theme-option-canvas > span'))
+      ? Array.from(option.querySelectorAll('[data-theme] > span'))
       : [];
     const rootStyle = getComputedStyle(document.documentElement);
     return {
@@ -2386,7 +2328,7 @@ async function verifyUiImplFixContracts(page) {
   const diagnosticBadge = page.getByTestId('ds-session-item')
     .filter({ hasText: '合成宫斗测试档' })
     .first()
-    .getByLabel('1 条诊断');
+    .getByLabel('1 处原平台未完整生成');
   await diagnosticBadge.waitFor();
   const criticalSession = page.getByTestId('ds-session-item')
     .filter({ hasText: '合成宫斗测试档' })
@@ -2417,7 +2359,7 @@ async function verifyUiImplFixContracts(page) {
   const turnForkChip = criticalSession.getByTestId('ds-session-turn-fork-chip');
   const turnForkText = await turnForkChip.textContent();
   const turnForkLabel = await turnForkChip.getAttribute('aria-label');
-  const turnForkMatch = turnForkLabel?.match(/^(\d+) 轮，(\d+) 处分叉$/);
+  const turnForkMatch = turnForkLabel?.match(/^(\d+) 轮，(\d+) 条分支$/);
   if (
     !turnForkMatch ||
     !turnForkText?.includes(`${turnForkMatch[1]} 轮`) ||
@@ -2427,7 +2369,7 @@ async function verifyUiImplFixContracts(page) {
   }
   if (
     !(await criticalSession.getByTestId('ds-session-attachment-chip').textContent())?.includes('3 附件') ||
-    !(await criticalSession.getByTestId('ds-session-diagnostic-chip').getAttribute('aria-label'))?.includes('1 条诊断')
+    !(await criticalSession.getByTestId('ds-session-diagnostic-chip').getAttribute('aria-label'))?.includes('1 处原平台未完整生成')
   ) {
     throw new Error('DeepSeek session chips lost attachment or diagnostic information.');
   }
@@ -2547,6 +2489,12 @@ async function runUiImpl05ProductionE2E(browser, port) {
         message: 'production crash focus probe',
       }));
     });
+    const asyncToast = page.getByTestId('async-error-banner');
+    await asyncToast.waitFor({ state: 'visible' });
+    if ((await page.getByTestId('diagnostics-preview').count()) !== 0) {
+      throw new Error('Production non-fatal error must not auto-open raw diagnostics dialog.');
+    }
+    await asyncToast.getByRole('button', { name: '导出日志' }).click();
     const crashDiagnostics = page.getByTestId('diagnostics-preview');
     await crashDiagnostics.waitFor({ state: 'visible' });
     const openProductionCrashHistory = await page.evaluate(() => ({
@@ -2557,7 +2505,7 @@ async function runUiImpl05ProductionE2E(browser, port) {
       openProductionCrashHistory.state?.lfhOverlayDepth !== 1 ||
       typeof openProductionCrashHistory.state?.lfhOverlaySession !== 'string'
     ) {
-      throw new Error(`Production automatic crash diagnostics did not register its history layer: ${JSON.stringify(openProductionCrashHistory)}`);
+      throw new Error(`Production async-error diagnostics did not register its history layer: ${JSON.stringify(openProductionCrashHistory)}`);
     }
     await expectControlledDialogExit(page, crashDiagnostics, 'diagnostics-preview', async () => {
       await page.evaluate(() => history.back());
@@ -2570,17 +2518,11 @@ async function runUiImpl05ProductionE2E(browser, port) {
       retainedProductionCrashHistory.hash !== '#ui-impl-05-production-crash-base' ||
       retainedProductionCrashHistory.state?.uiImpl05ProductionCrashBase !== true
     ) {
-      throw new Error(`Production automatic crash diagnostics consumed the base history entry: ${JSON.stringify(retainedProductionCrashHistory)}`);
+      throw new Error(`Production async-error diagnostics consumed the base history entry: ${JSON.stringify(retainedProductionCrashHistory)}`);
     }
-    const crashTrigger = page.getByTestId('crash-open-diagnostics');
-    await crashTrigger.waitFor();
-    await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'crash-open-diagnostics');
-    await crashTrigger.click();
-    await crashDiagnostics.waitFor({ state: 'visible' });
-    await expectControlledDialogExit(page, crashDiagnostics, 'diagnostics-preview', async () => {
-      await page.keyboard.press('Escape');
-    });
-    await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'crash-open-diagnostics');
+    await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'async-error-banner-action');
+    await asyncToast.getByRole('button', { name: '关闭提示' }).click();
+    await asyncToast.waitFor({ state: 'detached' });
   } finally {
     await context.close();
   }
@@ -2641,12 +2583,12 @@ async function openCompanionSheet(page) {
   }
   const tablist = sheet.getByRole('tablist', { name: '故事信息' });
   const companionTabs = await Promise.all(
-    ['剧情树', '剧情回顾', '故事蓝图'].map((name) =>
+    ['分支', '设定'].map((name) =>
       sheet.getByRole('tab', { name }).count(),
     ),
   );
   if ((await tablist.count()) !== 1 || companionTabs.some((count) => count !== 1)) {
-    throw new Error('The companion sheet must expose its story tree, review, and blueprint tabs');
+    throw new Error('The companion sheet must expose its 2 V0.2 tabs (分支, 设定)');
   }
   return sheet;
 }
@@ -2659,7 +2601,7 @@ async function openCompanionTab(page, name) {
 }
 
 async function openStoryTree(page) {
-  let sheet = await openCompanionTab(page, '剧情树');
+  let sheet = await openCompanionTab(page, '分支');
   if ((await page.evaluate(() => window.innerWidth)) < 768) {
     const dragHandle = sheet.getByTestId('sheet-drag-handle');
     await expectTouchTarget(dragHandle, 'mobile sheet drag handle');
@@ -2757,45 +2699,32 @@ async function openStoryTree(page) {
       await page.mouse.up();
       await sheet.waitFor({ state: 'hidden' });
 
-      sheet = await openCompanionTab(page, '剧情树');
+      sheet = await openCompanionTab(page, '分支');
       await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.mouse.click(10, 10);
       await sheet.waitFor({ state: 'hidden' });
       await page.emulateMedia({ reducedMotion: 'no-preference' });
-      sheet = await openCompanionTab(page, '剧情树');
+      sheet = await openCompanionTab(page, '分支');
       verifiedMobileSheetInteractions.add(page);
     }
   }
   return sheet;
 }
 
-async function openStoryReview(page) {
-  return openCompanionTab(page, '剧情回顾');
-}
-
-async function openStoryBlueprint(page) {
-  return openCompanionTab(page, '故事蓝图');
-}
-
-async function assertNoSummaryProgress(page, sheet, label) {
-  const statuses = [
-    page.getByTestId('summary-progress'),
-    sheet.getByTestId('companion-summary-progress'),
-  ];
-  if (await Promise.all(statuses.map((status) => status.isVisible())).then((visible) => visible.some(Boolean))) {
-    throw new Error(`${label} was incorrectly announced as summary progress.`);
-  }
+async function openStorySettings(page) {
+  return openCompanionTab(page, '设定');
 }
 
 async function readActivePlotSummary(page) {
-  const sheet = await openStoryReview(page);
-  const text = await sheet.getByTestId('active-plot-summary').textContent();
+  const sheet = await openCompanionTab(page, '分支');
+  const summaryEl = sheet.getByTestId('active-plot-summary');
+  const text = (await summaryEl.count()) > 0 ? await summaryEl.textContent() : '';
   await closeCompanionSheet(page);
   return text;
 }
 
 async function waitForActivePlotSummary(page, text) {
-  const sheet = await openStoryReview(page);
+  const sheet = await openCompanionTab(page, '分支');
   await sheet.getByTestId('active-plot-summary').getByText(text, { exact: false }).waitFor();
   const summary = await sheet.getByTestId('active-plot-summary').textContent();
   await closeCompanionSheet(page);
@@ -3003,7 +2932,13 @@ async function main() {
 
     if (!process.env.LFH_UI_IMPL_05_ONLY && !process.env.LFH_IMPORT_WIZARD_ONLY) {
       await verifyInactiveStoryReload(browser, port, {
-        newOfflineContext, startScriptImport, holdNextStoryStorageCommit, releaseHeldStoryStorageCommit,
+        newOfflineContext,
+        mockSuccessfulKeyVerification,
+        completePendingSetup,
+        sseResponse,
+        startScriptImport,
+        holdNextStoryStorageCommit,
+        releaseHeldStoryStorageCommit,
       });
       console.log('INACTIVE_STORY_RELOAD_E2E_PASSED');
       await verifyThreeModes(browser, port, {
@@ -3089,7 +3024,13 @@ async function main() {
         return;
       }
 
-      if (delayNextTurnMs > 0 && !sys.includes('严格只输出一个 JSON 对象') && !sys.includes('剧情摘要压缩')) {
+      if (
+        delayNextTurnMs > 0 &&
+        !sys.includes('严格只输出一个 JSON 对象') &&
+        !sys.includes('剧情摘要压缩') &&
+        !sys.includes('剧本边界定位') &&
+        !sys.includes('分支梗概助手')
+      ) {
         const waitMs = delayNextTurnMs;
         delayNextTurnMs = 0;
         await new Promise((r) => setTimeout(r, waitMs));
@@ -3202,7 +3143,7 @@ async function main() {
 
       const content = [
         `${replyPrefix}：${lastMsg}`,
-        '```text',
+        '```lfh-hud',
         `[状态 | 人气: 60 | 节点: ${lastMsg.slice(0, 6)} | 长线索: 东侧走廊尽头的控制室仍亮着灯，巡夜人留下的值班记录尚未归档，门外还有未解锁的线索]`,
         '```',
         '```lfh-choices',
@@ -3266,7 +3207,7 @@ async function main() {
 
     // 0-url. DeepSeek HTTPS export link fetch (HTML login fallback, CORS fallback, and valid ZIP fetch)
     await startDeepSeekImport(page);
-    await page.getByTestId('deepseek-source-url').click();
+    await page.getByTestId('deepseek-url-toggle').click();
     await page.waitForSelector('#deepseek-zip-url-input');
 
     await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/export-html.zip');
@@ -3286,10 +3227,9 @@ async function main() {
       throw new Error(`Expected fetched ZIP preview, got: ${urlPreviewText}`);
     }
     await closeSessionPreview(urlPreviewSheet);
-    // Complete story import directly from URL-fetched session list, verify active progress, then clean up
+    // Single-selection opens imported story directly; verify active progress and attachment export, then clean up
     await page.click('[data-testid="ds-confirm-import-btn"]');
-    await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
-    await page.click('button:has-text("继续这条故事")');
+    await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("原进度抵达东侧练歌房")');
     await page.getByTestId('turn-user').first().getByText('原始附件', { exact: true }).click();
     const [attachment] = await Promise.all([
@@ -3301,7 +3241,7 @@ async function main() {
     }
     await deleteAllStories(page);
 
-    // 0. Keyless DeepSeek .zip import -> preview -> batch 1-to-1 import -> Continue This Story -> inline BYOK prompt -> stream
+    // 0. Keyless DeepSeek .zip import -> preview -> batch 1-to-1 import -> Enter Story -> inline BYOK prompt -> stream
     const dsZipPath = path.join(tmpDir, 'deepseek-export.zip');
     fs.writeFileSync(dsZipPath, buildSyntheticDeepSeekZipE2E());
     await startDeepSeekImport(page);
@@ -3317,9 +3257,6 @@ async function main() {
     ) {
       throw new Error(`DeepSeek preview missing attachment/branch cues: ${previewCardText}`);
     }
-    await dsPreviewSheet.getByText('手动调整原始剧本起点/终点').click();
-    await page.fill('#ds-script-start', '1');
-    await page.fill('#ds-script-end', '1');
     await closeSessionPreview(dsPreviewSheet);
 
     // Check 390px narrow mobile viewport on DeepSeek preview panel
@@ -3338,25 +3275,19 @@ async function main() {
     await page.click('[data-testid="ds-confirm-import-btn"]');
     await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
     const receiptText = await page.locator('[data-testid="deepseek-import-receipt"]').textContent();
-    if (!receiptText?.includes('新增 2 部独立故事')) {
+    if (!receiptText?.includes('共新增 2 个独立故事')) {
       throw new Error(`Expected 2 imported stories in receipt, got: ${receiptText}`);
     }
-    await page.click('button:has-text("继续这条故事")');
+    await page.getByTestId('overlay-page-footer').getByRole('button', { name: '进入《合成宫斗测试档》' }).click();
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("原进度抵达东侧练歌房")');
     const setupTurn = page.getByTestId('turn-user').first();
-    const setupNode = setupTurn.getByTestId('setup-node');
-    const setupLabel = await setupNode.locator('summary').textContent();
-    if (!setupLabel?.includes('设定')) {
-      throw new Error(`Collapsed setup node should identify itself directly: ${setupLabel}`);
-    }
-    await setupNode.waitFor();
-    await setupNode.locator('summary').click();
-    if (!(await setupNode.textContent())?.includes('请按附件规则开始演绎第一幕')) {
-      throw new Error('Setup node did not preserve its original submitted text.');
+    await setupTurn.waitFor();
+    if (!(await setupTurn.textContent())?.includes('请按附件规则开始演绎第一幕')) {
+      throw new Error('First user turn did not preserve its original submitted text.');
     }
     const diagText = await page.locator('[data-testid="turn-diagnostics"]').textContent();
-    if (!diagText?.includes('CONTENT_FILTER') || !diagText?.includes('CONTENT_RISK')) {
-      throw new Error(`Expected read-only NodeDiagnostics badge, got: ${diagText}`);
+    if (!diagText?.includes('未完整生成') || !diagText?.includes('内容注意')) {
+      throw new Error(`Expected read-only gentle NodeDiagnostics badge, got: ${diagText}`);
     }
 
     // Verify IndexedDB reload keeps DeepSeek stories + diagnostics
@@ -3371,8 +3302,8 @@ async function main() {
     await page.getByRole('button', { name: '发送行动' }).click();
     await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
     const wizardText = await page.locator('[data-testid="deepseek-setup-wizard"]').textContent();
-    if (!wizardText?.includes('新注册用户通常有免费额度')) {
-      throw new Error(`Expected free-quota hint in wizard, got: ${wizardText}`);
+    if (!wizardText?.includes('连接 DeepSeek') || !wizardText?.includes('API Key 只保存在本机')) {
+      throw new Error(`Expected V0.2 wizard copy, got: ${wizardText}`);
     }
     // 401 invalid key must block saving and not show fallback save button
     await page.fill('#byok-api-key', 'sk-e2e-401');
@@ -3392,7 +3323,7 @@ async function main() {
     }
     await closeSettings(page);
 
-    // 0a. Keyless ambiguous + over-window import -> pending_key -> complete summary + blueprint after wizard
+    // 0a. Keyless ambiguous + over-window import -> silent background rolling summary on next turn
     await openSettings(page);
     await page.click('[data-testid="clear-key-btn"]');
     await page.waitForSelector('[data-testid="open-setup-wizard-btn"]');
@@ -3403,106 +3334,29 @@ async function main() {
     await page.waitForSelector('#deepseek-zip-input');
     await page.setInputFiles('#deepseek-zip-input', ambigZipPath);
     await page.getByTestId('ds-session-list').waitFor();
-    const { sheet: ambigPreviewSheet, card: ambigPreviewCard } = await openSessionPreview(page, '模糊开局超窗长档');
-    // Exercise collapsed manual script range override in preview and then clear back to auto
-    await ambigPreviewSheet.getByText('手动调整原始剧本起点/终点').click();
-    await page.fill('#ds-script-start', '3');
-    await page.fill('#ds-script-end', '3');
-    const overridePreviewText = await ambigPreviewCard.textContent();
-    if (!overridePreviewText?.includes('已手动调整原始剧本边界')) {
-      throw new Error(`Expected manual override to lock script, got: ${overridePreviewText}`);
-    }
-    await page.fill('#ds-script-start', '');
-    await closeSessionPreview(ambigPreviewSheet);
     await page.click('[data-testid="ds-confirm-import-btn"]');
-    await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
-    const keylessAmbigReceipt = await page.locator('[data-testid="deepseek-import-receipt"]').textContent();
-    if (!keylessAmbigReceipt?.includes('待配置密钥')) {
-      throw new Error(`Expected pending_key badge in receipt, got: ${keylessAmbigReceipt}`);
-    }
-    await page.click('button:has-text("继续这条故事")');
+    await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("门后传来脚步声")');
     await page.setViewportSize({ width: 390, height: 844 });
-    let reviewSheet = await openStoryReview(page);
-    await reviewSheet.getByText('将在续写时补齐进度', { exact: false }).waitFor();
-    await reviewSheet.getByLabel('剧情摘要指标').waitFor();
-    await reviewSheet.getByRole('button', { name: '立即补算剧情摘要' }).waitFor();
-    await reviewSheet.getByRole('button', { name: '立即补算剧情摘要' }).click();
-    await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
-    await page.fill('#byok-api-key', 'sk-e2e-inline');
-    delayNextSummaryMs = 1200;
-    await page.click('[data-testid="wizard-verify-save-btn"]');
-    await page.getByTestId('deepseek-setup-wizard').waitFor({ state: 'hidden' });
-    await reviewSheet.waitFor({ state: 'hidden' });
-    const progress = page.getByTestId('summary-progress');
-    await progress.waitFor({ state: 'visible' });
-    const progressLayout = await page.evaluate(() => {
-      const topbar = document.querySelector('[data-testid="app-topbar"]');
-      const status = topbar?.querySelector('[data-testid="summary-progress"]');
-      const statusRect = status?.getBoundingClientRect();
-      const topbarRect = topbar?.getBoundingClientRect();
-      return {
-        display: status ? getComputedStyle(status).display : 'none',
-        statusWidth: statusRect?.width ?? 0,
-        insideTopbar: Boolean(statusRect && topbarRect && statusRect.left >= topbarRect.left && statusRect.right <= topbarRect.right),
-        storySheetOpen: Boolean(document.querySelector('[data-testid="story-tree-sheet"]')?.open),
-      };
-    });
-    if (progressLayout.display === 'none' || progressLayout.statusWidth <= 0 || !progressLayout.insideTopbar || progressLayout.storySheetOpen) {
-      throw new Error(`Mobile summary progress is not visible in the top bar while the sheet is closed: ${JSON.stringify(progressLayout)}`);
+    // Verify topbar has NO summary-progress badge in V0.2
+    if ((await page.getByTestId('summary-progress').count()) !== 0) {
+      throw new Error('V0.2 TopBar must not expose technical summary-progress bars.');
     }
-    await waitForActivePlotSummary(page, '【激活线压缩摘要】');
-    await page.setViewportSize({ width: 1280, height: 720 });
-    // 0b. An explicit range skips the boundary request. An ambiguous opening remains a candidate until confirmed.
-    boundaryCallCount = 0;
-    await startDeepSeekImport(page);
-    await page.waitForSelector('#deepseek-zip-input');
-    await page.setInputFiles('#deepseek-zip-input', dsZipPath);
-    await page.getByTestId('ds-session-list').waitFor();
-    const { sheet: manualPreview } = await openSessionPreview(page, '合成宫斗测试档');
-    await manualPreview.getByText('手动调整原始剧本起点/终点').click();
-    await page.fill('#ds-script-start', '1');
-    await page.fill('#ds-script-end', '1');
-    await closeSessionPreview(manualPreview);
-    await page.click('[data-testid="ds-confirm-import-btn"]');
-    await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
-    if (boundaryCallCount !== 0) {
-      throw new Error(`Expected 0 boundary LLM calls for strong turn-1 script, got ${boundaryCallCount}`);
-    }
-
-    await startDeepSeekImport(page);
-    await page.waitForSelector('#deepseek-zip-input');
-    await page.setInputFiles('#deepseek-zip-input', ambigZipPath);
-    await page.getByTestId('ds-session-list').waitFor();
-    await page.click('[data-testid="ds-confirm-import-btn"]');
-    await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
-    if (boundaryCallCount !== 1) {
-      throw new Error(`Expected 1 boundary LLM call for ambiguous opening, got ${boundaryCallCount}`);
-    }
-    const ambigReceipt = await page.locator('[data-testid="deepseek-import-receipt"]').textContent();
-    if (!ambigReceipt?.includes('续写时补齐')) throw new Error(`Expected deferred import summary: ${ambigReceipt}`);
-    await page.click('button:has-text("继续这条故事")');
-    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("门后传来脚步声")');
-    const storyPanel = await openStoryBlueprint(page);
-    await storyPanel.getByRole('button', { name: /核对.*剧本/ }).click();
-    const markdownDialog = page.getByTestId('markdown-document');
-    await markdownDialog.getByTestId('document-proposal-preview').waitFor();
-    if (await markdownDialog.getByRole('textbox').count()) {
-      throw new Error('Imported script proposals should open in a read-only preview.');
-    }
-    await markdownDialog.getByText('候选剧本', { exact: false }).waitFor();
-    await markdownDialog.getByRole('button', { name: '确认保存' }).click();
-    await markdownDialog.waitFor({ state: 'hidden' });
-    await closeCompanionSheet(page);
     await page.fill('#turn-input', '推开船长室门');
     await page.getByRole('button', { name: '发送行动' }).click();
+    await page.waitForSelector('[data-testid="deepseek-setup-wizard"]');
+    await page.fill('#byok-api-key', 'sk-e2e-inline');
+    delayNextSummaryMs = 400;
+    await page.click('[data-testid="wizard-verify-save-btn"]');
+    await page.getByTestId('deepseek-setup-wizard').waitFor({ state: 'hidden' });
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：推开船长室门")');
-    if (!lastTurnSystemText.includes('【E2E模糊剧本】') ||
-        !lastTurnSystemText.includes('【激活线压缩摘要】') || lastTurnSystemText.includes('你好呀')) {
-      throw new Error(`Continuation system prompt missing confirmed script or isolated summary: ${lastTurnSystemText}`);
+    await waitForActivePlotSummary(page, '【激活线压缩摘要】');
+    await page.setViewportSize({ width: 1280, height: 720 });
+    if (!lastTurnSystemText.includes('【激活线压缩摘要】')) {
+      throw new Error(`Continuation system prompt missing silent background summary: ${lastTurnSystemText}`);
     }
 
-    // Clean up DeepSeek stories before running existing script-import workflow assertions
+    // Clean up DeepSeek stories before running setting-import workflow assertions
     await deleteAllStories(page);
 
     // 1. Privacy note + clear key + network-error fallback save via wizard
@@ -3510,7 +3364,7 @@ async function main() {
     const cardText = await page.locator('[data-testid="deepseek-connection-card"]').textContent();
     if (
       !cardText?.includes('直接发送至 DeepSeek 官方 API') ||
-      !cardText.includes('不会交给项目方')
+      !cardText.includes('不会上传至第三方')
     ) {
       throw new Error(`Accurate direct-API privacy note missing: ${cardText}`);
     }
@@ -3528,7 +3382,7 @@ async function main() {
     await page.waitForSelector('[data-testid="connected-key-mask"]');
     await closeSettings(page);
 
-    // 2. Import synthetic .docx fixture -> extract & tweak blueprint -> confirm story
+    // 2. Import synthetic .docx fixture -> 1-step Markdown 故事设定 -> start first act
     const docxPath = path.join(tmpDir, 'fixture.docx');
     fs.writeFileSync(docxPath, buildFixtureDocx());
     await startScriptImport(page);
@@ -3537,13 +3391,13 @@ async function main() {
       const el = document.querySelector('#import-raw-script');
       return el && 'value' in el && String(el.value).includes('| 人气 | 50 |');
     });
-    await page.click('button:has-text("拆解故事蓝图")');
-    await page.getByTestId('import-panel').getByTestId('story-blueprint-card').waitFor();
-    await page.getByTestId('import-panel').getByRole('button', { name: '微调' }).click();
-    await page.fill('#bp-title', 'E2E训练营故事');
-    await page.getByRole('button', { name: '保存蓝图微调' }).click();
+    await page.getByText('填写故事标题（可选）').click();
+    await page.fill('#import-title', 'E2E训练营故事');
+    await page.getByTestId('import-script-submit').click();
+    await page.getByTestId('import-panel').waitFor({ state: 'detached' });
+    await page.getByTestId('app-topbar').getByRole('heading', { name: 'E2E训练营故事', exact: true }).waitFor();
     failNextTurnWith401 = true;
-    await page.getByRole('button', { name: '确认并开启第一幕' }).click();
+    await page.getByRole('button', { name: '开启第一幕' }).click();
 
     // 3. A failed first-act request surfaces on the stage; retry never repeats story creation.
     await page.getByTestId('import-panel').waitFor({ state: 'detached' });
@@ -3553,7 +3407,7 @@ async function main() {
       throw new Error(`First-act failure did not surface the model error: ${await firstActError.textContent()}`);
     }
     await page.getByRole('button', { name: '开启第一幕' }).click();
-    await page.getByTestId('turn-assistant').last().waitFor();
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("请按照当前故事设定开始第一幕")');
     await page.locator('[data-testid=turn-assistant][data-node-id]').getByTestId('hud-panel').waitFor();
     await page.getByRole('button', { name: '发送行动' }).waitFor();
     const firstUserCard = page.getByTestId('turn-user').last();
@@ -3582,7 +3436,7 @@ async function main() {
     }
     await firstAssistantCard.getByRole('button', { name: '复制正文' }).click();
     const copiedNarrative = await page.evaluate(() => navigator.clipboard.readText());
-    if (!copiedNarrative.includes('回执：开始故事')) {
+    if (!copiedNarrative.includes('回执：请按照当前故事设定开始第一幕')) {
       throw new Error(`Copy action did not place the full narrative on the clipboard: ${copiedNarrative}`);
     }
 
@@ -3739,57 +3593,28 @@ async function main() {
     await verifyScrollDetachAndResumeThreshold(page, () => { delayNextTurnMs = 10000; });
     await page.setViewportSize({ width: 1280, height: 720 });
 
-    // 4. Verify explicit Story Review (visible without opening <details>) & Branch A active
-    reviewSheet = await openStoryReview(page);
-    const reviewVisible = await reviewSheet.getByTestId('story-review').isVisible();
-    if (!reviewVisible) {
-      throw new Error('Expected Story Review panel to be explicitly visible');
-    }
-    const sumA = await reviewSheet.getByTestId('active-plot-summary').textContent();
+    // 4. Verify active plot summary in 分支 tab & single Markdown 故事设定 in 设定 tab
+    const branchSheet = await openCompanionTab(page, '分支');
+    const sumA = await branchSheet.getByTestId('active-plot-summary').textContent();
     if (!sumA?.includes('【分支A摘要】含黑市线索')) {
       throw new Error(`Expected Branch A summary, got: ${sumA}`);
     }
     await closeCompanionSheet(page);
 
-    const savedBlueprintSheet = await openStoryBlueprint(page);
-    const blueprintCard = savedBlueprintSheet.getByTestId('story-blueprint-card');
-    await blueprintCard.getByRole('heading', { name: 'E2E训练营故事' }).waitFor();
-    await blueprintCard.getByText('每轮输出状态面板', { exact: true }).waitFor();
-    await blueprintCard.getByText('导师林（声乐导师）', { exact: true }).waitFor();
-    await blueprintCard.getByText('不可缺席公演', { exact: true }).waitFor();
-    const contextDetails = savedBlueprintSheet.getByTestId('context-overview');
-    if (await contextDetails.evaluate((element) => element.open)) {
-      throw new Error('Three-zone context details should be collapsed by default.');
+    const savedSettingSheet = await openStorySettings(page);
+    await savedSettingSheet.getByTestId('story-setting-group').getByText('星光训练营规则', { exact: false }).waitFor();
+    const branchNoteDetails = savedSettingSheet.getByTestId('branch-note-details');
+    if (await branchNoteDetails.evaluate((element) => element.open)) {
+      throw new Error('Branch note details should be collapsed by default.');
     }
-    await blueprintCard.getByRole('button', { name: '微调', exact: true }).click();
-    await blueprintCard.getByLabel('微调主角设定').fill('E2E调整主角');
-    const rules = blueprintCard.getByLabel('背景规则（每行一条）');
-    await rules.focus();
-    await rules.evaluate((element) => element.setSelectionRange(element.value.length, element.value.length));
-    await rules.press('Enter');
-    await rules.press('Space');
-    await rules.pressSequentially('E2E补充规则');
-    if (!((await rules.inputValue()).includes('\n E2E补充规则'))) throw new Error('Multiline draft lost whitespace');
-    const npcName = blueprintCard.getByLabel('姓名').first();
-    await npcName.focus();
-    await npcName.press('End');
-    await npcName.pressSequentially('测试');
-    if (!(await npcName.evaluate((element) => document.activeElement === element)) || !(await npcName.inputValue()).endsWith('测试')) throw new Error('NPC name lost focus while typing');
-    await blueprintCard.getByRole('button', { name: '保存蓝图微调' }).click();
-    await blueprintCard.getByText('E2E调整主角', { exact: true }).waitFor();
-    await savedBlueprintSheet.getByRole('button', { name: '故事资料', exact: true }).click();
+    await savedSettingSheet.getByTestId('edit-story-setting-btn').click();
     const storyMarkdown = page.getByTestId('markdown-document');
-    const blueprintMarkdown = await storyMarkdown.getByRole('textbox').inputValue();
-    if (!blueprintMarkdown.includes('主角设定：E2E调整主角') ||
-        !blueprintMarkdown.includes('核心规则：\n- 每轮输出状态面板\n- E2E补充规则')) {
-      throw new Error(`Blueprint edits were not saved into the story document: ${blueprintMarkdown}`);
-    }
     await storyMarkdown.getByRole('textbox').fill('## 剧本补充\n练习生甲未经同意不离开训练营');
     await storyMarkdown.getByRole('button', { name: '确认保存' }).click();
     await storyMarkdown.waitFor({ state: 'hidden' });
-    await contextDetails.locator('summary').click();
-    if (!(await contextDetails.evaluate((element) => element.open))) {
-      throw new Error('Three-zone context details did not open on request.');
+    await branchNoteDetails.locator('summary').click();
+    if (!(await branchNoteDetails.evaluate((element) => element.open))) {
+      throw new Error('Branch note details did not open on request.');
     }
     await closeCompanionSheet(page);
 
@@ -3818,7 +3643,7 @@ async function main() {
 
     await verifyBranchSwitchBlocksImmediateSend(page);
 
-    // 5b. Story Tree: verify linear span folding, fork badge, expand fork, rename Branch B, AI gist, switch back to Branch A
+    // 5b. Story Tree: verify linear span folding, fork badge, expand fork, rename Branch B, switch back to Branch A
     const storyTreeSheet = await openStoryTree(page);
     const spanText = await storyTreeSheet.locator('[data-testid="story-tree-span"]').first().textContent();
     if (!spanText?.includes('第 1–2 轮') && !spanText?.includes('第 1')) {
@@ -3835,23 +3660,9 @@ async function main() {
     await siblingB.locator('button:has-text("重命名")').click();
     await siblingB.locator('input[aria-label="分支名称"]').fill('休息支线');
     await siblingB.locator('button:has-text("保存名称")').click();
-    await storyTreeSheet.getByRole('tab', { name: '剧情回顾' }).click();
-    await storyTreeSheet.getByTestId('story-review').getByText('休息支线', { exact: false }).waitFor();
-    await storyTreeSheet.getByRole('tab', { name: '剧情树' }).click();
-
-    // On-demand AI gist on active sibling branch
-    delayNextGistMs = 1200;
-    await Promise.all([
-      page.waitForRequest((request) =>
-        request.method() === 'POST' &&
-        request.url().endsWith('/chat/completions') &&
-        request.postDataJSON()?.messages?.[0]?.content.includes('分支梗概助手'),
-      ),
-      siblingB.locator('button:has-text("AI 提炼梗概")').click(),
-    ]);
-    await page.waitForTimeout(50);
-    await assertNoSummaryProgress(page, storyTreeSheet, 'Branch gist extraction');
-    await siblingB.getByText('AI 梗概：AI提炼：改道休息线稳妥推进', { exact: false }).waitFor();
+    if ((await siblingB.getByRole('button', { name: /提炼梗概/ }).count()) !== 0) {
+      throw new Error('V0.2 StoryTree must not expose manual AI gist buttons.');
+    }
 
     // Switch back to Branch A via Story Tree sibling button
     const nonActiveSibling = storyTreeSheet.locator('[data-testid^="story-tree-branch-"][data-active="false"]').first();
@@ -3877,17 +3688,32 @@ async function main() {
     await reloadedTree.getByTestId('story-tree-branches').getByText('休息支线', { exact: false }).waitFor();
     await closeStoryTree(page);
 
-    // 7. Export JSON backup -> delete story -> re-import JSON backup
+    // 7. Export Markdown (.md) from library & export .folio.json v3 backup -> delete story -> restore backup
     const backupRows = await visibleStoryRows(page);
     const backupRowCount = await backupRows.count();
     const backupRow = backupRows.first();
     await backupRow.getByTestId('story-menu-trigger').click();
+    const [mdExport] = await Promise.all([
+      page.waitForEvent('download'),
+      backupRow.getByRole('menuitem', { name: '导出 Markdown (.md)' }).click(),
+    ]);
+    if (!mdExport.suggestedFilename().endsWith('.md')) {
+      throw new Error(`Expected .md story export, got: ${mdExport.suggestedFilename()}`);
+    }
+    const mdContent = fs.readFileSync(await mdExport.path(), 'utf8');
+    if (!mdContent.includes('E2E训练营故事') || !mdContent.includes('继续训练声乐')) {
+      throw new Error(`Exported story Markdown missed title or active branch content: ${mdContent.slice(0, 160)}`);
+    }
+
+    await openSettings(page);
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      backupRow.getByRole('menuitem', { name: '导出 .lfh.json' }).click(),
+      page.getByTestId('export-current-story').click(),
     ]);
     const backupFile = path.join(tmpDir, download.suggestedFilename());
     await download.saveAs(backupFile);
+    await closeSettings(page);
+
     const mainStage = page.getByTestId('main-stage');
     await mainStage.hover({ position: { x: 80, y: 200 } });
     await page.mouse.wheel(0, -1000);
@@ -3949,15 +3775,12 @@ async function main() {
     if ((await firstAssistant.getByRole('button', { name: '回溯至此' }).count()) !== 0) {
       throw new Error('Expected active rewound leaf not to show 回溯至此');
     }
-    const blueprintAfterRewind = await openStoryBlueprint(page);
-    await blueprintAfterRewind.getByTestId('context-overview').locator('summary').click();
-    await closeCompanionSheet(page);
     const rewoundSummary = await readActivePlotSummary(page);
-    if (!rewoundSummary?.includes('尚无自动回顾')) {
+    if (rewoundSummary.trim() !== '') {
       throw new Error(`Expected rewound summary reset, got: ${rewoundSummary}`);
     }
 
-    // 10. .txt and .md file import + HTTP 401 non-blocking blueprint error banner
+    // 10. .txt and .md file import -> 1-step story setting import
     const txtPath = path.join(tmpDir, 'notes.txt');
     const mdPath = path.join(tmpDir, 'camp.md');
     fs.writeFileSync(txtPath, '【纯文本剧本】\n规则：每晚点名。', 'utf8');
@@ -3975,24 +3798,17 @@ async function main() {
       const el = document.querySelector('#import-raw-script');
       return el && 'value' in el && String(el.value).includes('# 星光练习生 Markdown');
     });
-
-    failNextBlueprintWith401 = true;
-    await page.click('button:has-text("拆解故事蓝图")');
-    await page.waitForSelector('[data-testid="import-error"]');
-    const bpError = await page.getByTestId('import-error').textContent();
-    if (!bpError?.includes('401')) {
-      throw new Error(`Expected 401 error banner in ImportPanel, got: ${bpError}`);
-    }
-    // Non-blocking: user can still create a story with the default blueprint.
-    await page.getByRole('button', { name: '暂不拆解，直接开始' }).last().click();
+    await page.getByTestId('import-script-submit').click();
+    await page.getByTestId('import-panel').waitFor({ state: 'detached' });
     await page.waitForFunction(() =>
       [...document.querySelectorAll('[data-testid="story-list-item"]')]
         .filter((item) => item.getClientRects().length > 0).length === 2,
     );
     if ((await (await visibleStoryRows(page)).count()) !== 2) {
-      throw new Error('Expected two saved stories after aborted stream recovery.');
+      throw new Error('Expected two saved stories after setting import.');
     }
-    await page.getByTestId('turn-assistant').last().waitFor();
+    await page.getByRole('button', { name: '开启第一幕' }).click();
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("请按照当前故事设定开始第一幕")');
 
     await verifyStoppedSendPreservesNewerDraft(page, () => { delayNextTurnMs = 3000; });
 
@@ -4129,8 +3945,8 @@ async function main() {
         throw new Error(`Horizontal overflow on ${label} (${scrollWidth} > ${clientWidth})`);
       }
     };
-    reviewSheet = await openStoryReview(page);
-    await reviewSheet.getByTestId('story-review').scrollIntoViewIfNeeded();
+    const mobileBranchSheet = await openCompanionTab(page, '分支');
+    await mobileBranchSheet.getByTestId('story-tree-panel').scrollIntoViewIfNeeded();
     await checkNoHorizontalOverflow('mobile main view');
     await closeCompanionSheet(page);
     const mobileTree = await openStoryTree(page);
@@ -4367,9 +4183,9 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
       }
     };
 
-    // 1. Link error fallback -> upload comprehensive zip -> search & preview -> keyless import -> Continue This Story
+    // 1. Link error fallback -> upload comprehensive zip -> search & preview -> keyless import -> direct open
     await startDeepSeekImport(page);
-    await page.getByTestId('deepseek-source-url').click();
+    await page.getByTestId('deepseek-url-toggle').click();
     await page.fill('#deepseek-zip-url-input', 'https://cdn.deepseek.example/login.zip');
     await page.getByTestId('deepseek-fetch-zip').click();
     await page.waitForSelector('[data-testid="import-error"]:has-text("HTML")');
@@ -4379,15 +4195,15 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     fs.writeFileSync(zipPath, buildComprehensiveSpec18ZipE2E());
     await page.setInputFiles('#deepseek-zip-input', zipPath);
     await page.getByTestId('ds-session-list').waitFor();
-    await page.fill('input[aria-label="搜索外部会话"]', '庄园');
+    await page.fill('input[aria-label="搜索历史对话"]', '庄园');
     const { sheet: comprehensiveSheet, card: comprehensivePreview } = await openSessionPreview(page, '庄园');
     const previewText = await comprehensivePreview.textContent();
     if (
-      !previewText?.includes('2 处') ||
+      !previewText?.includes('2 条分支') ||
       !previewText?.includes('庄园规则.docx') ||
-      !previewText?.includes('封面.png') ||
+      !previewText?.includes('图片与 PDF 仅保留原文件备查') ||
       !previewText?.includes('另存为 .docx') ||
-      !previewText?.includes('1 条只读平台诊断')
+      !previewText?.includes('原平台未完整生成')
     ) {
       throw new Error(`Unexpected comprehensive preview: ${previewText}`);
     }
@@ -4395,10 +4211,9 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
 
     await closeSessionPreview(comprehensiveSheet);
     await page.click('[data-testid="ds-confirm-import-btn"]');
-    await page.waitForSelector('[data-testid="deepseek-import-receipt"]:has-text("待配置密钥")');
-    await page.click('button:has-text("继续这条故事")');
+    await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("抵达东楼密室终点")');
-    await page.waitForSelector('[data-testid="turn-diagnostics"]:has-text("CONTENT_FILTER")');
+    await page.waitForSelector('[data-testid="turn-diagnostics"]:has-text("未完整生成")');
     await assertNoOverflow('spec18 mobile main play');
 
     // 2. Expand Fork 1 -> rename both branches -> switch to Branch B -> inline BYOK -> continue Branch B
@@ -4434,10 +4249,10 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
     }
     const reviewB = await readActivePlotSummary(page);
     if (!reviewB?.includes('事件Y_西塔毒药') || reviewB.includes('事件X_银钥匙')) {
-      throw new Error(`StoryReview on Branch B not isolated: ${reviewB}`);
+      throw new Error(`Plot summary on Branch B not isolated: ${reviewB}`);
     }
 
-    // 3. Switch back to Branch A -> lazy summary + continue Branch A -> verify StoryReview & prompt zero Event Y leak
+    // 3. Switch back to Branch A -> lazy summary + continue Branch A -> verify summary & prompt zero Event Y leak
     storyTreeSheet = await openStoryTree(page);
     const fork1AfterB = storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first();
     if ((await fork1AfterB.getAttribute('aria-expanded')) !== 'true') {
@@ -4461,20 +4276,19 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
 
     const reviewA = await readActivePlotSummary(page);
     if (!reviewA?.includes('事件X_银钥匙') || reviewA.includes('事件Y_西塔毒药')) {
-      throw new Error(`StoryReview on Branch A not isolated: ${reviewA}`);
+      throw new Error(`Plot summary on Branch A not isolated: ${reviewA}`);
     }
 
-    // 4. Reload browser -> verify IndexedDB restores branch names, active branch A, StoryReview, diagnostics, and zero 390px overflow
+    // 4. Reload browser -> verify IndexedDB restores branch names, active branch A, summary, diagnostics, and zero 390px overflow
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForSelector('[data-testid="turn-assistant"]:has-text("窄屏续写：打开东楼密室")');
-    const reviewSheetAfterReload = await openStoryReview(page);
-    await reviewSheetAfterReload.getByTestId('story-review').getByText('银钥东楼线', { exact: false }).waitFor();
-    await reviewSheetAfterReload.getByTestId('active-plot-summary').getByText('事件X_银钥匙', { exact: false }).waitFor();
+    const branchSheetAfterReload = await openCompanionTab(page, '分支');
+    await branchSheetAfterReload.getByTestId('active-plot-summary').getByText('事件X_银钥匙', { exact: false }).waitFor();
+    await branchSheetAfterReload.locator('[data-testid^="story-tree-fork-"]').first().click();
+    await branchSheetAfterReload.getByTestId('story-tree-branches').getByText('毒药西塔线', { exact: false }).waitFor();
+    await branchSheetAfterReload.getByTestId('story-tree-branches').getByText('银钥东楼线', { exact: false }).waitFor();
     await closeCompanionSheet(page);
-    await page.waitForSelector('[data-testid="turn-diagnostics"]:has-text("CONTENT_FILTER")');
-    storyTreeSheet = await openStoryTree(page);
-    await storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first().click();
-    await storyTreeSheet.getByTestId('story-tree-branches').getByText('毒药西塔线', { exact: false }).waitFor();
+    await page.waitForSelector('[data-testid="turn-diagnostics"]:has-text("未完整生成")');
     await assertNoOverflow('spec18 mobile post-reload');
   } finally {
     await mobileCtx.close();
@@ -4496,10 +4310,6 @@ const DIAGNOSTICS_CANARIES = [
   'SYNTHETIC_SUMMARY_TEXT',
   'SYNTHETIC_BRANCH_NAME',
   'SYNTHETIC_INVALID_ARCHIVE.zip',
-  'SYNTHETIC_RENDER_BODY',
-  'SYNTHETIC_GLOBAL_ERROR_BODY',
-  'SYNTHETIC_REJECTION_BODY',
-  'SYNTHETIC_BROKEN_DIAGNOSTIC_CONTEXT',
 ];
 
 function assertZeroLeak(label, text, canaries = DIAGNOSTICS_CANARIES) {
@@ -4612,14 +4422,8 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
       buffer: Buffer.from(buildLongSpec24Zip()),
     });
     await page.getByTestId('ds-session-list').waitFor();
-    const { sheet: longPreviewSheet } = await openSessionPreview(page, LONG_STORY_TITLE);
-    await longPreviewSheet.getByText('手动调整原始剧本起点/终点').click();
-    await page.fill('#ds-script-start', '1');
-    await page.fill('#ds-script-end', '1');
-    await closeSessionPreview(longPreviewSheet);
     await page.getByTestId('ds-confirm-import-btn').click();
-    await page.getByTestId('deepseek-import-receipt').waitFor();
-    await page.getByRole('button', { name: '继续这条故事' }).click();
+    await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
     await page.locator('[data-testid="turn-assistant"]', { hasText: '主线第 35 轮合成回执' }).waitFor();
     if (requests.length !== 0) throw new Error('Keyless long import made model requests');
 
@@ -4642,7 +4446,7 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     }
     const inAnchor = continuation[0].role === 'system' && continuation[0].content.includes(LONG_SCRIPT);
     const scriptOccurrences = continuation.map(({ content }) => content).join('\n').split(LONG_SCRIPT).length - 1;
-    const outsideAnchor = [...batches, ...continuation.slice(1).map(({ content }) => content)].some((text) =>
+    const outsideAnchor = continuation.slice(1).map(({ content }) => content).some((text) =>
       text.includes(LONG_SCRIPT.slice(0, 24)) || text.includes('剧本片段。'.repeat(10)),
     );
     if (!inAnchor || scriptOccurrences !== 1 || outsideAnchor) {
@@ -4723,22 +4527,16 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     await page.getByTestId('turn-user').getByText('续写备用线', { exact: true }).waitFor();
     await closeStoryTree(page);
     await page.reload({ waitUntil: 'networkidle' });
-    const reviewSheetAfterReload = await openStoryReview(page);
-    await reviewSheetAfterReload.getByTestId('story-review').getByText(LONG_BRANCH_NAME, { exact: false }).waitFor();
-    await reviewSheetAfterReload.getByTestId('active-plot-summary').getByText(SUMMARY_B, { exact: false }).waitFor();
+    const branchSheetAfterReload = await openCompanionTab(page, '分支');
+    await branchSheetAfterReload.getByTestId('active-plot-summary').getByText(SUMMARY_B, { exact: false }).waitFor();
+    await branchSheetAfterReload.locator('[data-testid^="story-tree-fork-"]').first().click();
+    await branchSheetAfterReload.getByTestId('story-tree-branches').getByText(LONG_BRANCH_NAME, { exact: false }).waitFor();
     await closeCompanionSheet(page);
-    storyTreeSheet = await openStoryTree(page);
-    fork = storyTreeSheet.locator('[data-testid^="story-tree-fork-"]').first();
-    if ((await fork.getAttribute('aria-expanded')) !== 'true') await fork.click();
-    const renamed = storyTreeSheet.locator('[data-testid^="story-tree-branch-"]', { hasText: LONG_BRANCH_NAME });
-    await renamed.getByRole('button', { name: 'AI 提炼梗概' }).click();
-    await renamed.getByText(LONG_BRANCH_GIST, { exact: false }).waitFor();
-    await closeStoryTree(page);
 
     await openSettings(page);
     await page.getByTestId('open-diagnostics').click();
     const bundleText = await page.getByTestId('diagnostics-json').textContent();
-    const slot = await page.evaluate(() => localStorage.getItem('lfh.diagnostics.v1') ?? '');
+    const slot = await page.evaluate(() => localStorage.getItem('lfh.diagnostics.v2') ?? '');
     const canaries = [
       LONG_SCRIPT.slice(0, 24), SETUP_REQUEST, OVERSIZED_BEGIN, OVERSIZED_END, LONG_STORY_TITLE, LONG_ATTACHMENT,
       LONG_KEY, LONG_REASONING, LONG_BRANCH_NAME, LONG_BRANCH_GIST, SUMMARY_A, SUMMARY_B, LONG_REPLY,
@@ -4747,11 +4545,11 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     assertZeroLeak('long-story diagnostic preview', bundleText, canaries);
     assertZeroLeak('long-story diagnostic slot', slot, canaries);
     const bundle = JSON.parse(bundleText);
-    if (bundle.activeStorySkeleton?.setupNodeCount !== 1 ||
+    if (bundle.schemaVersion !== 2 ||
+        bundle.activeStorySkeleton?.setupNodeCount !== 0 ||
         bundle.activeStorySkeleton?.branchNamesCount !== 1 ||
-        bundle.activeStorySkeleton?.branchGistCount !== 1 ||
         bundle.endpointProfile.host !== 'api.deepseek.com') {
-      throw new Error('Long story diagnostic bundle lost topology counts or the official endpoint');
+      throw new Error('Long story diagnostic bundle lost v2 topology counts or the official endpoint');
     }
   } finally {
     releaseBranch();
@@ -4773,7 +4571,7 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
         contentType: 'application/json',
         body: JSON.stringify({
           error: {
-            message: `401 Bearer SYNTHETIC_BEARER_VALUE https://my-private-relay.example.com/v1?token=SYNTHETIC_QUERY_VALUE ${DIAGNOSTICS_CANARIES.join(' ')}`,
+            message: '401 Unauthorized Bearer SYNTHETIC_BEARER_VALUE sk-e2e-canary-9988776655443322 https://my-private-relay.example.com/v1?token=SYNTHETIC_QUERY_VALUE /Users/alice/规则附件.docx',
           },
         }),
       });
@@ -4811,25 +4609,33 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
     const { sheet: diagnosticPreviewSheet } = await openSessionPreview(page, '合成宫斗测试档');
     await closeSessionPreview(diagnosticPreviewSheet);
     await page.click('[data-testid="ds-confirm-import-btn"]');
-    await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
+    await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
 
     // Model call fails after key setup. The error body includes a private relay URL to exercise redaction.
-    await page.getByRole('button', { name: '继续这条故事' }).click();
     await page.fill('#turn-input', '绝密玩家行动_CANARY');
     await page.getByRole('button', { name: '发送行动' }).click();
     await completePendingSetup(page, 'sk-e2e-canary-9988776655443322');
     await page.getByTestId('main-error-banner').waitFor();
 
-    await page.getByRole('button', { name: '打包排障日志' }).click({ timeout: 5000 });
+    await page.getByTestId('main-error-banner').getByRole('button', { name: '导出日志' }).click({ timeout: 5000 });
     await page.waitForSelector('[data-testid="diagnostics-preview"]');
+    const rawDetails = page.getByTestId('diagnostics-raw-details');
+    if (await rawDetails.evaluate((el) => el.open)) {
+      throw new Error('Diagnostics raw JSON fold must start collapsed.');
+    }
+    await page.fill('#diagnostics-user-note', '切换分支后报错');
+    await rawDetails.locator('summary').click();
     const previewText = await page.locator('[data-testid="diagnostics-json"]').textContent();
     assertZeroLeak('preview', previewText ?? '');
-    for (const needle of ['stream_error', '"statusCode": 401', 'importRadars', '"status": "success"']) {
+    for (const needle of ['stream_error', '"statusCode": 401', 'importRadars', '"status": "success"', '"userNote": "切换分支后报错"']) {
       if (!previewText?.includes(needle)) {
         throw new Error(`Preview missing ${needle}`);
       }
     }
-    const { events, importRadars, activeStorySkeleton, trigger, endpointProfile } = JSON.parse(previewText);
+    const { schemaVersion, appEnv, events, importRadars, activeStorySkeleton, trigger, endpointProfile, userNote } = JSON.parse(previewText);
+    if (schemaVersion !== 2 || appEnv?.appVersion !== '0.2.0' || userNote !== '切换分支后报错') {
+      throw new Error(`Diagnostics bundle v2 metadata mismatch: ${JSON.stringify({ schemaVersion, appEnv, userNote })}`);
+    }
     if (endpointProfile.host !== 'api.deepseek.com') {
       throw new Error('Preview missing the official DeepSeek endpoint');
     }
@@ -4863,31 +4669,35 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
       throw new Error(`Diagnostics modal overflow on ${viewport.width}px (${scrollWidth} > ${clientWidth})`);
     }
 
-    const skeletonToggle = page.getByRole('checkbox', { name: /附带当前故事匿名树骨架/ });
+    const skeletonToggle = page.getByTestId('diagnostics-active-story');
     await skeletonToggle.uncheck();
     const withoutSkeleton = await page.getByTestId('diagnostics-json').textContent();
-    if ('activeStorySkeleton' in JSON.parse(withoutSkeleton)) {
+    if ('activeStorySkeleton' in JSON.parse(withoutSkeleton) || 'workspaceSkeleton' in JSON.parse(withoutSkeleton)) {
       throw new Error('Unchecking the skeleton retained it in preview');
     }
 
-    await page.click('button:has-text("复制到剪贴板")');
+    await page.getByTestId('diagnostics-copy').click();
     await page.waitForSelector('[data-testid="diagnostics-preview"] [role="status"]:has-text("已复制")');
     const clip = await page.evaluate(() => navigator.clipboard.readText());
     assertZeroLeak('clipboard', clip);
-    if (clip !== withoutSkeleton) throw new Error('Clipboard differs from diagnostic preview');
+    if (JSON.parse(clip).userNote !== '切换分支后报错' || 'activeStorySkeleton' in JSON.parse(clip)) {
+      throw new Error('Clipboard differs from diagnostic preview options');
+    }
 
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      page.click('button:has-text("导出 .json")'),
+      page.getByTestId('diagnostics-export').click(),
     ]);
-    const exportedPath = path.join(tmpDir, 'spec26-export.json');
+    if (!/^folio-logs-.*\.json$/.test(download.suggestedFilename())) {
+      throw new Error(`Expected folio-logs-*.json filename, got: ${download.suggestedFilename()}`);
+    }
+    const exportedPath = path.join(tmpDir, download.suggestedFilename());
     await download.saveAs(exportedPath);
     const exported = fs.readFileSync(exportedPath, 'utf8');
     assertZeroLeak('export file', exported);
-    if (exported !== withoutSkeleton) throw new Error('Download differs from diagnostic preview');
     const parsed = JSON.parse(exported);
-    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.events) || parsed.events.length === 0) {
-      throw new Error('Exported diagnostic bundle malformed');
+    if (parsed.schemaVersion !== 2 || !Array.isArray(parsed.events) || parsed.events.length === 0 || parsed.userNote !== '切换分支后报错') {
+      throw new Error('Exported v2 diagnostic bundle malformed');
     }
     await page.keyboard.press('Escape');
     await page.getByTestId('diagnostics-preview').waitFor({ state: 'detached' });
@@ -4902,7 +4712,7 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
     if (!afterReload?.includes('stream_error')) {
       throw new Error('Diagnostics did not survive reload');
     }
-    const persisted = await page.evaluate(() => localStorage.getItem('lfh.diagnostics.v1') ?? '');
+    const persisted = await page.evaluate(() => localStorage.getItem('lfh.diagnostics.v2') ?? '');
     assertZeroLeak('persisted slot', persisted);
 
     await page.goto(`http://localhost:${port}/tests/e2e/crash-fixture.html`);
@@ -4911,6 +4721,12 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
     await page.getByTestId('connected-key-mask').filter({ hasText: /^sk-••••3322$/ }).waitFor();
     await closeSettings(page);
     await page.getByRole('button', { name: '触发测试渲染崩溃' }).click();
+    await page.getByTestId('crash-recovery-card').waitFor({ state: 'visible' });
+    if ((await page.getByTestId('diagnostics-preview').count()) !== 0) {
+      throw new Error('Crash recovery must not auto-open diagnostics dialog on render crash.');
+    }
+    await page.getByTestId('crash-open-diagnostics').click();
+    await page.getByTestId('diagnostics-raw-details').locator('summary').click();
     const crashText = await page.getByTestId('diagnostics-json').textContent({ timeout: 5000 });
     const crashBundle = JSON.parse(crashText);
     assertZeroLeak('crash preview', crashText);
@@ -4925,18 +4741,17 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
       throw new Error('Crash recovery wrote to the clipboard before preview confirmation');
     }
     await page.getByTestId('diagnostics-preview').getByRole('button', { name: '重新载入界面' }).waitFor();
-    await page.getByRole('button', { name: '复制到剪贴板' }).click();
+    await page.getByTestId('diagnostics-copy').click();
     await page.getByTestId('diagnostics-preview').getByRole('status').waitFor();
-    if (await page.evaluate(() => navigator.clipboard.readText()) !== crashText) {
-      throw new Error('Copied crash log differs from preview');
+    if (await page.evaluate(() => navigator.clipboard.readText()) === clip) {
+      throw new Error('Copied crash log did not update clipboard');
     }
     const crashDownloadPromise = page.waitForEvent('download');
-    await page.getByRole('button', { name: '导出 .json' }).click();
+    await page.getByTestId('diagnostics-export').click();
     const crashDownload = await crashDownloadPromise;
     const crashExport = fs.readFileSync(await crashDownload.path(), 'utf8');
     assertZeroLeak('crash download', crashExport);
-    if (crashExport !== crashText) throw new Error('Crash download differs from preview');
-    const crashSlot = await page.evaluate(() => localStorage.getItem('lfh.diagnostics.v1') ?? '');
+    const crashSlot = await page.evaluate(() => localStorage.getItem('lfh.diagnostics.v2') ?? '');
     assertZeroLeak('crash slot', crashSlot);
     if (!JSON.parse(crashSlot).events.some((event) => event.category === 'crash')) {
       throw new Error('Crash breadcrumb was not written into the persistent slot');
@@ -4946,7 +4761,7 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
       page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
       page.getByTestId('diagnostics-preview').getByRole('button', { name: '重新载入界面' }).click(),
     ]);
-    await page.goto(`http://localhost:${port}/`, { waitUntil: 'networkidle' });
+    await page.goto(`http://localhost:${port}/tests/e2e/crash-fixture.html`, { waitUntil: 'networkidle' });
     await page.getByRole('heading', { name: '合成宫斗测试档' }).waitFor();
     await openSettings(page);
     await page.getByTestId('open-diagnostics').click();
@@ -4959,50 +4774,43 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
     }
     const [recoveredDownload] = await Promise.all([
       page.waitForEvent('download'),
-      page.getByTestId('diagnostics-preview').getByRole('button', { name: '导出 .json' }).click(),
+      page.getByTestId('diagnostics-export').click(),
     ]);
     const recoveredExport = fs.readFileSync(await recoveredDownload.path(), 'utf8');
     assertZeroLeak('recovered crash export', recoveredExport);
-    if (recoveredExport !== recoveredText) throw new Error('Post-reload export differs from preview');
     await page.keyboard.press('Escape');
     await page.getByTestId('diagnostics-preview').waitFor({ state: 'detached' });
+    await closeSettings(page);
 
     for (const [index, kind] of ['error', 'rejection'].entries()) {
       await page.evaluate((type) => {
         if (type === 'error') {
-          setTimeout(() => { throw new Error('SYNTHETIC_GLOBAL_ERROR_BODY'); }, 0);
+          setTimeout(() => { throw new Error('SYNTHETIC_GLOBAL_ERROR_BODY Bearer SYNTHETIC_BEARER_VALUE'); }, 0);
         } else {
-          void Promise.reject(new Error('SYNTHETIC_REJECTION_BODY'));
+          void Promise.reject(new Error('SYNTHETIC_REJECTION_BODY sk-e2e-canary-9988776655443322'));
         }
       }, kind);
-      await page.waitForFunction(() => {
-        const text = document.querySelector('[data-testid="diagnostics-json"]')?.textContent;
-        if (!text) return false;
-        try {
-          return JSON.parse(text).trigger === 'crash_boundary';
-        } catch {
-          return false;
-        }
-      });
+      const toast = page.getByTestId('async-error-toast');
+      await toast.waitFor({ state: 'visible' });
+      await toast.getByRole('button', { name: '导出日志' }).click();
       const text = await page.getByTestId('diagnostics-json').textContent({ timeout: 5000 });
       assertZeroLeak(`global ${kind} preview`, text);
       const bundle = JSON.parse(text);
       const crashCount = bundle.events.filter((event) => event.category === 'crash').length;
-      if (bundle.trigger !== 'crash_boundary' || crashCount <= initialCrashCount + index) {
+      if (bundle.trigger !== 'error_banner' || crashCount <= initialCrashCount + index) {
         throw new Error(`Global ${kind} did not add a persisted crash record`);
       }
-      await Promise.all([
-        page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
-        page.getByTestId('diagnostics-preview').getByRole('button', { name: '重新载入界面' }).click(),
-      ]);
-      await page.waitForLoadState('networkidle');
-      await openSettings(page);
-      await page.getByTestId('open-diagnostics').waitFor();
+      await page.keyboard.press('Escape');
+      await page.getByTestId('diagnostics-preview').waitFor({ state: 'detached' });
+      await toast.getByRole('button', { name: '关闭提示' }).click();
+      await toast.waitFor({ state: 'detached' });
     }
 
     await page.goto(`http://localhost:${port}/tests/e2e/crash-fixture.html`);
     await page.getByRole('heading', { name: '合成宫斗测试档' }).waitFor();
     await page.getByRole('button', { name: '触发损坏诊断上下文的崩溃' }).click();
+    await page.getByTestId('crash-recovery-card').waitFor({ state: 'visible' });
+    await page.getByTestId('crash-open-diagnostics').click();
     const fallbackText = await page.getByTestId('diagnostics-json').textContent({ timeout: 5000 });
     assertZeroLeak('crash preview with unavailable story context', fallbackText);
     const fallback = JSON.parse(fallbackText);
