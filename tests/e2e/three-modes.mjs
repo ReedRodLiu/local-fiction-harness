@@ -6,7 +6,7 @@ const fence = '\x60'.repeat(3);
 const proposal = (target, markdown, name) => `${fence}lfh-change\n${JSON.stringify({ target, markdown, name })}\n${fence}`;
 
 export async function verifyThreeModes(browser, port, helpers) {
-  const { newOfflineContext, mockSuccessfulKeyVerification, completePendingSetup, sseResponse, startScriptImport } = helpers;
+  const { newOfflineContext, mockSuccessfulKeyVerification, completePendingSetup, sseResponse, startScriptImport, holdNextStoryStorageCommit, releaseHeldStoryStorageCommit } = helpers;
   const context = await newOfflineContext(browser, port, { acceptDownloads: true, viewport: { width: 1280, height: 800 } });
   try {
     const page = await context.newPage();
@@ -202,6 +202,32 @@ export async function verifyThreeModes(browser, port, helpers) {
     await page.fill('#turn-input', '敲钟');
     await page.getByRole('button', { name: '发送行动' }).click();
     await page.getByTestId('story-timeline').getByText('渡口灯亮，第二声钟响。', { exact: true }).waitFor();
+    const library = page.getByTestId('desktop-library');
+    const selectStory = () => library.getByTestId('story-select-button').filter({ hasText: '浮灯渡口' }).click();
+    const selectWork = () => library.getByTestId('story-select-button').filter({ hasText: '纸月车站' }).click();
+    await library.getByRole('button', { name: '文游', exact: true }).click();
+    await holdNextStoryStorageCommit(page, 'meta');
+    await selectStory();
+    await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
+    await page.getByTestId('desktop-library-new-creation').click();
+    await releaseHeldStoryStorageCommit(page);
+    await page.getByTestId('welcome-view').waitFor();
+    await holdNextStoryStorageCommit(page, 'meta');
+    await selectStory();
+    await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
+    await library.getByRole('button', { name: '产粮', exact: true }).click();
+    await selectWork();
+    await writing.waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await writing.waitFor();
+    await holdNextStoryStorageCommit(page, 'meta');
+    await selectWork();
+    await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
+    await library.getByRole('button', { name: '文游', exact: true }).click();
+    await selectStory();
+    await page.getByTestId('story-timeline').waitFor();
+    await releaseHeldStoryStorageCommit(page);
+    await page.getByTestId('story-timeline').waitFor();
     assert.match(lastRequest(), /SCRIPT-END/);
     assert.match(lastRequest(), /PUBLIC-LATEST/);
     await page.getByRole('button', { name: '从这里开稿' }).last().click();

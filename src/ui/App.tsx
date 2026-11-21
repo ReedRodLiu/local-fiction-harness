@@ -1305,6 +1305,7 @@ export function App({ runtime }: AppProps) {
 
   function openCreativePage(mode: 'writing' | 'character', fromCreation = false) {
     if ((!fromCreation && creationPending.current) || deepSeekImportBusyRef.current) return;
+    ++storyOpSeqRef.current;
     captureOverlayTrigger();
     setCreativeCompanionOpen(false);
     abortActiveStream(true);
@@ -1325,6 +1326,7 @@ export function App({ runtime }: AppProps) {
 
   function openNewCreation() {
     if (creationPending.current || deepSeekImportBusyRef.current) return;
+    ++storyOpSeqRef.current;
     abortActiveStream(true);
     invalidateSummaryTask();
     setNewCreationMode(creativePage ?? 'story');
@@ -1384,6 +1386,7 @@ export function App({ runtime }: AppProps) {
 
   async function changeCreativeItem(mode: 'writing' | 'character', id: string, action: 'select' | 'rename' | 'delete' | 'export', title = '') {
     if (creationPending.current) return;
+    const opSeq = action === 'select' ? ++storyOpSeqRef.current : null;
     setErrorMsg(null);
     try {
       if (action === 'export') {
@@ -1413,11 +1416,11 @@ export function App({ runtime }: AppProps) {
             : action === 'delete' ? state.characters.filter((item) => item.id !== id) : state.characters,
         };
       });
-      if (action === 'select') openCreativePage(mode);
+      if (action === 'select' && storyOpSeqRef.current === opSeq) openCreativePage(mode);
       if (action === 'delete' && creativePage === mode &&
         (mode === 'writing' ? creative.workspace.activeWorkId === id : creative.workspace.activeCharacterId === id)) openNewCreation();
     } catch (error) {
-      setErrorMsg(toErrorMessage(error, '书架操作失败。'));
+      if (opSeq === null || storyOpSeqRef.current === opSeq) setErrorMsg(toErrorMessage(error, '书架操作失败。'));
     }
   }
 

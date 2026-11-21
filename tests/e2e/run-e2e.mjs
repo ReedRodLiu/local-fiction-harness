@@ -433,8 +433,8 @@ async function assertUploadControlHasVisibleKeyboardFocus(page, backButton, targ
   }
 }
 
-async function holdNextStoryStorageCommit(page) {
-  await page.evaluate(() => {
+async function holdNextStoryStorageCommit(page, store = 'stories') {
+  await page.evaluate((store) => {
     const descriptor = Object.getOwnPropertyDescriptor(IDBTransaction.prototype, 'oncomplete');
     if (!descriptor?.get || !descriptor.set) {
       throw new Error('IDBTransaction.oncomplete cannot be controlled in this browser.');
@@ -455,7 +455,7 @@ async function holdNextStoryStorageCommit(page) {
           if (
             armed &&
             transaction.mode === 'readwrite' &&
-            transaction.objectStoreNames.contains('stories') &&
+            transaction.objectStoreNames.contains(store) &&
             typeof window.__lfhStoryCommitControl?.release !== 'function'
           ) {
             armed = false;
@@ -469,12 +469,15 @@ async function holdNextStoryStorageCommit(page) {
         });
       },
     });
-  });
+  }, store);
 }
 
 async function releaseHeldStoryStorageCommit(page) {
   await page.waitForFunction(() => typeof window.__lfhStoryCommitControl?.release === 'function');
-  await page.evaluate(() => window.__lfhStoryCommitControl.release());
+  await page.evaluate(async () => {
+    window.__lfhStoryCommitControl.release();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
 }
 
 async function prepareAiFilterAbortProbe(page) {
@@ -2965,6 +2968,7 @@ async function main() {
     if (!process.env.LFH_UI_IMPL_05_ONLY && !process.env.LFH_IMPORT_WIZARD_ONLY) {
       await verifyThreeModes(browser, port, {
         newOfflineContext, mockSuccessfulKeyVerification, completePendingSetup, sseResponse, startScriptImport,
+        holdNextStoryStorageCommit, releaseHeldStoryStorageCommit,
       });
       console.log('THREE_MODE_HARNESS_E2E_PASSED');
       if (process.env.LFH_CREATIVE_ONLY === '1') return;
