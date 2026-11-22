@@ -6,12 +6,12 @@ Folio 不运行自建模型中转或业务服务器。用户在客户端配置�
 
 ## 下载与安装
 
-仓库目前为私有仓库，GitHub Release 仅对获授权的仓库成员开放。安装包和每版变更记录见：
+仓库目前为私有仓库，GitHub Release 仅对获授权的仓库成员开放。Release 页面记录各版本源码和更新内容；本次发布暂未附 Android APK，安装包需要完成签名构建后才能上传。
 
 - [Folio V0.2.0 Release](https://github.com/ReedRodLiu/local-fiction-harness/releases/tag/v0.2.0)
 - [Folio V0.1.0 Release](https://github.com/ReedRodLiu/local-fiction-harness/releases/tag/v0.1.0)
 
-Android 最低版本设为 Android 7.0（API 24），当前构建目标为 Android API 36。下载 Release 中的 APK 后，按 Android 系统提示允许本次安装来源，再打开 Folio。首次使用需要在应用设置中填写你自己的模型 API Key；模型调用费用由你与模型服务商之间的账户承担。
+Android 最低版本设为 Android 7.0（API 24），当前构建目标为 Android API 36。Release 附带 APK 后，按 Android 系统提示允许本次安装来源，再打开 Folio。首次使用需要在应用设置中填写你自己的模型 API Key；模型调用费用由你与模型服务商之间的账户承担。
 
 安装新版或更换设备前，建议先在应用中导出 `.folio.json` 备份。V0.2 会将 V0.1 的本地资料静默迁移到新数据结构；备份仍是更换设备或处理异常时最稳妥的恢复方式。API Key 不会包含在 `.folio.json` 备份中。
 
