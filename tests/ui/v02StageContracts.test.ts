@@ -239,8 +239,13 @@ describe('Folio V0.2 UI contracts & jargon purge', () => {
     }));
     expect(wizardMarkup).toContain('连接 DeepSeek');
     expect(wizardMarkup).toContain('前往 DeepSeek 开放平台获取 API Key：');
+    expect(wizardMarkup).toContain('id="byok-api-key"');
+    expect(wizardMarkup).toContain('data-testid="wizard-verify-save-btn"');
     expect(wizardMarkup).not.toContain('钥匙');
     expect(wizardMarkup).not.toContain('手机浏览器');
+    expect(wizardMarkup).not.toContain('一键粘贴');
+    expect(wizardMarkup).not.toContain('wizard-paste-btn');
+    expect(readUiSource('DeepSeekSetupWizard.tsx')).not.toContain('navigator.clipboard.readText');
 
     const settingsMarkup = renderToStaticMarkup(createElement(SettingsPage, {
       appVersion: '0.2.0',

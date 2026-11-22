@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   DEEPSEEK_OFFICIAL_KEYS_URL,
-  sanitizeApiKeyInput,
   validateApiKeyFormat,
   verifyDeepSeekApiKey,
 } from '../harness/index.ts';
@@ -34,8 +33,6 @@ export function DeepSeekSetupWizard({
   const [isVerifying, setIsVerifying] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [allowFallbackSave, setAllowFallbackSave] = useState(false);
-  const [clipboardHint, setClipboardHint] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
   const verifySeqRef = useRef(0);
 
   useEffect(() => {
@@ -47,28 +44,6 @@ export function DeepSeekSetupWizard({
 
   const handleOpenPlatform = () => {
     window.open(DEEPSEEK_OFFICIAL_KEYS_URL, '_blank', 'noopener,noreferrer');
-  };
-
-  const handleOneClickPaste = async () => {
-    setErrorMsg(null);
-    setAllowFallbackSave(false);
-    try {
-      if (!navigator.clipboard?.readText) {
-        throw new Error('clipboard_unavailable');
-      }
-      const clipText = await navigator.clipboard.readText();
-      const cleaned = sanitizeApiKeyInput(clipText);
-      if (!cleaned) {
-        setClipboardHint('剪贴板里暂时没有内容，请长按下方输入框选择「粘贴」。');
-        inputRef.current?.focus();
-        return;
-      }
-      setKeyDraft(cleaned);
-      setClipboardHint('已为你自动粘贴并清理空格。');
-    } catch {
-      setClipboardHint('请长按下方输入框选择「粘贴」。');
-      inputRef.current?.focus();
-    }
   };
 
   const handleVerifyAndSave = async () => {
@@ -185,24 +160,11 @@ export function DeepSeekSetupWizard({
               <span className="wizard-step-num">3</span>
               <strong>回到这里粘贴并验证</strong>
             </div>
-            <div className="wizard-paste-row">
-              <button
-                type="button"
-                className="btn"
-                data-testid="wizard-paste-btn"
-                disabled={isVerifying}
-                onClick={() => void handleOneClickPaste()}
-              >
-                一键粘贴
-              </button>
-              {clipboardHint && <span className="status-text">{clipboardHint}</span>}
-            </div>
 
-            <div className="field" style={{ marginTop: '8px' }}>
+            <div className="field">
               <label htmlFor="byok-api-key">DeepSeek API Key</label>
               <div className="key-input-row">
                 <input
-                  ref={inputRef}
                   id="byok-api-key"
                   name="apiKey"
                   type={showKey ? 'text' : 'password'}
