@@ -48,7 +48,7 @@ describe('Issue #111 Slice 3: memory-only DeepSeek balance controller', () => {
     let resolveFirst!: (value: { ok: boolean; status: number; text: () => Promise<string> }) => void;
     let callCount = 0;
 
-    const fetchMock: BalanceFetchLike = vi.fn(async () => {
+    const fetchMock = vi.fn<BalanceFetchLike>(async () => {
       callCount += 1;
       if (callCount === 1) {
         return await new Promise((resolve) => {
@@ -191,7 +191,7 @@ describe('Issue #111 Slice 3: memory-only DeepSeek balance controller', () => {
 
   it('auto-checks after binding a new key via wizard and supports retry after 401/5xx/timeout', async () => {
     let attempt = 0;
-    const fetchMock: BalanceFetchLike = vi.fn(async () => {
+    const fetchMock = vi.fn<BalanceFetchLike>(async () => {
       attempt += 1;
       if (attempt === 1) {
         return { ok: false, status: 401 };

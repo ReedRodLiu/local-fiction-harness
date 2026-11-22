@@ -1316,7 +1316,12 @@ export function App({ runtime }: AppProps) {
     try {
       await flushActiveManuscripts();
       if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
-      const work = { ...newWork('未命名作品'), writingStarted: true };
+      const prefAtCreate = pendingWelcomePref;
+      const work = {
+        ...newWork('未命名作品'),
+        writingStarted: true,
+        ...(prefAtCreate ? { generationPreference: prefAtCreate } : {}),
+      };
       await creative.save((state) => ({
         ...state,
         works: [...state.works, work],
@@ -2312,6 +2317,7 @@ export function App({ runtime }: AppProps) {
                 key={creativePage}
                 mode={creativePage}
                 workspace={creative.workspace}
+                defaultConfig={config}
                 ready={creative.ready}
                 storageError={creative.error}
                 save={creative.save}

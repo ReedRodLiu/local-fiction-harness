@@ -129,4 +129,20 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
     // Narrow mobile rules hide secondary tier label so controls never squeeze textarea or overflow
     expect(shellCss).toMatch(/@media \(max-width: 560px\)[\s\S]*\.composer-model-tier\s*\{[^}]*display:\s*none;/s);
   });
+
+  it('wires double-row GenerationControls into DraftPane (both discussion and manuscript views) and CharacterPane', () => {
+    const draftSource = readSource('src/ui/DraftPane.tsx');
+    const charSource = readSource('src/ui/CharacterPane.tsx');
+    const workspaceSource = readSource('src/ui/CreativeWorkspace.tsx');
+
+    expect(workspaceSource).toContain('defaultConfig: ModelConfig');
+    expect(draftSource).toContain("from './GenerationControls.tsx'");
+    expect(draftSource).toContain('className="composer composer-double-row"');
+    expect(draftSource).toContain('className="composer writing-composer composer-double-row"');
+    expect(draftSource).toContain('resolveEffectiveModelConfig(config, live.generationPreference)');
+
+    expect(charSource).toContain("from './GenerationControls.tsx'");
+    expect(charSource).toContain('className="composer composer-double-row"');
+    expect(charSource).toContain('resolveEffectiveModelConfig(config, current.generationPreference)');
+  });
 });

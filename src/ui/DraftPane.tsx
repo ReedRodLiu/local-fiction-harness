@@ -29,6 +29,8 @@ import {
   writeDocument,
   type CreativeWorkspaceState,
   type DraftWork,
+  type GenerationPreference,
+  type ModelConfig,
   type PlatformRuntime,
   type StageAssetMode,
   type TurnNode,
@@ -36,6 +38,7 @@ import {
   type WritingSuggestion,
 } from '../harness/index.ts';
 import type { DocumentEdit } from './DocumentDialog.tsx';
+import { GenerationControls, mergeGenerationPreference } from './GenerationControls.tsx';
 import { MarkdownView } from './MarkdownView.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { ProposalCard } from './ProposalCard.tsx';
@@ -68,6 +71,7 @@ type WritingCompanionTab = 'discussion' | 'documents';
 interface DraftPaneProps {
   work: DraftWork;
   workspace: CreativeWorkspaceState;
+  defaultConfig: ModelConfig;
   save: SaveWorkspace;
   read: () => Promise<CreativeWorkspaceState>;
   runtime: PlatformRuntime;
@@ -725,6 +729,26 @@ export function DraftPane(props: DraftPaneProps) {
     });
   };
 
+  const effectiveGenerationConfig = resolveEffectiveModelConfig(
+    props.defaultConfig,
+    work.generationPreference,
+  );
+
+  const handleGenerationPreferenceChange = (patch: Partial<GenerationPreference>) => {
+    void save((state) =>
+      updateWork(state, work.id, (live) => {
+        const nextPref = mergeGenerationPreference(live.generationPreference, patch);
+        const copy = { ...live };
+        if (nextPref) {
+          copy.generationPreference = nextPref;
+        } else {
+          delete copy.generationPreference;
+        }
+        return copy;
+      }),
+    ).catch(reply.fail);
+  };
+
   const resolveProposalTarget = (proposal: TurnProposalRecord): ResolvedProposalTargetState => {
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
     if (normalized === 'memory') {
@@ -1118,7 +1142,7 @@ export function DraftPane(props: DraftPaneProps) {
           </section>
 
           <form
-            className="composer"
+            className="composer composer-double-row"
             data-testid="stage-composer"
             onSubmit={(event) => {
               event.preventDefault();
@@ -1141,29 +1165,38 @@ export function DraftPane(props: DraftPaneProps) {
               }}
               onKeyDown={sendOnEnter}
             />
-            <div className="composer-actions">
-              {reply.busy ? (
-                <button
-                  type="button"
-                  className="btn composer-send"
-                  aria-label="停止"
-                  onClick={reply.stop}
-                >
-                  <Square size={17} strokeWidth={1.75} aria-hidden="true" />
-                  <span className="visually-hidden">停止</span>
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  className="btn btn-primary composer-send"
-                  aria-label="发送"
-                  disabled={!discussionInput.trim()}
-                >
-                  <ArrowUp size={19} strokeWidth={1.75} aria-hidden="true" />
-                  <span className="visually-hidden">发送</span>
-                </button>
-              )}
-            </div>
+            <GenerationControls
+              model={effectiveGenerationConfig.model}
+              reasoningEffort={effectiveGenerationConfig.reasoningEffort}
+              disabled={reply.busy}
+              onModelChange={(model) => handleGenerationPreferenceChange({ model })}
+              onReasoningEffortChange={(reasoningEffort) => handleGenerationPreferenceChange({ reasoningEffort })}
+              trailingSlot={
+                <div className="composer-actions">
+                  {reply.busy ? (
+                    <button
+                      type="button"
+                      className="btn composer-send"
+                      aria-label="停止"
+                      onClick={reply.stop}
+                    >
+                      <Square size={17} strokeWidth={1.75} aria-hidden="true" />
+                      <span className="visually-hidden">停止</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      className="btn btn-primary composer-send"
+                      aria-label="发送"
+                      disabled={!discussionInput.trim()}
+                    >
+                      <ArrowUp size={19} strokeWidth={1.75} aria-hidden="true" />
+                      <span className="visually-hidden">发送</span>
+                    </button>
+                  )}
+                </div>
+              }
+            />
           </form>
         </>
       ) : (
@@ -1407,7 +1440,7 @@ export function DraftPane(props: DraftPaneProps) {
             )}
 
             <form
-              className="composer writing-composer"
+              className="composer writing-composer composer-double-row"
               data-testid="stage-composer"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -1415,23 +1448,28 @@ export function DraftPane(props: DraftPaneProps) {
               }}
             >
               {composerNotices}
-              <div className="writing-composer-main">
-                <div className="writing-composer-row">
-                  <label className="visually-hidden" htmlFor="writing-suggestion-input">
-                    写作要求
-                  </label>
-                  <textarea
-                    id="writing-suggestion-input"
-                    aria-label="写作要求"
-                    rows={1}
-                    value={manuscriptInput}
-                    placeholder="输入续写/改写要求、调整设定，或直接提问…"
-                    onChange={(event) => {
-                      setManuscriptInput(event.target.value);
-                      syncTextareaHeight(event.currentTarget);
-                    }}
-                    onKeyDown={sendOnEnter}
-                  />
+              <label className="visually-hidden" htmlFor="writing-suggestion-input">
+                写作要求
+              </label>
+              <textarea
+                id="writing-suggestion-input"
+                aria-label="写作要求"
+                rows={1}
+                value={manuscriptInput}
+                placeholder="输入续写/改写要求、调整设定，或直接提问…"
+                onChange={(event) => {
+                  setManuscriptInput(event.target.value);
+                  syncTextareaHeight(event.currentTarget);
+                }}
+                onKeyDown={sendOnEnter}
+              />
+              <GenerationControls
+                model={effectiveGenerationConfig.model}
+                reasoningEffort={effectiveGenerationConfig.reasoningEffort}
+                disabled={reply.busy}
+                onModelChange={(model) => handleGenerationPreferenceChange({ model })}
+                onReasoningEffortChange={(reasoningEffort) => handleGenerationPreferenceChange({ reasoningEffort })}
+                trailingSlot={
                   <div className="composer-actions">
                     {reply.busy ? (
                       <button
@@ -1455,8 +1493,8 @@ export function DraftPane(props: DraftPaneProps) {
                       </button>
                     )}
                   </div>
-                </div>
-              </div>
+                }
+              />
             </form>
           </div>
         </>

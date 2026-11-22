@@ -1,4 +1,9 @@
-import type { CreativeWorkspaceState, PlatformRuntime, StageAssetMode } from '../harness/index.ts';
+import type {
+  CreativeWorkspaceState,
+  ModelConfig,
+  PlatformRuntime,
+  StageAssetMode,
+} from '../harness/index.ts';
 import { CharacterPane } from './CharacterPane.tsx';
 import type { DocumentEdit } from './DocumentDialog.tsx';
 import { DraftPane } from './DraftPane.tsx';
@@ -9,6 +14,7 @@ import type { SaveWorkspace } from './useCreativeWorkspace.ts';
 interface Props {
   mode: 'writing' | 'character';
   workspace: CreativeWorkspaceState;
+  defaultConfig: ModelConfig;
   ready: boolean;
   storageError: string;
   save: SaveWorkspace;

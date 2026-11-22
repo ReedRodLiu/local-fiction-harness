@@ -238,4 +238,100 @@ describe('Issue #109 Slice 1: Welcome materialization & Story independent genera
     const restoredSingle = importStoryBackup(singleJson, []);
     expect(restoredSingle.generationPreference).toEqual(welcomeOverride);
   });
+
+  it('isolates DraftWork and LocalCharacter overrides across views/conversations and round-trips workspace via .folio.json v3', () => {
+    const globalCfg: ModelConfig = {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-flash',
+      reasoningEffort: 'high',
+      apiKey: 'sk-test',
+      memoryOnly: false,
+    };
+
+    const { work: workA } = materializeAssetFromNodes({
+      targetMode: 'writing',
+      title: '作品A',
+      settingMarkdown: '# 设定A',
+      turns: sampleTurns,
+      generationPreference: { model: 'deepseek-v4-pro', reasoningEffort: 'max' },
+    });
+    const { work: workB } = materializeAssetFromNodes({
+      targetMode: 'writing',
+      title: '作品B',
+      settingMarkdown: '# 设定B',
+      turns: sampleTurns,
+    });
+    const { character: charA } = materializeAssetFromNodes({
+      targetMode: 'character',
+      title: '角色A',
+      settingMarkdown: '# 人设A',
+      turns: sampleTurns,
+      characterName: '角色A',
+      generationPreference: { model: 'deepseek-flash', reasoningEffort: 'none' },
+    });
+    const { character: charB } = materializeAssetFromNodes({
+      targetMode: 'character',
+      title: '角色B',
+      settingMarkdown: '# 人设B',
+      turns: sampleTurns,
+      characterName: '角色B',
+    });
+
+    expect(resolveEffectiveModelConfig(globalCfg, workA!.generationPreference)).toMatchObject({
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'max',
+    });
+    expect(resolveEffectiveModelConfig(globalCfg, workB!.generationPreference)).toMatchObject({
+      model: 'deepseek-flash',
+      reasoningEffort: 'high',
+    });
+    expect(resolveEffectiveModelConfig(globalCfg, charA!.generationPreference)).toMatchObject({
+      model: 'deepseek-flash',
+      reasoningEffort: 'none',
+    });
+
+    // Global default changes -> workB & charB follow dynamically, workA & charA keep overrides
+    const nextGlobal: ModelConfig = { ...globalCfg, model: 'deepseek-v4-pro', reasoningEffort: 'low' };
+    expect(resolveEffectiveModelConfig(nextGlobal, workA!.generationPreference)).toMatchObject({
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'max',
+    });
+    expect(resolveEffectiveModelConfig(nextGlobal, workB!.generationPreference)).toMatchObject({
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'low',
+    });
+    expect(resolveEffectiveModelConfig(nextGlobal, charA!.generationPreference)).toMatchObject({
+      model: 'deepseek-flash',
+      reasoningEffort: 'none',
+    });
+    expect(resolveEffectiveModelConfig(nextGlobal, charB!.generationPreference)).toMatchObject({
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'low',
+    });
+
+    const v3Json = exportFolioBackupV3({
+      stories: [],
+      workspace: {
+        ...emptyWorkspace(),
+        works: [workA!, workB!],
+        characters: [charA!, charB!],
+        activeWorkId: workA!.id,
+        activeCharacterId: charA!.id,
+      },
+    });
+    const restored = mergeRestoredBackup(
+      { stories: [], workspace: emptyWorkspace() },
+      parseAndValidateFolioBackup(v3Json),
+    );
+    expect(restored.workspace.works.find((w) => w.title === '作品A')?.generationPreference).toEqual({
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'max',
+    });
+    expect(restored.workspace.works.find((w) => w.title === '作品B')?.generationPreference).toBeUndefined();
+    expect(restored.workspace.characters.find((c) => c.name === '角色A')?.generationPreference).toEqual({
+      model: 'deepseek-flash',
+      reasoningEffort: 'none',
+    });
+    expect(restored.workspace.characters.find((c) => c.name === '角色B')?.generationPreference).toBeUndefined();
+  });
 });

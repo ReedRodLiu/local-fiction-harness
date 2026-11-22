@@ -20,12 +20,15 @@ import {
   writeDocument,
   type CharacterConversation,
   type CreativeWorkspaceState,
+  type GenerationPreference,
   type LocalCharacter,
+  type ModelConfig,
   type PlatformRuntime,
   type StageAssetMode,
   type TurnProposalRecord,
 } from '../harness/index.ts';
 import type { DocumentEdit } from './DocumentDialog.tsx';
+import { GenerationControls, mergeGenerationPreference } from './GenerationControls.tsx';
 import { MarkdownView } from './MarkdownView.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { TurnCard, type ResolvedProposalTargetState } from './TurnCard.tsx';
@@ -58,6 +61,7 @@ type CharacterCompanionTab = 'conversations' | 'profile';
 interface CharacterPaneProps {
   character: LocalCharacter;
   workspace: CreativeWorkspaceState;
+  defaultConfig: ModelConfig;
   save: SaveWorkspace;
   read: () => Promise<CreativeWorkspaceState>;
   runtime: PlatformRuntime;
@@ -397,7 +401,8 @@ export function CharacterPane(props: CharacterPaneProps) {
         activeLeafNodeId: userNode.parentId,
       };
       const ctx = characterContext(state.publicDocument, current, convAtUserParent, userNode.content);
-      const result = await request(ctx.messages);
+      const effectiveConfig = resolveEffectiveModelConfig(config, current.generationPreference);
+      const result = await request(ctx.messages, { config: effectiveConfig });
       if (signal.aborted) return;
 
       const publicDoc = documentVersion(state.publicDocument);
@@ -422,6 +427,8 @@ export function CharacterPane(props: CharacterPaneProps) {
                 result.turnSummary,
               ),
               ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {}),
+              model: result.model,
+              reasoningEffort: result.reasoningEffort,
               documents: docs,
               documentReads: ctx.reads,
               ...(proposalRecords.length > 0 ? { proposals: proposalRecords } : {}),
@@ -443,8 +450,28 @@ export function CharacterPane(props: CharacterPaneProps) {
           [assistantId]: Math.max(1, Math.round((performance.now() - startedAt) / 1000)),
         }));
       }
-      if (savedConv && assistantId) runSilentSummary(current.id, savedConv, config, assistantId);
+      if (savedConv && assistantId) runSilentSummary(current.id, savedConv, effectiveConfig, assistantId);
     });
+  };
+
+  const effectiveGenerationConfig = resolveEffectiveModelConfig(
+    props.defaultConfig,
+    character.generationPreference,
+  );
+
+  const handleGenerationPreferenceChange = (patch: Partial<GenerationPreference>) => {
+    void save((state) =>
+      updateCharacter(state, character.id, (live) => {
+        const nextPref = mergeGenerationPreference(live.generationPreference, patch);
+        const copy = { ...live };
+        if (nextPref) {
+          copy.generationPreference = nextPref;
+        } else {
+          delete copy.generationPreference;
+        }
+        return copy;
+      }),
+    ).catch(reply.fail);
   };
 
   const editAndBranch = (targetUserNodeId: string, newContent: string) => {
@@ -786,7 +813,7 @@ export function CharacterPane(props: CharacterPaneProps) {
       </section>
 
       <form
-        className="composer"
+        className="composer composer-double-row"
         data-testid="stage-composer"
         onSubmit={(event) => {
           event.preventDefault();
@@ -842,29 +869,38 @@ export function CharacterPane(props: CharacterPaneProps) {
           }}
           onKeyDown={sendOnEnter}
         />
-        <div className="composer-actions">
-          {reply.busy ? (
-            <button
-              type="button"
-              className="btn composer-send"
-              aria-label="停止"
-              onClick={reply.stop}
-            >
-              <Square size={17} strokeWidth={1.75} aria-hidden="true" />
-              <span className="visually-hidden">停止</span>
-            </button>
-          ) : (
-            <button
-              type="submit"
-              className="btn btn-primary composer-send"
-              aria-label="发送"
-              disabled={!input.trim()}
-            >
-              <ArrowUp size={19} strokeWidth={1.75} aria-hidden="true" />
-              <span className="visually-hidden">发送</span>
-            </button>
-          )}
-        </div>
+        <GenerationControls
+          model={effectiveGenerationConfig.model}
+          reasoningEffort={effectiveGenerationConfig.reasoningEffort}
+          disabled={reply.busy}
+          onModelChange={(model) => handleGenerationPreferenceChange({ model })}
+          onReasoningEffortChange={(reasoningEffort) => handleGenerationPreferenceChange({ reasoningEffort })}
+          trailingSlot={
+            <div className="composer-actions">
+              {reply.busy ? (
+                <button
+                  type="button"
+                  className="btn composer-send"
+                  aria-label="停止"
+                  onClick={reply.stop}
+                >
+                  <Square size={17} strokeWidth={1.75} aria-hidden="true" />
+                  <span className="visually-hidden">停止</span>
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  className="btn btn-primary composer-send"
+                  aria-label="发送"
+                  disabled={!input.trim()}
+                >
+                  <ArrowUp size={19} strokeWidth={1.75} aria-hidden="true" />
+                  <span className="visually-hidden">发送</span>
+                </button>
+              )}
+            </div>
+          }
+        />
       </form>
 
       <SheetDialog
