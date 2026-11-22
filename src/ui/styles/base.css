@@ -28,7 +28,12 @@
 
 .field input:focus-visible,
 button:focus-visible,
-summary:focus-visible {
+summary:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+[role="tab"]:focus-visible,
+[role="menuitem"]:focus-visible,
+[role="menuitemradio"]:focus-visible {
   outline: 2px solid var(--accent-fiction);
   outline-offset: 2px;
 }
@@ -235,13 +240,23 @@ summary:focus-visible {
   gap: 0.35rem 0.5rem;
   width: 100%;
   min-height: 44px;
-  padding: 0;
+  padding: 4px 6px;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.story-tree-span-toggle:hover:not(:disabled) {
+  background: var(--bg-surface);
+}
+
+.story-tree-span-toggle:active:not(:disabled) {
+  background: var(--bg-surface-active);
 }
 
 .story-tree-span-toggle:focus-visible {
@@ -646,6 +661,7 @@ summary:focus-visible {
 }
 
 .md-view a {
+  border-radius: 3px;
   color: var(--accent-fiction);
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -828,6 +844,10 @@ summary:focus-visible {
   background: var(--accent-fiction-soft);
 }
 
+.diff-collapsed-btn:active:not(:disabled) {
+  background: var(--accent-fiction-active);
+}
+
 /* BannerAlert trailing action, dismiss & async error toast */
 .banner-alert-body {
   flex: 1 1 auto;
@@ -848,9 +868,15 @@ summary:focus-visible {
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
 }
 
 .banner-alert-action:hover {
+  color: var(--text-primary);
+}
+
+.banner-alert-action:active:not(:disabled) {
+  background: var(--bg-surface-active);
   color: var(--text-primary);
 }
 
@@ -869,10 +895,16 @@ summary:focus-visible {
   background: transparent;
   color: inherit;
   cursor: pointer;
+  transition: background-color 120ms ease-out, transform 120ms ease-out;
 }
 
 .banner-alert-dismiss:hover {
   background: var(--bg-surface-hover);
+}
+
+.banner-alert-dismiss:active:not(:disabled) {
+  background: var(--bg-surface-active);
+  transform: scale(0.95);
 }
 
 .async-error-toast {
@@ -925,14 +957,20 @@ summary:focus-visible {
   gap: 6px 8px;
   min-width: 0;
   min-height: 44px;
-  padding: 2px 0;
+  padding: 2px 4px;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
   font: inherit;
   font-size: 13px;
   text-align: left;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.proposal-card-toggle:active:not(:disabled) {
+  background: var(--bg-surface-active);
 }
 
 .proposal-card-chevron {
@@ -1049,6 +1087,11 @@ summary:focus-visible {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.proposal-detail-tab:active:not(:disabled) {
+  background: var(--bg-surface-active);
 }
 
 .proposal-detail-tab[aria-selected="true"] {

@@ -78,6 +78,16 @@
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+  transition: background-color 120ms ease-out, transform 120ms ease-out;
+}
+
+.theme-option:hover:not(:disabled) {
+  background: var(--bg-surface-hover);
+}
+
+.theme-option:active:not(:disabled) {
+  background: var(--bg-surface-active);
+  transform: scale(0.98);
 }
 
 .theme-option[aria-pressed='true'] {
@@ -152,6 +162,11 @@
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.font-size-segmented button:active:not(:disabled) {
+  background: var(--bg-surface-active);
 }
 
 .font-size-segmented button[aria-pressed='true'] {
@@ -203,9 +218,15 @@
   display: flex;
   align-items: center;
   min-height: 44px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-size: 13px;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.settings-advanced-details summary:active {
+  background: var(--bg-surface-active);
 }
 
 .settings-advanced-body {
