@@ -52,7 +52,7 @@ import {
 } from './proposalActions.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
 import type { SaveWorkspace } from './useCreativeWorkspace.ts';
-import { useManuscriptAutosave } from './useManuscriptAutosave.ts';
+import { formatManuscriptStatusText, useManuscriptAutosave } from './useManuscriptAutosave.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 import {
   makeTurn,
@@ -908,9 +908,11 @@ export function DraftPane(props: DraftPaneProps) {
       {autosave.saveError && (
         <BannerAlert tone="warning">
           <span>{autosave.saveError}</span>
-          <button type="button" className="btn btn-sm" onClick={() => void autosave.flush()}>
-            重试保存
-          </button>
+          {!editing && (
+            <button type="button" className="btn btn-sm" onClick={() => void autosave.flush()}>
+              重试保存
+            </button>
+          )}
         </BannerAlert>
       )}
       {autosave.undoBanner && (
@@ -1167,11 +1169,22 @@ export function DraftPane(props: DraftPaneProps) {
       ) : (
         <>
           <div className="writing-manuscript-canvas">
-            <div className="writing-manuscript-status" data-testid="manuscript-status" role="status">
-              <span>
-                {autosave.text.length} 字 ·{' '}
-                {autosave.saving ? '保存中…' : autosave.dirty ? '待保存…' : '已本地保存'}
-              </span>
+            <div
+              className={`writing-manuscript-status${autosave.saveError ? ' is-error' : ''}`}
+              data-testid="manuscript-status"
+              role="status"
+            >
+              <span>{formatManuscriptStatusText(autosave)}</span>
+              {autosave.saveError && (
+                <button
+                  type="button"
+                  className="text-action manuscript-status-retry"
+                  data-testid="manuscript-retry-save"
+                  onClick={() => void autosave.flush()}
+                >
+                  重试保存
+                </button>
+              )}
               {autosave.canUndo && (
                 <button
                   type="button"

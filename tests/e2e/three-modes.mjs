@@ -399,9 +399,68 @@ export async function verifyThreeModes(browser, port, helpers) {
     await writing.getByTestId('creative-manuscript').waitFor();
     assert.match(await writing.getByTestId('creative-manuscript').inputValue(), /月台灯柱下只剩一只褪色皮箱/);
 
-    // Debounced autosave + manuscript intent split (chat answer vs continuation suggestion) + undo
+    // Debounced autosave + quiet manuscript status + pre-transition flushes + manuscript intent split
+    await page.evaluate(() => {
+      const status = document.querySelector('[data-testid="manuscript-status"]');
+      window.__lfhObservedManuscriptStatuses = status ? [status.textContent ?? ''] : [];
+      if (status) {
+        const observer = new MutationObserver(() => {
+          window.__lfhObservedManuscriptStatuses.push(status.textContent ?? '');
+        });
+        observer.observe(status, { childList: true, characterData: true, subtree: true });
+        window.__lfhManuscriptStatusObserver = observer;
+      }
+    });
     await writing.getByTestId('creative-manuscript').fill('纸月照进车站。');
     await writing.getByTestId('manuscript-status').getByText('7 字 · 已本地保存', { exact: true }).waitFor();
+
+    // Pre-debounce flush on TopBar 聊天/正文 switch
+    await writing.getByTestId('creative-manuscript').fill('纸月照进车站。未落盘补充。');
+    assert.equal(await page.evaluate(() => window.__lfhHasPendingManuscriptFlush?.()), true);
+    await page.getByRole('group', { name: '作品视图' }).getByRole('button', { name: '聊天' }).click();
+    await writing.getByTestId('writing-discussion-timeline').waitFor();
+    await page.waitForFunction(async (expectedBody) => {
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('local-fiction-harness');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const entry = await new Promise((resolve, reject) => {
+        const request = db.transaction('meta').objectStore('meta').get('creativeWorkspace');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      db.close();
+      return entry?.value?.works?.some((work) => work.body === expectedBody) === true;
+    }, '纸月照进车站。未落盘补充。');
+
+    // Pre-debounce flush on active work export from library menu
+    await page.getByRole('group', { name: '作品视图' }).getByRole('button', { name: '正文' }).click();
+    await writing.getByTestId('creative-manuscript').waitFor();
+    await writing.getByTestId('creative-manuscript').fill('纸月照进车站。导出瞬时正文。');
+    const activeWorkRow = page.getByTestId('desktop-library').locator('[data-testid="story-list-item"][data-active="true"]');
+    await activeWorkRow.getByTestId('story-menu-trigger').click();
+    const [workExportDownload] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByTestId('story-overflow-menu').getByRole('menuitem', { name: '导出 Markdown (.md)' }).click(),
+    ]);
+    assert.match(fs.readFileSync(await workExportDownload.path(), 'utf8'), /导出瞬时正文/);
+
+    // Android hardware Back flush hook flushes pending edits immediately
+    await writing.getByTestId('creative-manuscript').fill('纸月照进车站。');
+    assert.equal(await page.evaluate(() => window.__lfhHasPendingManuscriptFlush?.()), true);
+    await page.evaluate(() => window.__lfhFlushManuscript?.());
+    assert.equal(await page.evaluate(() => window.__lfhHasPendingManuscriptFlush?.()), false);
+
+    await writing.getByTestId('manuscript-status').getByText('7 字 · 已本地保存', { exact: true }).waitFor();
+    const observedStatuses = await page.evaluate(() => {
+      window.__lfhManuscriptStatusObserver?.disconnect();
+      return window.__lfhObservedManuscriptStatuses ?? [];
+    });
+    for (const statusText of observedStatuses) {
+      assert.doesNotMatch(statusText, /待保存|保存中/);
+    }
+
     await page.getByLabel('写作要求').fill('这一段节奏是不是太快？');
     await button('发送请求').click();
     await writing.getByTestId('manuscript-chat-answer').getByText('可以在钟响后补写一句环境细节', { exact: false }).waitFor();

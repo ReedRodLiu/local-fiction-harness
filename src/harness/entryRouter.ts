@@ -10,7 +10,11 @@ import {
   type LocalCharacter,
 } from './creative.ts';
 import { createDefaultId } from './id.ts';
-import { normalizeReasoningEffort } from './keyConfig.ts';
+import {
+  isOfficialDeepSeekModel,
+  isReasoningEffort,
+  normalizeReasoningEffort,
+} from './keyConfig.ts';
 import {
   CHANGE_PROMPT,
   documentVersion,
@@ -22,6 +26,7 @@ import {
   type UnparsedProposalBlock,
 } from './markdownDocuments.ts';
 import type {
+  GenerationPreference,
   LlmMessage,
   LlmTransport,
   ModelConfig,
@@ -414,6 +419,20 @@ export async function routeEntryMessage(
   };
 }
 
+function normalizeGenerationPreference(
+  pref?: GenerationPreference,
+): GenerationPreference | undefined {
+  if (!pref) return undefined;
+  const out: GenerationPreference = {};
+  if (isOfficialDeepSeekModel(pref.model)) {
+    out.model = pref.model;
+  }
+  if (isReasoningEffort(pref.reasoningEffort)) {
+    out.reasoningEffort = pref.reasoningEffort;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /**
  * Materializes neutral (unpersisted) or existing turns + setting Markdown into a persisted target mode asset.
  */
@@ -424,11 +443,13 @@ export function materializeAssetFromNodes(opts: {
   turns: readonly TurnNode[];
   body?: string;
   characterName?: string;
+  generationPreference?: GenerationPreference;
   createId?: () => string;
   now?: number;
 }): { story?: Story; work?: DraftWork; character?: LocalCharacter } {
   const createId = opts.createId ?? createDefaultId;
   const now = opts.now ?? Date.now();
+  const generationPreference = normalizeGenerationPreference(opts.generationPreference);
   const clonedNodes: TurnNode[] = [];
   const idMap = new Map<string, string>();
   for (const turn of opts.turns) {
@@ -464,6 +485,7 @@ export function materializeAssetFromNodes(opts: {
       title: opts.title.trim() || '新故事',
       sourceKind: 'manual_script',
       v2Migrated: true,
+      ...(generationPreference ? { generationPreference } : {}),
       rawScript: '',
       blueprint: createDefaultBlueprint(opts.title.trim() || '新故事'),
       documents: {
@@ -489,6 +511,7 @@ export function materializeAssetFromNodes(opts: {
     const baseWork = newWork(opts.title.trim() || '未命名作品', opts.settingMarkdown);
     const work: DraftWork = {
       ...baseWork,
+      ...(generationPreference ? { generationPreference } : {}),
       body: opts.body ?? '',
       writingStarted: Boolean(opts.body?.trim()),
       discussion: clonedNodes,
@@ -505,6 +528,7 @@ export function materializeAssetFromNodes(opts: {
   conv.activeLeafNodeId = leafId;
   const character: LocalCharacter = {
     ...baseChar,
+    ...(generationPreference ? { generationPreference } : {}),
     conversations: [conv],
     activeConversationId: conv.id,
   };
@@ -529,9 +553,11 @@ export function convertActiveAssetMode(opts: {
   let settingMarkdown = '';
   let turns: TurnNode[] = [];
   let body = '';
+  let generationPreference: GenerationPreference | undefined;
 
   if (opts.fromMode === 'story' && opts.story) {
     title = opts.story.title;
+    generationPreference = opts.story.generationPreference;
     if (opts.story.documents) {
       const scoped = { ...opts.story, documents: opts.story.documents };
       const state = storyDocumentState(scoped, opts.story.activeLeafNodeId, true);
@@ -542,11 +568,13 @@ export function convertActiveAssetMode(opts: {
     turns = getActiveBranchNodes(opts.story);
   } else if (opts.fromMode === 'writing' && opts.work) {
     title = opts.work.title;
+    generationPreference = opts.work.generationPreference;
     settingMarkdown = documentVersion(opts.work.document).markdown;
     turns = getWorkActiveDiscussionNodes(opts.work);
     body = opts.work.body;
   } else if (opts.fromMode === 'character' && opts.character) {
     title = opts.character.name;
+    generationPreference = opts.character.generationPreference;
     settingMarkdown = documentVersion(opts.character.document).markdown;
     const conv = opts.character.conversations.find((c) => c.id === opts.character!.activeConversationId);
     turns = conv ? getActiveBranchNodes(conv) : [];
@@ -559,6 +587,7 @@ export function convertActiveAssetMode(opts: {
     turns,
     body,
     characterName: opts.toMode === 'character' ? title : undefined,
+    generationPreference,
     createId: opts.createId,
     now: opts.now,
   });

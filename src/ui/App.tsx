@@ -42,8 +42,11 @@ import {
   type DeepSeekImportBatchResult,
   type DiagnosticActiveView,
   type DiagnosticBundleTrigger,
+  type GenerationPreference,
   type ModelConfig,
+  type OfficialDeepSeekModel,
   type PlatformRuntime,
+  type ReasoningEffort,
   type ScriptTurnRange,
   type StageAssetMode,
   type Story,
@@ -68,6 +71,7 @@ import { CreativeWorkspace } from './CreativeWorkspace.tsx';
 import { DeepSeekSetupWizard } from './DeepSeekSetupWizard.tsx';
 import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
 import { DocumentDialog, type DocumentEdit } from './DocumentDialog.tsx';
+import { GenerationControls, mergeGenerationPreference } from './GenerationControls.tsx';
 import { ImportPanel, type ImportMode } from './ImportPanel.tsx';
 import { LibraryDrawer } from './LibraryDrawer.tsx';
 import { MarkdownView } from './MarkdownView.tsx';
@@ -91,9 +95,11 @@ import { toErrorMessage } from './textHelpers.ts';
 import { useAppOverlayHistory } from './useAppOverlayHistory.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
 import { useCreativeWorkspace } from './useCreativeWorkspace.ts';
+import { useDeepSeekBalance } from './useDeepSeekBalance.ts';
 import { useDisplayPreferences } from './useDisplayPreferences.ts';
 import { useEdgeSwipeToOpen } from './useEdgeSwipeToOpen.ts';
 import { useLibraryCollapsedPreference } from './useLibraryCollapsedPreference.ts';
+import { flushActiveManuscripts } from './useManuscriptAutosave.ts';
 import { usePresentationOverlayState } from './usePresentationOverlayState.ts';
 
 function hasModelCredentials(config: ModelConfig, useDevEnvKey: boolean): boolean {
@@ -167,6 +173,7 @@ export function App({ runtime }: AppProps) {
   const [creativePage, setCreativePage] = useState<'writing' | 'character' | null>(null);
   const [newCreationOpen, setNewCreationOpen] = useState(false);
   const [neutralTurns, setNeutralTurns] = useState<TurnNode[]>([]);
+  const [pendingWelcomePref, setPendingWelcomePref] = useState<GenerationPreference | undefined>(undefined);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const [writingView, setWritingView] = useState<{ id: string; manuscript: boolean } | null>(null);
   const [initialCreativeTurn, setInitialCreativeTurn] = useState<{ id: string; prompt: string } | null>(null);
@@ -231,6 +238,7 @@ export function App({ runtime }: AppProps) {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardMounted, setWizardMounted] = useState(false);
   const [wizardVerifying, setWizardVerifying] = useState(false);
+  const [keyBoundSeq, setKeyBoundSeq] = useState(0);
   const [pendingByok, setPendingByok] = useState<{
     label: string;
     resume: (resolvedConfig: ModelConfig) => void;
@@ -691,6 +699,10 @@ export function App({ runtime }: AppProps) {
       storyOpSeqRef.current !== storySeqAtStart;
 
     try {
+      await storyCommitQueueRef.current;
+      if (isStale()) {
+        return;
+      }
       const result = await execute({
         signal: controller.signal,
         onReasoningDelta: (delta) => {
@@ -796,6 +808,15 @@ export function App({ runtime }: AppProps) {
 
   const hasCredentials = hasModelCredentials(config, useDevEnvKey);
   const useDevProxyForSetup = import.meta.env.DEV && isWebDev && isDevProxyBaseUrl(config.baseUrl);
+  const { balanceState, refreshBalance } = useDeepSeekBalance({
+    active: showSettings,
+    hasCredentials,
+    useDevEnvKey,
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    keyBoundSeq,
+    diagnostics: runtime.diagnostics,
+  });
 
   const openByokPrompt = (
     label: string,
@@ -840,6 +861,7 @@ export function App({ runtime }: AppProps) {
     if (branchSwitchBusyRef.current) return;
     ++overlayNavigationSeqRef.current;
     captureOverlayTrigger();
+    void flushActiveManuscripts();
     abortActiveStream(true);
     setPlusMenuOpen(false);
     setCreativePage(null);
@@ -855,6 +877,7 @@ export function App({ runtime }: AppProps) {
     if (branchSwitchBusyRef.current) return;
     ++overlayNavigationSeqRef.current;
     captureOverlayTrigger();
+    void flushActiveManuscripts();
     setPlusMenuOpen(false);
     setCreativeCompanionOpen(false);
     setShowImport(false);
@@ -906,6 +929,7 @@ export function App({ runtime }: AppProps) {
       setCreativePage(null);
       setNewCreationOpen(false);
       setNeutralTurns([]);
+      setPendingWelcomePref(undefined);
       return;
     }
     if (targetMode === 'writing' && materialized.work) {
@@ -917,6 +941,7 @@ export function App({ runtime }: AppProps) {
       }));
       if (!stillCurrent()) return;
       setNeutralTurns([]);
+      setPendingWelcomePref(undefined);
       setWritingView({ id: work.id, manuscript: Boolean(work.body.trim()) });
       openCreativePage('writing');
       return;
@@ -930,6 +955,7 @@ export function App({ runtime }: AppProps) {
       }));
       if (!stillCurrent()) return;
       setNeutralTurns([]);
+      setPendingWelcomePref(undefined);
       openCreativePage('character');
     }
   };
@@ -939,8 +965,10 @@ export function App({ runtime }: AppProps) {
     const fromMode: StageAssetMode = creativePage ?? 'story';
     if (fromMode === targetMode) return;
     setErrorMsg(null);
-    const activeWorkNow = creative.workspace.works.find((item) => item.id === creative.workspace.activeWorkId);
-    const activeCharacterNow = creative.workspace.characters.find((item) => item.id === creative.workspace.activeCharacterId);
+    await flushActiveManuscripts();
+    const latestWorkspace = await creative.read();
+    const activeWorkNow = latestWorkspace.works.find((item) => item.id === latestWorkspace.activeWorkId);
+    const activeCharacterNow = latestWorkspace.characters.find((item) => item.id === latestWorkspace.activeCharacterId);
 
     try {
       const converted = convertActiveAssetMode({
@@ -949,7 +977,7 @@ export function App({ runtime }: AppProps) {
         story,
         work: activeWorkNow,
         character: activeCharacterNow,
-        workspace: creative.workspace,
+        workspace: latestWorkspace,
       });
       await persistMaterializedAsset(targetMode, converted);
       try {
@@ -998,13 +1026,15 @@ export function App({ runtime }: AppProps) {
           setInput('');
         }
         void runStreamingExecution(
-          (callbacks) =>
-            harness.runTurn(
-              story,
+          (callbacks) => {
+            const latestStory = storyRef.current ?? story;
+            return harness.runTurn(
+              latestStory,
               trimmed,
-              resolveEffectiveModelConfig(activeCfg, story.generationPreference),
+              resolveEffectiveModelConfig(activeCfg, latestStory.generationPreference),
               callbacks,
-            ),
+            );
+          },
           restoreOnError
             ? () => setInput((current) =>
               current.length === 0 || current === trimmed ? trimmed : current,
@@ -1026,15 +1056,16 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '编辑内容并生成新分支',
       (activeCfg) => {
-        void runStreamingExecution((callbacks) =>
-          harness.editAndBranch(
-            story,
+        void runStreamingExecution((callbacks) => {
+          const latestStory = storyRef.current ?? story;
+          return harness.editAndBranch(
+            latestStory,
             targetUserNodeId,
             trimmed,
-            resolveEffectiveModelConfig(activeCfg, story.generationPreference),
+            resolveEffectiveModelConfig(activeCfg, latestStory.generationPreference),
             callbacks,
-          ),
-        );
+          );
+        });
       },
       overrideConfig,
     );
@@ -1048,14 +1079,15 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '重新生成回复',
       (activeCfg) => {
-        void runStreamingExecution((callbacks) =>
-          harness.regenerateNode(
-            story,
+        void runStreamingExecution((callbacks) => {
+          const latestStory = storyRef.current ?? story;
+          return harness.regenerateNode(
+            latestStory,
             targetAssistantNodeId,
-            resolveEffectiveModelConfig(activeCfg, story.generationPreference),
+            resolveEffectiveModelConfig(activeCfg, latestStory.generationPreference),
             callbacks,
-          ),
-        );
+          );
+        });
       },
       overrideConfig,
     );
@@ -1107,6 +1139,7 @@ export function App({ runtime }: AppProps) {
   const handleWelcomeEntrySubmit = (rawPrompt: string) => {
     const trimmed = rawPrompt.trim();
     if (!trimmed || creationPending.current || isStreaming || creating) return;
+    const prefAtSubmit = pendingWelcomePref;
 
     if (neutralTurns.length > 0) {
       const switchTarget = detectNaturalModeSwitchIntent(trimmed);
@@ -1116,6 +1149,7 @@ export function App({ runtime }: AppProps) {
           title: neutralTurns[0]?.content.slice(0, 20) || '新创作',
           settingMarkdown: neutralTurns.map((t) => t.content).join('\n\n'),
           turns: neutralTurns,
+          generationPreference: prefAtSubmit,
         });
         setInput('');
         void persistMaterializedAsset(switchTarget, materialized)
@@ -1150,12 +1184,13 @@ export function App({ runtime }: AppProps) {
       setErrorMsg(null);
       setInput('');
 
+      const effectiveWelcomeCfg = resolveEffectiveModelConfig(activeCfg, prefAtSubmit);
       const publicMem = documentVersion(creative.workspace.publicDocument).markdown;
       void routeEntryMessage(
         trimmed,
         neutralTurns,
         runtime.transport,
-        activeCfg,
+        effectiveWelcomeCfg,
         {
           signal: controller.signal,
           onReasoningDelta: (delta) => {
@@ -1192,8 +1227,8 @@ export function App({ runtime }: AppProps) {
             content: routed.assistantReply,
             ...(routed.turnSummary ? { turnSummary: routed.turnSummary } : {}),
             ...(routed.reasoningContent ? { reasoningContent: routed.reasoningContent } : {}),
-            model: routed.model ?? activeCfg.model,
-            reasoningEffort: routed.reasoningEffort ?? normalizeReasoningEffort(activeCfg.reasoningEffort),
+            model: routed.model ?? effectiveWelcomeCfg.model,
+            reasoningEffort: routed.reasoningEffort ?? normalizeReasoningEffort(effectiveWelcomeCfg.reasoningEffort),
             createdAt: now + 1,
             summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
             ...(proposalRecords.length > 0 ? { proposals: proposalRecords } : {}),
@@ -1222,6 +1257,7 @@ export function App({ runtime }: AppProps) {
             settingMarkdown: routed.settingMarkdown,
             turns: allTurns,
             characterName: routed.characterName,
+            generationPreference: prefAtSubmit,
           });
           await persistMaterializedAsset(routed.mode, materialized, {
             storySeqAtStart,
@@ -1278,6 +1314,8 @@ export function App({ runtime }: AppProps) {
     setCreating(true);
     setErrorMsg(null);
     try {
+      await flushActiveManuscripts();
+      if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
       const work = { ...newWork('未命名作品'), writingStarted: true };
       await creative.save((state) => ({
         ...state,
@@ -1286,6 +1324,7 @@ export function App({ runtime }: AppProps) {
       }));
       if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
       setNeutralTurns([]);
+      setPendingWelcomePref(undefined);
       setInput('');
       setWritingView({ id: work.id, manuscript: true });
       openCreativePage('writing');
@@ -1310,14 +1349,16 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '开启第一幕',
       (activeCfg) => {
-        void runStreamingExecution((callbacks) =>
-          harness.runTurn(
-            targetStory,
+        void runStreamingExecution((callbacks) => {
+          const latestStory =
+            storyRef.current?.id === targetStory.id ? storyRef.current : targetStory;
+          return harness.runTurn(
+            latestStory,
             '请按照当前故事设定开始第一幕。',
-            resolveEffectiveModelConfig(activeCfg, targetStory.generationPreference),
+            resolveEffectiveModelConfig(activeCfg, latestStory.generationPreference),
             callbacks,
-          ),
-        );
+          );
+        });
       },
       overrideConfig,
     );
@@ -1362,6 +1403,7 @@ export function App({ runtime }: AppProps) {
       await commitStoryState(activated ?? saved);
       setNewCreationOpen(false);
       setNeutralTurns([]);
+      setPendingWelcomePref(undefined);
       setShowImport(false);
       setShowSettings(false);
     } catch (err) {
@@ -1409,6 +1451,8 @@ export function App({ runtime }: AppProps) {
     const opSeq = ++storyOpSeqRef.current;
     setErrorMsg(null);
     try {
+      await flushActiveManuscripts();
+      if (storyOpSeqRef.current !== opSeq) return;
       const switched = await harness.setActiveStory(id);
       if (storyOpSeqRef.current !== opSeq) return;
       if (switched) {
@@ -1418,6 +1462,7 @@ export function App({ runtime }: AppProps) {
         if (isNavigationCurrent(opSeq, overlaySeqAtStart)) {
           setNewCreationOpen(false);
           setNeutralTurns([]);
+          setPendingWelcomePref(undefined);
           setShowImport(false);
           setShowSettings(false);
           setCreativePage(null);
@@ -1488,6 +1533,7 @@ export function App({ runtime }: AppProps) {
   const handleExportFullBackup = async () => {
     setErrorMsg(null);
     try {
+      await flushActiveManuscripts();
       const latestWorkspace = await creative.read();
       const latestStories = (await harness.listStories()).map(migrateStoryToV02);
       const json = exportFolioBackupV3({
@@ -1615,6 +1661,7 @@ export function App({ runtime }: AppProps) {
     setWritingView(null);
     setInitialCreativeTurn(null);
     setNeutralTurns([]);
+    setPendingWelcomePref(undefined);
     setNewCreationOpen(true);
     setInput('');
     setErrorMsg(null);
@@ -1637,6 +1684,7 @@ export function App({ runtime }: AppProps) {
   function openNewCreation() {
     if (deepSeekImportBusyRef.current) return;
     ++storyOpSeqRef.current;
+    void flushActiveManuscripts();
     abortActiveStream(true);
     invalidateSummaryTask();
     setPlusMenuOpen(false);
@@ -1647,6 +1695,7 @@ export function App({ runtime }: AppProps) {
     setStoryTreeOpen(false);
     setMobileLibraryOpen(false);
     setNeutralTurns([]);
+    setPendingWelcomePref(undefined);
     setNewCreationOpen(true);
     setInput('');
     setErrorMsg(null);
@@ -1670,6 +1719,9 @@ export function App({ runtime }: AppProps) {
     setErrorMsg(null);
     try {
       if (action === 'export') {
+        if (mode === 'writing') {
+          await flushActiveManuscripts();
+        }
         const state = await creative.read();
         if (mode === 'writing') {
           const work = state.works.find((item) => item.id === id);
@@ -1689,6 +1741,10 @@ export function App({ runtime }: AppProps) {
           }
         }
         return;
+      }
+      if (action !== 'delete' || mode !== 'writing' || creative.workspace.activeWorkId !== id) {
+        await flushActiveManuscripts();
+        if (opSeq !== null && storyOpSeqRef.current !== opSeq) return;
       }
       await creative.save((state) => {
         if (mode === 'writing') {
@@ -1963,8 +2019,10 @@ export function App({ runtime }: AppProps) {
   const showManuscript = Boolean(activeWork && (writingView?.id === activeWork.id
     ? writingView.manuscript
     : activeWork.writingStarted || activeWork.body || activeWork.source));
-  const selectWritingView = (manuscript: boolean) => {
-    if (activeWork) setWritingView({ id: activeWork.id, manuscript });
+  const selectWritingView = async (manuscript: boolean) => {
+    const targetWorkId = activeWork?.id;
+    await flushActiveManuscripts();
+    if (targetWorkId) setWritingView({ id: targetWorkId, manuscript });
   };
 
   const creativeActions = (mode: 'writing' | 'character') => ({
@@ -2041,6 +2099,52 @@ export function App({ runtime }: AppProps) {
 
   const backupSummaryText = `包含 ${stories.length} 个故事、${creative.workspace.works.length} 部作品、${creative.workspace.characters.length} 位角色与我的记忆（不含 API Key）`;
 
+  const effectiveComposerConfig = isWelcome
+    ? resolveEffectiveModelConfig(config, pendingWelcomePref)
+    : resolveEffectiveModelConfig(config, story.generationPreference);
+
+  const handleStoryGenerationPreferenceChange = (patch: Partial<GenerationPreference>) => {
+    if (isStreaming || creating || branchSwitchBusyRef.current) return;
+    const current = storyRef.current;
+    if (!current) return;
+    const targetStoryId = current.id;
+    const optimistic: Story = {
+      ...current,
+      generationPreference: mergeGenerationPreference(current.generationPreference, patch),
+    };
+    storyRef.current = optimistic;
+    setStory(optimistic);
+    setStories((prev) => prev.map((item) => (item.id === targetStoryId ? optimistic : item)));
+
+    void enqueueStoryCommit((latest) => {
+      if (!latest || latest.id !== targetStoryId) return null;
+      return {
+        ...latest,
+        generationPreference: mergeGenerationPreference(latest.generationPreference, patch),
+      };
+    }).catch((err) => {
+      setErrorMsg(toErrorMessage(err, '保存模型与思考偏好失败。'));
+    });
+  };
+
+  const handleComposerModelChange = (model: OfficialDeepSeekModel) => {
+    if (isStreaming || creating) return;
+    if (isWelcome) {
+      setPendingWelcomePref((prev) => mergeGenerationPreference(prev, { model }));
+    } else {
+      handleStoryGenerationPreferenceChange({ model });
+    }
+  };
+
+  const handleComposerReasoningChange = (reasoningEffort: ReasoningEffort) => {
+    if (isStreaming || creating) return;
+    if (isWelcome) {
+      setPendingWelcomePref((prev) => mergeGenerationPreference(prev, { reasoningEffort }));
+    } else {
+      handleStoryGenerationPreferenceChange({ reasoningEffort });
+    }
+  };
+
   return (
     <div className="app-root">
       {!showImport && !showSettings && (
@@ -2062,7 +2166,7 @@ export function App({ runtime }: AppProps) {
                 type="button"
                 className="topbar-segment-btn"
                 aria-pressed={!showManuscript}
-                onClick={() => selectWritingView(false)}
+                onClick={() => void selectWritingView(false)}
               >
                 聊天
               </button>
@@ -2070,7 +2174,7 @@ export function App({ runtime }: AppProps) {
                 type="button"
                 className="topbar-segment-btn"
                 aria-pressed={showManuscript}
-                onClick={() => selectWritingView(true)}
+                onClick={() => void selectWritingView(true)}
               >
                 正文
               </button>
@@ -2179,6 +2283,8 @@ export function App({ runtime }: AppProps) {
               config={config}
               useDevEnvKey={useDevEnvKey}
               showDevTestProxy={import.meta.env.DEV && isWebDev && Boolean(devTestInfo?.available)}
+              balanceState={balanceState}
+              onRefreshBalance={refreshBalance}
               themePreference={displayPreferences.theme}
               fontSize={displayPreferences.fontSize}
               canExportCurrentStory={storyExists}
@@ -2217,8 +2323,8 @@ export function App({ runtime }: AppProps) {
                 companionOpen={creativeCompanionOpen}
                 setCompanionOpen={setCreativeCompanionOpen}
                 manuscript={showManuscript}
-                onStartManuscript={() => selectWritingView(true)}
-                onSwitchToChat={() => selectWritingView(false)}
+                onStartManuscript={() => void selectWritingView(true)}
+                onSwitchToChat={() => void selectWritingView(false)}
                 onSwitchStageMode={(targetMode) => void handleConvertStageMode(targetMode)}
                 onNavigateCreatedAsset={(kind, id) => void changeCreativeItem(kind === 'character' ? 'character' : 'writing', id, 'select')}
                 initialTurn={initialCreativeTurn}
@@ -2371,7 +2477,7 @@ export function App({ runtime }: AppProps) {
                 </div>
               )}
 
-              <form className="composer" data-testid="stage-composer" onSubmit={handleSubmit}>
+              <form className="composer composer-double-row" data-testid="stage-composer" onSubmit={handleSubmit}>
                 <div className="composer-notices">
                   {errorMsg && !showSettings && !showImport && !isWelcome && (
                     <BannerAlert
@@ -2413,59 +2519,6 @@ export function App({ runtime }: AppProps) {
                   )}
                 </div>
 
-                {isWelcome && (
-                  <div className="composer-plus-wrap">
-                    <button
-                      type="button"
-                      className="icon-button composer-plus-btn"
-                      data-testid="welcome-plus-menu-trigger"
-                      aria-label="导入或直接写正文"
-                      aria-haspopup="menu"
-                      aria-expanded={plusMenuOpen}
-                      disabled={isStreaming || creating}
-                      onClick={() => setPlusMenuOpen((open) => !open)}
-                    >
-                      <Plus size={19} strokeWidth={1.75} aria-hidden="true" />
-                    </button>
-                    {plusMenuOpen && (
-                      <div
-                        className="composer-plus-menu"
-                        role="menu"
-                        aria-label="更多开始方式"
-                        data-testid="welcome-plus-menu"
-                      >
-                        <button
-                          type="button"
-                          role="menuitem"
-                          data-testid="welcome-deepseek-import"
-                          onClick={() => openImportView('deepseek')}
-                        >
-                          <Sparkles size={16} strokeWidth={1.75} aria-hidden="true" />
-                          <span>从 DeepSeek 导入</span>
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          data-testid="welcome-script-import"
-                          onClick={() => openImportView('script')}
-                        >
-                          <FilePlus2 size={16} strokeWidth={1.75} aria-hidden="true" />
-                          <span>导入设定文件 (.docx / .md / .txt)</span>
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          data-testid="welcome-blank-manuscript"
-                          onClick={() => void handleStartBlankManuscript()}
-                        >
-                          <PenLine size={16} strokeWidth={1.75} aria-hidden="true" />
-                          <span>直接写空白正文</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-
                 <label className="visually-hidden" htmlFor="turn-input">
                   {isWelcome ? '说说你想写什么、玩什么或聊什么' : '输入你的行动或对话'}
                 </label>
@@ -2498,40 +2551,101 @@ export function App({ runtime }: AppProps) {
                     }
                   }}
                 />
-                <div className="composer-actions">
-                  <span className="status-text visually-hidden">
-                    {isWelcome ? '输入内容开始新的创作' : `已保存轮次：${Math.floor(activeNodes.length / 2)}`}
-                  </span>
-                  <div>
-                    {isStreaming ? (
+                <GenerationControls
+                  model={effectiveComposerConfig.model}
+                  reasoningEffort={effectiveComposerConfig.reasoningEffort}
+                  disabled={isStreaming || creating}
+                  onModelChange={handleComposerModelChange}
+                  onReasoningEffortChange={handleComposerReasoningChange}
+                  leadingSlot={isWelcome ? (
+                    <div className="composer-plus-wrap">
                       <button
-                        key="stop-generation-btn"
                         type="button"
-                        className="btn composer-send"
-                        aria-label="停止生成"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          abortRef.current?.abort();
-                        }}
+                        className="icon-button composer-plus-btn"
+                        data-testid="welcome-plus-menu-trigger"
+                        aria-label="导入或直接写正文"
+                        aria-haspopup="menu"
+                        aria-expanded={plusMenuOpen}
+                        disabled={isStreaming || creating}
+                        onClick={() => setPlusMenuOpen((open) => !open)}
                       >
-                        <Square size={17} strokeWidth={1.75} aria-hidden="true" />
-                        <span className="visually-hidden">停止生成</span>
+                        <Plus size={19} strokeWidth={1.75} aria-hidden="true" />
                       </button>
-                    ) : (
-                      <button
-                        key="send-action-btn"
-                        type="submit"
-                        className="btn btn-primary composer-send"
-                        aria-label="发送行动"
-                        disabled={!input.trim() || isSummarizing || isBranchSwitching || creating}
-                      >
-                        <ArrowUp size={19} strokeWidth={1.75} aria-hidden="true" />
-                        <span className="visually-hidden">发送行动</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
+                      {plusMenuOpen && (
+                        <div
+                          className="composer-plus-menu"
+                          role="menu"
+                          aria-label="更多开始方式"
+                          data-testid="welcome-plus-menu"
+                        >
+                          <button
+                            type="button"
+                            role="menuitem"
+                            data-testid="welcome-deepseek-import"
+                            onClick={() => openImportView('deepseek')}
+                          >
+                            <Sparkles size={16} strokeWidth={1.75} aria-hidden="true" />
+                            <span>从 DeepSeek 导入</span>
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            data-testid="welcome-script-import"
+                            onClick={() => openImportView('script')}
+                          >
+                            <FilePlus2 size={16} strokeWidth={1.75} aria-hidden="true" />
+                            <span>导入设定文件 (.docx / .md / .txt)</span>
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            data-testid="welcome-blank-manuscript"
+                            onClick={() => void handleStartBlankManuscript()}
+                          >
+                            <PenLine size={16} strokeWidth={1.75} aria-hidden="true" />
+                            <span>直接写空白正文</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : undefined}
+                  trailingSlot={(
+                    <div className="composer-actions">
+                      <span className="status-text visually-hidden">
+                        {isWelcome ? '输入内容开始新的创作' : `已保存轮次：${Math.floor(activeNodes.length / 2)}`}
+                      </span>
+                      <div>
+                        {isStreaming ? (
+                          <button
+                            key="stop-generation-btn"
+                            type="button"
+                            className="btn composer-send"
+                            aria-label="停止生成"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              abortRef.current?.abort();
+                            }}
+                          >
+                            <Square size={17} strokeWidth={1.75} aria-hidden="true" />
+                            <span className="visually-hidden">停止生成</span>
+                          </button>
+                        ) : (
+                          <button
+                            key="send-action-btn"
+                            type="submit"
+                            className="btn btn-primary composer-send"
+                            aria-label="发送行动"
+                            disabled={!input.trim() || isSummarizing || isBranchSwitching || creating}
+                          >
+                            <ArrowUp size={19} strokeWidth={1.75} aria-hidden="true" />
+                            <span className="visually-hidden">发送行动</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                />
               </form>
             </>
           )}
@@ -2553,6 +2667,7 @@ export function App({ runtime }: AppProps) {
                 setPendingByok(null);
                 setWizardOpen(false);
                 updateConfig(nextCfg, false);
+                setKeyBoundSeq((seq) => seq + 1);
                 if (resume) resume(nextCfg);
               }}
               onVerifyingChange={setWizardVerifying}
