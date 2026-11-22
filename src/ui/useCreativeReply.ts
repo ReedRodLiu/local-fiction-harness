@@ -110,7 +110,7 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
     run: (
       request: (
         messages: LlmMessage[],
-        options?: { onVisibleDelta?: (delta: string) => void },
+        options?: { onVisibleDelta?: (delta: string) => void; config?: ModelConfig },
       ) => ReturnType<typeof streamCreativeReply>,
       signal: AbortSignal,
       config: ModelConfig,
@@ -128,7 +128,7 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
       setReasoning('');
       void run(
         (messages, options) =>
-          streamCreativeReply(runtime.transport, config, messages, {
+          streamCreativeReply(runtime.transport, options?.config ?? config, messages, {
             signal: controller.signal,
             onReasoningDelta: (delta) => {
               if (!controller.signal.aborted) setReasoning((text) => text + delta);

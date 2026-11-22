@@ -1,4 +1,5 @@
 import { createDefaultId } from './id.ts';
+import { normalizeReasoningEffort } from './keyConfig.ts';
 import {
   EMPTY_SUMMARY_SNAPSHOT,
   assembleCreativeThreeZoneContext,
@@ -28,10 +29,12 @@ import {
 import type {
   AbortSignalLike,
   DocumentRead,
+  GenerationPreference,
   LlmMessage,
   LlmTransport,
   ModelConfig,
   PlotSummarySnapshot,
+  ReasoningEffort,
   Story,
   TurnCallbacks,
   TurnNode,
@@ -53,6 +56,7 @@ export interface WritingSuggestion {
 export interface DraftWork {
   id: string;
   title: string;
+  generationPreference?: GenerationPreference;
   document: MarkdownDocument;
   body: string;
   writingStarted?: boolean;
@@ -78,6 +82,7 @@ export interface CharacterConversation {
 export interface LocalCharacter {
   id: string;
   name: string;
+  generationPreference?: GenerationPreference;
   document: MarkdownDocument;
   conversations: CharacterConversation[];
   activeConversationId: string | null;
@@ -184,6 +189,8 @@ export function appendWorkDiscussionTurn(
     role: TurnNode['role'];
     content: string;
     reasoningContent?: string;
+    model?: string;
+    reasoningEffort?: ReasoningEffort;
     parentId?: string | null;
     id?: string;
     createdAt?: number;
@@ -204,6 +211,8 @@ export function appendWorkDiscussionTurn(
     role: nodeInput.role,
     content: nodeInput.content,
     ...(nodeInput.reasoningContent ? { reasoningContent: nodeInput.reasoningContent } : {}),
+    ...(nodeInput.model ? { model: nodeInput.model } : {}),
+    ...(nodeInput.reasoningEffort ? { reasoningEffort: nodeInput.reasoningEffort } : {}),
     createdAt: nodeInput.createdAt ?? Date.now(),
     summarySnapshot: parentSnapshot,
     ...(nodeInput.documentReads ? { documentReads: nodeInput.documentReads } : {}),
@@ -506,9 +515,17 @@ export async function streamCreativeReply(
   let reasoningContent = '';
   let finishReason: string | null | undefined;
   let visible = '';
-  for await (const delta of transport.streamChat({ ...config, messages, signal: callbacks.signal })) {
+  const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
+  for await (const delta of transport.streamChat({
+    baseUrl: config.baseUrl,
+    apiKey: config.apiKey,
+    model: config.model,
+    reasoningEffort,
+    messages,
+    signal: callbacks.signal,
+  })) {
     if (delta.finishReason != null) finishReason = delta.finishReason;
-    if (delta.reasoningDelta) {
+    if (delta.reasoningDelta && reasoningEffort !== 'none') {
       reasoningContent += delta.reasoningDelta;
       callbacks.onReasoningDelta?.(delta.reasoningDelta);
     }
@@ -541,6 +558,8 @@ export async function streamCreativeReply(
     proposals: parsed.proposals,
     unparsedBlocks: parsed.unparsedBlocks,
     reasoningContent,
+    model: config.model,
+    reasoningEffort,
   };
 }
 

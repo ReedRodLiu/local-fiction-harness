@@ -1,4 +1,5 @@
 import { createDefaultId } from './id.ts';
+import { createBackgroundModelConfig, normalizeReasoningEffort } from './keyConfig.ts';
 import {
   buildTurnProposalRecords,
   documentProgress, documentVersion, editStoryDocument, migrateStoryDocuments, parseProposalReply, referenceDocument,
@@ -259,18 +260,20 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     let reasoningContent = '';
     let finishReason: string | null | undefined;
     let shownChars = 0;
+    const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
 
     throwIfAborted(callbacks?.signal);
     for await (const delta of deps.transport.streamChat({
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
       model: config.model,
+      reasoningEffort,
       messages,
       signal: callbacks?.signal,
     })) {
       throwIfAborted(callbacks?.signal);
       if (delta.finishReason != null) finishReason = delta.finishReason;
-      if (delta.reasoningDelta) {
+      if (delta.reasoningDelta && reasoningEffort !== 'none') {
         reasoningContent += delta.reasoningDelta;
         callbacks?.onReasoningDelta?.(delta.reasoningDelta);
       }
@@ -293,6 +296,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     signal?: AbortSignalLike,
   ): Promise<PlotSummarySnapshot> => {
     if (!targetLeafId) return parentSnapshot;
+    const bgConfig = createBackgroundModelConfig(config);
     const branchNodes = getActiveBranchNodes(story, targetLeafId);
     const setupFilter = getSetupNodeFilter(story, targetLeafId);
     let currentSnapshot = parentSnapshot;
@@ -334,7 +338,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       ): Promise<string | null> => {
         try {
           const result = await streamText(
-            config,
+            bgConfig,
             buildSummaryCompressionMessages(previousContent, nodes, filter, maxBatchChars),
             { signal },
           );
@@ -474,12 +478,15 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     signal?: AbortSignalLike;
   }): Promise<TurnExecutionResult> => {
     const assistantCreatedAt = Math.max(now(), opts.baseStory.updatedAt + 1);
+    const reasoningEffort = normalizeReasoningEffort(opts.config.reasoningEffort);
     const initialAssistantNode: TurnNode = {
       id: createId(),
       parentId: opts.userNode.id,
       role: 'assistant',
       content: opts.content,
       ...(opts.reasoningContent ? { reasoningContent: opts.reasoningContent } : {}),
+      model: opts.config.model,
+      reasoningEffort,
       createdAt: assistantCreatedAt,
       summarySnapshot: opts.baseSnapshot,
       documents: opts.documentState,
@@ -694,7 +701,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         throw new Error(`目标分支节点 ${branchEntryNodeId} 不存在。`);
       }
       const { content } = await streamText(
-        config,
+        createBackgroundModelConfig(config),
         buildBranchGistMessages(story, branchEntryNodeId),
         { signal },
       );
@@ -772,7 +779,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       }
 
       const { content } = await streamText(
-        config,
+        createBackgroundModelConfig(config),
         buildBlueprintExtractionMessages(trimmed),
         { signal },
       );

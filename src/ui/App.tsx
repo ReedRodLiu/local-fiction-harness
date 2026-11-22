@@ -28,10 +28,13 @@ import {
   migrateStoryToV02,
   newDocument,
   newWork,
+  normalizeOfficialDeepSeekModel,
   normalizeOfficialModelConfig,
   normalizeProposalTarget,
+  normalizeReasoningEffort,
   parseAndValidateFolioBackup,
   projectStoryTreeSpine,
+  resolveEffectiveModelConfig,
   routeEntryMessage,
   storyDocumentState,
   storyExportMarkdown,
@@ -115,7 +118,8 @@ function mergeLoadedConfig(
         initialConfig: {
           ...loaded,
           baseUrl: devProxy.baseUrl,
-          model: devProxy.model ?? loaded.model,
+          model: devProxy.model ?? normalizeOfficialDeepSeekModel(loaded.model),
+          reasoningEffort: normalizeReasoningEffort(loaded.reasoningEffort),
           apiKey: devProxy.hasEnvKey ? '' : loaded.apiKey,
         },
         initialUseDevEnvKey: devProxy.hasEnvKey,
@@ -645,6 +649,7 @@ export function App({ runtime }: AppProps) {
     setConfig({
       baseUrl: devTestInfo.proxyBaseUrl,
       model: devModel,
+      reasoningEffort: normalizeReasoningEffort(config.reasoningEffort),
       apiKey: devTestInfo.hasEnvKey ? '' : config.apiKey,
       memoryOnly: config.memoryOnly,
     });
@@ -998,7 +1003,13 @@ export function App({ runtime }: AppProps) {
           setInput('');
         }
         void runStreamingExecution(
-          (callbacks) => harness.runTurn(story, trimmed, activeCfg, callbacks),
+          (callbacks) =>
+            harness.runTurn(
+              story,
+              trimmed,
+              resolveEffectiveModelConfig(activeCfg, story.generationPreference),
+              callbacks,
+            ),
           restoreOnError
             ? () => setInput((current) =>
               current.length === 0 || current === trimmed ? trimmed : current,
@@ -1021,7 +1032,13 @@ export function App({ runtime }: AppProps) {
       '编辑内容并生成新分支',
       (activeCfg) => {
         void runStreamingExecution((callbacks) =>
-          harness.editAndBranch(story, targetUserNodeId, trimmed, activeCfg, callbacks),
+          harness.editAndBranch(
+            story,
+            targetUserNodeId,
+            trimmed,
+            resolveEffectiveModelConfig(activeCfg, story.generationPreference),
+            callbacks,
+          ),
         );
       },
       overrideConfig,
@@ -1037,7 +1054,12 @@ export function App({ runtime }: AppProps) {
       '重新生成回复',
       (activeCfg) => {
         void runStreamingExecution((callbacks) =>
-          harness.regenerateNode(story, targetAssistantNodeId, activeCfg, callbacks),
+          harness.regenerateNode(
+            story,
+            targetAssistantNodeId,
+            resolveEffectiveModelConfig(activeCfg, story.generationPreference),
+            callbacks,
+          ),
         );
       },
       overrideConfig,
@@ -1174,6 +1196,8 @@ export function App({ runtime }: AppProps) {
             role: 'assistant',
             content: routed.assistantReply,
             ...(routed.reasoningContent ? { reasoningContent: routed.reasoningContent } : {}),
+            model: routed.model ?? activeCfg.model,
+            reasoningEffort: routed.reasoningEffort ?? normalizeReasoningEffort(activeCfg.reasoningEffort),
             createdAt: now + 1,
             summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
             ...(proposalRecords.length > 0 ? { proposals: proposalRecords } : {}),
@@ -1293,7 +1317,12 @@ export function App({ runtime }: AppProps) {
       '开启第一幕',
       (activeCfg) => {
         void runStreamingExecution((callbacks) =>
-          harness.runTurn(targetStory, '请按照当前故事设定开始第一幕。', activeCfg, callbacks),
+          harness.runTurn(
+            targetStory,
+            '请按照当前故事设定开始第一幕。',
+            resolveEffectiveModelConfig(activeCfg, targetStory.generationPreference),
+            callbacks,
+          ),
         );
       },
       overrideConfig,
@@ -2186,6 +2215,9 @@ export function App({ runtime }: AppProps) {
               onImportBackupFile={(file) => void handleImportBackupFile(file)}
               onThemePreferenceChange={setThemePreference}
               onFontSizeChange={setDisplayFontSize}
+              onDefaultModelChange={(model) => updateConfig({ ...config, model })}
+              onDefaultReasoningEffortChange={(reasoningEffort) =>
+                updateConfig({ ...config, reasoningEffort })}
             />
           ) : creativePage ? (
             <>

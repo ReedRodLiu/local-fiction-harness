@@ -10,6 +10,7 @@ import {
   type LocalCharacter,
 } from './creative.ts';
 import { createDefaultId } from './id.ts';
+import { normalizeReasoningEffort } from './keyConfig.ts';
 import {
   CHANGE_PROMPT,
   documentVersion,
@@ -23,6 +24,7 @@ import type {
   LlmMessage,
   LlmTransport,
   ModelConfig,
+  ReasoningEffort,
   Story,
   TurnCallbacks,
   TurnNode,
@@ -38,6 +40,8 @@ export interface EntryRouteResult {
   assistantReply: string;
   characterName?: string;
   reasoningContent: string;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
   proposals: ParsedProposal[];
   unparsedBlocks: UnparsedProposalBlock[];
   usedFallback: boolean;
@@ -359,15 +363,23 @@ export async function routeEntryMessage(
   let reasoningContent = '';
   let finishReason: string | null | undefined;
   let shown = '';
+  const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
 
-  for await (const delta of transport.streamChat({ ...config, messages, signal: callbacks.signal })) {
+  for await (const delta of transport.streamChat({
+    baseUrl: config.baseUrl,
+    apiKey: config.apiKey,
+    model: config.model,
+    reasoningEffort,
+    messages,
+    signal: callbacks.signal,
+  })) {
     if (callbacks.signal?.aborted) {
       const abortErr = new Error('操作已中止。');
       abortErr.name = 'AbortError';
       throw abortErr;
     }
     if (delta.finishReason != null) finishReason = delta.finishReason;
-    if (delta.reasoningDelta) {
+    if (delta.reasoningDelta && reasoningEffort !== 'none') {
       reasoningContent += delta.reasoningDelta;
       callbacks.onReasoningDelta?.(delta.reasoningDelta);
     }
@@ -388,7 +400,11 @@ export async function routeEntryMessage(
   if (finishReason !== 'stop' && !raw.trim()) {
     throw new Error('回复未完成，请重试。');
   }
-  return parseEntryRouteReply(raw, userInput, neutralHistory, reasoningContent);
+  return {
+    ...parseEntryRouteReply(raw, userInput, neutralHistory, reasoningContent),
+    model: config.model,
+    reasoningEffort,
+  };
 }
 
 /**

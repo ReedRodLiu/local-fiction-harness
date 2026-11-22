@@ -14,6 +14,7 @@ import {
   getNodeSiblingBranchInfo,
   newConversation,
   normalizeProposalTarget,
+  resolveEffectiveModelConfig,
   summarizeCharacterConversation,
   writeDocument,
   type CharacterConversation,
@@ -255,7 +256,8 @@ export function CharacterPane(props: CharacterPaneProps) {
       const targetConv: CharacterConversation =
         options.parentId !== undefined ? { ...target, activeLeafNodeId: options.parentId } : target;
       const ctx = characterContext(state.publicDocument, current, targetConv, trimmed);
-      const result = await request(ctx.messages);
+      const effectiveConfig = resolveEffectiveModelConfig(config, current.generationPreference);
+      const result = await request(ctx.messages, { config: effectiveConfig });
       if (signal.aborted) return;
 
       const publicDoc = documentVersion(state.publicDocument);
@@ -285,6 +287,8 @@ export function CharacterPane(props: CharacterPaneProps) {
                 user?.id ?? expectedParent,
               ),
               ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {}),
+              model: result.model,
+              reasoningEffort: result.reasoningEffort,
               documents: docs,
               documentReads: ctx.reads,
               ...(proposalRecords.length > 0 ? { proposals: proposalRecords } : {}),
@@ -320,7 +324,7 @@ export function CharacterPane(props: CharacterPaneProps) {
           .find((item) => item.id === current.id)
           ?.conversations.find((item) => item.id === target.id);
       if (persistedConv && assistantId) {
-        runSilentSummary(current.id, persistedConv, config, assistantId);
+        runSilentSummary(current.id, persistedConv, effectiveConfig, assistantId);
       }
     });
   }

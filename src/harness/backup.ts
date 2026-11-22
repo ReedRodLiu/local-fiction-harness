@@ -15,7 +15,12 @@ import {
   writeDocument,
 } from './markdownDocuments.ts';
 import { migrateStoryToV02, migrateWorkspaceToV02 } from './migration.ts';
-import { validateNodes, validateStoryPayload, validateTurnNodeEntry } from './storyStorage.ts';
+import {
+  validateGenerationPreference,
+  validateNodes,
+  validateStoryPayload,
+  validateTurnNodeEntry,
+} from './storyStorage.ts';
 import type { Story, TurnNode } from './types.ts';
 
 export interface FolioBackupDisplayPreferences {
@@ -92,6 +97,7 @@ function sanitizeWorkForExport(work: DraftWork): DraftWork {
   return cloneJson({
     id: work.id,
     title: work.title,
+    ...(work.generationPreference ? { generationPreference: work.generationPreference } : {}),
     document: work.document,
     body: work.body,
     ...(work.writingStarted !== undefined ? { writingStarted: work.writingStarted } : {}),
@@ -110,6 +116,7 @@ function sanitizeCharacterForExport(character: LocalCharacter): LocalCharacter {
   return cloneJson({
     id: character.id,
     name: character.name,
+    ...(character.generationPreference ? { generationPreference: character.generationPreference } : {}),
     document: character.document,
     conversations: character.conversations.map((conv) => ({
       id: conv.id,
@@ -146,6 +153,7 @@ function sanitizeStoryForExport(story: Story): Story {
     ...(migrated.sourceKind !== undefined ? { sourceKind: migrated.sourceKind } : {}),
     ...(migrated.sourceSessionId !== undefined ? { sourceSessionId: migrated.sourceSessionId } : {}),
     ...(migrated.v2Migrated ? { v2Migrated: true } : {}),
+    ...(migrated.generationPreference ? { generationPreference: migrated.generationPreference } : {}),
     ...(migrated.documents ? { documents: migrated.documents } : {}),
     ...(migrated.importCandidate !== undefined ? { importCandidate: migrated.importCandidate } : {}),
     ...(migrated.attachments ? { attachments: migrated.attachments } : {}),
@@ -256,9 +264,14 @@ function validateDraftWork(raw: unknown, index: number): DraftWork {
     }
     source = { storyId: raw.source.storyId, nodeId: raw.source.nodeId };
   }
+  const generationPreference = validateGenerationPreference(
+    raw.generationPreference,
+    `备份作品 ${raw.id}`,
+  );
   return {
     id: raw.id,
     title: raw.title,
+    ...(generationPreference ? { generationPreference } : {}),
     document,
     body: raw.body,
     ...(raw.writingStarted !== undefined ? { writingStarted: raw.writingStarted } : {}),
@@ -345,9 +358,14 @@ function validateLocalCharacter(raw: unknown, index: number): LocalCharacter {
   ) {
     throw new Error(`备份角色 ${raw.id} 的 activeConversationId 不存在。`);
   }
+  const generationPreference = validateGenerationPreference(
+    raw.generationPreference,
+    `备份角色 ${raw.id}`,
+  );
   return {
     id: raw.id,
     name: raw.name,
+    ...(generationPreference ? { generationPreference } : {}),
     document,
     conversations,
     activeConversationId: raw.activeConversationId,

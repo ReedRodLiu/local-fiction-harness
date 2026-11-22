@@ -1,10 +1,13 @@
 import { getTextDecoderCtor, type TextDecoderLike } from './encoding.ts';
+import { normalizeReasoningEffort } from './keyConfig.ts';
 import type {
+  DeepSeekThinkingParam,
   FetchLike,
   FetchResponseLike,
   LlmStreamDelta,
   LlmStreamRequest,
   LlmTransport,
+  ReasoningEffort,
 } from './types.ts';
 
 function createUtf8Decoder(): TextDecoderLike {
@@ -190,6 +193,17 @@ export function resolveChatCompletionsUrl(baseUrl: string): string {
   return `${cleaned}/chat/completions`;
 }
 
+export function mapReasoningEffortToDeepSeekParams(effort: ReasoningEffort = 'high'): {
+  thinking: DeepSeekThinkingParam;
+  reasoning_effort: ReasoningEffort;
+} {
+  const normalized = normalizeReasoningEffort(effort);
+  return {
+    thinking: { type: normalized === 'none' ? 'disabled' : 'enabled' },
+    reasoning_effort: normalized,
+  };
+}
+
 export function buildOpenAiChatRequest(req: LlmStreamRequest): {
   url: string;
   headers: Record<string, string>;
@@ -203,6 +217,13 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
   if (req.apiKey.trim()) {
     headers.Authorization = `Bearer ${req.apiKey.trim()}`;
   }
+  const effort =
+    req.reasoningEffort ??
+    req.reasoning_effort ??
+    (req.thinking?.type === 'disabled' ? 'none' : 'high');
+  const mapped = mapReasoningEffortToDeepSeekParams(effort);
+  const thinking = req.thinking ?? mapped.thinking;
+  const reasoning_effort = req.reasoning_effort ?? mapped.reasoning_effort;
   return {
     url,
     headers,
@@ -210,6 +231,8 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
       model: req.model,
       messages: req.messages,
       stream: true,
+      thinking,
+      reasoning_effort,
     }),
   };
 }

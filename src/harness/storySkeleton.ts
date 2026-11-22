@@ -1,5 +1,6 @@
 import type { CreativeWorkspaceState, DraftWork, LocalCharacter } from './creative.ts';
-import type { NodeDiagnosticStatus, Story, TurnNode } from './types.ts';
+import { isReasoningEffort, sanitizeDiagnosticModelName } from './keyConfig.ts';
+import type { NodeDiagnosticStatus, ReasoningEffort, Story, TurnNode } from './types.ts';
 
 export interface RedactedStorySkeletonNode {
   id: string;
@@ -8,6 +9,8 @@ export interface RedactedStorySkeletonNode {
   isSetupNode: boolean;
   contentLen: number;
   reasoningLen: number;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
   diagnostics?: {
     sourceStatus?: NodeDiagnosticStatus;
     contentRisk?: boolean;
@@ -176,6 +179,8 @@ export function buildRedactedStorySkeleton(story: Story): RedactedStorySkeleton 
         ...(typeof contentRisk === 'boolean' ? { contentRisk } : {}),
       };
 
+      const safeModel = sanitizeDiagnosticModelName(node.model);
+      const safeEffort = isReasoningEffort(node.reasoningEffort) ? node.reasoningEffort : undefined;
       return {
         id: anonymousId.get(node.id)!,
         parentId: node.parentId === null ? null : anonymousId.get(node.parentId) ?? null,
@@ -183,6 +188,8 @@ export function buildRedactedStorySkeleton(story: Story): RedactedStorySkeleton 
         isSetupNode: setupNodeIds.has(node.id),
         contentLen: node.content.length,
         reasoningLen: node.reasoningContent?.length ?? 0,
+        ...(safeModel ? { model: safeModel } : {}),
+        ...(safeEffort ? { reasoningEffort: safeEffort } : {}),
         ...(Object.keys(diagnostics).length > 0 ? { diagnostics } : {}),
         summaryCoveredCount: node.summarySnapshot?.summarizedTurnCount ?? 0,
         summaryContentLen: node.summarySnapshot?.content?.length ?? 0,

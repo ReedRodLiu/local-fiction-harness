@@ -71,12 +71,27 @@ export interface TurnProposalRecord {
   updatedAt?: number;
 }
 
+export type OfficialDeepSeekModel = 'deepseek-flash' | 'deepseek-v4-pro';
+
+export type ReasoningEffort = 'none' | 'low' | 'high' | 'max';
+
+export interface GenerationPreference {
+  model?: OfficialDeepSeekModel;
+  reasoningEffort?: ReasoningEffort;
+}
+
+export interface DeepSeekThinkingParam {
+  type: 'enabled' | 'disabled';
+}
+
 export interface TurnNode {
   id: string;
   parentId: string | null;
   role: 'user' | 'assistant';
   content: string;
   reasoningContent?: string;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
   diagnostics?: NodeDiagnostics;
   createdAt: number;
   summarySnapshot: PlotSummarySnapshot;
@@ -92,6 +107,7 @@ export interface Story {
   sourceKind?: StorySourceKind;
   sourceSessionId?: string;
   v2Migrated?: boolean;
+  generationPreference?: GenerationPreference;
   documents?: StoryDocuments;
   importCandidate?: string;
   attachments?: Record<string, StoryAttachment>;
@@ -127,6 +143,9 @@ export interface LlmStreamRequest {
   apiKey: string;
   model: string;
   messages: LlmMessage[];
+  reasoningEffort?: ReasoningEffort;
+  thinking?: DeepSeekThinkingParam;
+  reasoning_effort?: ReasoningEffort;
   signal?: AbortSignalLike;
 }
 
@@ -164,6 +183,7 @@ export interface StoryBackupEnvelope {
 export interface ModelConfig {
   baseUrl: string;
   model: string;
+  reasoningEffort?: ReasoningEffort;
   apiKey: string;
   memoryOnly: boolean;
 }

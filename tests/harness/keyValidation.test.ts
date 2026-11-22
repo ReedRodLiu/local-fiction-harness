@@ -13,6 +13,7 @@ describe('DeepSeek official key validation & config normalization', () => {
     expect(DEFAULT_MODEL_CONFIG).toEqual({
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-flash',
+      reasoningEffort: 'high',
       apiKey: '',
       memoryOnly: false,
     });
@@ -27,6 +28,7 @@ describe('DeepSeek official key validation & config normalization', () => {
     expect(normalized).toEqual({
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-flash',
+      reasoningEffort: 'high',
       apiKey: '',
       memoryOnly: false,
     });
