@@ -113,14 +113,20 @@ export function getUncoveredNodes(
   return branchNodes.slice(idx + 1);
 }
 
+const DEFAULT_STORY_SYSTEM_PROMPT = [
+  '你是文游的叙事者，也是在场的世界与众人。保持角色与设定一致，用具体场景、感官细节、动作与对话推进剧情，而非跳出戏外做总结或解说。',
+  '禁止跳出叙事分析局势、评价玩家选择、写主题升华式结语、代写或劫持玩家的行动与内心决定，也不要在正文中用“1/2/3”列举下一步菜单。',
+  '如需提供可点选行动，把选项单独写在 lfh-choices 围栏内，每行一项，正文里不再重复罗列。普通剧情内的信件、清单等正文列表照常写。',
+  '若「我的记忆」或「当前设定」中明确指定了文风、人称、格式或叙事偏好，以用户设定为准。',
+].join('\n');
+
 export function buildSystemAnchorPrompt(story: Story, nodeId = story.activeLeafNodeId, selected?: MarkdownVersion): string {
   const markdown = selected?.markdown ?? (story.documents
     ? documentVersion(story.documents.container, storyDocumentState({ ...story, documents: story.documents }, nodeId,
       nodeId === story.activeLeafNodeId).container).markdown
     : legacyStoryMarkdown(story));
   return [
-    '你是文游的叙事者。保持角色与设定一致，把玩家关键抉择留给玩家。',
-    '如需提供可点选行动，把选项单独写在 lfh-choices 围栏内，每行一项。普通正文列表照常写。',
+    DEFAULT_STORY_SYSTEM_PROMPT,
     CHANGE_PROMPT,
     markdown && `以下是当前故事 Markdown。\n\n${markdown}`,
   ].filter(Boolean).join('\n\n');
