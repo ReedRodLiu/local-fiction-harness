@@ -471,6 +471,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     userNode: TurnNode;
     baseSnapshot: PlotSummarySnapshot;
     content: string;
+    turnSummary?: string;
     reasoningContent: string;
     extraNodes: Record<string, TurnNode>;
     rootNodeIds: string[];
@@ -484,6 +485,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       parentId: opts.userNode.id,
       role: 'assistant',
       content: opts.content,
+      ...(opts.turnSummary ? { turnSummary: opts.turnSummary } : {}),
       ...(opts.reasoningContent ? { reasoningContent: opts.reasoningContent } : {}),
       model: opts.config.model,
       reasoningEffort,
@@ -604,6 +606,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       userNode,
       baseSnapshot: parentSnapshot,
       content: parsed.content || '请核对下方的修改建议。',
+      ...(parsed.turnSummary ? { turnSummary: parsed.turnSummary } : {}),
       reasoningContent: result.reasoningContent,
       documentState: prepared.state,
       reads: prepared.reads,
@@ -874,6 +877,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         userNode,
         baseSnapshot: parentSnapshot,
         content: parsed.content || '请核对下方的修改建议。',
+        ...(parsed.turnSummary ? { turnSummary: parsed.turnSummary } : {}),
         reasoningContent: result.reasoningContent,
         documentState: prepared.state,
         reads: prepared.reads,

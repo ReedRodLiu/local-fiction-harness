@@ -89,6 +89,7 @@ export interface TurnNode {
   parentId: string | null;
   role: 'user' | 'assistant';
   content: string;
+  turnSummary?: string;
   reasoningContent?: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;

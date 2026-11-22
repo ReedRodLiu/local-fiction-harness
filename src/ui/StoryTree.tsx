@@ -1,10 +1,10 @@
 import { useId, useMemo, useState } from 'react';
 import { GitBranch } from 'lucide-react';
 import {
+  formatTurnPreview,
   getActiveBranchNodes,
   getForkSiblingBranches,
   projectStoryTreeSpine,
-  toCompactPreview,
   type ForkSiblingBranch,
   type NodeDiagnosticStatus,
   type Story,
@@ -193,8 +193,10 @@ export function StoryTree({
                                 <span className="story-tree-span-node-heading">
                                   第 {turn} 轮 · {node.role === 'user' ? '玩家' : '叙事 AI'}
                                 </span>
-                                <p className="story-tree-span-node-preview">
-                                  {toCompactPreview(node.content, 180)}
+                                <p
+                                  className={`story-tree-span-node-preview ${node.role === 'user' ? 'is-user' : 'is-assistant'}`}
+                                >
+                                  {formatTurnPreview(node)}
                                 </p>
                                 {diagnostics.length > 0 && (
                                   <span className="story-tree-span-node-diagnostics" role="note">
@@ -272,7 +274,11 @@ export function StoryTree({
                                 </div>
                               )}
 
-                              <div className="story-tree-preview">{branch.preview}</div>
+                              <div
+                                className={`story-tree-preview ${branch.leafRole === 'user' ? 'is-user' : 'is-assistant'}`}
+                              >
+                                {branch.preview}
+                              </div>
 
                               {diagTags.length > 0 && (
                                 <div className="story-tree-diagnostics" role="note">

@@ -1225,6 +1225,7 @@ export function App({ runtime }: AppProps) {
             parentId: userNode.id,
             role: 'assistant',
             content: routed.assistantReply,
+            ...(routed.turnSummary ? { turnSummary: routed.turnSummary } : {}),
             ...(routed.reasoningContent ? { reasoningContent: routed.reasoningContent } : {}),
             model: routed.model ?? effectiveWelcomeCfg.model,
             reasoningEffort: routed.reasoningEffort ?? normalizeReasoningEffort(effectiveWelcomeCfg.reasoningEffort),

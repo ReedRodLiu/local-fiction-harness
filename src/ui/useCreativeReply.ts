@@ -54,12 +54,18 @@ export function updateConversation(
   };
 }
 
-export function makeTurn(role: TurnNode['role'], content: string, parentId: string | null): TurnNode {
+export function makeTurn(
+  role: TurnNode['role'],
+  content: string,
+  parentId: string | null,
+  turnSummary?: string,
+): TurnNode {
   return {
     id: createDefaultId(),
     parentId,
     role,
     content,
+    ...(turnSummary ? { turnSummary } : {}),
     summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
     createdAt: Date.now(),
   };

@@ -2,6 +2,7 @@ import {
   buildChildrenByParent,
   buildSubtreeMaxCreatedAt,
   countNodesToRoot,
+  formatTurnPreview,
   getRootNodes,
   pickActiveOrLatestChild,
   toCompactPreview,
@@ -60,6 +61,7 @@ export interface StoryTreeSpineProjection {
 export interface ForkSiblingBranch {
   entryNodeId: string;
   leafId: string;
+  leafRole?: TurnNode['role'];
   label: string;
   customName?: string;
   aiGist?: string;
@@ -129,7 +131,7 @@ function makeSpanItem(
     endTurn,
     nodeCount: nodes.length,
     turnCount: endTurn - startTurn + 1,
-    preview: toCompactPreview(last.content, 48),
+    preview: formatTurnPreview(last),
     diagnosticsCount: countDiagnostics(nodes),
     isActiveEnd,
   };
@@ -324,6 +326,7 @@ export function getForkSiblingBranches(
     return {
       entryNodeId: entryNode.id,
       leafId: leaf.id,
+      leafRole: leaf.role,
       label: customName || `分支 ${index + 1}`,
       ...(customName ? { customName } : {}),
       ...(aiGist ? { aiGist } : {}),
@@ -331,7 +334,7 @@ export function getForkSiblingBranches(
       branchTurnCount: Math.max(1, Math.ceil(branchLine.length / 2)),
       totalTurnDepth: Math.max(1, Math.ceil(totalNodes / 2)),
       cues: extractBranchLocalCues(branchLine),
-      preview: toCompactPreview(leaf.content, 52),
+      preview: formatTurnPreview(leaf),
       diagnostics: Array.from(diagnosticsSet),
       hasContentRisk,
     };
