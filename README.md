@@ -8,6 +8,7 @@ Folio 不运行自建模型中转或业务服务器。用户在客户端配置�
 
 仓库目前为私有仓库，GitHub Release 仅对获授权的仓库成员开放。Release 页面记录各版本源码和更新内容；本次发布暂未附 Android APK，安装包需要完成签名构建后才能上传。
 
+- [Folio V0.3.0 Release](https://github.com/ReedRodLiu/local-fiction-harness/releases/tag/v0.3.0)
 - [Folio V0.2.0 Release](https://github.com/ReedRodLiu/local-fiction-harness/releases/tag/v0.2.0)
 - [Folio V0.1.0 Release](https://github.com/ReedRodLiu/local-fiction-harness/releases/tag/v0.1.0)
 
@@ -25,6 +26,13 @@ Android 最低版本设为 Android 7.0（API 24），当前构建目标为 Andro
 - **本地优先**：故事、对话、角色资料和记忆保存在设备端；客户端不代管模型账户或 API Key。
 
 ## 版本说明
+
+### V0.3.0
+
+- 开放 DeepSeek 官方双模型（`deepseek-flash` / `deepseek-v4-pro`）与四档思考强度滑块（全局默认 + 按故事/作品/角色独立覆盖）。
+- 支持在设置页连接卡片内查看 DeepSeek 官方总余额与直达官方充值页。
+- 写故事试写与改写统一接入 `target: manuscript` 提案确认卡片，正文编辑升级为 1.5s–2s 静默自动保存与全路径退出刷盘。
+- 新增单轮摘要与紧凑剧情树预览、全场景等待轮播提示、去“DS味”默认系统提示词、`lfh-choices` 容错解析及移动端触控反馈优化。
 
 ### V0.2.0
 

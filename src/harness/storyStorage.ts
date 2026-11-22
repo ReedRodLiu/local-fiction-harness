@@ -202,6 +202,7 @@ const VALID_PROPOSAL_TARGETS = new Set<TurnProposalTarget>([
   'note',
   'character',
   'draft',
+  'manuscript',
   'container',
   'public',
   'local',

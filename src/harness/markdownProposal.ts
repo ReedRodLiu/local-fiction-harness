@@ -1062,13 +1062,14 @@ export function resolveProposalMarkdown(
  */
 export function buildTurnProposalRecords(
   parsed: Pick<ProposalReplySplit, 'proposals' | 'unparsedBlocks'>,
-  baseVersions: { setting?: string; memory?: string; note?: string } = {},
+  baseVersions: { setting?: string; memory?: string; note?: string; manuscript?: string } = {},
   now: number = Date.now(),
 ): TurnProposalRecord[] {
   const resolveBaseVersion = (target: ProposalTarget): string | undefined => {
     if (target === 'setting') return baseVersions.setting;
     if (target === 'memory') return baseVersions.memory;
     if (target === 'note') return baseVersions.note;
+    if (target === 'manuscript') return baseVersions.manuscript;
     return undefined;
   };
 

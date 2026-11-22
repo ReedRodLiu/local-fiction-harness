@@ -135,7 +135,7 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
     const charSource = readSource('src/ui/CharacterPane.tsx');
     const workspaceSource = readSource('src/ui/CreativeWorkspace.tsx');
 
-    expect(workspaceSource).toContain('defaultConfig: ModelConfig');
+    expect(workspaceSource).toContain('defaultConfig?: ModelConfig');
     expect(draftSource).toContain("from './GenerationControls.tsx'");
     expect(draftSource).toContain('className="composer composer-double-row"');
     expect(draftSource).toContain('className="composer writing-composer composer-double-row"');

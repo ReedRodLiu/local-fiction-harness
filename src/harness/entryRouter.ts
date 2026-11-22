@@ -59,6 +59,7 @@ export type ManuscriptReplyIntent =
       kind: 'suggestion';
       text: string;
       content: string;
+      turnSummary?: string;
       reasoningContent: string;
     }
   | {
