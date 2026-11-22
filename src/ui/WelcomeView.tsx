@@ -1,6 +1,7 @@
 import { Sparkles } from 'lucide-react';
 import type { Story, TurnNode } from '../harness/index.ts';
 import { MessageContent } from './MessageContent.tsx';
+import { useRotatingWaitingPhrase } from './waitingPhrases.ts';
 
 export interface RecentCreativeEntry {
   id: string;
@@ -31,6 +32,10 @@ export function WelcomeView({
   const recentStories = [...stories].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3);
   const hasAnyItems = recentStories.length > 0 || recentCreative.length > 0;
   const inNeutralChat = neutralTurns.length > 0 || isStreaming;
+  const waitingPhrase = useRotatingWaitingPhrase({
+    scene: 'welcome',
+    active: isStreaming && !streamContent.trim(),
+  });
 
   if (inNeutralChat) {
     return (
@@ -76,7 +81,7 @@ export function WelcomeView({
               <details className="reasoning-details" data-testid="reasoning-details" open>
                 <summary data-testid="reasoning-toggle">
                   <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
-                  <span>思考中…</span>
+                  <span>{waitingPhrase}</span>
                 </summary>
                 <div className="reasoning-content">{streamReasoning}</div>
               </details>
@@ -84,7 +89,7 @@ export function WelcomeView({
             {streamContent ? (
               <MessageContent content={streamContent} mode="writing" />
             ) : (
-              <div className="turn-body">正在倾听你的想法…</div>
+              <div className="turn-body">{waitingPhrase}</div>
             )}
           </article>
         )}

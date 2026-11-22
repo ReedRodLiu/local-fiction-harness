@@ -101,6 +101,7 @@ import { useEdgeSwipeToOpen } from './useEdgeSwipeToOpen.ts';
 import { useLibraryCollapsedPreference } from './useLibraryCollapsedPreference.ts';
 import { flushActiveManuscripts } from './useManuscriptAutosave.ts';
 import { usePresentationOverlayState } from './usePresentationOverlayState.ts';
+import { useRotatingWaitingPhrase } from './waitingPhrases.ts';
 
 function hasModelCredentials(config: ModelConfig, useDevEnvKey: boolean): boolean {
   if (
@@ -665,6 +666,10 @@ export function App({ runtime }: AppProps) {
   };
 
   const activeSummary = getActiveSummarySnapshot(story);
+  const storyWaitingPhrase = useRotatingWaitingPhrase({
+    scene: 'story',
+    active: isStreaming && !isWelcome && !streamContent.trim(),
+  });
 
   const autoScroll = useAutoScrollTimeline({
     contextKey: isWelcome ? 'welcome-neutral' : story.id,
@@ -2455,7 +2460,7 @@ export function App({ runtime }: AppProps) {
                         <details className="reasoning-details" data-testid="reasoning-details" open>
                           <summary data-testid="reasoning-toggle">
                             <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
-                            <span>思考中…</span>
+                            <span>{storyWaitingPhrase}</span>
                           </summary>
                           <div className="reasoning-content">{streamReasoning}</div>
                         </details>
@@ -2463,7 +2468,7 @@ export function App({ runtime }: AppProps) {
                       {streamContent ? (
                         <MessageContent content={streamContent} mode="story" />
                       ) : (
-                        <div className="turn-body">正在等待响应…</div>
+                        <div className="turn-body">{storyWaitingPhrase}</div>
                       )}
                     </article>
                   )}

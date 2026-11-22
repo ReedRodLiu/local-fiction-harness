@@ -29,6 +29,7 @@ import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
 import { toErrorMessage } from './textHelpers.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
+import { useRotatingWaitingPhrase } from './waitingPhrases.ts';
 
 const SUMMARY_STATUS_LABELS: Record<ImportSummaryStatus, string> = {
   pending_summary: '续写时自动整理前情',
@@ -342,6 +343,19 @@ export function DeepSeekImportPanel({
     completedImportResultsRef.current = [];
     setCompletedImportSessionIds([]);
   };
+
+  const urlFetchPhrase = useRotatingWaitingPhrase({
+    scene: 'import_fetch',
+    active: isFetchingUrl,
+  });
+  const aiFilterPhrase = useRotatingWaitingPhrase({
+    scene: 'import_filter',
+    active: isAiFiltering,
+  });
+  const importOrganizePhrase = useRotatingWaitingPhrase({
+    scene: 'import_organize',
+    active: isImporting,
+  });
 
   const combineCompletedImports = (): DeepSeekImportBatchResult => {
     const completed = completedImportResultsRef.current;
@@ -694,7 +708,7 @@ export function DeepSeekImportPanel({
       onClick={() => void handleConfirmImport()}
     >
       {isImporting
-        ? '正在导入…'
+        ? importOrganizePhrase
         : completedImportSessionIds.length > 0
           ? `重试导入剩余 ${pendingImportCount} 条`
           : selectedIds.length > 1
@@ -935,7 +949,7 @@ export function DeepSeekImportPanel({
                   disabled={!zipUrl.trim() || isFetchingUrl}
                   onClick={() => void handleFetchZipUrl()}
                 >
-                  {isFetchingUrl ? '正在拉取…' : '拉取并查看对话'}
+                  {isFetchingUrl ? urlFetchPhrase : '拉取并查看对话'}
                 </button>
               </div>
             </div>
@@ -951,7 +965,7 @@ export function DeepSeekImportPanel({
             <>
               {isImporting && (
                 <p className="status-text" role="status" data-testid="deepseek-import-busy">
-                  正在导入并整理「故事设定」，请稍候…
+                  {importOrganizePhrase}
                 </p>
               )}
               <div className="ds-toolbar">
@@ -1014,7 +1028,7 @@ export function DeepSeekImportPanel({
                         onClick={() => handleRunAiFilter(aiQuery)}
                       >
                         <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
-                        {isAiFiltering ? '正在挑选…' : hasCredentials ? '开始挑选' : '连接 DeepSeek'}
+                        {isAiFiltering ? aiFilterPhrase : hasCredentials ? '开始挑选' : '连接 DeepSeek'}
                       </button>
                     </div>
                     {!aiMatchedIds && !isAiFiltering && (

@@ -46,6 +46,7 @@ import {
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
 import type { SaveWorkspace } from './useCreativeWorkspace.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
+import { useRotatingWaitingPhrase } from './waitingPhrases.ts';
 import {
   makeTurn,
   sendOnEnter,
@@ -105,6 +106,11 @@ export function CharacterPane(props: CharacterPaneProps) {
   const [confirm, setConfirm] = useState<'export' | 'delete' | null>(null);
   const [companionTab, setCompanionTab] = useState<CharacterCompanionTab>('conversations');
   const [reasoningDurations, setReasoningDurations] = useState<Record<string, number>>({});
+  const characterWaitingPhrase = useRotatingWaitingPhrase({
+    scene: 'character',
+    active: reply.busy && !reply.output.trim(),
+    characterName: character.name,
+  });
   const [createdAssetNotice, setCreatedAssetNotice] = useState<{
     kind: 'character' | 'work';
     id: string;
@@ -798,7 +804,7 @@ export function CharacterPane(props: CharacterPaneProps) {
               <details className="reasoning-details" data-testid="reasoning-details" open>
                 <summary data-testid="reasoning-toggle">
                   <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
-                  <span>思考中…</span>
+                  <span>{characterWaitingPhrase}</span>
                 </summary>
                 <div className="reasoning-content">{reply.reasoning}</div>
               </details>
@@ -806,7 +812,7 @@ export function CharacterPane(props: CharacterPaneProps) {
             {reply.output ? (
               <MessageContent content={reply.output} mode="character" />
             ) : (
-              <div className="turn-body">正在等待响应…</div>
+              <div className="turn-body">{characterWaitingPhrase}</div>
             )}
           </article>
         )}

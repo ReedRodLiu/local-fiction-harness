@@ -57,6 +57,7 @@ import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
 import type { SaveWorkspace } from './useCreativeWorkspace.ts';
 import { formatManuscriptStatusText, useManuscriptAutosave } from './useManuscriptAutosave.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
+import { useRotatingWaitingPhrase } from './waitingPhrases.ts';
 import {
   makeTurn,
   sendOnEnter,
@@ -127,6 +128,10 @@ export function DraftPane(props: DraftPaneProps) {
     label: string;
   } | null>(null);
   const [reasoningDurations, setReasoningDurations] = useState<Record<string, number>>({});
+  const writingWaitingPhrase = useRotatingWaitingPhrase({
+    scene: 'writing',
+    active: reply.busy && !reply.output.trim(),
+  });
 
   const textarea = useRef<HTMLTextAreaElement>(null);
   const suggestionCardRef = useRef<HTMLElement>(null);
@@ -1127,7 +1132,7 @@ export function DraftPane(props: DraftPaneProps) {
                   <details className="reasoning-details" data-testid="reasoning-details" open>
                     <summary data-testid="reasoning-toggle">
                       <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
-                      <span>思考中…</span>
+                      <span>{writingWaitingPhrase}</span>
                     </summary>
                     <div className="reasoning-content">{reply.reasoning}</div>
                   </details>
@@ -1135,7 +1140,7 @@ export function DraftPane(props: DraftPaneProps) {
                 {reply.output ? (
                   <MessageContent content={reply.output} mode="writing" />
                 ) : (
-                  <div className="turn-body">正在等待响应…</div>
+                  <div className="turn-body">{writingWaitingPhrase}</div>
                 )}
               </article>
             )}
@@ -1372,7 +1377,7 @@ export function DraftPane(props: DraftPaneProps) {
 
                 {reply.busy ? (
                   <p className="writing-suggestion-body" aria-live="polite">
-                    {reply.output || '正在构思续写与改写建议…'}
+                    {reply.output || writingWaitingPhrase}
                   </p>
                 ) : selectedSuggestion ? (
                   <div className="writing-suggestion-confirm">
