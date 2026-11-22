@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assembleThreeZoneContext,
   createFictionHarness,
+  extractAssistantChoices,
   parseAssistantMessage,
   type LlmStreamRequest,
   type LlmTransport,
@@ -241,5 +242,130 @@ describe('Slice 4: Pseudo-code HUD panel & A/B/C/D or numbered choice parsing', 
     const numbered = parseAssistantMessage('```lfh-choices\n1. 调查书桌\n2. 询问管家\n3. 推窗观察\n4. 离开走廊\n5. 直接休息\n```');
     expect(numbered.choices).toHaveLength(5);
     expect(numbered.choices[4]).toEqual({ key: '5', label: '直接休息', fullText: '5. 直接休息' });
+  });
+
+  it('extracts fenced lfh-choices with 4+ backticks and trailing spaces on the opening line', () => {
+    const reply = [
+      '夜色渐深。',
+      '',
+      '````lfh-choices   \t',
+      'A. 推门进入',
+      'B. 留在门外',
+      '````',
+    ].join('\n');
+
+    const extracted = extractAssistantChoices(reply);
+    expect(extracted.choices).toEqual([
+      { key: 'A', label: '推门进入', fullText: 'A. 推门进入' },
+      { key: 'B', label: '留在门外', fullText: 'B. 留在门外' },
+    ]);
+    expect(extracted.displayContent).toBe('夜色渐深。\nA. 推门进入\nB. 留在门外');
+  });
+
+  it('extracts unclosed terminal fenced lfh-choices while ignoring non-terminal fenced blocks', () => {
+    const unclosed = [
+      '走廊尽头传来脚步声。',
+      '',
+      '```lfh-choices  ',
+      'A. 躲进衣柜',
+      'B. 迎面走去',
+      '',
+    ].join('\n');
+
+    const extracted = extractAssistantChoices(unclosed);
+    expect(extracted.choices).toEqual([
+      { key: 'A', label: '躲进衣柜', fullText: 'A. 躲进衣柜' },
+      { key: 'B', label: '迎面走去', fullText: 'B. 迎面走去' },
+    ]);
+    expect(extracted.displayContent).toBe('走廊尽头传来脚步声。\nA. 躲进衣柜\nB. 迎面走去');
+
+    const nonTerminal = [
+      '示例格式如下：',
+      '```lfh-choices',
+      'A. 示例一',
+      'B. 示例二',
+      '```',
+      '以上只是说明文字，并非本轮行动选项。',
+    ].join('\n');
+
+    expect(extractAssistantChoices(nonTerminal)).toEqual({
+      displayContent: nonTerminal,
+      choices: [],
+    });
+  });
+
+  it('extracts bare lfh-choices blocks without backticks at the end of a reply', () => {
+    const bare = [
+      '雨点敲打着窗棂。',
+      '',
+      'lfh-choices   ',
+      'A. 检查窗外',
+      'B. 锁上房门',
+      'C. 点亮蜡烛',
+    ].join('\n');
+
+    const extracted = extractAssistantChoices(bare);
+    expect(extracted.choices).toEqual([
+      { key: 'A', label: '检查窗外', fullText: 'A. 检查窗外' },
+      { key: 'B', label: '锁上房门', fullText: 'B. 锁上房门' },
+      { key: 'C', label: '点亮蜡烛', fullText: 'C. 点亮蜡烛' },
+    ]);
+    expect(extracted.displayContent).toBe('雨点敲打着窗棂。\nA. 检查窗外\nB. 锁上房门\nC. 点亮蜡烛');
+
+    const spacedBare = [
+      'lfh-choices',
+      '',
+      '1. 查看书架',
+      '',
+      '2. 离开书房',
+      '',
+    ].join('\n');
+
+    const spacedExtracted = extractAssistantChoices(spacedBare);
+    expect(spacedExtracted.choices).toEqual([
+      { key: '1', label: '查看书架', fullText: '1. 查看书架' },
+      { key: '2', label: '离开书房', fullText: '2. 离开书房' },
+    ]);
+    expect(spacedExtracted.displayContent).toBe('1. 查看书架\n2. 离开书房');
+  });
+
+  it('does not swallow unrelated trailing prose after bare lfh-choices or match plain markdown lists', () => {
+    const bareWithTrailingProse = [
+      '你推开大门。',
+      '',
+      'lfh-choices',
+      'A. 走进大厅',
+      'B. 转身离开',
+      '',
+      '大厅的吊灯忽然熄灭，四周陷入一片漆黑。',
+      '',
+      '远处传来低沉的钟声，仿佛在警告来访者。',
+    ].join('\n');
+
+    expect(extractAssistantChoices(bareWithTrailingProse)).toEqual({
+      displayContent: bareWithTrailingProse,
+      choices: [],
+    });
+
+    const insideCodeFence = [
+      '参考示例：',
+      '```markdown',
+      'lfh-choices',
+      'A. 选项一',
+      'B. 选项二',
+      '```',
+    ].join('\n');
+
+    expect(extractAssistantChoices(insideCodeFence)).toEqual({
+      displayContent: insideCodeFence,
+      choices: [],
+    });
+
+    expect(extractAssistantChoices('随身物品：\n- 火柴\n- 铜钥匙')).toEqual({
+      displayContent: '随身物品：\n- 火柴\n- 铜钥匙',
+      choices: [],
+    });
+
+    expect(extractAssistantChoices('```lfh-choices\nA. 唯一选项\n```').choices).toEqual([]);
   });
 });
