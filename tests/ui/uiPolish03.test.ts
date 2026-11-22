@@ -116,6 +116,10 @@ describe('UI-POLISH-03 V0.2 unified writing stage', () => {
     }));
 
     expect(markup).toContain('data-testid="creative-manuscript"');
+    expect(markup).toContain('data-testid="manuscript-status"');
+    expect(markup).toContain('7 字 · 已本地保存');
+    expect(markup).not.toContain('待保存…');
+    expect(markup).not.toContain('保存中…');
     expect(markup).toContain('data-testid="writing-suggestion-card"');
     expect(markup).toContain('站钟忽然停在十二点前。');
     expect(markup).toContain('采纳建议');

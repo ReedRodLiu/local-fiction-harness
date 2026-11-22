@@ -95,9 +95,11 @@ import { toErrorMessage } from './textHelpers.ts';
 import { useAppOverlayHistory } from './useAppOverlayHistory.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
 import { useCreativeWorkspace } from './useCreativeWorkspace.ts';
+import { useDeepSeekBalance } from './useDeepSeekBalance.ts';
 import { useDisplayPreferences } from './useDisplayPreferences.ts';
 import { useEdgeSwipeToOpen } from './useEdgeSwipeToOpen.ts';
 import { useLibraryCollapsedPreference } from './useLibraryCollapsedPreference.ts';
+import { flushActiveManuscripts } from './useManuscriptAutosave.ts';
 import { usePresentationOverlayState } from './usePresentationOverlayState.ts';
 
 function hasModelCredentials(config: ModelConfig, useDevEnvKey: boolean): boolean {
@@ -236,6 +238,7 @@ export function App({ runtime }: AppProps) {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardMounted, setWizardMounted] = useState(false);
   const [wizardVerifying, setWizardVerifying] = useState(false);
+  const [keyBoundSeq, setKeyBoundSeq] = useState(0);
   const [pendingByok, setPendingByok] = useState<{
     label: string;
     resume: (resolvedConfig: ModelConfig) => void;
@@ -805,6 +808,15 @@ export function App({ runtime }: AppProps) {
 
   const hasCredentials = hasModelCredentials(config, useDevEnvKey);
   const useDevProxyForSetup = import.meta.env.DEV && isWebDev && isDevProxyBaseUrl(config.baseUrl);
+  const { balanceState, refreshBalance } = useDeepSeekBalance({
+    active: showSettings,
+    hasCredentials,
+    useDevEnvKey,
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    keyBoundSeq,
+    diagnostics: runtime.diagnostics,
+  });
 
   const openByokPrompt = (
     label: string,
@@ -849,6 +861,7 @@ export function App({ runtime }: AppProps) {
     if (branchSwitchBusyRef.current) return;
     ++overlayNavigationSeqRef.current;
     captureOverlayTrigger();
+    void flushActiveManuscripts();
     abortActiveStream(true);
     setPlusMenuOpen(false);
     setCreativePage(null);
@@ -864,6 +877,7 @@ export function App({ runtime }: AppProps) {
     if (branchSwitchBusyRef.current) return;
     ++overlayNavigationSeqRef.current;
     captureOverlayTrigger();
+    void flushActiveManuscripts();
     setPlusMenuOpen(false);
     setCreativeCompanionOpen(false);
     setShowImport(false);
@@ -951,8 +965,10 @@ export function App({ runtime }: AppProps) {
     const fromMode: StageAssetMode = creativePage ?? 'story';
     if (fromMode === targetMode) return;
     setErrorMsg(null);
-    const activeWorkNow = creative.workspace.works.find((item) => item.id === creative.workspace.activeWorkId);
-    const activeCharacterNow = creative.workspace.characters.find((item) => item.id === creative.workspace.activeCharacterId);
+    await flushActiveManuscripts();
+    const latestWorkspace = await creative.read();
+    const activeWorkNow = latestWorkspace.works.find((item) => item.id === latestWorkspace.activeWorkId);
+    const activeCharacterNow = latestWorkspace.characters.find((item) => item.id === latestWorkspace.activeCharacterId);
 
     try {
       const converted = convertActiveAssetMode({
@@ -961,7 +977,7 @@ export function App({ runtime }: AppProps) {
         story,
         work: activeWorkNow,
         character: activeCharacterNow,
-        workspace: creative.workspace,
+        workspace: latestWorkspace,
       });
       await persistMaterializedAsset(targetMode, converted);
       try {
@@ -1297,6 +1313,8 @@ export function App({ runtime }: AppProps) {
     setCreating(true);
     setErrorMsg(null);
     try {
+      await flushActiveManuscripts();
+      if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
       const work = { ...newWork('未命名作品'), writingStarted: true };
       await creative.save((state) => ({
         ...state,
@@ -1432,6 +1450,8 @@ export function App({ runtime }: AppProps) {
     const opSeq = ++storyOpSeqRef.current;
     setErrorMsg(null);
     try {
+      await flushActiveManuscripts();
+      if (storyOpSeqRef.current !== opSeq) return;
       const switched = await harness.setActiveStory(id);
       if (storyOpSeqRef.current !== opSeq) return;
       if (switched) {
@@ -1512,6 +1532,7 @@ export function App({ runtime }: AppProps) {
   const handleExportFullBackup = async () => {
     setErrorMsg(null);
     try {
+      await flushActiveManuscripts();
       const latestWorkspace = await creative.read();
       const latestStories = (await harness.listStories()).map(migrateStoryToV02);
       const json = exportFolioBackupV3({
@@ -1662,6 +1683,7 @@ export function App({ runtime }: AppProps) {
   function openNewCreation() {
     if (deepSeekImportBusyRef.current) return;
     ++storyOpSeqRef.current;
+    void flushActiveManuscripts();
     abortActiveStream(true);
     invalidateSummaryTask();
     setPlusMenuOpen(false);
@@ -1696,6 +1718,9 @@ export function App({ runtime }: AppProps) {
     setErrorMsg(null);
     try {
       if (action === 'export') {
+        if (mode === 'writing') {
+          await flushActiveManuscripts();
+        }
         const state = await creative.read();
         if (mode === 'writing') {
           const work = state.works.find((item) => item.id === id);
@@ -1715,6 +1740,10 @@ export function App({ runtime }: AppProps) {
           }
         }
         return;
+      }
+      if (action !== 'delete' || mode !== 'writing' || creative.workspace.activeWorkId !== id) {
+        await flushActiveManuscripts();
+        if (opSeq !== null && storyOpSeqRef.current !== opSeq) return;
       }
       await creative.save((state) => {
         if (mode === 'writing') {
@@ -1989,8 +2018,10 @@ export function App({ runtime }: AppProps) {
   const showManuscript = Boolean(activeWork && (writingView?.id === activeWork.id
     ? writingView.manuscript
     : activeWork.writingStarted || activeWork.body || activeWork.source));
-  const selectWritingView = (manuscript: boolean) => {
-    if (activeWork) setWritingView({ id: activeWork.id, manuscript });
+  const selectWritingView = async (manuscript: boolean) => {
+    const targetWorkId = activeWork?.id;
+    await flushActiveManuscripts();
+    if (targetWorkId) setWritingView({ id: targetWorkId, manuscript });
   };
 
   const creativeActions = (mode: 'writing' | 'character') => ({
@@ -2134,7 +2165,7 @@ export function App({ runtime }: AppProps) {
                 type="button"
                 className="topbar-segment-btn"
                 aria-pressed={!showManuscript}
-                onClick={() => selectWritingView(false)}
+                onClick={() => void selectWritingView(false)}
               >
                 聊天
               </button>
@@ -2142,7 +2173,7 @@ export function App({ runtime }: AppProps) {
                 type="button"
                 className="topbar-segment-btn"
                 aria-pressed={showManuscript}
-                onClick={() => selectWritingView(true)}
+                onClick={() => void selectWritingView(true)}
               >
                 正文
               </button>
@@ -2251,6 +2282,8 @@ export function App({ runtime }: AppProps) {
               config={config}
               useDevEnvKey={useDevEnvKey}
               showDevTestProxy={import.meta.env.DEV && isWebDev && Boolean(devTestInfo?.available)}
+              balanceState={balanceState}
+              onRefreshBalance={refreshBalance}
               themePreference={displayPreferences.theme}
               fontSize={displayPreferences.fontSize}
               canExportCurrentStory={storyExists}
@@ -2289,8 +2322,8 @@ export function App({ runtime }: AppProps) {
                 companionOpen={creativeCompanionOpen}
                 setCompanionOpen={setCreativeCompanionOpen}
                 manuscript={showManuscript}
-                onStartManuscript={() => selectWritingView(true)}
-                onSwitchToChat={() => selectWritingView(false)}
+                onStartManuscript={() => void selectWritingView(true)}
+                onSwitchToChat={() => void selectWritingView(false)}
                 onSwitchStageMode={(targetMode) => void handleConvertStageMode(targetMode)}
                 onNavigateCreatedAsset={(kind, id) => void changeCreativeItem(kind === 'character' ? 'character' : 'writing', id, 'select')}
                 initialTurn={initialCreativeTurn}
@@ -2633,6 +2666,7 @@ export function App({ runtime }: AppProps) {
                 setPendingByok(null);
                 setWizardOpen(false);
                 updateConfig(nextCfg, false);
+                setKeyBoundSeq((seq) => seq + 1);
                 if (resume) resume(nextCfg);
               }}
               onVerifyingChange={setWizardVerifying}
