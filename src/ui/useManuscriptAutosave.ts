@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toErrorMessage } from './textHelpers.ts';
 
+export const DEFAULT_MANUSCRIPT_AUTOSAVE_DEBOUNCE_MS = 1500;
+export const DEFAULT_MANUSCRIPT_SLOW_SAVE_MS = 5000;
+
+declare global {
+  interface Window {
+    __lfhFlushManuscript?: () => Promise<void>;
+    __lfhHasPendingManuscriptFlush?: () => boolean;
+  }
+}
+
 export type ManuscriptSaveDiagnosticAction =
   | 'manuscript_save_queued'
   | 'manuscript_save_flushed'
@@ -29,6 +39,7 @@ export interface ManuscriptAutosaveSnapshot {
   persistedText: string;
   dirty: boolean;
   saving: boolean;
+  slowSaving: boolean;
   saveError: string | null;
   canUndo: boolean;
   canRedo: boolean;
@@ -41,6 +52,7 @@ export interface ManuscriptAutosaveOptions {
   persistedText: string;
   onSave: (nextText: string, expectedPrevText: string) => Promise<void>;
   debounceMs?: number;
+  slowSaveMs?: number;
   maxUndoSteps?: number;
   undoBannerMs?: number;
   onDiagnosticEvent?: (action: ManuscriptSaveDiagnosticAction) => void;
@@ -68,10 +80,79 @@ export interface ManuscriptAutosaveManager {
   dispose(): void;
 }
 
+const activeManuscriptManagers = new Set<ManuscriptAutosaveManager>();
+const inflightManuscriptFlushes = new Set<Promise<void>>();
+
+function trackInflightFlush(promise: Promise<void>): Promise<void> {
+  const settled = promise.then(
+    () => undefined,
+    () => undefined,
+  );
+  inflightManuscriptFlushes.add(settled);
+  void settled.finally(() => {
+    inflightManuscriptFlushes.delete(settled);
+  });
+  return promise;
+}
+
+/**
+ * Registers an active manuscript autosave manager so navigation/exit transitions
+ * and the Android Back bridge can flush pending edits before proceeding.
+ */
+export function registerActiveManuscriptManager(manager: ManuscriptAutosaveManager): () => void {
+  activeManuscriptManagers.add(manager);
+  return () => {
+    activeManuscriptManagers.delete(manager);
+  };
+}
+
+/**
+ * Returns true when any active manuscript has unsaved/saving edits or a flush
+ * triggered by a recent unmount is still in flight.
+ */
+export function hasPendingManuscriptFlush(): boolean {
+  if (inflightManuscriptFlushes.size > 0) return true;
+  for (const manager of activeManuscriptManagers) {
+    const snap = manager.getSnapshot();
+    if (snap.dirty || snap.saving) return true;
+  }
+  return false;
+}
+
+/**
+ * Flushes all active manuscript editors and awaits any in-flight unmount flushes.
+ */
+export async function flushActiveManuscripts(): Promise<void> {
+  const flushes: Promise<void>[] = [];
+  for (const manager of activeManuscriptManagers) {
+    flushes.push(manager.flush());
+  }
+  for (const pending of inflightManuscriptFlushes) {
+    flushes.push(pending);
+  }
+  if (flushes.length === 0) return;
+  await Promise.allSettled(flushes);
+}
+
+export function formatManuscriptStatusText(
+  snapshot: Pick<ManuscriptAutosaveSnapshot, 'text' | 'dirty' | 'saving' | 'slowSaving' | 'saveError'>,
+): string {
+  const count = snapshot.text.length;
+  if (snapshot.saveError) return `${count} 字 · 保存失败`;
+  if (snapshot.slowSaving) return `${count} 字 · 正在保存…`;
+  return `${count} 字 · 已本地保存`;
+}
+
+if (typeof window !== 'undefined') {
+  window.__lfhFlushManuscript = () => flushActiveManuscripts();
+  window.__lfhHasPendingManuscriptFlush = () => hasPendingManuscriptFlush();
+}
+
 export function createManuscriptAutosaveManager(
   options: ManuscriptAutosaveOptions,
 ): ManuscriptAutosaveManager {
-  const debounceMs = options.debounceMs ?? 400;
+  const debounceMs = options.debounceMs ?? DEFAULT_MANUSCRIPT_AUTOSAVE_DEBOUNCE_MS;
+  const slowSaveMs = Math.max(100, options.slowSaveMs ?? DEFAULT_MANUSCRIPT_SLOW_SAVE_MS);
   const maxUndoSteps = Math.max(10, options.maxUndoSteps ?? 20);
   const undoBannerMs = options.undoBannerMs ?? 6000;
 
@@ -79,6 +160,7 @@ export function createManuscriptAutosaveManager(
   let currentText = options.persistedText;
   let lastPersistedText = options.persistedText;
   let saving = false;
+  let slowSaving = false;
   let saveError: string | null = null;
   let undoStack: ManuscriptSnapshot[] = [];
   let redoStack: ManuscriptSnapshot[] = [];
@@ -86,6 +168,7 @@ export function createManuscriptAutosaveManager(
   let bannerSeq = 0;
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let slowSaveTimer: ReturnType<typeof setTimeout> | null = null;
   let bannerTimer: ReturnType<typeof setTimeout> | null = null;
   let saveQueue: Promise<void> = Promise.resolve();
   let disposed = false;
@@ -101,6 +184,25 @@ export function createManuscriptAutosaveManager(
       clearTimeout(debounceTimer);
       debounceTimer = null;
     }
+  };
+
+  const clearSlowSaveTimer = () => {
+    if (slowSaveTimer !== null) {
+      clearTimeout(slowSaveTimer);
+      slowSaveTimer = null;
+    }
+  };
+
+  const startSlowSaveTimer = () => {
+    clearSlowSaveTimer();
+    slowSaving = false;
+    slowSaveTimer = setTimeout(() => {
+      slowSaveTimer = null;
+      if (saving && !saveError && !disposed) {
+        slowSaving = true;
+        emit();
+      }
+    }, slowSaveMs);
   };
 
   const clearBannerTimer = () => {
@@ -128,6 +230,7 @@ export function createManuscriptAutosaveManager(
       const expectedPrev = lastPersistedText;
       saving = true;
       saveError = null;
+      startSlowSaveTimer();
       if (!disposed) emit();
 
       try {
@@ -146,6 +249,8 @@ export function createManuscriptAutosaveManager(
           options.onSaveError?.(err);
         }
       } finally {
+        clearSlowSaveTimer();
+        slowSaving = false;
         saving = false;
         if (!disposed) emit();
       }
@@ -185,6 +290,7 @@ export function createManuscriptAutosaveManager(
         persistedText: lastPersistedText,
         dirty: currentText !== lastPersistedText,
         saving,
+        slowSaving,
         saveError,
         canUndo: undoStack.length > 0,
         canRedo: redoStack.length > 0,
@@ -300,9 +406,9 @@ export function createManuscriptAutosaveManager(
     flush(): Promise<void> {
       clearDebounce();
       if (currentText === lastPersistedText && !saveError) {
-        return saveQueue;
+        return saving ? trackInflightFlush(saveQueue) : saveQueue;
       }
-      return drainSaveQueue('flush');
+      return trackInflightFlush(drainSaveQueue('flush'));
     },
 
     waitForIdle(): Promise<void> {
@@ -312,11 +418,13 @@ export function createManuscriptAutosaveManager(
     syncExternal(nextWorkId: string, nextPersistedText: string) {
       if (nextWorkId !== currentWorkId) {
         clearDebounce();
+        clearSlowSaveTimer();
         clearBannerTimer();
         currentWorkId = nextWorkId;
         currentText = nextPersistedText;
         lastPersistedText = nextPersistedText;
         saving = false;
+        slowSaving = false;
         saveError = null;
         undoStack = [];
         redoStack = [];
@@ -341,7 +449,9 @@ export function createManuscriptAutosaveManager(
     dispose() {
       disposed = true;
       clearDebounce();
+      clearSlowSaveTimer();
       clearBannerTimer();
+      slowSaving = false;
       listeners.clear();
     },
   };
@@ -369,6 +479,7 @@ export function useManuscriptAutosave(
       workId: options.workId,
       persistedText: options.persistedText,
       debounceMs: options.debounceMs,
+      slowSaveMs: options.slowSaveMs,
       maxUndoSteps: options.maxUndoSteps,
       undoBannerMs: options.undoBannerMs,
       onSave: (nextText, expectedPrev) => optionsRef.current.onSave(nextText, expectedPrev),
@@ -385,11 +496,15 @@ export function useManuscriptAutosave(
     const manager = managerRef.current!;
     // React StrictMode runs cleanup + re-setup on the same ref instance; reactivate before subscribing.
     manager.activate();
+    const unregister = registerActiveManuscriptManager(manager);
     setSnapshot(manager.getSnapshot());
     const unsubscribe = manager.subscribe(() => {
       setSnapshot(manager.getSnapshot());
     });
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      unregister();
+    };
   }, []);
 
   useEffect(() => {
@@ -405,11 +520,15 @@ export function useManuscriptAutosave(
     const handlePageHide = () => {
       void managerRef.current?.flush();
     };
+    const handleBeforeUnload = () => {
+      void managerRef.current?.flush();
+    };
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', handleVisibilityChange);
     }
     if (typeof window !== 'undefined') {
       window.addEventListener('pagehide', handlePageHide);
+      window.addEventListener('beforeunload', handleBeforeUnload);
     }
     return () => {
       if (typeof document !== 'undefined') {
@@ -417,6 +536,7 @@ export function useManuscriptAutosave(
       }
       if (typeof window !== 'undefined') {
         window.removeEventListener('pagehide', handlePageHide);
+        window.removeEventListener('beforeunload', handleBeforeUnload);
       }
     };
   }, []);

@@ -27,6 +27,8 @@ public class MainActivity extends BridgeActivity {
     private static final long BACK_NAVIGATION_GUARD_MS = 300;
 
     private boolean backNavigationInFlight = false;
+    private long exitFlushSeq = 0;
+    private ExitFlushCoordinator activeExitFlushCoordinator = null;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -60,8 +62,7 @@ public class MainActivity extends BridgeActivity {
                             return;
                         }
                         if (mode == BACK_MODE_STALE_OVERLAY) {
-                            backNavigationInFlight = false;
-                            finish();
+                            finishAfterBestEffortFlush(webView);
                             return;
                         }
                         if (webView.canGoBack()) {
@@ -72,12 +73,67 @@ public class MainActivity extends BridgeActivity {
                             );
                             return;
                         }
-                        backNavigationInFlight = false;
-                        finish();
+                        finishAfterBestEffortFlush(webView);
                     })
                 );
             }
         });
+    }
+
+    @Override
+    public void onDestroy() {
+        if (activeExitFlushCoordinator != null) {
+            activeExitFlushCoordinator.cancel();
+            activeExitFlushCoordinator = null;
+        }
+        super.onDestroy();
+    }
+
+    private void finishAfterBestEffortFlush(WebView webView) {
+        if (activeExitFlushCoordinator != null) {
+            activeExitFlushCoordinator.cancel();
+            activeExitFlushCoordinator = null;
+        }
+        if (isFinishing() || isDestroyed() || webView == null) {
+            backNavigationInFlight = false;
+            if (!isFinishing() && !isDestroyed()) finish();
+            return;
+        }
+        ExitFlushCoordinator coordinator = new ExitFlushCoordinator(
+            new ExitFlushCoordinator.Scheduler() {
+                @Override
+                public void postDelayed(Runnable action, long delayMs) {
+                    webView.postDelayed(action, delayMs);
+                }
+
+                @Override
+                public void removeCallbacks(Runnable action) {
+                    webView.removeCallbacks(action);
+                }
+            },
+            (script, callback) -> webView.evaluateJavascript(script, res ->
+                runOnUiThread(() -> {
+                    if (
+                        isFinishing() ||
+                        isDestroyed() ||
+                        getBridge() == null ||
+                        webView != getBridge().getWebView()
+                    ) {
+                        return;
+                    }
+                    callback.accept(res);
+                })
+            ),
+            () -> {
+                backNavigationInFlight = false;
+                activeExitFlushCoordinator = null;
+                if (!isFinishing() && !isDestroyed()) {
+                    finish();
+                }
+            }
+        );
+        activeExitFlushCoordinator = coordinator;
+        coordinator.flushAndFinish("exit-" + (++exitFlushSeq));
     }
 
     private static int parseBackMode(String result) {
