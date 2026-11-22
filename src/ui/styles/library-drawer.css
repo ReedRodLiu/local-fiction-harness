@@ -1,6 +1,9 @@
 .library-categories { display: flex; gap: 4px; margin-bottom: 12px; }
-.library-categories button { flex: 1; min-height: 44px; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--text-secondary); cursor: pointer; }
+.library-categories button { flex: 1; min-height: 44px; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--text-secondary); cursor: pointer; transition: background-color 120ms ease-out, transform 120ms ease-out; }
+.library-categories button:hover:not(:disabled) { background: var(--bg-surface-hover); color: var(--text-primary); }
+.library-categories button:active:not(:disabled) { background: var(--bg-surface-active); transform: scale(0.97); }
 .library-categories button[aria-pressed="true"] { background: var(--bg-surface-hover); color: var(--text-primary); font-weight: 650; }
+.library-categories button[aria-pressed="true"]:active:not(:disabled) { background: var(--bg-surface-active); }
 .library-import-picker { width: 100%; }
 .library-import-picker > summary { display: flex; align-items: center; justify-content: center; width: 100%; cursor: pointer; list-style: none; }
 .library-import-picker summary::-webkit-details-marker { display: none; }

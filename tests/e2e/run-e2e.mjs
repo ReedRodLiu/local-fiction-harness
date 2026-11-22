@@ -1654,11 +1654,14 @@ async function verifyByokDialogProtection(page, port) {
   await wizard.waitFor({ state: 'visible' });
   for (const testId of [
     'wizard-open-platform-btn',
-    'wizard-paste-btn',
     'wizard-verify-save-btn',
   ]) {
     await wizard.getByTestId(testId).waitFor();
   }
+  if ((await wizard.getByTestId('wizard-paste-btn').count()) !== 0) {
+    throw new Error('BYOK wizard must not render deprecated wizard-paste-btn.');
+  }
+  await wizard.locator('#byok-api-key').waitFor();
   await page.waitForTimeout(250);
   const mobileBounds = await wizard.boundingBox();
   const mobileViewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));

@@ -67,4 +67,74 @@ describe('MessageContent', () => {
 
     expect(markup).toContain('class="hud-field hud-field-wide"');
   });
+
+  it('renders bare lfh-choices as choice buttons while preserving bold, lists, and GFM tables', () => {
+    const content = [
+      '**重点线索**已出现：',
+      '- 铜钥匙',
+      '- 泛黄的信笺',
+      '',
+      '| 区域 | 状态 |',
+      '|---|---|',
+      '| 东楼 | 封锁 |',
+      '',
+      'lfh-choices  ',
+      'A. 撬开东楼门锁',
+      'B. 先回客厅休息',
+    ].join('\n');
+
+    const activeMarkup = renderToStaticMarkup(
+      createElement(MessageContent, {
+        content,
+        showChoices: true,
+        onSelectChoice: () => undefined,
+      }),
+    );
+
+    expect(activeMarkup).toContain('<strong>重点线索</strong>');
+    expect(activeMarkup).toContain('<ul><li>铜钥匙</li><li>泛黄的信笺</li></ul>');
+    expect(activeMarkup).toContain('<table class="md-table">');
+    expect(activeMarkup).toContain('data-testid="choice-row"');
+    expect(activeMarkup).toContain('data-testid="choice-option"');
+    expect(activeMarkup).toContain('aria-label="A. 撬开东楼门锁"');
+    expect(activeMarkup).not.toContain('lfh-choices');
+    expect(activeMarkup).not.toContain('撬开东楼门锁</p>');
+
+    const historyMarkup = renderToStaticMarkup(
+      createElement(MessageContent, {
+        content,
+        showChoices: false,
+      }),
+    );
+
+    expect(historyMarkup).not.toContain('data-testid="choice-row"');
+    expect(historyMarkup).not.toContain('lfh-choices');
+    expect(historyMarkup).toContain('A. 撬开东楼门锁');
+    expect(historyMarkup).toContain('B. 先回客厅休息');
+  });
+
+  it('renders unclosed and 4-backtick fenced lfh-choices as choice buttons and keeps plain lists intact', () => {
+    const unclosedMarkup = renderToStaticMarkup(
+      createElement(MessageContent, {
+        content: '雾气弥漫。\n\n````lfh-choices   \nA. 举起提灯\nB. 原地聆听',
+        showChoices: true,
+        onSelectChoice: () => undefined,
+      }),
+    );
+
+    expect(unclosedMarkup).toContain('data-testid="choice-row"');
+    expect(unclosedMarkup).toContain('aria-label="A. 举起提灯"');
+    expect(unclosedMarkup).not.toContain('lfh-choices');
+
+    const plainListMarkup = renderToStaticMarkup(
+      createElement(MessageContent, {
+        content: '1. 物品\n2. 笔记',
+        showChoices: true,
+        onSelectChoice: () => undefined,
+      }),
+    );
+
+    expect(plainListMarkup).toContain('<ol><li>物品</li><li>笔记</li></ol>');
+    expect(plainListMarkup).not.toContain('data-testid="choice-row"');
+  });
 });

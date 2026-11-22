@@ -253,6 +253,26 @@ export function turnMessages(nodes: TurnNode[]): LlmMessage[] {
   return nodes.map(({ role, content }) => ({ role, content }));
 }
 
+const DEFAULT_CHARACTER_SYSTEM_PROMPT = [
+  '你是该角色本人。保持人设一致，随用户的说话方式和情境自然切换日常聊天或代入对戏；让用户自主决定自身身份与关键行动，自然承接较早经历与当时参与者，用户换新身份时按初见交流。',
+  '用真人说话的口吻和节奏回应，回复篇幅与长短句随情境自然变化。禁止客服式客套与总结、分点说教、解释自己为何这样回复、跳出角色的括号吐槽或元评论，以及自称 AI 或模型能力免责声明。',
+  '若「我的记忆」或「当前设定」中明确指定了说话方式、格式或角色互动偏好，以用户设定为准。',
+].join('\n');
+
+const DEFAULT_WRITING_CHAT_SYSTEM_PROMPT = [
+  '你是作者的创作搭档，和作者讨论开书想法、原作设定、正文段落与续写方向。自动结合作品设定与正文现状；用户明确要求持久修改设定或记忆时再附提案。',
+  '讨论时像敏锐的同桌编辑一样直奔重点，不要套用“首先/其次/总结”的模板分点、客套寒暄或大段修改理由说教；仅当作者明确索要大纲、人物表或分条拆解时，才使用结构化列表。',
+  '输出试写或正文片段时，写干净克制的小说正文，避免翻译腔、套路化 AI 比喻和说教式收尾。',
+  '若「我的记忆」或「当前设定」中明确指定了文风、结构或协作偏好，以用户设定为准。',
+].join('\n');
+
+function appendChangePrompt(prompt: string): string {
+  const trimmed = prompt.trim();
+  if (!trimmed) return CHANGE_PROMPT;
+  if (trimmed.includes(CHANGE_PROMPT)) return trimmed;
+  return `${trimmed}\n${CHANGE_PROMPT}`;
+}
+
 export function creativeContext(
   prompt: string,
   entries: readonly [string, MarkdownVersion][],
@@ -260,7 +280,7 @@ export function creativeContext(
   input: string,
 ): LlmMessage[] {
   return [
-    { role: 'system', content: `${prompt}\n${CHANGE_PROMPT}` },
+    { role: 'system', content: appendChangePrompt(prompt) },
     ...documentMessages(entries),
     ...turnMessages(path),
     { role: 'user', content: input },
@@ -277,10 +297,8 @@ export function characterContext(
   const publicVersion = documentVersion(global);
   const persona = documentVersion(character.document, conversation.characterVersion);
   const local = documentVersion(conversation.document, conversationLocalVersion(conversation));
-  const prompt =
-    '你是该角色本人。保持人设一致，随用户的说话方式和情境自然切换日常聊天或代入对戏；让用户自主决定自身身份与关键行动。自然承接较早经历与当时参与者，用户换新身份时按初见交流。';
   const assembled = assembleCreativeThreeZoneContext({
-    systemPrompt: `${prompt}\n${CHANGE_PROMPT}`,
+    systemPrompt: appendChangePrompt(DEFAULT_CHARACTER_SYSTEM_PROMPT),
     documents: [
       ['我的记忆', publicVersion],
       ['角色设定', persona],
@@ -325,10 +343,9 @@ export function workContext(
   const workVersion = documentVersion(work.document);
   const tree = getWorkDiscussionTree(work);
   const targetParentId = options.targetParentId === undefined ? tree.activeLeafNodeId : options.targetParentId;
-  const prompt = options.systemPrompt ??
-    '和作者自由讨论开书想法、原作设定、正文段落与续写方向。自动结合作品设定与正文现状；用户明确要求持久修改设定或记忆时再附提案。';
+  const prompt = options.systemPrompt ?? DEFAULT_WRITING_CHAT_SYSTEM_PROMPT;
   const assembled = assembleCreativeThreeZoneContext({
-    systemPrompt: `${prompt}\n${CHANGE_PROMPT}`,
+    systemPrompt: appendChangePrompt(prompt),
     documents: [
       ['我的记忆', publicVersion],
       ['作品设定', workVersion],

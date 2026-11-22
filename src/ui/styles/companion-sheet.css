@@ -37,6 +37,11 @@
   font-size: 13px;
   font-weight: 550;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.companion-tab:active:not(:disabled) {
+  background: var(--bg-surface-active);
 }
 
 .companion-tab[aria-selected="true"] {
@@ -98,14 +103,23 @@
   justify-content: space-between;
   width: 100%;
   min-height: 48px;
-  padding: 8px 4px;
+  padding: 8px 6px;
   border: 0;
   border-bottom: 1px solid var(--border-hairline);
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.companion-document-row:hover:not(:disabled) {
+  background: var(--bg-surface-hover);
+}
+
+.companion-document-row:active:not(:disabled) {
+  background: var(--bg-surface-active);
 }
 
 .companion-document-row:last-child {
@@ -374,10 +388,16 @@
   display: flex;
   align-items: center;
   min-height: 44px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 550;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.branch-note-details summary:active {
+  background: var(--bg-surface-active);
 }
 
 .branch-note-body {
