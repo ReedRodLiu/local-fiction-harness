@@ -300,7 +300,18 @@ a:focus-visible,
   margin: 0.2rem 0 0;
   color: var(--text-muted);
   font-size: 0.83rem;
+  line-height: 1.45;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.story-tree-span-node-preview.is-user {
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
 }
 
 .story-tree-span-node-diagnostics {
@@ -324,8 +335,19 @@ a:focus-visible,
 
 .story-tree-preview {
   font-size: 0.83rem;
+  line-height: 1.45;
   color: var(--text-muted);
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.story-tree-preview.is-user {
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
 }
 
 .story-tree-fork-wrap {

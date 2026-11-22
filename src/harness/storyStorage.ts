@@ -309,6 +309,7 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
     typeof entry.content !== 'string' ||
     typeof entry.createdAt !== 'number' ||
     !Number.isFinite(entry.createdAt) ||
+    (entry.turnSummary !== undefined && typeof entry.turnSummary !== 'string') ||
     (entry.reasoningContent !== undefined && typeof entry.reasoningContent !== 'string') ||
     (entry.model !== undefined && typeof entry.model !== 'string')
   ) {
@@ -326,12 +327,17 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
     typeof documents.local !== 'string' || typeof documents.container !== 'string')) {
     throw new Error('备份中的节点文档引用无效。');
   }
+  const trimmedTurnSummary =
+    typeof entry.turnSummary === 'string' && entry.turnSummary.trim()
+      ? entry.turnSummary.trim()
+      : undefined;
   const trimmedModel = typeof entry.model === 'string' && entry.model.trim() ? entry.model.trim() : undefined;
   return {
     id: entry.id,
     parentId: entry.parentId,
     role: entry.role,
     content: entry.content,
+    ...(trimmedTurnSummary !== undefined ? { turnSummary: trimmedTurnSummary } : {}),
     ...(entry.reasoningContent !== undefined ? { reasoningContent: entry.reasoningContent } : {}),
     ...(trimmedModel !== undefined ? { model: trimmedModel } : {}),
     ...(entry.reasoningEffort !== undefined ? { reasoningEffort: entry.reasoningEffort as ReasoningEffort } : {}),

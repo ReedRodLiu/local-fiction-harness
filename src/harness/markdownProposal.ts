@@ -1,3 +1,4 @@
+import { stripMarkdownToPlainText } from './branches.ts';
 import { createDefaultId } from './id.ts';
 import type { TurnProposalRecord } from './types.ts';
 
@@ -57,6 +58,7 @@ export interface UnparsedProposalBlock {
 
 export interface ProposalReplySplit {
   content: string;
+  turnSummary?: string;
   proposalStatus: ProposalParseStatus;
   proposal?: MarkdownProposal;
   proposals: ParsedProposal[];
@@ -101,8 +103,13 @@ const PROPOSAL_MARKERS = [
   '```lfh-change',
 ] as const;
 
+const SUMMARY_MARKERS = [
+  '````lfh-summary',
+  '```lfh-summary',
+] as const;
+
 interface ExtractedFenceBlock {
-  format: 'lfh-proposal' | 'lfh-change';
+  format: 'lfh-proposal' | 'lfh-change' | 'lfh-summary';
   raw: string;
   innerLines: string[];
   closed: boolean;
@@ -256,10 +263,29 @@ function extractFenceBlocks(rawContent: string): {
   const textChunks: string[] = [];
   let currentText: string[] = [];
 
+  let activeOuterFence: { char: string; len: number } | null = null;
   let i = 0;
   while (i < lines.length) {
-    const openMatch = /^(`{3,})(lfh-proposal|lfh-change)\s*$/.exec(lines[i]);
+    if (activeOuterFence) {
+      currentText.push(lines[i]);
+      const closeMatch = /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*$/.exec(lines[i]);
+      if (
+        closeMatch &&
+        closeMatch[1][0] === activeOuterFence.char &&
+        closeMatch[1].length >= activeOuterFence.len
+      ) {
+        activeOuterFence = null;
+      }
+      i += 1;
+      continue;
+    }
+
+    const openMatch = /^[ \t]{0,3}(`{3,})[ \t]*(lfh-proposal|lfh-change|lfh-summary)[ \t]*$/.exec(lines[i]);
     if (!openMatch) {
+      const anyFence = /^[ \t]{0,3}(`{3,}|~{3,})(.*)$/.exec(lines[i]);
+      if (anyFence && !(anyFence[1][0] === '`' && anyFence[2].includes('`'))) {
+        activeOuterFence = { char: anyFence[1][0], len: anyFence[1].length };
+      }
       currentText.push(lines[i]);
       i += 1;
       continue;
@@ -269,7 +295,7 @@ function extractFenceBlocks(rawContent: string): {
     currentText = [];
 
     const outerLen = openMatch[1].length;
-    const format = openMatch[2] as 'lfh-proposal' | 'lfh-change';
+    const format = openMatch[2] as 'lfh-proposal' | 'lfh-change' | 'lfh-summary';
     let innerFenceLen = 0;
     let inSearchReplace = false;
     let closedAt = -1;
@@ -295,7 +321,13 @@ function extractFenceBlocks(rawContent: string): {
         } else if (info === '' && len >= outerLen && !inSearchReplace) {
           closedAt = j;
           break;
-        } else if (info !== '' && info !== 'lfh-proposal' && info !== 'lfh-change' && !inSearchReplace) {
+        } else if (
+          format === 'lfh-proposal' &&
+          info !== '' &&
+          info !== 'lfh-proposal' &&
+          info !== 'lfh-change' &&
+          !inSearchReplace
+        ) {
           innerFenceLen = len;
         }
       }
@@ -597,8 +629,14 @@ export function parseProposalReply(
 ): ProposalReplySplit {
   const { blocks, textChunks } = extractFenceBlocks(rawContent);
   if (blocks.length === 0) {
+    const normalized = normalizeEol(rawContent);
+    const partial = findTrailingMarkerPrefixLength(normalized);
+    const trimmedContent =
+      partial.length > 0 && partial.isSummaryOnly
+        ? normalized.slice(0, -partial.length).trimEnd()
+        : rawContent;
     return {
-      content: rawContent,
+      content: trimmedContent,
       proposalStatus: 'none',
       proposals: [],
       unparsedBlocks: [],
@@ -607,8 +645,16 @@ export function parseProposalReply(
 
   const proposals: ParsedProposal[] = [];
   const unparsedBlocks: UnparsedProposalBlock[] = [];
+  let turnSummary: string | undefined;
 
   for (const block of blocks) {
+    if (block.format === 'lfh-summary') {
+      if (block.closed) {
+        const sanitized = stripMarkdownToPlainText(block.innerLines.join(' '));
+        if (sanitized) turnSummary = sanitized;
+      }
+      continue;
+    }
     const outcome =
       block.format === 'lfh-proposal'
         ? parseLfhProposalBlock(block, options.finishReason)
@@ -636,6 +682,7 @@ export function parseProposalReply(
 
   return {
     content,
+    ...(turnSummary ? { turnSummary } : {}),
     proposalStatus,
     ...(proposal ? { proposal } : {}),
     proposals,
@@ -658,7 +705,9 @@ export function splitMarkdownReply(content: string): MarkdownReplySplit {
   return { content: parsed.content, proposalStatus: 'invalid' };
 }
 
-function findTrailingMarkerPrefixLength(text: string): { length: number; isLfhPrefix: boolean } {
+function findTrailingMarkerPrefixLength(
+  text: string,
+): { length: number; isLfhPrefix: boolean; isSummaryOnly: boolean } {
   const lines = text.split('\n');
   let nonProposalFence = '';
   let lastLineWasClosingFence = false;
@@ -668,42 +717,61 @@ function findTrailingMarkerPrefixLength(text: string): { length: number; isLfhPr
     const isLast = i === lines.length - 1;
     const fenceMatch = /^(`{3,}|~{3,})(.*)$/.exec(line.trimEnd());
     if (nonProposalFence) {
-      if (fenceMatch && fenceMatch[2].trim() === '' && fenceMatch[1][0] === nonProposalFence[0] && fenceMatch[1].length >= nonProposalFence.length) {
+      if (
+        fenceMatch &&
+        fenceMatch[2].trim() === '' &&
+        fenceMatch[1][0] === nonProposalFence[0] &&
+        fenceMatch[1].length >= nonProposalFence.length
+      ) {
         nonProposalFence = '';
         if (isLast) lastLineWasClosingFence = true;
       }
     } else if (!isLast && fenceMatch) {
       const info = fenceMatch[2].trim();
-      if (info !== 'lfh-proposal' && info !== 'lfh-change') {
+      if (info !== 'lfh-proposal' && info !== 'lfh-change' && info !== 'lfh-summary') {
         nonProposalFence = fenceMatch[1];
       }
     }
   }
 
   if (nonProposalFence || lastLineWasClosingFence) {
-    return { length: 0, isLfhPrefix: false };
+    return { length: 0, isLfhPrefix: false, isSummaryOnly: false };
   }
 
   const lastLine = lines[lines.length - 1] ?? '';
-  let maxLength = 0;
+  let maxProposalLength = 0;
   let isLfhPrefix = false;
   for (const marker of PROPOSAL_MARKERS) {
     for (let size = marker.length - 1; size > 0; size -= 1) {
       if (lastLine === marker.slice(0, size)) {
-        if (size > maxLength) {
-          maxLength = size;
+        if (size > maxProposalLength) {
+          maxProposalLength = size;
           isLfhPrefix = size >= '```lfh'.length;
         }
       }
     }
   }
-  return { length: maxLength, isLfhPrefix };
+
+  let maxSummaryLength = 0;
+  for (const marker of SUMMARY_MARKERS) {
+    for (let size = marker.length - 1; size > 0; size -= 1) {
+      if (lastLine === marker.slice(0, size)) {
+        if (size > maxSummaryLength) {
+          maxSummaryLength = size;
+        }
+      }
+    }
+  }
+
+  const maxLength = Math.max(maxProposalLength, maxSummaryLength);
+  const isSummaryOnly = maxSummaryLength > maxProposalLength && maxSummaryLength >= '```lfh-s'.length;
+  return { length: maxLength, isLfhPrefix, isSummaryOnly };
 }
 
 /**
  * Computes the stream-safe visible narrative prefix, hiding any active or partial
- * `lfh-proposal` / `lfh-change` fence while allowing trailing conversational text
- * after closed proposal blocks to stream through.
+ * `lfh-proposal` / `lfh-change` / `lfh-summary` fence while allowing trailing conversational text
+ * after closed blocks to stream through.
  */
 export function inspectStreamingReplyPrefix(content: string): {
   visible: string;
@@ -728,11 +796,12 @@ export function inspectStreamingReplyPrefix(content: string): {
   const firstPrefix = blocks[0].startLine > 0 ? `${textChunks[0]}\n` : '';
 
   if (!lastBlock.closed) {
+    const proposalInProgress = lastBlock.format !== 'lfh-summary';
     if (!hasTrailingText && blocks.length === 1) {
-      return { visible: firstPrefix, proposalInProgress: true };
+      return { visible: firstPrefix, proposalInProgress };
     }
     const prior = joinCleanedChunks(textChunks.slice(0, -1));
-    return { visible: prior, proposalInProgress: true };
+    return { visible: prior, proposalInProgress };
   }
 
   if (!hasTrailingText && blocks.length === 1) {

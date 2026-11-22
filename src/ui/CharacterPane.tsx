@@ -10,6 +10,7 @@ import {
   documentVersion,
   findLeafForTurnTreeNode,
   formatCharacterConversationTitle,
+  formatTurnPreview,
   getActiveBranchNodes,
   getNodeSiblingBranchInfo,
   newConversation,
@@ -285,6 +286,7 @@ export function CharacterPane(props: CharacterPaneProps) {
                 'assistant',
                 result.content.trim() || '请核对下方的设定更新建议。',
                 user?.id ?? expectedParent,
+                result.turnSummary,
               ),
               ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {}),
               model: result.model,
@@ -417,6 +419,7 @@ export function CharacterPane(props: CharacterPaneProps) {
                 'assistant',
                 result.content.trim() || '请核对下方的设定更新建议。',
                 userNode.id,
+                result.turnSummary,
               ),
               ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {}),
               documents: docs,
@@ -971,7 +974,11 @@ export function CharacterPane(props: CharacterPaneProps) {
                           closeCompanion();
                         }}
                       >
-                        <span>{leaf.content.replace(/\s+/g, ' ').trim().slice(0, 40) || '分支对话'}</span>
+                        <span
+                          className={`companion-branch-preview ${leaf.role === 'user' ? 'is-user' : 'is-assistant'}`}
+                        >
+                          {formatTurnPreview(leaf, { emptyFallback: '分支对话' })}
+                        </span>
                         <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
                       </button>
                     ))}

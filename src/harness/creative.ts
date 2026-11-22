@@ -1,3 +1,4 @@
+import { toCompactPreview } from './branches.ts';
 import { createDefaultId } from './id.ts';
 import { normalizeReasoningEffort } from './keyConfig.ts';
 import {
@@ -188,6 +189,7 @@ export function appendWorkDiscussionTurn(
   nodeInput: {
     role: TurnNode['role'];
     content: string;
+    turnSummary?: string;
     reasoningContent?: string;
     model?: string;
     reasoningEffort?: ReasoningEffort;
@@ -210,6 +212,7 @@ export function appendWorkDiscussionTurn(
     parentId,
     role: nodeInput.role,
     content: nodeInput.content,
+    ...(nodeInput.turnSummary ? { turnSummary: nodeInput.turnSummary } : {}),
     ...(nodeInput.reasoningContent ? { reasoningContent: nodeInput.reasoningContent } : {}),
     ...(nodeInput.model ? { model: nodeInput.model } : {}),
     ...(nodeInput.reasoningEffort ? { reasoningEffort: nodeInput.reasoningEffort } : {}),
@@ -256,6 +259,7 @@ export function turnMessages(nodes: TurnNode[]): LlmMessage[] {
 const DEFAULT_CHARACTER_SYSTEM_PROMPT = [
   '你是该角色本人。保持人设一致，随用户的说话方式和情境自然切换日常聊天或代入对戏；让用户自主决定自身身份与关键行动，自然承接较早经历与当时参与者，用户换新身份时按初见交流。',
   '用真人说话的口吻和节奏回应，回复篇幅与长短句随情境自然变化。禁止客服式客套与总结、分点说教、解释自己为何这样回复、跳出角色的括号吐槽或元评论，以及自称 AI 或模型能力免责声明。',
+  '每轮回复末尾必须附带一个单行 lfh-summary 元数据围栏，用 15–25 个中文字的纯文本概括本轮互动进展（不要使用任何 Markdown 标记）：\n```lfh-summary\n一句15至25字的纯文本本轮摘要\n```',
   '若「我的记忆」或「当前设定」中明确指定了说话方式、格式或角色互动偏好，以用户设定为准。',
 ].join('\n');
 
@@ -263,6 +267,7 @@ const DEFAULT_WRITING_CHAT_SYSTEM_PROMPT = [
   '你是作者的创作搭档，和作者讨论开书想法、原作设定、正文段落与续写方向。自动结合作品设定与正文现状；用户明确要求持久修改设定或记忆时再附提案。',
   '讨论时像敏锐的同桌编辑一样直奔重点，不要套用“首先/其次/总结”的模板分点、客套寒暄或大段修改理由说教；仅当作者明确索要大纲、人物表或分条拆解时，才使用结构化列表。',
   '输出试写或正文片段时，写干净克制的小说正文，避免翻译腔、套路化 AI 比喻和说教式收尾。',
+  '每轮回复末尾必须附带一个单行 lfh-summary 元数据围栏，用 15–25 个中文字的纯文本概括本轮讨论或创作进展（不要使用任何 Markdown 标记）：\n```lfh-summary\n一句15至25字的纯文本本轮摘要\n```',
   '若「我的记忆」或「当前设定」中明确指定了文风、结构或协作偏好，以用户设定为准。',
 ].join('\n');
 
@@ -552,6 +557,7 @@ export async function streamCreativeReply(
   }
   return {
     content: parsed.content,
+    ...(parsed.turnSummary ? { turnSummary: parsed.turnSummary } : {}),
     proposalStatus: legacyProposalStatus,
     proposalParseStatus: parsed.proposalStatus,
     proposal: parsed.proposal,
@@ -583,8 +589,8 @@ export function formatCharacterConversationTitle(
       .sort((a, b) => a.createdAt - b.createdAt)
       .find((node) => node.content.trim());
   if (firstMeaningful) {
-    const compact = firstMeaningful.content.replace(/\s+/g, ' ').trim();
-    return compact.length > 22 ? `${compact.slice(0, 22)}…` : compact;
+    const compact = toCompactPreview(firstMeaningful.content, 22, '');
+    if (compact) return compact;
   }
   return `与${character.name || '角色'}的新对话`;
 }

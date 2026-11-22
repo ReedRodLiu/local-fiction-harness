@@ -17,6 +17,7 @@ import {
   newDocument,
   parseProposalReply,
   storyDocumentState,
+  visibleReplyPrefix,
   type ParsedProposal,
   type UnparsedProposalBlock,
 } from './markdownDocuments.ts';
@@ -38,6 +39,7 @@ export interface EntryRouteResult {
   title: string;
   settingMarkdown: string;
   assistantReply: string;
+  turnSummary?: string;
   characterName?: string;
   reasoningContent: string;
   model?: string;
@@ -57,11 +59,13 @@ export type ManuscriptReplyIntent =
   | {
       kind: 'chat';
       content: string;
+      turnSummary?: string;
       reasoningContent: string;
     }
   | {
       kind: 'proposal';
       content: string;
+      turnSummary?: string;
       proposals: ParsedProposal[];
       unparsedBlocks: UnparsedProposalBlock[];
       reasoningContent: string;
@@ -87,6 +91,7 @@ export const ENTRY_ROUTE_SYSTEM_PROMPT = [
   '- 若为 writing：像敏锐的创作搭档一样顺着用户的构思直接切入，不要套用“首先/其次/总结”的分点或客套，也不要写成说教。',
   '- 若为 character：直接以角色本人语气自然说出第一句问候或开场，不要客服腔、括号元评论或自称 AI。',
   '- 若为 ambiguous：温和、简短、自然地接住话头，一两句搭话并轻问一句即可，禁止推销产品功能、列举能力菜单或使用分点清单。',
+  '- 当 mode 为 story、writing 或 character 时，在回复末尾附带一个单行 lfh-summary 围栏，用 15–25 字纯文本概括本轮进展（不含 Markdown）。',
   '若「我的记忆」或用户提供的「当前设定」中明确指定了文风、语气或格式偏好，以用户设定为准。',
 ].join('\n');
 
@@ -238,7 +243,7 @@ export function visibleEntryRoutePrefix(rawContent: string): string {
   const normalized = rawContent.replace(/\r\n?/g, '\n');
   const { fence, outsideContent } = extractLeadingRouteFence(normalized);
   if (fence) {
-    return fence.closed ? outsideContent : '';
+    return fence.closed ? visibleReplyPrefix(outsideContent) : '';
   }
   const lastLine = normalized.split('\n').at(-1) ?? '';
   for (const marker of ROUTE_FENCE_MARKERS) {
@@ -248,7 +253,7 @@ export function visibleEntryRoutePrefix(rawContent: string): string {
       }
     }
   }
-  return normalized;
+  return visibleReplyPrefix(normalized);
 }
 
 function parseEntryRouteMode(rawMode: string | undefined): EntryRouteMode | null {
@@ -298,6 +303,7 @@ export function parseEntryRouteReply(
         title,
         settingMarkdown,
         assistantReply: cleanedReply || '好的，我们从这里开始。',
+        ...(parsedProposals.turnSummary ? { turnSummary: parsedProposals.turnSummary } : {}),
         ...(fields.character_name?.trim() ? { characterName: fields.character_name.trim() } : {}),
         reasoningContent,
         proposals: parsedProposals.proposals,
@@ -323,6 +329,7 @@ export function parseEntryRouteReply(
     title,
     settingMarkdown,
     assistantReply: cleanedReply || outsideContent.trim() || '好的，我们从这里开始。',
+    ...(parsedProposals.turnSummary ? { turnSummary: parsedProposals.turnSummary } : {}),
     ...(mode === 'character' ? { characterName: title } : {}),
     reasoningContent,
     proposals: parsedProposals.proposals,
@@ -625,6 +632,7 @@ export function parseManuscriptAssistantReply(
     return {
       kind: 'proposal',
       content: parsed.content || '请核对下方的设定更新建议。',
+      ...(parsed.turnSummary ? { turnSummary: parsed.turnSummary } : {}),
       proposals: parsed.proposals,
       unparsedBlocks: parsed.unparsedBlocks,
       reasoningContent,
@@ -635,6 +643,7 @@ export function parseManuscriptAssistantReply(
     return {
       kind: 'chat',
       content: parsed.content || cleaned,
+      ...(parsed.turnSummary ? { turnSummary: parsed.turnSummary } : {}),
       reasoningContent,
     };
   }
@@ -649,6 +658,7 @@ export function parseManuscriptAssistantReply(
     return {
       kind: 'chat',
       content: parsed.content || cleaned,
+      ...(parsed.turnSummary ? { turnSummary: parsed.turnSummary } : {}),
       reasoningContent,
     };
   }

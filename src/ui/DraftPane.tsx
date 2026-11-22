@@ -9,6 +9,7 @@ import {
   documentLineage,
   documentVersion,
   findLeafForTurnTreeNode,
+  formatTurnPreview,
   getActiveBranchNodes,
   getManuscriptIntentSystemPrompt,
   getNodeSiblingBranchInfo,
@@ -344,6 +345,7 @@ export function DraftPane(props: DraftPaneProps) {
           const appendedAssistant = appendWorkDiscussionTurn(working, {
             role: 'assistant',
             content: result.content.trim() || '请核对下方的设定更新建议。',
+            ...(result.turnSummary ? { turnSummary: result.turnSummary } : {}),
             reasoningContent: result.reasoningContent || undefined,
             model: result.model,
             reasoningEffort: result.reasoningEffort,
@@ -481,6 +483,7 @@ export function DraftPane(props: DraftPaneProps) {
             const a = appendWorkDiscussionTurn(u.work, {
               role: 'assistant',
               content: routed.content,
+              ...(routed.turnSummary ? { turnSummary: routed.turnSummary } : {}),
               reasoningContent: reasoningContent || undefined,
               model: effectiveConfig.model,
               reasoningEffort,
@@ -511,6 +514,7 @@ export function DraftPane(props: DraftPaneProps) {
           const a = appendWorkDiscussionTurn(u.work, {
             role: 'assistant',
             content: routed.content,
+            ...(routed.turnSummary ? { turnSummary: routed.turnSummary } : {}),
             reasoningContent: reasoningContent || undefined,
             model: effectiveConfig.model,
             reasoningEffort,
@@ -1509,8 +1513,10 @@ export function DraftPane(props: DraftPaneProps) {
                             setCompanionOpen(false);
                           }}
                         >
-                          <span>
-                            {leaf.content.replace(/\s+/g, ' ').trim().slice(0, 36) || '聊天分支'}
+                          <span
+                            className={`companion-branch-preview ${leaf.role === 'user' ? 'is-user' : 'is-assistant'}`}
+                          >
+                            {formatTurnPreview(leaf, { emptyFallback: '聊天分支' })}
                           </span>
                           <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
                         </button>

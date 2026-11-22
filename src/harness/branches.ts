@@ -15,10 +15,153 @@ export interface BranchLeafSummary {
   isActive: boolean;
 }
 
-export function toCompactPreview(text: string, maxLen = 44): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  if (!normalized) return '（空内容）';
-  return normalized.length > maxLen ? `${normalized.slice(0, maxLen)}…` : normalized;
+export const AI_PREVIEW_MAX_CHARS = 40;
+export const USER_PREVIEW_MAX_CHARS = 30;
+
+const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})([^\n]*)$/;
+const FENCE_CLOSE_RE = /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*$/;
+const INTERNAL_LFH_LANG_RE = /^lfh-[a-z0-9_-]+$/i;
+
+function stripInternalAndFenceLines(text: string): string {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  const keptLines: string[] = [];
+  let activeFence: { char: string; len: number; isInternal: boolean } | null = null;
+  let inProposalSearchReplace = false;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (activeFence) {
+      if (activeFence.isInternal) {
+        if (/^<<<<<<<\s*SEARCH\b/.test(line.trimEnd()) || /^=======\s*$/.test(line.trimEnd())) {
+          inProposalSearchReplace = true;
+        } else if (/^>>>>>>>\s*REPLACE\b/.test(line.trimEnd())) {
+          inProposalSearchReplace = false;
+        }
+      }
+      const closeMatch = FENCE_CLOSE_RE.exec(line);
+      if (
+        closeMatch &&
+        closeMatch[1][0] === activeFence.char &&
+        closeMatch[1].length >= activeFence.len &&
+        !inProposalSearchReplace
+      ) {
+        activeFence = null;
+      } else if (!activeFence.isInternal) {
+        keptLines.push(line);
+      }
+      continue;
+    }
+
+    const openMatch = FENCE_OPEN_RE.exec(line);
+    if (openMatch) {
+      const fence = openMatch[1];
+      const info = openMatch[2].trim();
+      if (fence[0] === '`' && info.includes('`')) {
+        keptLines.push(line);
+        continue;
+      }
+      const lang = info.split(/\s+/, 1)[0] ?? '';
+      activeFence = {
+        char: fence[0],
+        len: fence.length,
+        isInternal: INTERNAL_LFH_LANG_RE.test(lang),
+      };
+      inProposalSearchReplace = false;
+      continue;
+    }
+
+    if (/^[ \t]{0,3}lfh-choices[ \t]*$/i.test(line)) {
+      const tail = lines.slice(i + 1).filter((l) => l.trim() !== '');
+      if (tail.length >= 2) {
+        break;
+      }
+    }
+
+    keptLines.push(line);
+  }
+
+  return keptLines.join('\n');
+}
+
+function stripInlineMarkdown(line: string): string {
+  return line
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1')
+    .replace(/<(https?:\/\/[^>]+)>/gi, '$1')
+    .replace(/`+([^`\n]+)`+/g, '$1')
+    .replace(/(\*{3}|_{3})([^\n]+?)\1/g, '$2')
+    .replace(/\*\*([^*\n]+?)\*\*/g, '$1')
+    .replace(/(^|[^\p{L}\p{N}_])__([^\n_]+?)__(?=[^\p{L}\p{N}_]|$)/gu, '$1$2')
+    .replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, '$1$2')
+    .replace(/(^|[^\p{L}\p{N}_])_([^\n_]+?)_(?=[^\p{L}\p{N}_]|$)/gu, '$1$2')
+    .replace(/~~([^~\n]+?)~~/g, '$1')
+    .replace(/<\/?(?:br|hr|p|div|span|b|i|em|strong|del|s|u|code|pre|blockquote|details|summary|a|img|h[1-6]|ul|ol|li|table|tr|td|th)\b[^>]*>/gi, ' ')
+    .replace(/\\([\\`*_{}[\]()#+\-.!>~|])/g, '$1')
+    .replace(/\*{2,}/g, '');
+}
+
+/**
+ * Strips Markdown syntax and internal `lfh-*` protocol blocks into normalized plain text.
+ */
+export function stripMarkdownToPlainText(text: string): string {
+  if (!text) return '';
+  const withoutFences = stripInternalAndFenceLines(text);
+  const cleanedLines: string[] = [];
+
+  for (const rawLine of withoutFences.split('\n')) {
+    let line = rawLine.trim();
+    if (!line) continue;
+    if (/^(?:[-*_]\s*){3,}$/.test(line)) continue;
+    if (/^\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?$/.test(line)) continue;
+
+    line = line
+      .replace(/^(?:>\s*)+/, '')
+      .replace(/^#{1,6}\s+/, '')
+      .replace(/\s+#+\s*$/, '')
+      .replace(/^[-*+]\s+(?:\[[ xX]\]\s+)?/, '')
+      .replace(/^\d+[.)]\s+/, '');
+
+    if (line.includes('|')) {
+      line = line.replace(/\|/g, ' ');
+    }
+
+    line = stripInlineMarkdown(line).replace(/\s+/g, ' ').trim();
+    if (line) cleanedLines.push(line);
+  }
+
+  return cleanedLines.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+export function toCompactPreview(
+  text: string,
+  maxLen = 44,
+  emptyFallback = '（空内容）',
+): string {
+  const normalized = stripMarkdownToPlainText(text);
+  if (!normalized) return emptyFallback;
+  const limit = Math.max(1, Math.floor(maxLen));
+  const chars = Array.from(normalized);
+  if (chars.length <= limit) return normalized;
+  if (limit === 1) return chars[0];
+  return `${chars.slice(0, limit - 1).join('')}…`;
+}
+
+/**
+ * Formats a TurnNode for compact Story Tree / branch preview display:
+ * prefers persisted `turnSummary` for AI turns, otherwise sanitizes Markdown & truncates cleanly.
+ */
+export function formatTurnPreview(
+  node: Pick<TurnNode, 'role' | 'content' | 'turnSummary'>,
+  options?: { aiMaxLen?: number; userMaxLen?: number; emptyFallback?: string },
+): string {
+  const emptyFallback = options?.emptyFallback ?? '（空内容）';
+  if (node.role === 'assistant') {
+    const summary = node.turnSummary ? stripMarkdownToPlainText(node.turnSummary) : '';
+    if (summary) return summary;
+    return toCompactPreview(node.content, options?.aiMaxLen ?? AI_PREVIEW_MAX_CHARS, emptyFallback);
+  }
+  return toCompactPreview(node.content, options?.userMaxLen ?? USER_PREVIEW_MAX_CHARS, emptyFallback);
 }
 
 export function countNodesToRoot(story: Story, nodeId: string): number {
@@ -245,11 +388,11 @@ export function getBranchTreeSummary(story: Story): BranchLeafSummary[] {
 
   for (const leaf of sortNodesChronologically(leaves)) {
     const depth = countNodesToRoot(story, leaf.id);
-    const snippet = toCompactPreview(leaf.content, 44);
+    const snippet = formatTurnPreview(leaf, { emptyFallback: '' });
     summaries.push({
       leafId: leaf.id,
       turnCount: Math.ceil(depth / 2),
-      preview: snippet === '（空内容）' ? '' : snippet,
+      preview: snippet,
       isActive: leaf.id === story.activeLeafNodeId,
     });
   }

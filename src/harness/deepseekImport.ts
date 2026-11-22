@@ -1,6 +1,7 @@
 import { unzipSync } from 'fflate';
 import { DEFAULT_ZIP_MAX_BYTES } from './binaryDownload.ts';
 import { createDefaultBlueprint } from './blueprint.ts';
+import { toCompactPreview } from './branches.ts';
 import { getActiveBranchNodes } from './context.ts';
 import { decodeUtf8WithGbFallback } from './encoding.ts';
 import { isAbortError, type FictionHarness } from './harness.ts';
@@ -285,9 +286,7 @@ function extractFragments(msg: DeepSeekRawMessage, unknownTypes?: Set<string>): 
 }
 
 function toSnippet(text: string, maxLen = 56): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  if (!normalized) return '';
-  return normalized.length > maxLen ? `${normalized.slice(0, maxLen)}…` : normalized;
+  return toCompactPreview(text, maxLen, '');
 }
 
 function countForkPoints(messages: readonly DeepSeekRawMessage[]): number {
