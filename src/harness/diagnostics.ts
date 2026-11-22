@@ -33,7 +33,7 @@ const STACK_MODULES = new Set([
   'markdownProposal.ts', 'markdownDiff.ts', 'MarkdownView.tsx', 'ProposalCard.tsx',
   'migration.ts', 'backup.ts', 'creative.ts', 'entryRouter.ts', 'DraftPane.tsx', 'CharacterPane.tsx',
   'WelcomeView.tsx', 'SettingsPage.tsx', 'useCreativeReply.ts', 'useCreativeWorkspace.ts',
-  'useManuscriptAutosave.ts', 'useAutoScrollTimeline.ts', 'CompanionSheet.tsx',
+  'useManuscriptAutosave.ts', 'useAutoScrollTimeline.ts', 'useDeepSeekBalance.ts', 'CompanionSheet.tsx',
   'markdownDocuments.ts', 'storyStorage.ts', 'storySkeleton.ts', 'context.ts',
   'branches.ts', 'storyTree.ts',
 ]);
@@ -128,6 +128,9 @@ const DIAGNOSTIC_ACTIONS = new Set([
   // V0.2 log share/export
   'diagnostics_exported',
   'diagnostics_shared',
+  // V0.2+ balance check (zero-content status/latency only)
+  'balance_check_done',
+  'balance_check_failed',
   'other',
 ]);
 const CRASH_DIAGNOSTIC_ACTIONS = new Set([

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, FileUp, LifeBuoy, ShieldCheck } from 'lucide-react';
+import { Download, ExternalLink, FileUp, LifeBuoy, RefreshCw, ShieldCheck } from 'lucide-react';
 import {
+  DEEPSEEK_DEV_PROXY_BALANCE_NOTICE,
+  DEEPSEEK_OFFICIAL_TOP_UP_DECLARATION,
+  DEEPSEEK_OFFICIAL_TOP_UP_URL,
   REASONING_EFFORTS,
   maskApiKey,
   normalizeOfficialDeepSeekModel,
@@ -16,6 +19,7 @@ import {
 } from './displayPreferences.ts';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
+import type { SettingsBalanceState } from './useDeepSeekBalance.ts';
 
 export interface SettingsPageProps {
   appVersion: string;
@@ -23,6 +27,8 @@ export interface SettingsPageProps {
   config: ModelConfig;
   useDevEnvKey: boolean;
   showDevTestProxy: boolean;
+  balanceState?: SettingsBalanceState;
+  onRefreshBalance?: () => void;
   themePreference: DisplayThemePreference;
   fontSize: DisplayFontSize;
   canExportCurrentStory: boolean;
@@ -96,6 +102,8 @@ export function SettingsPage({
   config,
   useDevEnvKey,
   showDevTestProxy,
+  balanceState = { status: 'idle' },
+  onRefreshBalance,
   themePreference,
   fontSize,
   canExportCurrentStory,
@@ -124,6 +132,14 @@ export function SettingsPage({
 
   const handleBackupExport = onExportFullBackup ?? onExportCurrentStory;
   const exportEnabled = canExportFullBackup ?? (Boolean(onExportFullBackup) || canExportCurrentStory);
+  const isBalanceLoading = balanceState.status === 'loading';
+  const isBalanceError = balanceState.status === 'error';
+  const displayedBalance =
+    balanceState.status === 'loaded'
+      ? balanceState
+      : balanceState.status === 'loading'
+        ? balanceState.previous
+        : undefined;
 
   useEffect(() => {
     let cancelled = false;
@@ -177,6 +193,82 @@ export function SettingsPage({
           <p className="wizard-privacy-note">
             请求会由你的设备直接发送至 DeepSeek 官方 API；API Key 仅保存在本机，不会上传至第三方。
           </p>
+          {hasCredentials && (
+            useDevEnvKey ? (
+              <p className="settings-balance-proxy-note" data-testid="deepseek-balance-dev-proxy-note">
+                {DEEPSEEK_DEV_PROXY_BALANCE_NOTICE}
+              </p>
+            ) : (
+              <div className="settings-balance-panel" data-testid="deepseek-balance-panel">
+                <div className="settings-balance-row">
+                  <div className="settings-balance-summary">
+                    <span className="settings-balance-label">账户总余额</span>
+                    {displayedBalance ? (
+                      <div className="settings-balance-value-row">
+                        <strong className="settings-balance-amount" data-testid="deepseek-balance-value">
+                          {displayedBalance.formattedBalance}
+                        </strong>
+                        {!displayedBalance.isAvailable && (
+                          <span className="badge badge-danger" data-testid="deepseek-balance-insufficient-badge">
+                            余额不足
+                          </span>
+                        )}
+                      </div>
+                    ) : isBalanceLoading ? (
+                      <span className="settings-balance-loading" data-testid="deepseek-balance-loading">
+                        正在查询余额…
+                      </span>
+                    ) : isBalanceError ? (
+                      <span className="settings-balance-idle" data-testid="deepseek-balance-unavailable">
+                        暂未能获取余额
+                      </span>
+                    ) : (
+                      <span className="settings-balance-idle" data-testid="deepseek-balance-idle">
+                        点击刷新查看余额
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm settings-balance-refresh-btn"
+                    data-testid="refresh-balance-btn"
+                    disabled={isBalanceLoading}
+                    onClick={() => onRefreshBalance?.()}
+                  >
+                    <RefreshCw
+                      size={16}
+                      strokeWidth={1.75}
+                      className={isBalanceLoading ? 'settings-balance-spin' : undefined}
+                      aria-hidden="true"
+                    />
+                    <span>{isBalanceLoading ? '刷新中…' : isBalanceError ? '重试' : '刷新'}</span>
+                  </button>
+                </div>
+                {balanceState.status === 'error' && (
+                  <p className="settings-balance-error" role="status" data-testid="deepseek-balance-error">
+                    {balanceState.message}
+                  </p>
+                )}
+              </div>
+            )
+          )}
+          {hasCredentials && (
+            <div className="settings-topup-block" data-testid="deepseek-topup-block">
+              <a
+                className="btn settings-topup-link"
+                href={DEEPSEEK_OFFICIAL_TOP_UP_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="deepseek-topup-link"
+              >
+                <span>前往 DeepSeek 充值</span>
+                <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
+              </a>
+              <p className="settings-topup-note" data-testid="deepseek-topup-note">
+                {DEEPSEEK_OFFICIAL_TOP_UP_DECLARATION}
+              </p>
+            </div>
+          )}
           {hasCredentials ? (
             <div className="settings-button-row">
               <button type="button" className="btn" data-testid="change-key-btn" onClick={onOpenSetupWizard}>

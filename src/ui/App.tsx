@@ -91,6 +91,7 @@ import { toErrorMessage } from './textHelpers.ts';
 import { useAppOverlayHistory } from './useAppOverlayHistory.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
 import { useCreativeWorkspace } from './useCreativeWorkspace.ts';
+import { useDeepSeekBalance } from './useDeepSeekBalance.ts';
 import { useDisplayPreferences } from './useDisplayPreferences.ts';
 import { useEdgeSwipeToOpen } from './useEdgeSwipeToOpen.ts';
 import { useLibraryCollapsedPreference } from './useLibraryCollapsedPreference.ts';
@@ -232,6 +233,7 @@ export function App({ runtime }: AppProps) {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardMounted, setWizardMounted] = useState(false);
   const [wizardVerifying, setWizardVerifying] = useState(false);
+  const [keyBoundSeq, setKeyBoundSeq] = useState(0);
   const [pendingByok, setPendingByok] = useState<{
     label: string;
     resume: (resolvedConfig: ModelConfig) => void;
@@ -797,6 +799,15 @@ export function App({ runtime }: AppProps) {
 
   const hasCredentials = hasModelCredentials(config, useDevEnvKey);
   const useDevProxyForSetup = import.meta.env.DEV && isWebDev && isDevProxyBaseUrl(config.baseUrl);
+  const { balanceState, refreshBalance } = useDeepSeekBalance({
+    active: showSettings,
+    hasCredentials,
+    useDevEnvKey,
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    keyBoundSeq,
+    diagnostics: runtime.diagnostics,
+  });
 
   const openByokPrompt = (
     label: string,
@@ -2198,6 +2209,8 @@ export function App({ runtime }: AppProps) {
               config={config}
               useDevEnvKey={useDevEnvKey}
               showDevTestProxy={import.meta.env.DEV && isWebDev && Boolean(devTestInfo?.available)}
+              balanceState={balanceState}
+              onRefreshBalance={refreshBalance}
               themePreference={displayPreferences.theme}
               fontSize={displayPreferences.fontSize}
               canExportCurrentStory={storyExists}
@@ -2572,6 +2585,7 @@ export function App({ runtime }: AppProps) {
                 setPendingByok(null);
                 setWizardOpen(false);
                 updateConfig(nextCfg, false);
+                setKeyBoundSeq((seq) => seq + 1);
                 if (resume) resume(nextCfg);
               }}
               onVerifyingChange={setWizardVerifying}
