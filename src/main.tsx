@@ -9,7 +9,7 @@ const runtime = createPlatformRuntime();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AppErrorBoundary runtime={runtime}>
+    <AppErrorBoundary runtime={runtime} onAsyncError={() => undefined}>
       <App runtime={runtime} />
     </AppErrorBoundary>
   </StrictMode>,

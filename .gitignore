@@ -22,6 +22,7 @@ android/*/build/
 android/local.properties
 android/.idea/
 android/captures/
+android/signing/
 android/app/src/main/assets/public/
 android/capacitor-cordova-android-plugins/
 *.apk
@@ -30,6 +31,10 @@ android/capacitor-cordova-android-plugins/
 *.dex
 *.keystore
 *.jks
+*.p12
+
+# Runtime diagnostics can contain user/environment details; keep local exports out of Git.
+docs/diagnostics/
 
 # Local private corpus & chat exports (never commit or push)
 docs/文游500篇/

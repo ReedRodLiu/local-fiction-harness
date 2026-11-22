@@ -1,6 +1,6 @@
 {
   "name": "local-fiction-harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -27,6 +27,7 @@
     "@capacitor/core": "^8.6.2",
     "fflate": "^0.8.3",
     "lucide-react": "^1.76.0",
+    "marked": "^18.2.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

@@ -19,7 +19,7 @@ describe('UI review fix contracts', () => {
     for (const moduleName of [
       'play-stage.css',
       'companion-sheet.css',
-      'story-blueprint-card.css',
+      'creative.css',
       'settings.css',
       'diagnostics.css',
     ]) {
@@ -30,7 +30,7 @@ describe('UI review fix contracts', () => {
       'App.tsx',
       'CompanionSheet.tsx',
       'SettingsPage.tsx',
-      'StoryBlueprintCard.tsx',
+      'ProposalCard.tsx',
     ]) {
       expect(readSource(`src/ui/${component}`), component).not.toMatch(
         /import\s+['"]\.\/styles\/[^'"]+\.css['"]/,
@@ -38,12 +38,15 @@ describe('UI review fix contracts', () => {
     }
   });
 
-  it('keeps drawer lifecycle in primitives and errors in BannerAlert', () => {
+  it('keeps drawer lifecycle in primitives, errors in BannerAlert, and V0.2 ProposalCard styles in base.css', () => {
     const drawer = readSource('src/ui/LibraryDrawer.tsx');
     expect(drawer).not.toContain('showModal()');
     expect(drawer).not.toContain('const closeMobile');
     expect(readSource('src/ui/DiagnosticsPreview.tsx')).toContain('<BannerAlert');
-    expect(readSource('src/ui/StoryBlueprintCard.tsx')).toContain('<BannerAlert');
+    expect(readSource('src/ui/DocumentDialog.tsx')).toContain('<BannerAlert');
+    expect(readSource('src/ui/DraftPane.tsx')).toContain('<BannerAlert');
+    expect(readSource('src/ui/ProposalCard.tsx')).toContain('proposal-card');
+    expect(readSource('src/ui/styles/base.css')).toContain('.proposal-card');
   });
 
   it('uses renderable icons and neutral tokens outside story structure', () => {

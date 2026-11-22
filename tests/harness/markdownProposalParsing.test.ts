@@ -41,10 +41,18 @@ describe('Markdown proposal parsing', () => {
     expect(splitMarkdownReply(character('null')).proposalStatus).toBe('invalid');
   });
 
-  it('rejects multiple blocks and content after the closing fence', () => {
+  it('accepts multiple blocks and trailing content after the closing fence in V0.2', () => {
     const block = '```lfh-change\n{"target":"local","markdown":"内容"}\n```';
-    expect(splitMarkdownReply(`${block}\n${block}`).proposalStatus).toBe('invalid');
-    expect(splitMarkdownReply(`${block}\n额外内容`).proposalStatus).toBe('invalid');
+    expect(splitMarkdownReply(`${block}\n${block}`)).toEqual({
+      content: '',
+      proposalStatus: 'recognized',
+      proposal: { target: 'local', markdown: '内容', name: undefined },
+    });
+    expect(splitMarkdownReply(`${block}\n额外内容`)).toEqual({
+      content: '额外内容',
+      proposalStatus: 'recognized',
+      proposal: { target: 'local', markdown: '内容', name: undefined },
+    });
   });
 
   it('keeps proposal payload out of the visible streaming prefix', () => {

@@ -1,19 +1,55 @@
-import { useState } from 'react';
-import { Clipboard, Download, RotateCcw, ShieldCheck, X } from 'lucide-react';
-import type { DiagnosticBundle } from '../harness/index.ts';
+import { useMemo, useState } from 'react';
+import { CheckCircle2, Clipboard, Download, RotateCcw, ShieldCheck, X } from 'lucide-react';
+import {
+  formatDiagnosticBundleFileName,
+  sanitizeDiagnosticText,
+  type DiagnosticBundle,
+} from '../harness/index.ts';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { ModalDialog } from './primitives/ModalDialog.tsx';
 import { toErrorMessage } from './textHelpers.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 
-interface DiagnosticsPreviewProps {
+export interface DiagnosticsPreviewProps {
   open: boolean;
-  buildBundle: () => DiagnosticBundle;
+  buildBundle: (options?: { userNote?: string }) => DiagnosticBundle;
   onExport: (fileName: string, jsonContent: string) => Promise<void>;
   onClose: () => void;
   onExitComplete: () => void;
   reassurance?: string;
   onReload?: () => void;
+  onRecordDiagnostic?: (action: 'diagnostics_exported' | 'diagnostics_shared') => void;
+}
+
+export function buildDiagnosticsExportPayload(
+  rawBundle: DiagnosticBundle,
+  options: { includeWorkspaceSkeleton: boolean; userNote: string },
+): { bundle: DiagnosticBundle; jsonText: string } {
+  const collapsedNote = options.userNote.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  const sanitizedNote = collapsedNote ? sanitizeDiagnosticText(collapsedNote, 280).trim() : '';
+
+  const base = options.includeWorkspaceSkeleton
+    ? { ...rawBundle }
+    : (() => {
+        const {
+          activeStorySkeleton: _activeStorySkeleton,
+          workspaceSkeleton: _workspaceSkeleton,
+          ...rest
+        } = rawBundle;
+        return rest;
+      })();
+
+  const bundle: DiagnosticBundle = sanitizedNote
+    ? { ...base, userNote: rawBundle.userNote || sanitizedNote }
+    : (() => {
+        const { userNote: _ignored, ...rest } = base;
+        return rest;
+      })();
+
+  return {
+    bundle,
+    jsonText: JSON.stringify(bundle, null, 2),
+  };
 }
 
 export function DiagnosticsPreview({
@@ -24,28 +60,44 @@ export function DiagnosticsPreview({
   onExitComplete,
   reassurance,
   onReload,
+  onRecordDiagnostic,
 }: DiagnosticsPreviewProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const [includeActiveStory, setIncludeActiveStory] = useState(true);
+  const [userNote, setUserNote] = useState('');
+  const [includeWorkspaceSkeleton, setIncludeWorkspaceSkeleton] = useState(true);
   const [bundleSnapshot] = useState(() => buildBundle());
+
   useWebHistoryLayer('diagnostics', 1000, true, onClose);
-  const { activeStorySkeleton: _activeStorySkeleton, ...bundleWithoutSkeleton } = bundleSnapshot;
-  const jsonText = JSON.stringify(
-    includeActiveStory ? bundleSnapshot : bundleWithoutSkeleton,
-    null,
-    2,
+
+  const { jsonText } = useMemo(
+    () =>
+      buildDiagnosticsExportPayload(bundleSnapshot, {
+        includeWorkspaceSkeleton,
+        userNote,
+      }),
+    [bundleSnapshot, includeWorkspaceSkeleton, userNote],
   );
+
+  const buildFreshJson = () => {
+    const trimmed = userNote.trim();
+    const freshBundle = buildBundle(trimmed ? { userNote: trimmed } : undefined);
+    return buildDiagnosticsExportPayload(freshBundle, {
+      includeWorkspaceSkeleton,
+      userNote,
+    }).jsonText;
+  };
 
   const handleExport = async () => {
     setNotice(null);
     setFailure(null);
     try {
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      await onExport(`lfh-diagnostics-${stamp}.json`, jsonText);
-      setNotice('已导出脱敏诊断包。');
+      const payload = buildFreshJson();
+      await onExport(formatDiagnosticBundleFileName(), payload);
+      onRecordDiagnostic?.('diagnostics_exported');
+      setNotice('已导出排障日志包。');
     } catch (err) {
-      setFailure(toErrorMessage(err, '导出脱敏诊断包失败。'));
+      setFailure(toErrorMessage(err, '导出排障日志失败，请改用复制到剪贴板。'));
     }
   };
 
@@ -53,17 +105,18 @@ export function DiagnosticsPreview({
     setNotice(null);
     setFailure(null);
     try {
-      await navigator.clipboard.writeText(jsonText);
+      const payload = buildFreshJson();
+      await navigator.clipboard.writeText(payload);
       setNotice('已复制到剪贴板。');
     } catch (err) {
-      setFailure(toErrorMessage(err, '复制失败，请改用导出文件。'));
+      setFailure(toErrorMessage(err, '复制失败，请改用导出日志包。'));
     }
   };
 
   return (
     <ModalDialog
       open={open}
-      label="脱敏诊断包预览"
+      label="导出排障日志"
       className="modal-dialog diagnostics-dialog"
       testId="diagnostics-preview"
       onClose={onClose}
@@ -72,13 +125,13 @@ export function DiagnosticsPreview({
       <div className="diagnostics-content">
         <header className="diagnostics-header">
           <div>
-            <h2>脱敏诊断包</h2>
-            <p>最近 30 分钟运行摘要，可先预览再导出。</p>
+            <h2>导出排障日志</h2>
+            <p>用于向开发者反馈问题，导出前可先确认以下隐私清单。</p>
           </div>
           <button
             type="button"
             className="icon-button"
-            aria-label="关闭诊断预览"
+            aria-label="关闭导出排障日志"
             data-testid="diagnostics-close"
             onClick={onClose}
           >
@@ -86,19 +139,53 @@ export function DiagnosticsPreview({
           </button>
         </header>
 
-        <div className="diagnostics-safe" role="note" data-testid="diagnostics-safety">
-          <ShieldCheck size={20} strokeWidth={1.75} aria-hidden="true" />
-          <span><strong>零正文、零剧本、零密钥</strong>，只保留运行结构与计数。</span>
-        </div>
+        <section className="diagnostics-checklist" role="note" data-testid="diagnostics-safety">
+          <div className="diagnostics-checklist-item diagnostics-checklist-include">
+            <CheckCircle2 size={16} strokeWidth={1.75} aria-hidden="true" />
+            <span>将包含：最近 60 分钟运行记录、设备与版本信息、当前结构统计</span>
+          </div>
+          <div className="diagnostics-checklist-item diagnostics-checklist-exclude">
+            <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />
+            <span>绝不包含：你的剧本、设定正文、聊天记录与 DeepSeek 密钥</span>
+          </div>
+        </section>
+
         {reassurance && <p className="diagnostics-reassurance">{reassurance}</p>}
 
+        <div className="field diagnostics-note-field">
+          <label htmlFor="diagnostics-user-note">遇到什么问题？（选填）</label>
+          <input
+            id="diagnostics-user-note"
+            data-testid="diagnostics-user-note"
+            type="text"
+            maxLength={280}
+            value={userNote}
+            placeholder="例如：切换分支后画面卡住（请勿填写剧本正文或密钥）"
+            onChange={(event) => setUserNote(event.target.value)}
+          />
+        </div>
+
+        <label className="checkbox-row diagnostics-checkbox" htmlFor="diagnostics-active-story">
+          <input
+            id="diagnostics-active-story"
+            data-testid="diagnostics-active-story"
+            type="checkbox"
+            checked={includeWorkspaceSkeleton}
+            onChange={(event) => setIncludeWorkspaceSkeleton(event.target.checked)}
+          />
+          <span>附带工作区匿名结构计数</span>
+        </label>
+
         <div className="diagnostics-action-row">
-          {onReload && (
-            <button type="button" className="btn" data-testid="diagnostics-reload" onClick={onReload}>
-              <RotateCcw size={18} strokeWidth={1.75} />
-              重新载入界面
-            </button>
-          )}
+          <button
+            type="button"
+            className="btn btn-primary"
+            data-testid="diagnostics-export"
+            onClick={() => void handleExport()}
+          >
+            <Download size={18} strokeWidth={1.75} />
+            分享 / 导出日志包
+          </button>
           <button
             type="button"
             className="btn"
@@ -108,34 +195,20 @@ export function DiagnosticsPreview({
             <Clipboard size={18} strokeWidth={1.75} />
             复制到剪贴板
           </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            data-testid="diagnostics-export"
-            onClick={() => void handleExport()}
-          >
-            <Download size={18} strokeWidth={1.75} />
-            导出 .json
-          </button>
+          {onReload && (
+            <button type="button" className="btn" data-testid="diagnostics-reload" onClick={onReload}>
+              <RotateCcw size={18} strokeWidth={1.75} />
+              重新载入界面
+            </button>
+          )}
         </div>
 
-        <label className="checkbox-row diagnostics-checkbox" htmlFor="diagnostics-active-story">
-          <input
-            id="diagnostics-active-story"
-            data-testid="diagnostics-active-story"
-            type="checkbox"
-            checked={includeActiveStory}
-            onChange={(event) => setIncludeActiveStory(event.target.checked)}
-          />
-          <span>附带当前故事匿名树骨架</span>
-        </label>
-        <p className="diagnostics-note">
-          不含剧本、对话正文、推理链、剧情摘要、故事标题、分支名称、附件文件名与 API Key。私人中转域名仅以哈希显示。
-        </p>
-
-        <pre className="diagnostics-json" data-testid="diagnostics-json">
-          {jsonText}
-        </pre>
+        <details className="diagnostics-raw-details" data-testid="diagnostics-raw-details">
+          <summary>查看原始 JSON</summary>
+          <pre className="diagnostics-json" data-testid="diagnostics-json">
+            {jsonText}
+          </pre>
+        </details>
 
         {notice && <div className="status-text" role="status">{notice}</div>}
         {failure && <BannerAlert tone="danger">{failure}</BannerAlert>}

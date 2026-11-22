@@ -5,6 +5,7 @@ import { getActiveBranchNodes } from './context.ts';
 import { decodeUtf8WithGbFallback } from './encoding.ts';
 import { isAbortError, type FictionHarness } from './harness.ts';
 import { createDefaultId } from './id.ts';
+import { newDocument } from './markdownDocuments.ts';
 import { DEFAULT_STORY_TITLE, parseScriptInput } from './scriptParser.ts';
 import type {
   AbortSignalLike,
@@ -107,18 +108,29 @@ export interface DeepSeekAttachmentResult {
   hint?: string;
 }
 
+export interface RecoveredTextAttachment {
+  fileName: string;
+  content: string;
+}
+
 export interface DeepSeekSessionPreview {
   sessionId: string;
   title: string;
   story: Story;
   rawScript: string;
+  settingMarkdown: string;
   scriptConfidence: 'strong' | 'ambiguous';
   latestSnippet: string;
   turnCount: number;
   forkCount: number;
   recoveredAttachments: DeepSeekAttachmentResult[];
+  recoveredTextAttachments: RecoveredTextAttachment[];
   skippedAttachments: DeepSeekAttachmentResult[];
   diagnosticCount: number;
+}
+
+export interface MarkedDeepSeekSession extends DeepSeekSessionIndexItem {
+  alreadyImported: boolean;
 }
 
 export interface ScriptTurnRange {
@@ -144,6 +156,7 @@ export interface DeepSeekImportOptions extends DeepSeekPreviewOptions {
   modelConfig?: ModelConfig;
   transport?: LlmTransport;
   signal?: AbortSignalLike;
+  existingStories?: readonly Pick<Story, 'title' | 'sourceSessionId'>[];
 }
 
 export interface ScriptBoundaryResult {
@@ -589,6 +602,55 @@ function detectRawScriptFromActivePath(
   };
 }
 
+export function buildImportSettingMarkdown(
+  initialScript: string,
+  recoveredAttachments: readonly RecoveredTextAttachment[],
+): string {
+  const trimmedScript = initialScript.trim();
+  const extraAttachments = recoveredAttachments
+    .map((att) => ({ fileName: att.fileName, content: att.content.trim() }))
+    .filter((att) => att.content && !trimmedScript.includes(att.content));
+
+  const sections: string[] = [];
+  if (trimmedScript) {
+    sections.push(trimmedScript);
+  }
+  for (const att of extraAttachments) {
+    sections.push(`## 附件：${att.fileName}\n\n${att.content}`);
+  }
+  return sections.join('\n\n').trim();
+}
+
+function initializeStorySettingDocument(
+  story: Story,
+  settingMarkdown: string,
+  preserveSetupRawScript = '',
+): Story {
+  const container = newDocument(settingMarkdown, 'migration', 'story-original');
+  const local = newDocument('', 'migration', 'path-original');
+  const nodes: Record<string, TurnNode> = {};
+  for (const [id, node] of Object.entries(story.nodes)) {
+    nodes[id] = {
+      ...node,
+      documents: {
+        container: 'story-original',
+        local: 'path-original',
+      },
+    };
+  }
+  return {
+    ...story,
+    rawScript: story.setupNodeIds?.length ? preserveSetupRawScript : '',
+    v2Migrated: true,
+    nodes,
+    documents: {
+      container,
+      local,
+      edits: {},
+    },
+  };
+}
+
 function buildStoryFromRawSession(
   raw: DeepSeekRawSession,
   extractedFiles: Record<string, Uint8Array>,
@@ -617,6 +679,7 @@ function buildStoryFromRawSession(
   }
 
   const recoveredAttachments: DeepSeekAttachmentResult[] = [];
+  const recoveredTextAttachments: RecoveredTextAttachment[] = [];
   const skippedAttachments: DeepSeekAttachmentResult[] = [];
   const seenAttachmentPaths = new Set<string>();
   const attachmentsByNodeId = new Map<string, SetupAttachmentText>();
@@ -689,6 +752,9 @@ function buildStoryFromRawSession(
             inlineAttachmentSections.push(`【附件：${fileName}】\n${parsed.rawScript}`);
             if (isFirstSeen) {
               recoveredAttachments.push({ fileName, exportPath, kind });
+              if (parsed.rawScript.trim()) {
+                recoveredTextAttachments.push({ fileName, content: parsed.rawScript.trim() });
+              }
             }
             continue;
           } catch {
@@ -700,7 +766,7 @@ function buildStoryFromRawSession(
             fileName,
             exportPath,
             kind: 'unsupported',
-            hint: '文本附件内容为空或无法读取，已跳过。',
+            hint: '文本附件内容为空或无法读取，已跳过正文整理。',
           });
         }
       } else if (kind === 'legacy_doc') {
@@ -709,7 +775,7 @@ function buildStoryFromRawSession(
             fileName,
             exportPath,
             kind,
-            hint: '旧版二进制 .doc 暂不支持前端直读，请先在 Word/WPS 中另存为 .docx 后再导入。',
+            hint: '旧版 .doc 暂不支持直接读取正文，已保留原文件备查；如需整理进设定，请先另存为 .docx。',
           });
         }
       } else if (isFirstSeen) {
@@ -717,7 +783,7 @@ function buildStoryFromRawSession(
           fileName,
           exportPath,
           kind,
-          hint: kind === 'media' ? '图片或 PDF 不提取正文。' : '此附件格式不提取正文。',
+          hint: kind === 'media' ? '图片与 PDF 仅保留原文件备查。' : '此附件仅保留原文件备查。',
         });
       }
     }
@@ -788,6 +854,7 @@ function buildStoryFromRawSession(
     id: opts.createId(),
     title,
     sourceKind: 'deepseek_import',
+    sourceSessionId: raw.id,
     ...(Object.keys(attachments).length > 0 ? { attachments } : {}),
     rawScript: '',
     blueprint: createDefaultBlueprint(title),
@@ -804,17 +871,21 @@ function buildStoryFromRawSession(
     attachmentsByNodeId,
     opts.scriptRangeOverride,
   );
+  const settingMarkdown = buildImportSettingMarkdown(detected.rawScript, recoveredTextAttachments);
 
   const firstAssistant = activeNodes.find((n) => n.role === 'assistant');
-  const story: Story = {
-    ...baseStory,
-    rawScript: detected.rawScript,
-    ...(detected.setupNodeIds.length > 0 ? { setupNodeIds: detected.setupNodeIds } : {}),
-    blueprint: {
-      ...baseStory.blueprint,
-      openingHook: firstAssistant ? toSnippet(firstAssistant.content, 120) : '',
+  const story = initializeStorySettingDocument(
+    {
+      ...baseStory,
+      ...(detected.setupNodeIds.length > 0 ? { setupNodeIds: detected.setupNodeIds } : {}),
+      blueprint: {
+        ...baseStory.blueprint,
+        openingHook: firstAssistant ? toSnippet(firstAssistant.content, 120) : '',
+      },
     },
-  };
+    settingMarkdown,
+    detected.rawScript,
+  );
 
   const activeLeaf = activeLeafNodeId ? nodes[activeLeafNodeId] : null;
   return {
@@ -822,11 +893,13 @@ function buildStoryFromRawSession(
     title,
     story,
     rawScript: detected.rawScript,
+    settingMarkdown,
     scriptConfidence: detected.confidence,
     latestSnippet: activeLeaf ? toSnippet(activeLeaf.content, 64) : '',
     turnCount: Math.ceil(activeNodes.length / 2),
     forkCount: countForkPoints(messages),
     recoveredAttachments,
+    recoveredTextAttachments,
     skippedAttachments,
     diagnosticCount,
   };
@@ -1065,9 +1138,52 @@ export async function locateDeepSeekScriptBoundary(
   };
 }
 
+export function markDuplicateImportSessions(
+  sessions: readonly DeepSeekSessionIndexItem[],
+  existingStories: Iterable<Pick<Story, 'sourceSessionId'> | string>,
+): MarkedDeepSeekSession[] {
+  const existingIds = new Set<string>();
+  for (const item of existingStories) {
+    if (typeof item === 'string') {
+      if (item) existingIds.add(item);
+    } else if (item.sourceSessionId) {
+      existingIds.add(item.sourceSessionId);
+    }
+  }
+  return sessions.map((session) => ({
+    ...session,
+    alreadyImported: existingIds.has(session.sessionId),
+  }));
+}
+
+export function resolveDuplicateImportTitle(
+  baseTitle: string,
+  sourceSessionId: string,
+  existingStories: readonly Pick<Story, 'title' | 'sourceSessionId'>[],
+): string {
+  const normalizedBase = baseTitle.trim() || DEFAULT_STORY_TITLE;
+  const existingTitles = new Set(existingStories.map((story) => story.title));
+  const hasSameSession = existingStories.some(
+    (story) => story.sourceSessionId !== undefined && story.sourceSessionId === sourceSessionId,
+  );
+  if (!hasSameSession && !existingTitles.has(normalizedBase)) {
+    return normalizedBase;
+  }
+  const firstCopy = `${normalizedBase} (副本)`;
+  if (!existingTitles.has(firstCopy)) {
+    return firstCopy;
+  }
+  let suffix = 2;
+  while (existingTitles.has(`${normalizedBase} (副本 ${suffix})`)) {
+    suffix += 1;
+  }
+  return `${normalizedBase} (副本 ${suffix})`;
+}
+
 /**
  * Persists each selected DeepSeek session 1-to-1 as an independent Story.
- * Opening candidates are advisory. Defer compression until the next continuation.
+ * Merges initial setup text and readable text attachments directly into the canonical
+ * single-Markdown 「故事设定」 (`story.documents.container`) without blocking approval.
  */
 export async function importDeepSeekSessions(
   zipBytes: Uint8Array,
@@ -1078,7 +1194,7 @@ export async function importDeepSeekSessions(
     | 'setActiveStory'
     | 'getReviewState'
     | 'transport'
-  >,
+  > & Partial<Pick<FictionHarness, 'listStories'>>,
   options: DeepSeekImportOptions = {},
 ): Promise<DeepSeekImportBatchResult> {
   const previews = readDeepSeekSessions(zipBytes, selectedSessionIds, options, true);
@@ -1086,24 +1202,44 @@ export async function importDeepSeekSessions(
   const summaryStatuses: Record<string, ImportSummaryStatus> = {};
   const modelConfig = options.modelConfig;
   const transport = options.transport ?? harness.transport;
+  const knownStories: Array<Pick<Story, 'title' | 'sourceSessionId'>> = [
+    ...(options.existingStories ?? (harness.listStories ? await harness.listStories() : [])),
+  ];
 
   for (const preview of previews) {
-    let workingStory = preview.scriptConfidence === 'ambiguous'
-      ? { ...preview.story, importCandidate: preview.rawScript, rawScript: '' }
-      : preview.story;
+    let workingStory = preview.story;
     const hasManualOverride = Boolean(options.scriptRangeOverrides?.[preview.sessionId]);
 
     if (modelConfig && preview.scriptConfidence === 'ambiguous' && !hasManualOverride) {
       const boundary = await locateDeepSeekScriptBoundary(workingStory, transport, modelConfig, options.signal);
       if (!boundary.usedFallback && boundary.rawScript.trim()) {
-        workingStory = { ...workingStory, importCandidate: boundary.rawScript };
+        const refinedSetting = buildImportSettingMarkdown(
+          boundary.rawScript,
+          preview.recoveredTextAttachments,
+        );
+        workingStory = initializeStorySettingDocument(workingStory, refinedSetting);
       }
     }
+
+    const resolvedTitle = resolveDuplicateImportTitle(
+      workingStory.title,
+      preview.sessionId,
+      knownStories,
+    );
+    if (resolvedTitle !== workingStory.title) {
+      workingStory = {
+        ...workingStory,
+        title: resolvedTitle,
+        blueprint: { ...workingStory.blueprint, title: resolvedTitle },
+      };
+    }
+
     summaryStatuses[workingStory.id] = harness.getReviewState(workingStory).needsSummaryCompression
       ? (modelConfig ? 'pending_summary' : 'pending_key')
       : 'within_window';
     const saved = await harness.saveStory(workingStory);
     stories.push(saved);
+    knownStories.push(saved);
   }
 
   if (stories.length > 0) {
@@ -1113,21 +1249,27 @@ export async function importDeepSeekSessions(
 }
 
 /**
- * Optional LLM-assisted session filter: sends compact session titles and opening snippets
- * to identify interactive-fiction candidates among large DeepSeek exports.
+ * Optional LLM-assisted session filter: sends compact session titles, timestamps,
+ * and snippets to identify interactive-fiction candidates or match a natural-language query.
  */
 export async function assistFilterDeepSeekSessions(
   sessions: readonly DeepSeekSessionIndexItem[],
   transport: LlmTransport,
   config: ModelConfig,
   signal?: AbortSignalLike,
+  userQuery?: string,
 ): Promise<string[]> {
   if (sessions.length === 0) return [];
+  const trimmedQuery = userQuery?.trim();
   const compactList = sessions.slice(0, 60).map((s) => ({
     id: s.sessionId,
     title: s.title,
     turns: s.turnCount,
-    snippet: s.firstSnippet,
+    updatedAt: new Date(s.updatedAt).toISOString().slice(0, 10),
+    snippet: s.firstSnippet || s.latestSnippet,
+    ...(trimmedQuery && s.latestSnippet && s.latestSnippet !== s.firstSnippet
+      ? { latestSnippet: s.latestSnippet }
+      : {}),
     files: s.attachments.map((a) => a.fileName),
   }));
 
@@ -1137,12 +1279,15 @@ export async function assistFilterDeepSeekSessions(
     [
       {
         role: 'system',
-        content:
-          '你是互动叙事文游识别助手。请从给定会话列表 JSON 中挑出属于“互动叙事 / 文字冒险 / 角色扮演文游”的会话 ID，严格只输出 JSON：{"fictionSessionIds":["..."]}。',
+        content: trimmedQuery
+          ? '你是互动叙事对话筛选助手。请结合用户的自然语言描述（例如题材、角色设定、时间范围或片段线索），从给定对话列表 JSON 中挑出最符合的对话 ID，严格只输出 JSON：{"fictionSessionIds":["..."]}。'
+          : '你是互动叙事文游识别助手。请从给定对话列表 JSON 中挑出属于“互动叙事 / 文字冒险 / 角色扮演文游”的对话 ID，严格只输出 JSON：{"fictionSessionIds":["..."]}。',
       },
       {
         role: 'user',
-        content: JSON.stringify(compactList),
+        content: trimmedQuery
+          ? JSON.stringify({ query: trimmedQuery, sessions: compactList })
+          : JSON.stringify(compactList),
       },
     ],
     signal,

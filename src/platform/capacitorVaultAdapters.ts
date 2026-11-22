@@ -111,6 +111,7 @@ export function createAndroidStoryStorage(
 
 /**
  * Bridges BackupExporter to Android FileProvider + native share/save sheet.
+ * Diagnostic logs (`folio-logs-*`) use the same bridge and trigger the native share sheet ("分享排障日志").
  */
 export function createAndroidBackupExporter(
   plugin: NativeVaultPluginLike = NativeVault,

@@ -1,4 +1,4 @@
-import type { CreativeWorkspaceState, PlatformRuntime } from '../harness/index.ts';
+import type { CreativeWorkspaceState, PlatformRuntime, StageAssetMode } from '../harness/index.ts';
 import { CharacterPane } from './CharacterPane.tsx';
 import type { DocumentEdit } from './DocumentDialog.tsx';
 import { DraftPane } from './DraftPane.tsx';
@@ -19,6 +19,9 @@ interface Props {
   openDocument: (edit: DocumentEdit) => void;
   manuscript?: boolean;
   onStartManuscript?: () => void;
+  onSwitchToChat?: () => void;
+  onSwitchStageMode?: (targetMode: StageAssetMode) => void;
+  onNavigateCreatedAsset?: (kind: 'character' | 'work', id: string) => void;
   initialTurn: { id: string; prompt: string } | null;
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;
