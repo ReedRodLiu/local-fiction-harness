@@ -78,6 +78,10 @@ public class NativeVaultPlugin extends Plugin {
             JSObject meta = new JSObject();
             meta.put("baseUrl", call.getString("baseUrl", ""));
             meta.put("model", call.getString("model", ""));
+            String reasoningEffort = call.getString("reasoningEffort");
+            if (reasoningEffort != null && !reasoningEffort.isEmpty()) {
+                meta.put("reasoningEffort", reasoningEffort);
+            }
             meta.put("memoryOnly", call.getBoolean("memoryOnly", false));
             secretVault.saveMeta(meta);
             call.resolve();

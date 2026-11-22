@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Download, FileUp, LifeBuoy, ShieldCheck } from 'lucide-react';
-import { maskApiKey, type ModelConfig } from '../harness/index.ts';
+import {
+  REASONING_EFFORTS,
+  maskApiKey,
+  normalizeOfficialDeepSeekModel,
+  normalizeReasoningEffort,
+  type ModelConfig,
+  type OfficialDeepSeekModel,
+  type ReasoningEffort,
+} from '../harness/index.ts';
 import {
   DISPLAY_FONT_SIZES,
   type DisplayFontSize,
@@ -32,7 +40,35 @@ export interface SettingsPageProps {
   onImportBackupFile: (file: File) => void;
   onThemePreferenceChange: (preference: DisplayThemePreference) => void;
   onFontSizeChange: (fontSize: DisplayFontSize) => void;
+  onDefaultModelChange?: (model: OfficialDeepSeekModel) => void;
+  onDefaultReasoningEffortChange?: (effort: ReasoningEffort) => void;
 }
+
+const MODEL_OPTIONS: Array<{
+  value: OfficialDeepSeekModel;
+  label: string;
+  subtitle: string;
+}> = [
+  { value: 'deepseek-flash', label: '日常轻量', subtitle: 'deepseek-flash' },
+  { value: 'deepseek-v4-pro', label: '旗舰深度', subtitle: 'deepseek-v4-pro' },
+];
+
+const REASONING_OPTIONS: Array<{
+  value: ReasoningEffort;
+  label: string;
+}> = [
+  { value: 'none', label: '关闭' },
+  { value: 'low', label: '低' },
+  { value: 'high', label: '高' },
+  { value: 'max', label: '极限' },
+];
+
+const REASONING_LABELS: Record<ReasoningEffort, string> = {
+  none: '关闭',
+  low: '低',
+  high: '高',
+  max: '极限',
+};
 
 const THEME_OPTIONS: Array<{
   value: DisplayThemePreference;
@@ -77,9 +113,14 @@ export function SettingsPage({
   onImportBackupFile,
   onThemePreferenceChange,
   onFontSizeChange,
+  onDefaultModelChange,
+  onDefaultReasoningEffortChange,
 }: SettingsPageProps) {
   const backupInputRef = useRef<HTMLInputElement>(null);
   const [storageStatus, setStorageStatus] = useState('正在读取本地占用…');
+  const activeModel = normalizeOfficialDeepSeekModel(config.model);
+  const activeReasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
+  const reasoningSliderIndex = REASONING_EFFORTS.indexOf(activeReasoningEffort);
 
   const handleBackupExport = onExportFullBackup ?? onExportCurrentStory;
   const exportEnabled = canExportFullBackup ?? (Boolean(onExportFullBackup) || canExportCurrentStory);
@@ -156,6 +197,72 @@ export function SettingsPage({
             </button>
           )}
         </section>
+
+        <div className="settings-control-block" data-testid="settings-default-model-block">
+          <h3>全局默认模型</h3>
+          <p className="settings-control-hint">未单独调整的故事、作品与角色将默认使用这里的设置。</p>
+          <div className="settings-model-grid" role="group" aria-label="全局默认模型">
+            {MODEL_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className="settings-model-option"
+                data-testid={`settings-model-option-${option.value}`}
+                aria-pressed={activeModel === option.value}
+                onClick={() => onDefaultModelChange?.(option.value)}
+              >
+                <strong>{option.label}</strong>
+                <span className="settings-model-id">{option.subtitle}</span>
+              </button>
+            ))}
+          </div>
+          {activeModel === 'deepseek-v4-pro' && (
+            <p className="settings-pro-cost-hint" data-testid="settings-pro-cost-hint">
+              旗舰深度响应耗时更长，额度消耗约为日常轻量的 3–4 倍。
+            </p>
+          )}
+        </div>
+
+        <div className="settings-control-block" data-testid="settings-default-reasoning-block">
+          <div className="settings-control-header">
+            <h3>默认思考强度</h3>
+            <span className="settings-reasoning-value" data-testid="settings-reasoning-current-label">
+              {REASONING_LABELS[activeReasoningEffort]}
+            </span>
+          </div>
+          <div className="settings-reasoning-slider-wrap">
+            <input
+              type="range"
+              min={0}
+              max={REASONING_EFFORTS.length - 1}
+              step={1}
+              value={reasoningSliderIndex >= 0 ? reasoningSliderIndex : 2}
+              aria-label="默认思考强度"
+              aria-valuetext={REASONING_LABELS[activeReasoningEffort]}
+              data-testid="settings-reasoning-slider"
+              className="settings-reasoning-slider"
+              onChange={(event) => {
+                const index = Number(event.currentTarget.value);
+                const next = REASONING_EFFORTS[index] ?? 'high';
+                onDefaultReasoningEffortChange?.(next);
+              }}
+            />
+            <div className="settings-reasoning-stops" role="group" aria-label="默认思考强度档位">
+              {REASONING_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  data-testid={`settings-reasoning-option-${option.value}`}
+                  aria-pressed={activeReasoningEffort === option.value}
+                  onClick={() => onDefaultReasoningEffortChange?.(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
         <p className="settings-privacy"><ShieldCheck size={16} strokeWidth={1.75} /> 不含项目方代理或云端存储。</p>
       </InsetGroup>
 

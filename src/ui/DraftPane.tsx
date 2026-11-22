@@ -16,9 +16,11 @@ import {
   getWorkActiveDiscussionNodes,
   getWorkDiscussionTree,
   normalizeProposalTarget,
+  normalizeReasoningEffort,
   parseManuscriptAssistantReply,
   parseProposalReply,
   referenceDocument,
+  resolveEffectiveModelConfig,
   summarizeWorkDiscussion,
   visibleManuscriptReplyPrefix,
   visibleReplyPrefix,
@@ -313,7 +315,8 @@ export function DraftPane(props: DraftPaneProps) {
       const ctx = workContext(state.publicDocument, live, input, {
         targetParentId: contextParentId,
       });
-      const result = await request(ctx.messages);
+      const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
+      const result = await request(ctx.messages, { config: effectiveConfig });
       if (signal.aborted) return;
 
       const publicDoc = documentVersion(state.publicDocument);
@@ -342,6 +345,8 @@ export function DraftPane(props: DraftPaneProps) {
             role: 'assistant',
             content: result.content.trim() || '请核对下方的设定更新建议。',
             reasoningContent: result.reasoningContent || undefined,
+            model: result.model,
+            reasoningEffort: result.reasoningEffort,
             parentId: userId,
             documentReads: ctx.reads,
             proposals: proposalRecords.length > 0 ? proposalRecords : undefined,
@@ -363,7 +368,7 @@ export function DraftPane(props: DraftPaneProps) {
       }
       if (options.parentId === undefined) setDiscussionInput('');
       if (updatedWork && assistantId) {
-        runSilentSummary(updatedWork, config, assistantId);
+        runSilentSummary(updatedWork, effectiveConfig, assistantId);
       }
     });
   }
@@ -400,15 +405,24 @@ export function DraftPane(props: DraftPaneProps) {
         systemPrompt: getManuscriptIntentSystemPrompt(),
         cursorPos: start,
       });
+      const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
+      const reasoningEffort = normalizeReasoningEffort(effectiveConfig.reasoningEffort);
 
       let raw = '';
       let reasoningContent = '';
       let finishReason: string | null | undefined;
       let shown = '';
-      for await (const delta of runtime.transport.streamChat({ ...config, messages: ctx.messages, signal })) {
+      for await (const delta of runtime.transport.streamChat({
+        baseUrl: effectiveConfig.baseUrl,
+        apiKey: effectiveConfig.apiKey,
+        model: effectiveConfig.model,
+        reasoningEffort,
+        messages: ctx.messages,
+        signal,
+      })) {
         if (signal.aborted) return;
         if (delta.finishReason != null) finishReason = delta.finishReason;
-        if (delta.reasoningDelta) {
+        if (delta.reasoningDelta && reasoningEffort !== 'none') {
           reasoningContent += delta.reasoningDelta;
           appendReasoning(delta.reasoningDelta);
         }
@@ -468,6 +482,8 @@ export function DraftPane(props: DraftPaneProps) {
               role: 'assistant',
               content: routed.content,
               reasoningContent: reasoningContent || undefined,
+              model: effectiveConfig.model,
+              reasoningEffort,
               parentId: u.node.id,
               documentReads: ctx.reads,
               proposals: proposalRecords,
@@ -496,6 +512,8 @@ export function DraftPane(props: DraftPaneProps) {
             role: 'assistant',
             content: routed.content,
             reasoningContent: reasoningContent || undefined,
+            model: effectiveConfig.model,
+            reasoningEffort,
             parentId: u.node.id,
             documentReads: ctx.reads,
           });
@@ -508,7 +526,7 @@ export function DraftPane(props: DraftPaneProps) {
         setManuscriptInput('');
         setManuscriptChatAnswer(routed.content);
         if (updatedWork && chatAssistantId) {
-          runSilentSummary(updatedWork, config, chatAssistantId);
+          runSilentSummary(updatedWork, effectiveConfig, chatAssistantId);
         }
       }
     });
@@ -655,7 +673,8 @@ export function DraftPane(props: DraftPaneProps) {
       const ctx = workContext(state.publicDocument, live, userNode.content, {
         targetParentId: userNode.parentId,
       });
-      const result = await request(ctx.messages);
+      const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
+      const result = await request(ctx.messages, { config: effectiveConfig });
       if (signal.aborted) return;
       const publicDoc = documentVersion(state.publicDocument);
       const workDoc = documentVersion(live.document);
@@ -672,6 +691,8 @@ export function DraftPane(props: DraftPaneProps) {
             role: 'assistant',
             content: result.content.trim() || '请核对下方的设定更新建议。',
             reasoningContent: result.reasoningContent || undefined,
+            model: result.model,
+            reasoningEffort: result.reasoningEffort,
             parentId: userNode.id,
             documentReads: ctx.reads,
             proposals: proposalRecords.length > 0 ? proposalRecords : undefined,
@@ -687,7 +708,7 @@ export function DraftPane(props: DraftPaneProps) {
           [assistantId]: Math.max(1, Math.round((performance.now() - startedAt) / 1000)),
         }));
       }
-      if (updatedWork && assistantId) runSilentSummary(updatedWork, config, assistantId);
+      if (updatedWork && assistantId) runSilentSummary(updatedWork, effectiveConfig, assistantId);
     });
   };
 

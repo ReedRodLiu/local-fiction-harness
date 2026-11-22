@@ -1,4 +1,9 @@
-import type { KeyValueStorage, LlmTransport, Story, StoryStorage } from './types.ts';
+import {
+  isReasoningEffort,
+  normalizeReasoningEffort,
+  sanitizeDiagnosticModelName,
+} from './keyConfig.ts';
+import type { KeyValueStorage, LlmTransport, ReasoningEffort, Story, StoryStorage } from './types.ts';
 import {
   buildRedactedStorySkeleton,
   buildRedactedWorkspaceSkeleton,
@@ -179,6 +184,7 @@ const SAFE_ENUM_METRICS: Record<string, ReadonlySet<string>> = {
     'unknown',
   ]),
   routeMode: new Set(['story', 'writing', 'character', 'neutral', 'ambiguous', 'unknown']),
+  reasoningEffort: new Set(['none', 'low', 'high', 'max']),
 };
 const SAFE_REASON_CODE_UPPER_ALLOWLIST = new Set([
   'TIMEOUT',
@@ -197,15 +203,7 @@ const SAFE_ENV_VERSION_REGEX = /^[A-Za-z0-9][A-Za-z0-9._/+ -]{0,47}$/;
 
 const SAFE_FRAGMENT_TYPE_REGEX = /^[A-Z][A-Z0-9_]{0,31}$/;
 const SAFE_ATTACHMENT_EXTENSION_REGEX = /^\.[a-z0-9]{1,8}$/;
-const SAFE_MODEL_IDENTIFIER_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?(?:\/[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?)?$/;
 const MODEL_HOSTNAME_REGEX = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i;
-const LOCAL_MODEL_ALIASES = new Set([
-  'localhost',
-  'localhost.localdomain',
-  'host.docker.internal',
-  'host.containers.internal',
-  'gateway.docker.internal',
-]);
 
 export type DiagnosticLevel = 'info' | 'warn' | 'error';
 export type DiagnosticCategory = 'llm' | 'branch' | 'storage' | 'import' | 'ui' | 'crash';
@@ -224,6 +222,7 @@ export interface SanitizedEndpointProfile {
   hostKind: EndpointHostKind;
   host: string;
   model: string;
+  reasoningEffort?: ReasoningEffort;
   memoryOnly: boolean;
   hasApiKey: boolean;
   isDevProxy: boolean;
@@ -232,6 +231,7 @@ export interface SanitizedEndpointProfile {
 export interface EndpointProfileInput {
   baseUrl: string;
   model: string;
+  reasoningEffort?: ReasoningEffort;
   apiKey?: string;
   memoryOnly: boolean;
   isDevProxy?: boolean;
@@ -401,10 +401,14 @@ export function sanitizeEndpointProfile(input: EndpointProfileInput): SanitizedE
       host = classified.host;
     }
   }
+  const reasoningEffort = isReasoningEffort(config.reasoningEffort)
+    ? config.reasoningEffort
+    : undefined;
   return {
     hostKind,
     host,
     model: sanitizeModel(config.model, apiKey, trimmedUrl),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
     memoryOnly: config.memoryOnly === true,
     hasApiKey: apiKey.length > 0,
     isDevProxy,
@@ -412,16 +416,8 @@ export function sanitizeEndpointProfile(input: EndpointProfileInput): SanitizedE
 }
 
 function sanitizeModel(rawModel: unknown, apiKey: string, baseUrl: string): string {
-  if (typeof rawModel !== 'string') return 'unset';
-  const model = rawModel.trim();
-  if (
-    !model ||
-    model.length > 128 ||
-    /^(?:https?|ftp|file|data|blob|wss?):/i.test(model) ||
-    !SAFE_MODEL_IDENTIFIER_REGEX.test(model)
-  ) {
-    return 'unset';
-  }
+  const model = sanitizeDiagnosticModelName(rawModel);
+  if (!model) return 'unset';
 
   const normalized = model.toLowerCase();
   const components = normalized.split('/');
@@ -432,24 +428,12 @@ function sanitizeModel(rawModel: unknown, apiKey: string, baseUrl: string): stri
       (endpoint.host.length >= 4 && normalized.includes(endpoint.host)));
   if (
     (apiKey && normalized.includes(apiKey.toLowerCase())) ||
-    components.some(isHostAlias) ||
     containsEndpointHost ||
-    endpoint.values.some((value) => components.includes(value.toLowerCase())) ||
-    /(?:api[_-]?key|secret|token|password|authorization|bearer)/i.test(model) ||
-    /^(?:sk|rk|pk|key|token|secret)[_-]/i.test(model)
+    endpoint.values.some((value) => components.includes(value.toLowerCase()))
   ) {
     return 'unset';
   }
   return model;
-}
-
-function isHostAlias(value: string): boolean {
-  const hostname = value.split(':', 1)[0]!;
-  return (
-    LOCAL_MODEL_ALIASES.has(hostname) ||
-    /^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname) ||
-    MODEL_HOSTNAME_REGEX.test(hostname)
-  );
 }
 
 function readEndpointModelSecrets(baseUrl: string): { host: string; values: string[] } {
@@ -581,6 +565,11 @@ function sanitizeMeta(
       if (typeof v === 'string' && enumSet.has(v)) {
         out[k] = v;
       }
+      continue;
+    }
+    if (k === 'model') {
+      const safeModel = sanitizeDiagnosticModelName(v);
+      if (safeModel) out[k] = safeModel;
       continue;
     }
     if (k === 'reasonCode') {
@@ -1084,6 +1073,15 @@ export function createDiagnosticTransport(
     async *streamChat(req) {
       const startedAt = now();
       let chunkCount = 0;
+      const effort = normalizeReasoningEffort(
+        req.reasoningEffort ??
+          req.reasoning_effort ??
+          (req.thinking?.type === 'disabled' ? 'none' : 'high'),
+      );
+      const streamMeta = {
+        model: req.model,
+        reasoningEffort: effort,
+      };
       try {
         for await (const delta of inner.streamChat(req)) {
           chunkCount += 1;
@@ -1094,7 +1092,7 @@ export function createDiagnosticTransport(
           category: 'llm',
           action: 'stream_done',
           durationMs: now() - startedAt,
-          meta: { chunks: chunkCount, messageCount: req.messages.length },
+          meta: { chunks: chunkCount, messageCount: req.messages.length, ...streamMeta },
         });
       } catch (err) {
         const aborted = Boolean(err && typeof err === 'object' && (err as { name?: unknown }).name === 'AbortError');
@@ -1104,6 +1102,7 @@ export function createDiagnosticTransport(
             category: 'llm',
             action: 'stream_aborted',
             durationMs: now() - startedAt,
+            meta: streamMeta,
           });
         } else {
           collector.recordError({
@@ -1112,6 +1111,7 @@ export function createDiagnosticTransport(
             error: err,
             durationMs: now() - startedAt,
             statusCode: extractStatusCode(err),
+            meta: streamMeta,
           });
         }
         throw err;

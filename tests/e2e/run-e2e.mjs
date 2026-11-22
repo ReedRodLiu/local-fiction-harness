@@ -2079,7 +2079,7 @@ async function verifyDisplayPreferenceMatrix(page, port) {
     }
   }
   const forbiddenSettingsText = await settings.textContent();
-  for (const hiddenField of ['Base URL', 'memoryOnly', '模型名', 'DeepSeek-Flash', 'deepseek-flash']) {
+  for (const hiddenField of ['Base URL', 'memoryOnly', '自定义模型']) {
     if (forbiddenSettingsText?.includes(hiddenField)) {
       throw new Error(`Production settings exposed ${hiddenField}.`);
     }
@@ -2452,8 +2452,13 @@ async function runUiImpl05ProductionE2E(browser, port) {
     await wizard.waitFor({ state: 'visible' });
     const productionWizardText = await wizard.textContent();
     for (const modelName of ['DeepSeek-Flash', 'deepseek-flash']) {
-      if (productionSettingsText?.includes(modelName) || productionWizardText?.includes(modelName)) {
-        throw new Error(`Production settings or BYOK wizard exposed model name ${modelName}.`);
+      if (productionWizardText?.includes(modelName)) {
+        throw new Error(`Production BYOK wizard exposed model name ${modelName}.`);
+      }
+    }
+    for (const hiddenField of ['Base URL', 'memoryOnly', '自定义模型']) {
+      if (productionSettingsText?.includes(hiddenField)) {
+        throw new Error(`Production settings exposed ${hiddenField}.`);
       }
     }
     await expectControlledDialogExit(page, wizard, 'deepseek-setup-wizard', async () => {
