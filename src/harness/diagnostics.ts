@@ -1,18 +1,36 @@
 import type { KeyValueStorage, LlmTransport, Story, StoryStorage } from './types.ts';
-import { buildRedactedStorySkeleton, type RedactedStorySkeleton } from './storySkeleton.ts';
+import {
+  buildRedactedStorySkeleton,
+  buildRedactedWorkspaceSkeleton,
+  type RedactedStorySkeleton,
+  type RedactedWorkspaceSkeleton,
+  type WorkspaceSkeletonInput,
+} from './storySkeleton.ts';
 
-export const DIAGNOSTIC_WINDOW_MS = 30 * 60 * 1000;
-export const MAX_DIAGNOSTIC_EVENTS = 400;
+export const DIAGNOSTIC_WINDOW_MS = 60 * 60 * 1000;
+export const MAX_DIAGNOSTIC_EVENTS = 600;
 export const MAX_DIAGNOSTIC_RADARS = 20;
-export const DIAGNOSTIC_STORAGE_KEY = 'lfh.diagnostics.v1';
+export const DIAGNOSTIC_STORAGE_KEY = 'lfh.diagnostics.v2';
+export const LEGACY_DIAGNOSTIC_STORAGE_KEY = 'lfh.diagnostics.v1';
+export const DIAGNOSTIC_BUNDLE_FILENAME_PREFIX = 'folio-logs-';
 
 const MAX_MESSAGE_CHARS = 320;
+const MAX_ERROR_REASON_CHARS = 180;
+const MAX_USER_NOTE_CHARS = 280;
 const MAX_STACK_FRAMES = 5;
 const STACK_MODULES = new Set([
+  // V0.1 modules
   'App.tsx', 'AppErrorBoundary.tsx', 'DeepSeekImportPanel.tsx', 'indexedDbStorage.ts',
   'diagnostics.ts', 'harness.ts', 'sse.ts', 'deepseekImport.ts', 'binaryDownload.ts',
   'capacitorSseTransport.ts', 'capacitorBinaryDownloader.ts', 'capacitorVaultAdapters.ts',
   'bundle.js',
+  // V0.2 modules
+  'markdownProposal.ts', 'markdownDiff.ts', 'MarkdownView.tsx', 'ProposalCard.tsx',
+  'migration.ts', 'backup.ts', 'creative.ts', 'entryRouter.ts', 'DraftPane.tsx', 'CharacterPane.tsx',
+  'WelcomeView.tsx', 'SettingsPage.tsx', 'useCreativeReply.ts', 'useCreativeWorkspace.ts',
+  'useManuscriptAutosave.ts', 'useAutoScrollTimeline.ts', 'CompanionSheet.tsx',
+  'markdownDocuments.ts', 'storyStorage.ts', 'storySkeleton.ts', 'context.ts',
+  'branches.ts', 'storyTree.ts',
 ]);
 
 const OFFICIAL_MODEL_HOSTS = new Set([
@@ -42,6 +60,7 @@ const MARKDOWN_PROPOSAL_ACTIONS = {
   incomplete: 'markdown_proposal_incomplete',
 } as const;
 const DIAGNOSTIC_ACTIONS = new Set([
+  // V0.1 actions
   'stream_done',
   'stream_aborted',
   'stream_error',
@@ -71,6 +90,39 @@ const DIAGNOSTIC_ACTIONS = new Set([
   'unhandled_window_error',
   'unhandled_rejection',
   'import_complete',
+  // V0.2 single-entry routing
+  'entry_route_classified',
+  'entry_route_ambiguous',
+  'entry_neutral_persisted',
+  'entry_misroute_corrected',
+  // V0.2 proposals & diffs
+  'proposal_parsed',
+  'proposal_needs_review',
+  'proposal_applied',
+  'proposal_dismissed',
+  'proposal_reverted',
+  'patch_reapplied',
+  'patch_conflict',
+  // V0.2 background silent summary
+  'summary_background_done',
+  'summary_background_skipped',
+  'summary_background_failed',
+  'summary_window_trimmed',
+  // V0.2 manuscript editing & undo
+  'manuscript_save_queued',
+  'manuscript_save_flushed',
+  'manuscript_save_error',
+  'manuscript_suggestion_adopted',
+  'manuscript_undo',
+  // V0.2 backup & migration
+  'backup_export_v3',
+  'backup_import_v3',
+  'backup_import_legacy',
+  'migration_v02_done',
+  'migration_v02_error',
+  // V0.2 log share/export
+  'diagnostics_exported',
+  'diagnostics_shared',
   'other',
 ]);
 const CRASH_DIAGNOSTIC_ACTIONS = new Set([
@@ -83,7 +135,66 @@ const DIAGNOSTIC_BUNDLE_TRIGGERS = new Set<DiagnosticBundleTrigger>([
   'error_banner',
   'crash_boundary',
 ]);
-const SAFE_EVENT_METRICS = new Set(['chunks', 'messageCount']);
+const DIAGNOSTIC_ACTIVE_VIEWS = new Set<DiagnosticActiveView>([
+  'welcome',
+  'story',
+  'writing',
+  'character',
+  'import',
+  'settings',
+  'unknown',
+]);
+const DIAGNOSTIC_THEMES = new Set<DiagnosticTheme>(['system', 'light', 'dark', 'warm']);
+
+const SAFE_NUMERIC_METRICS = new Set([
+  'chunks',
+  'messageCount',
+  'addedLines',
+  'removedLines',
+  'durationMs',
+  'hydratedCount',
+  'migratedCount',
+]);
+const SAFE_ENUM_METRICS: Record<string, ReadonlySet<string>> = {
+  target: new Set([
+    'public',
+    'container',
+    'local',
+    'character',
+    'setting',
+    'memory',
+    'branch_note',
+    'manuscript',
+    'unknown',
+  ]),
+  op: new Set([
+    'patch',
+    'append',
+    'section',
+    'full',
+    'replace',
+    'insert',
+    'create',
+    'delete',
+    'unknown',
+  ]),
+  routeMode: new Set(['story', 'writing', 'character', 'neutral', 'ambiguous', 'unknown']),
+};
+const SAFE_REASON_CODE_UPPER_ALLOWLIST = new Set([
+  'TIMEOUT',
+  'CONTENT_FILTER',
+  'INCOMPLETE',
+  'ABORTED',
+  'NETWORK_ERROR',
+  'QUOTA_EXCEEDED',
+  'PATCH_CONFLICT',
+]);
+const SAFE_SNAKE_CODE_REGEX = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
+const CREDENTIAL_PREFIX_REGEX = /^(?:sk|rk|pk|key|token|secret|password|bearer|authorization)[_-]/i;
+const SAFE_ERROR_NAME_REGEX = /^(?:Error|[A-Z][A-Za-z0-9]{0,47}(?:Error|Exception))$/;
+const SAFE_ERROR_CODE_REGEX = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/;
+const SAFE_ENV_VERSION_REGEX = /^[A-Za-z0-9][A-Za-z0-9._/+ -]{0,47}$/;
+
 const SAFE_FRAGMENT_TYPE_REGEX = /^[A-Z][A-Z0-9_]{0,31}$/;
 const SAFE_ATTACHMENT_EXTENSION_REGEX = /^\.[a-z0-9]{1,8}$/;
 const SAFE_MODEL_IDENTIFIER_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?(?:\/[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?)?$/;
@@ -99,6 +210,15 @@ const LOCAL_MODEL_ALIASES = new Set([
 export type DiagnosticLevel = 'info' | 'warn' | 'error';
 export type DiagnosticCategory = 'llm' | 'branch' | 'storage' | 'import' | 'ui' | 'crash';
 export type EndpointHostKind = 'official' | 'relay' | 'local' | 'unset';
+export type DiagnosticActiveView =
+  | 'welcome'
+  | 'story'
+  | 'writing'
+  | 'character'
+  | 'import'
+  | 'settings'
+  | 'unknown';
+export type DiagnosticTheme = 'system' | 'light' | 'dark' | 'warm';
 
 export interface SanitizedEndpointProfile {
   hostKind: EndpointHostKind;
@@ -141,22 +261,27 @@ export interface DiagnosticEvent {
   action: string;
   durationMs?: number;
   statusCode?: number;
+  errorName?: string;
+  errorCode?: string;
+  sanitizedReason?: string;
   sanitizedMessage?: string;
   stackTop?: string[];
   meta?: Record<string, DiagnosticMetaValue>;
 }
 
 export interface DiagnosticBundle {
-  schemaVersion: 1;
+  schemaVersion: 2;
   generatedAt: string;
   platform: 'web' | 'android';
-  windowMinutes: 30;
+  windowMinutes: 60;
   trigger: DiagnosticBundleTrigger;
   appEnv: DiagnosticAppEnvironment;
   endpointProfile: SanitizedEndpointProfile;
   importRadars: DeepSeekImportRadar[];
   events: Array<Omit<DiagnosticEvent, 'ts'> & { tsOffsetSec: number }>;
+  userNote?: string;
   activeStorySkeleton?: RedactedStorySkeleton;
+  workspaceSkeleton?: RedactedWorkspaceSkeleton;
 }
 
 export type DiagnosticBundleTrigger = 'settings_manual' | 'error_banner' | 'crash_boundary';
@@ -164,15 +289,22 @@ export type DiagnosticBundleTrigger = 'settings_manual' | 'error_banner' | 'cras
 export interface DiagnosticAppEnvironment {
   platform: 'web' | 'android';
   appVersion: string;
+  osVersion?: string;
+  webviewVersion?: string;
+  theme?: DiagnosticTheme;
   viewport: string;
-  activeView: 'story' | 'import' | 'unknown';
+  activeView: DiagnosticActiveView;
   storyCount: number;
+  workCount?: number;
+  characterCount?: number;
 }
 
 export interface DiagnosticBundleBuildOptions {
   trigger?: DiagnosticBundleTrigger;
   appEnv?: Partial<DiagnosticAppEnvironment>;
+  userNote?: string;
   activeStory?: Story;
+  workspace?: WorkspaceSkeletonInput;
 }
 
 export interface DiagnosticCollectorOptions {
@@ -189,6 +321,7 @@ export interface DiagnosticCollector {
     error: unknown;
     durationMs?: number;
     statusCode?: number;
+    errorCode?: string | number;
     stack?: string;
     meta?: Record<string, DiagnosticMetaValue>;
   }): void;
@@ -198,6 +331,11 @@ export interface DiagnosticCollector {
     options?: DiagnosticBundleBuildOptions,
   ): DiagnosticBundle;
   clear(): void;
+}
+
+export function formatDiagnosticBundleFileName(date: Date = new Date()): string {
+  const stamp = date.toISOString().replace(/[:.]/g, '-');
+  return `${DIAGNOSTIC_BUNDLE_FILENAME_PREFIX}${stamp}.json`;
 }
 
 function fnv1a32Hex(input: string): string {
@@ -364,7 +502,7 @@ export function sanitizeDiagnosticText(raw: string, maxLen = MAX_MESSAGE_CHARS):
   text = text.replace(/\bsk-[A-Za-z0-9_-]{6,}\b/g, '[REDACTED_KEY]');
   // 3. Scrub key/token query or header assignments
   text = text.replace(
-    /\b(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*[^\s&"',;]+/gi,
+    /\b((?:x-)?api[_-]?key|token|secret|password|authorization)\s*[:=]\s*[^\s&"',;]+/gi,
     '$1=[REDACTED]',
   );
   // 4. Scrub URLs: keep official/local host or hashed relay_<8hex>, strip path/query/fragment/userinfo
@@ -374,9 +512,20 @@ export function sanitizeDiagnosticText(raw: string, maxLen = MAX_MESSAGE_CHARS):
     const { host } = classifyAndRedactHost(parsed.host);
     return `${parsed.scheme}://${host || 'unknown'}`;
   });
-  // 4b. Scrub attachment-like file names (keep only the extension) and bare hostnames / IPv4 literals
+  // 5. Scrub local/device filesystem paths BEFORE filename redaction so paths don't leak directory names
+  text = text.replace(/(?:file|content):\/\/[^\s"'`<>]+/gi, '[REDACTED_PATH]');
   text = text.replace(
-    /[^\s"'`<>/\\:]*[^\s"'`<>/\\:.]\.(docx?|md|txt|pdf|zip|png|jpe?g|gif|webp|bmp|svg)\b/gi,
+    /(?:\/Users|\/home|\/var\/mobile|\/private\/var|\/data\/user|\/data\/data|\/storage\/emulated\/\d+|\/sdcard)\/[^\s"'`<>:]+/g,
+    '[REDACTED_PATH]',
+  );
+  text = text.replace(/[A-Za-z]:\\Users\\[^\s"'`<>:]+/gi, '[REDACTED_PATH]');
+  // 6. Scrub backup & attachment-like file names (keep only extension) and bare hostnames / IPv4 literals
+  text = text.replace(
+    /[^\s"'`<>/\\:：，（）()]*[^\s"'`<>/\\:：，（）().]\.(?:lfh|folio)\.json\b/gi,
+    '[file].json',
+  );
+  text = text.replace(
+    /[^\s"'`<>/\\:：，（）()]*[^\s"'`<>/\\:：，（）().]\.(docx?|md|txt|pdf|zip|png|jpe?g|gif|webp|bmp|svg)\b/gi,
     (_m, ext: string) => `[file].${ext.toLowerCase()}`,
   );
   text = text.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, (ip) => classifyAndRedactHost(ip).host);
@@ -385,15 +534,34 @@ export function sanitizeDiagnosticText(raw: string, maxLen = MAX_MESSAGE_CHARS):
     if (BARE_DOMAIN_FILE_SUFFIXES.has(lower.slice(lower.lastIndexOf('.') + 1))) return candidate;
     return classifyAndRedactHost(lower).host;
   });
-  // 5. Scrub local/device filesystem paths
-  text = text.replace(/(?:file|content):\/\/[^\s"'`<>]+/gi, '[REDACTED_PATH]');
-  text = text.replace(/(?:\/Users|\/home|\/var\/mobile|\/data\/user)\/[^\s"'`<>:]+/g, '[REDACTED_PATH]');
-  text = text.replace(/[A-Za-z]:\\Users\\[^\s"'`<>:]+/gi, '[REDACTED_PATH]');
 
   if (text.length > maxLen) {
-    return `${text.slice(0, maxLen)}…`;
+    if (maxLen <= 1) return text.slice(0, Math.max(0, maxLen));
+    return `${text.slice(0, maxLen - 1)}…`;
   }
   return text;
+}
+
+function sanitizeSingleLineText(raw: unknown, maxLen: number): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const collapsed = raw.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  if (!collapsed) return undefined;
+  const sanitized = sanitizeDiagnosticText(collapsed, maxLen).trim();
+  return sanitized || undefined;
+}
+
+function sanitizeReasonCode(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 40) return undefined;
+  if (SAFE_REASON_CODE_UPPER_ALLOWLIST.has(trimmed)) return trimmed;
+  if (
+    SAFE_SNAKE_CODE_REGEX.test(trimmed) &&
+    !CREDENTIAL_PREFIX_REGEX.test(trimmed)
+  ) {
+    return trimmed;
+  }
+  return undefined;
 }
 
 function sanitizeMeta(
@@ -402,11 +570,22 @@ function sanitizeMeta(
   if (!meta) return undefined;
   const out: Record<string, DiagnosticMetaValue> = {};
   for (const [k, v] of Object.entries(meta)) {
-    if (!SAFE_EVENT_METRICS.has(k)) continue;
-    if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
-      out[k] = Math.round(v);
-    } else if (typeof v === 'boolean') {
-      out[k] = v;
+    if (SAFE_NUMERIC_METRICS.has(k)) {
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+        out[k] = Math.round(v);
+      }
+      continue;
+    }
+    const enumSet = SAFE_ENUM_METRICS[k];
+    if (enumSet) {
+      if (typeof v === 'string' && enumSet.has(v)) {
+        out[k] = v;
+      }
+      continue;
+    }
+    if (k === 'reasonCode') {
+      const code = sanitizeReasonCode(v);
+      if (code) out[k] = code;
     }
   }
   return Object.keys(out).length > 0 ? out : undefined;
@@ -422,6 +601,79 @@ function normalizeStatusCode(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599
     ? value
     : undefined;
+}
+
+function normalizeErrorName(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return SAFE_ERROR_NAME_REGEX.test(trimmed) ? trimmed : 'Error';
+}
+
+function normalizeErrorCode(value: unknown, statusCode?: number): string | undefined {
+  if (typeof value === 'number' && Number.isInteger(value)) {
+    const status = normalizeStatusCode(value);
+    if (status !== undefined) return `HTTP_${status}`;
+    if (value >= 0 && value <= 999999) return String(value);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (
+      trimmed &&
+      SAFE_ERROR_CODE_REGEX.test(trimmed) &&
+      !CREDENTIAL_PREFIX_REGEX.test(trimmed) &&
+      !MODEL_HOSTNAME_REGEX.test(trimmed) &&
+      !/^https?$/i.test(trimmed)
+    ) {
+      return trimmed;
+    }
+  }
+  return statusCode !== undefined ? `HTTP_${statusCode}` : undefined;
+}
+
+function extractErrorDetails(
+  error: unknown,
+  explicitStatusCode?: number,
+  explicitErrorCode?: string | number,
+): {
+  statusCode?: number;
+  errorName?: string;
+  errorCode?: string;
+  sanitizedReason?: string;
+} {
+  const statusCode = explicitStatusCode ?? extractStatusCode(error);
+  let rawName: unknown;
+  let rawCode: unknown = explicitErrorCode;
+  let rawMessage: unknown;
+
+  try {
+    if (typeof error === 'string') {
+      rawMessage = error;
+    } else if (error && typeof error === 'object') {
+      const errRecord = error as { name?: unknown; code?: unknown; message?: unknown };
+      rawName = errRecord.name;
+      if (rawCode === undefined) rawCode = errRecord.code;
+      rawMessage = errRecord.message;
+    }
+  } catch {
+    // Ignore hostile error getters
+  }
+
+  const errorName =
+    rawName !== undefined
+      ? normalizeErrorName(rawName)
+      : error instanceof Error
+        ? 'Error'
+        : undefined;
+  const errorCode = normalizeErrorCode(rawCode, statusCode);
+  const sanitizedReason = sanitizeSingleLineText(rawMessage, MAX_ERROR_REASON_CHARS);
+
+  return {
+    ...(statusCode !== undefined ? { statusCode } : {}),
+    ...(errorName ? { errorName } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    ...(sanitizedReason ? { sanitizedReason } : {}),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -483,6 +735,10 @@ function normalizeEvent(value: unknown): DiagnosticEvent | null {
   const safeAction = DIAGNOSTIC_ACTIONS.has(rawAction) ? rawAction : 'other';
   const durationMs = normalizeDurationMs(value.durationMs);
   const statusCode = normalizeStatusCode(value.statusCode);
+  const errorName = level === 'error' ? normalizeErrorName(value.errorName) : undefined;
+  const errorCode = level === 'error' ? normalizeErrorCode(value.errorCode, statusCode) : undefined;
+  const sanitizedReason =
+    level === 'error' ? sanitizeSingleLineText(value.sanitizedReason, MAX_ERROR_REASON_CHARS) : undefined;
   const stackTop = normalizeStackTop(value.stackTop);
   const sanitizedMessage = level === 'error'
     ? `${safeAction.replaceAll('_', ' ')}${statusCode === undefined ? '' : ` (HTTP ${statusCode})`}`
@@ -498,6 +754,9 @@ function normalizeEvent(value: unknown): DiagnosticEvent | null {
     action: safeAction,
     ...(durationMs !== undefined ? { durationMs } : {}),
     ...(statusCode !== undefined ? { statusCode } : {}),
+    ...(errorName ? { errorName } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    ...(sanitizedReason ? { sanitizedReason } : {}),
     ...(sanitizedMessage ? { sanitizedMessage } : {}),
     ...(stackTop.length ? { stackTop } : {}),
     ...(meta ? { meta } : {}),
@@ -572,6 +831,23 @@ function normalizeImportRadar(value: unknown): DeepSeekImportRadar | null {
   };
 }
 
+function normalizeSafeEnvVersion(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const collapsed = value.replace(/\s+/g, ' ').trim();
+  if (!collapsed || !SAFE_ENV_VERSION_REGEX.test(collapsed)) return undefined;
+  if (
+    collapsed.startsWith('/') ||
+    collapsed.includes('//') ||
+    collapsed.includes('..') ||
+    /(?:^|\/)(?:Users|home|var|data|storage|sdcard)\b/i.test(collapsed) ||
+    /(?:api[_-]?key|token|secret|password|authorization|bearer)/i.test(collapsed) ||
+    /\bsk-[A-Za-z0-9_-]{3,}/i.test(collapsed)
+  ) {
+    return undefined;
+  }
+  return collapsed;
+}
+
 function normalizeAppEnvironment(
   value: Partial<DiagnosticAppEnvironment> | undefined,
   platform: 'web' | 'android',
@@ -582,19 +858,35 @@ function normalizeAppEnvironment(
     /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(value.appVersion)
       ? value.appVersion
       : 'unknown';
+  const osVersion = normalizeSafeEnvVersion(value?.osVersion);
+  const webviewVersion = normalizeSafeEnvVersion(value?.webviewVersion);
+  const theme =
+    typeof value?.theme === 'string' && DIAGNOSTIC_THEMES.has(value.theme as DiagnosticTheme)
+      ? (value.theme as DiagnosticTheme)
+      : undefined;
   const viewport =
     typeof value?.viewport === 'string' && /^\d{1,5}x\d{1,5}$/.test(value.viewport)
       ? value.viewport
       : 'unknown';
   const activeView =
-    value?.activeView === 'story' || value?.activeView === 'import' ? value.activeView : 'unknown';
+    typeof value?.activeView === 'string' &&
+    DIAGNOSTIC_ACTIVE_VIEWS.has(value.activeView as DiagnosticActiveView)
+      ? (value.activeView as DiagnosticActiveView)
+      : 'unknown';
 
   return {
     platform,
     appVersion,
+    ...(osVersion ? { osVersion } : {}),
+    ...(webviewVersion ? { webviewVersion } : {}),
+    ...(theme ? { theme } : {}),
     viewport,
     activeView,
     storyCount: normalizeCount(value?.storyCount),
+    ...(value?.workCount !== undefined ? { workCount: normalizeCount(value.workCount) } : {}),
+    ...(value?.characterCount !== undefined
+      ? { characterCount: normalizeCount(value.characterCount) }
+      : {}),
   };
 }
 
@@ -622,10 +914,22 @@ export function createDiagnosticCollector(
     }
   };
 
+  const persist = (): void => {
+    if (!options.storage) return;
+    try {
+      const payload: PersistedDiagnosticsPayload = { events, radars };
+      options.storage.setItem(DIAGNOSTIC_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // Never throw from diagnostics persistence
+    }
+  };
+
   const loadFromStorage = (): void => {
     if (!options.storage) return;
     try {
-      const raw = options.storage.getItem(DIAGNOSTIC_STORAGE_KEY);
+      const rawV2 = options.storage.getItem(DIAGNOSTIC_STORAGE_KEY);
+      const rawLegacy = rawV2 ? null : options.storage.getItem(LEGACY_DIAGNOSTIC_STORAGE_KEY);
+      const raw = rawV2 ?? rawLegacy;
       if (!raw) return;
       const parsed = JSON.parse(raw) as Partial<PersistedDiagnosticsPayload>;
       if (Array.isArray(parsed.events)) {
@@ -641,20 +945,18 @@ export function createDiagnosticCollector(
       prune(now());
       // Rewrite older payloads through the same zero-content projection before they remain persisted.
       persist();
+      if (rawLegacy !== null) {
+        options.storage.removeItem(LEGACY_DIAGNOSTIC_STORAGE_KEY);
+      }
     } catch {
       events = [];
       radars = [];
       persist();
-    }
-  };
-
-  const persist = (): void => {
-    if (!options.storage) return;
-    try {
-      const payload: PersistedDiagnosticsPayload = { events, radars };
-      options.storage.setItem(DIAGNOSTIC_STORAGE_KEY, JSON.stringify(payload));
-    } catch {
-      // Never throw from diagnostics persistence
+      try {
+        options.storage.removeItem(LEGACY_DIAGNOSTIC_STORAGE_KEY);
+      } catch {
+        // Ignore
+      }
     }
   };
 
@@ -671,12 +973,16 @@ export function createDiagnosticCollector(
     },
 
     recordError(input): void {
+      const details = extractErrorDetails(input.error, input.statusCode, input.errorCode);
       this.recordEvent({
         level: 'error',
         category: input.category,
         action: input.action,
         durationMs: input.durationMs,
-        statusCode: input.statusCode ?? extractStatusCode(input.error),
+        statusCode: details.statusCode,
+        errorName: details.errorName,
+        errorCode: details.errorCode,
+        sanitizedReason: details.sanitizedReason,
         stackTop: readStackTop(input.error, input.stack),
         meta: input.meta,
       });
@@ -698,14 +1004,18 @@ export function createDiagnosticCollector(
       const trigger = DIAGNOSTIC_BUNDLE_TRIGGERS.has(bundleOptions.trigger as DiagnosticBundleTrigger)
         ? bundleOptions.trigger!
         : 'settings_manual';
+      const userNote = sanitizeSingleLineText(bundleOptions.userNote, MAX_USER_NOTE_CHARS);
       const activeStorySkeleton = bundleOptions.activeStory
         ? buildRedactedStorySkeleton(bundleOptions.activeStory)
         : undefined;
+      const workspaceSkeleton = bundleOptions.workspace
+        ? buildRedactedWorkspaceSkeleton(bundleOptions.workspace)
+        : undefined;
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         generatedAt: new Date(currentTs).toISOString(),
         platform: options.platform,
-        windowMinutes: 30,
+        windowMinutes: 60,
         trigger,
         appEnv: normalizeAppEnvironment(bundleOptions.appEnv, options.platform),
         endpointProfile: sanitizeEndpointProfile(endpointConfig),
@@ -719,7 +1029,9 @@ export function createDiagnosticCollector(
             ...event,
             tsOffsetSec: Math.round((ts - currentTs) / 1000),
           })),
+        ...(userNote ? { userNote } : {}),
         ...(activeStorySkeleton ? { activeStorySkeleton } : {}),
+        ...(workspaceSkeleton ? { workspaceSkeleton } : {}),
       };
     },
 
@@ -728,6 +1040,7 @@ export function createDiagnosticCollector(
       radars = [];
       try {
         options.storage?.removeItem(DIAGNOSTIC_STORAGE_KEY);
+        options.storage?.removeItem(LEGACY_DIAGNOSTIC_STORAGE_KEY);
       } catch {
         // Ignore
       }

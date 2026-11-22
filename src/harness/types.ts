@@ -39,6 +39,38 @@ export interface StoryAttachment {
   base64: string;
 }
 
+export type TurnProposalStatus = 'pending' | 'applied' | 'dismissed' | 'reverted' | 'needs_review';
+
+export type TurnProposalTarget =
+  | 'setting'
+  | 'memory'
+  | 'note'
+  | 'character'
+  | 'draft'
+  | 'container'
+  | 'public'
+  | 'local';
+
+export type TurnProposalOp = 'patch' | 'append' | 'section' | 'full';
+
+export interface TurnProposalRecord {
+  id: string;
+  target: TurnProposalTarget;
+  op: TurnProposalOp;
+  summary: string;
+  status: TurnProposalStatus;
+  body: string;
+  heading?: string;
+  name?: string;
+  baseVersionId?: string;
+  appliedVersionId?: string;
+  previousVersionId?: string;
+  raw?: string;
+  reason?: string;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
 export interface TurnNode {
   id: string;
   parentId: string | null;
@@ -51,12 +83,15 @@ export interface TurnNode {
   documents?: StoryDocumentState;
   documentReads?: DocumentRead[];
   attachmentIds?: string[];
+  proposals?: TurnProposalRecord[];
 }
 
 export interface Story {
   id: string;
   title: string;
   sourceKind?: StorySourceKind;
+  sourceSessionId?: string;
+  v2Migrated?: boolean;
   documents?: StoryDocuments;
   importCandidate?: string;
   attachments?: Record<string, StoryAttachment>;

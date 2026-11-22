@@ -5,6 +5,7 @@ import {
   assembleThreeZoneContext,
   createFictionHarness,
   createInMemoryStoryStorage,
+  documentVersion,
   exportStoryBackup,
   importDeepSeekSessions,
   importStoryBackup,
@@ -485,7 +486,7 @@ describe('Spec #25 Slice 2: Setup Node annotation, deduplication & backup compat
     expect(summaryReq!.messages.map((m) => m.content).join('\n')).not.toContain(uniqueScriptMarker);
   });
 
-  it('retains model boundary suggestions for user review without hiding setup nodes', async () => {
+  it('writes model boundary detections directly into canonical V0.2 setting Markdown without hiding setup nodes', async () => {
     const session = {
       id: 'sess-ambiguous',
       title: '模糊开局',
@@ -587,8 +588,10 @@ describe('Spec #25 Slice 2: Setup Node annotation, deduplication & backup compat
     expect(batch.stories).toHaveLength(1);
     const imported = batch.stories[0];
     expect(imported.setupNodeIds).toBeUndefined();
-    expect(imported.importCandidate).toContain('角色：林晚');
+    expect(imported.importCandidate).toBeUndefined();
     expect(imported.rawScript).toBe('');
+    expect(imported.v2Migrated).toBe(true);
+    expect(documentVersion(imported.documents!.container, 'story-original').markdown).toContain('角色：林晚');
   });
 
   it('round-trips setupNodeIds in Story JSON backup, validates node existence, and remains backward-compatible with v1 backups lacking setupNodeIds', () => {

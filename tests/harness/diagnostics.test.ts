@@ -27,7 +27,7 @@ function createMemoryKv(): KeyValueStorage {
   };
 }
 
-describe('Spec #26 Slice 1: Zero-content DiagnosticCollector, sanitization & 30-min ring buffer', () => {
+describe('Spec #26 / V0.2 Slice 1: Zero-content DiagnosticCollector, sanitization & 60-min ring buffer', () => {
   it('fails closed when the model field contains credentials, hosts, URLs, queries, or serialized text', () => {
     const rejectedModels = [
       {
@@ -223,7 +223,7 @@ describe('Spec #26 Slice 1: Zero-content DiagnosticCollector, sanitization & 30-
     expect(out).toContain('[file].docx');
   });
 
-  it('keeps echoed story content out of persisted events while retaining safe status and timing fields', () => {
+  it('keeps echoed story content out of meta/action while retaining sanitized error details and status/timing fields', () => {
     const kv = createMemoryKv();
     const options = {
       platform: 'web' as const,
@@ -234,7 +234,9 @@ describe('Spec #26 Slice 1: Zero-content DiagnosticCollector, sanitization & 30-
     collector.recordError({
       category: 'llm',
       action: 'stream_error',
-      error: new Error('HTTP 401 Unauthorized: 绝密玩家行动_CANARY'),
+      error: new TypeError(
+        'HTTP 401 Unauthorized for Bearer secret-token-canary sk-live-canary-998877 at https://private-relay.example.com/v1?k=secret',
+      ),
       statusCode: 401,
       durationMs: 27,
       meta: { response: '绝密玩家行动_CANARY' },
@@ -245,7 +247,7 @@ describe('Spec #26 Slice 1: Zero-content DiagnosticCollector, sanitization & 30-
       action: '绝密玩家行动_CANARY',
     });
 
-    const persisted = kv.getItem('lfh.diagnostics.v1') ?? '';
+    const persisted = kv.getItem('lfh.diagnostics.v2') ?? '';
     const restored = createDiagnosticCollector(options).buildBundle({
       baseUrl: '',
       model: 'm',
@@ -254,8 +256,24 @@ describe('Spec #26 Slice 1: Zero-content DiagnosticCollector, sanitization & 30-
     const json = JSON.stringify(restored);
 
     expect(persisted).not.toContain('绝密玩家行动_CANARY');
+    expect(persisted).not.toContain('secret-token-canary');
+    expect(persisted).not.toContain('sk-live-canary-998877');
+    expect(persisted).not.toContain('private-relay.example.com');
     expect(json).not.toContain('绝密玩家行动_CANARY');
-    expect(restored.events[0]).toMatchObject({ action: 'stream_error', statusCode: 401, durationMs: 27 });
+    expect(json).not.toContain('secret-token-canary');
+    expect(json).not.toContain('sk-live-canary-998877');
+    expect(json).not.toContain('private-relay.example.com');
+    expect(restored.schemaVersion).toBe(2);
+    expect(restored.windowMinutes).toBe(60);
+    expect(restored.events[0]).toMatchObject({
+      action: 'stream_error',
+      statusCode: 401,
+      durationMs: 27,
+      errorName: 'TypeError',
+      errorCode: 'HTTP_401',
+    });
+    expect(restored.events[0]?.sanitizedReason).toContain('HTTP 401 Unauthorized');
+    expect(restored.events[0]?.sanitizedReason).toContain('[REDACTED_KEY]');
     expect(restored.events[0]).not.toHaveProperty('message');
     expect(restored.events[0]).not.toHaveProperty('stack');
     expect(restored.events[1]?.action).toBe('other');
@@ -298,7 +316,7 @@ describe('Spec #26 Slice 1: Zero-content DiagnosticCollector, sanitization & 30-
     bundle.importRadars[0]!.attachmentExtensions['.docx'] = 999;
     collector.recordEvent({ level: 'warn', category: 'ui', action: 'import_complete' });
 
-    const persisted = JSON.parse(kv.getItem('lfh.diagnostics.v1') ?? '{}') as {
+    const persisted = JSON.parse(kv.getItem('lfh.diagnostics.v2') ?? '{}') as {
       events: Array<{ durationMs?: number; meta?: { chunks?: number } }>;
       radars: Array<{
         durationMs?: number;
@@ -358,9 +376,10 @@ describe('Spec #26 Slice 1: Zero-content DiagnosticCollector, sanitization & 30-
       storage: kv,
       now: () => now,
     });
-    const persisted = kv.getItem('lfh.diagnostics.v1') ?? '';
+    const persisted = kv.getItem('lfh.diagnostics.v2') ?? '';
     const bundle = collector.buildBundle({ baseUrl: '', model: 'm', memoryOnly: false });
 
+    expect(kv.getItem('lfh.diagnostics.v1')).toBeNull();
     expect(persisted).not.toContain(canary);
     expect(JSON.stringify(bundle)).not.toContain(canary);
     expect(bundle.events[0]).toMatchObject({ statusCode: 401, durationMs: 9, meta: { chunks: 2 } });
@@ -370,7 +389,7 @@ describe('Spec #26 Slice 1: Zero-content DiagnosticCollector, sanitization & 30-
     expect(bundle.importRadars[0]?.attachmentExtensions).toEqual({ '.other': 1, '.pdf': 1 });
   });
 
-  it('evicts events older than 30 minutes, caps at 400 events, and recovers pre-crash events on new instance', () => {
+  it('evicts events older than 60 minutes, caps at 600 events, and recovers pre-crash events on new instance', () => {
     let clock = 1_700_000_000_000;
     const kv = createMemoryKv();
     const collectorA = createDiagnosticCollector({
@@ -382,13 +401,13 @@ describe('Spec #26 Slice 1: Zero-content DiagnosticCollector, sanitization & 30-
     // Old event at t=0
     collectorA.recordEvent({ level: 'info', category: 'ui', action: 'old_event' });
 
-    // Advance 31 minutes -> old_event is expired
-    clock += 31 * 60 * 1000;
-    for (let i = 0; i < 405; i++) {
+    // Advance 61 minutes -> old_event is expired (59-min event would still be kept)
+    clock += 61 * 60 * 1000;
+    for (let i = 0; i < 605; i++) {
       collectorA.recordEvent({
         level: 'info',
         category: 'branch',
-        action: `ev_${i}`,
+        action: i === 0 ? 'switch_branch_failed' : 'switch_branch',
       });
     }
     collectorA.recordError({
@@ -410,9 +429,11 @@ describe('Spec #26 Slice 1: Zero-content DiagnosticCollector, sanitization & 30-
       memoryOnly: true,
     });
 
-    expect(bundle.events.length).toBe(400);
-    expect(bundle.events.some((e) => e.action === 'old_event')).toBe(false);
-    expect(bundle.events.some((e) => e.action === 'ev_0')).toBe(false);
+    expect(bundle.schemaVersion).toBe(2);
+    expect(bundle.windowMinutes).toBe(60);
+    expect(bundle.events.length).toBe(600);
+    expect(bundle.events.some((e) => e.action === 'other')).toBe(false);
+    expect(bundle.events.some((e) => e.action === 'switch_branch_failed')).toBe(false);
     expect(bundle.events[bundle.events.length - 1]?.action).toBe('unhandled_render_crash');
   });
 });

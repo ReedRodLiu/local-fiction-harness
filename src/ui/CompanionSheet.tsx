@@ -1,42 +1,38 @@
 import { useState, type KeyboardEvent } from 'react';
+import { ChevronRight, Download, Edit3 } from 'lucide-react';
 import {
-  computeActiveReviewState,
+  documentVersion,
+  legacyStoryMarkdown,
+  storyDocumentState,
   type PlotSummarySnapshot,
   type Story,
-  type StoryBlueprint,
-  type ThreeZoneMetrics,
+  type StoryDocuments,
 } from '../harness/index.ts';
-import { ContextOverview } from './ContextOverview.tsx';
-import { StoryReview } from './StoryReview.tsx';
+import { MarkdownView } from './MarkdownView.tsx';
 import { StoryTree } from './StoryTree.tsx';
+import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
 
-type CompanionTab = 'tree' | 'review' | 'blueprint';
+type CompanionTab = 'branches' | 'settings';
 
 const TABS: { id: CompanionTab; label: string }[] = [
-  { id: 'tree', label: '剧情树' },
-  { id: 'review', label: '剧情回顾' },
-  { id: 'blueprint', label: '故事蓝图' },
+  { id: 'branches', label: '分支' },
+  { id: 'settings', label: '设定' },
 ];
 
 interface CompanionSheetProps {
   open: boolean;
   story: Story;
   summarySnapshot: PlotSummarySnapshot;
-  metrics: ThreeZoneMetrics;
-  hasCredentials: boolean;
   isStreaming: boolean;
   isSummarizing: boolean;
-  isSummaryInProgress: boolean;
-  isBlueprintReextracting: boolean;
   isBranchSwitching: boolean;
   onSwitchBranch: (targetNodeId: string) => void;
   onRenameBranch: (branchEntryNodeId: string, name: string) => Promise<void> | void;
-  onExtractBranchGist: (branchEntryNodeId: string) => Promise<void> | void;
-  onComputeSummary: () => void;
-  onOpenDocuments?: { container(): void; local(): void; public(): void; adoptScript?: () => void };
-  onSaveBlueprintTweak?: (blueprint: StoryBlueprint, baseline: Story) => Promise<boolean | void>;
-  onReextractBlueprint: () => void;
+  onEditSetting?: () => void;
+  onOpenMyMemory?: () => void;
+  onEditBranchNote?: () => void;
+  onExportMarkdown?: () => void;
   onClose: () => void;
 }
 
@@ -44,24 +40,34 @@ export function CompanionSheet({
   open,
   story,
   summarySnapshot,
-  metrics,
-  hasCredentials,
   isStreaming,
   isSummarizing,
-  isSummaryInProgress,
-  isBlueprintReextracting,
   isBranchSwitching,
   onSwitchBranch,
   onRenameBranch,
-  onExtractBranchGist,
-  onComputeSummary,
-  onOpenDocuments,
-  onSaveBlueprintTweak,
-  onReextractBlueprint,
+  onEditSetting,
+  onOpenMyMemory,
+  onEditBranchNote,
+  onExportMarkdown,
   onClose,
 }: CompanionSheetProps) {
-  const [activeTab, setActiveTab] = useState<CompanionTab>('tree');
-  const needsSummary = computeActiveReviewState(story).needsSummaryCompression;
+  const [activeTab, setActiveTab] = useState<CompanionTab>('branches');
+
+  const isBusy = isStreaming || isSummarizing || isBranchSwitching;
+
+  const settingMarkdown = story.documents
+    ? documentVersion(
+        story.documents.container,
+        storyDocumentState(story as Story & { documents: StoryDocuments }, story.activeLeafNodeId, true).container,
+      ).markdown
+    : legacyStoryMarkdown(story);
+
+  const branchNoteMarkdown = story.documents
+    ? documentVersion(
+        story.documents.local,
+        storyDocumentState(story as Story & { documents: StoryDocuments }, story.activeLeafNodeId, true).local,
+      ).markdown
+    : '';
 
   const selectAdjacentTab = (event: KeyboardEvent<HTMLButtonElement>) => {
     const currentIndex = TABS.findIndex((tab) => tab.id === activeTab);
@@ -76,15 +82,13 @@ export function CompanionSheet({
   return (
     <SheetDialog
       open={open}
-      title="故事结构"
-      label="故事伴生面板"
+      title="故事伴生"
+      label="分支与设定"
       testId="story-tree-sheet"
-      status={isSummaryInProgress ? '补算摘要中…' : undefined}
-      statusTestId="companion-summary-progress"
       onClose={onClose}
     >
       <div className="companion-sheet" data-testid="companion-sheet">
-        <div className="companion-tabs" role="tablist" aria-label="故事信息">
+        <div className="companion-tabs companion-tabs-two" role="tablist" aria-label="故事信息">
           {TABS.map((tab) => (
             <button
               key={tab.id}
@@ -100,80 +104,99 @@ export function CompanionSheet({
               onKeyDown={selectAdjacentTab}
             >
               {tab.label}
-              {tab.id === 'review' && needsSummary && (
-                <span
-                  className="companion-tab-warning"
-                  data-testid="summary-needed-indicator"
-                  aria-label="剧情摘要待补算"
-                />
-              )}
             </button>
           ))}
         </div>
 
         <section
-          id="companion-panel-tree"
+          id="companion-panel-branches"
           className="companion-panel"
           role="tabpanel"
-          aria-labelledby="companion-tab-tree"
-          data-testid="companion-panel-tree"
-          hidden={activeTab !== 'tree'}
+          aria-labelledby="companion-tab-branches"
+          data-testid="companion-panel-branches"
+          hidden={activeTab !== 'branches'}
         >
-          <StoryTree
-            story={story}
-            isBusy={isStreaming || isSummarizing || isBranchSwitching}
-            isRenameBusy={isStreaming || isBranchSwitching || isSummarizing}
-            collapsible={false}
-            onSwitchBranch={onSwitchBranch}
-            onRenameBranch={onRenameBranch}
-            onExtractBranchGist={(id) => {
-              if (!hasCredentials) onClose();
-              onExtractBranchGist(id);
-            }}
-          />
+          <div className="context-overview-stack">
+            {summarySnapshot.content.trim() && (
+              <section className="story-review-summary story-review-card" data-testid="active-plot-summary" aria-label="当前进展回顾">
+                <strong>当前进展回顾</strong>
+                <p>{summarySnapshot.content.trim()}</p>
+              </section>
+            )}
+
+            <StoryTree
+              story={story}
+              isBusy={isBusy}
+              isRenameBusy={isBusy}
+              collapsible={false}
+              onSwitchBranch={onSwitchBranch}
+              onRenameBranch={onRenameBranch}
+            />
+          </div>
         </section>
 
         <section
-          id="companion-panel-review"
+          id="companion-panel-settings"
           className="companion-panel"
           role="tabpanel"
-          aria-labelledby="companion-tab-review"
-          data-testid="companion-panel-review"
-          hidden={activeTab !== 'review'}
+          aria-labelledby="companion-tab-settings"
+          data-testid="companion-panel-settings"
+          hidden={activeTab !== 'settings'}
         >
-          <StoryReview
-            story={story}
-            metrics={metrics}
-            isBusy={isStreaming || isSummarizing || isBranchSwitching}
-            isSummarizing={isSummaryInProgress}
-            onComputeSummary={() => {
-              if (!hasCredentials) onClose();
-              onComputeSummary();
-            }}
-          />
-        </section>
+          <div className="context-overview-stack">
+            <InsetGroup title="故事设定" testId="story-setting-group">
+              <div className="companion-setting-preview">
+                <MarkdownView content={settingMarkdown.trim() || '尚未编写故事设定，可在对话中告诉 AI 或点击下方编辑。'} mode="story" />
+              </div>
+              {onEditSetting && (
+                <button
+                  type="button"
+                  className="btn"
+                  data-testid="edit-story-setting-btn"
+                  disabled={isBusy}
+                  onClick={onEditSetting}
+                >
+                  <Edit3 size={16} strokeWidth={1.75} aria-hidden="true" />
+                  编辑设定
+                </button>
+              )}
+            </InsetGroup>
 
-        <section
-          id="companion-panel-blueprint"
-          className="companion-panel"
-          role="tabpanel"
-          aria-labelledby="companion-tab-blueprint"
-          data-testid="companion-panel-blueprint"
-          hidden={activeTab !== 'blueprint'}
-        >
-          <ContextOverview
-            story={story}
-            summarySnapshot={summarySnapshot}
-            metrics={metrics}
-            isStreaming={isStreaming || isSummarizing || isBranchSwitching}
-            isReextracting={isBlueprintReextracting}
-            onOpenDocuments={onOpenDocuments}
-            onSaveBlueprintTweak={onSaveBlueprintTweak}
-            onReextractBlueprint={() => {
-              if (!hasCredentials) onClose();
-              onReextractBlueprint();
-            }}
-          />
+            <InsetGroup title="通用资料与导出" testId="companion-documents">
+              <div className="companion-document-list">
+                {onOpenMyMemory && (
+                  <button type="button" className="companion-document-row" data-testid="open-my-memory-row" onClick={onOpenMyMemory}>
+                    <span>我的记忆</span>
+                    <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                )}
+                {onExportMarkdown && (
+                  <button type="button" className="companion-document-row" data-testid="export-story-markdown-row" onClick={onExportMarkdown}>
+                    <span>导出 Markdown (.md)</span>
+                    <Download size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            </InsetGroup>
+
+            <details className="branch-note-details" data-testid="branch-note-details">
+              <summary>分支笔记</summary>
+              <div className="branch-note-body">
+                <MarkdownView content={branchNoteMarkdown.trim() || '暂无分支笔记，当前路线的进展会自动记录在这里。'} mode="story" />
+                {onEditBranchNote && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    data-testid="edit-branch-note-btn"
+                    disabled={isBusy}
+                    onClick={onEditBranchNote}
+                  >
+                    编辑分支笔记
+                  </button>
+                )}
+              </div>
+            </details>
+          </div>
         </section>
       </div>
     </SheetDialog>

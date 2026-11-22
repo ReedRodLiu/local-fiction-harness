@@ -1,22 +1,27 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { ChevronRight, FileUp, GitBranch, Link2, TriangleAlert } from 'lucide-react';
+import { ChevronRight, FileUp, GitBranch, Link2, Sparkles, TriangleAlert } from 'lucide-react';
 import {
   DEFAULT_ZIP_MAX_BYTES,
   UnsupportedDeepSeekExportVersionError,
   assistFilterDeepSeekSessions,
   isAbortError,
+  markDuplicateImportSessions,
   previewDeepSeekSessions,
   scanDeepSeekExportZip,
   type BinaryDownloader,
+  type DeepSeekAttachmentResult,
   type DeepSeekImportBatchResult,
   type DeepSeekSessionIndexItem,
   type DeepSeekStructureStats,
-  type DiagnosticCollector,
   type DeepSeekZipScanResult,
+  type DiagnosticCollector,
   type ImportSummaryStatus,
   type LlmTransport,
+  type MarkedDeepSeekSession,
   type ModelConfig,
   type ScriptTurnRange,
+  type Story,
+  type TurnNode,
 } from '../harness/index.ts';
 import { StoryTree } from './StoryTree.tsx';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
@@ -26,24 +31,77 @@ import { toErrorMessage } from './textHelpers.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 
 const SUMMARY_STATUS_LABELS: Record<ImportSummaryStatus, string> = {
-  pending_summary: '将在续写时补齐进度',
-  within_window: '近期窗口内',
-  pending_key: '待配置密钥',
+  pending_summary: '续写时自动整理前情',
+  within_window: '可直接继续',
+  pending_key: '连接 DeepSeek 后可续写',
 };
 
-type DeepSeekSourceMode = 'file' | 'url';
-type DeepSeekFilterMode = 'all' | 'likely' | 'ai';
-
-const SOURCE_TABS: ReadonlyArray<{ id: DeepSeekSourceMode; label: string }> = [
-  { id: 'file', label: '本地 .zip' },
-  { id: 'url', label: 'HTTPS 下载链接' },
-];
+export type DeepSeekFilterMode = 'likely' | 'all' | 'ai';
 
 const FILTER_TABS: ReadonlyArray<{ id: DeepSeekFilterMode; label: string }> = [
+  { id: 'likely', label: '推荐导入' },
   { id: 'all', label: '全部' },
-  { id: 'likely', label: '疑似文游' },
-  { id: 'ai', label: 'AI 辅助筛选' },
+  { id: 'ai', label: 'AI 帮你挑' },
 ];
+
+export function selectDefaultImportSessionIds(sessions: readonly MarkedDeepSeekSession[]): string[] {
+  const firstUnimported =
+    sessions.find((session) => !session.alreadyImported && session.isLikelyFiction) ??
+    sessions.find((session) => !session.alreadyImported);
+  return firstUnimported ? [firstUnimported.sessionId] : [];
+}
+
+export function shouldOpenImportedStoryDirectly(result: DeepSeekImportBatchResult): boolean {
+  return result.stories.length === 1;
+}
+
+export function filterMarkedImportSessions(
+  sessions: readonly MarkedDeepSeekSession[],
+  filterMode: DeepSeekFilterMode,
+  searchQuery: string,
+  aiMatchedIds: ReadonlySet<string> | null,
+): MarkedDeepSeekSession[] {
+  const q = searchQuery.trim().toLowerCase();
+  return sessions.filter((s) => {
+    if (filterMode === 'likely' && !s.isLikelyFiction) return false;
+    if (filterMode === 'ai' && !aiMatchedIds?.has(s.sessionId)) return false;
+    if (!q) return true;
+    return (
+      s.title.toLowerCase().includes(q) ||
+      s.firstSnippet.toLowerCase().includes(q) ||
+      s.latestSnippet.toLowerCase().includes(q)
+    );
+  });
+}
+
+function stripDiagnosticsForPreviewTree(story: Story): Story {
+  const nodes: Record<string, TurnNode> = {};
+  for (const [id, node] of Object.entries(story.nodes)) {
+    if (node.diagnostics) {
+      const { diagnostics: _omitted, ...rest } = node;
+      nodes[id] = rest;
+    } else {
+      nodes[id] = node;
+    }
+  }
+  return { ...story, nodes };
+}
+
+function summarizeSkippedAttachments(attachments: readonly DeepSeekAttachmentResult[]): {
+  hasMedia: boolean;
+  otherItems: DeepSeekAttachmentResult[];
+} {
+  let hasMedia = false;
+  const otherItems: DeepSeekAttachmentResult[] = [];
+  for (const attachment of attachments) {
+    if (attachment.kind === 'media') {
+      hasMedia = true;
+    } else {
+      otherItems.push(attachment);
+    }
+  }
+  return { hasMedia, otherItems };
+}
 
 function moveTabSelection<T extends string>(
   event: KeyboardEvent<HTMLButtonElement>,
@@ -84,7 +142,18 @@ interface DeepSeekImportError {
   message: string;
 }
 
-interface DeepSeekImportPanelProps {
+export interface DeepSeekImportPanelInitialState {
+  scanResult?: DeepSeekZipScanResult | null;
+  zipBytes?: Uint8Array | null;
+  selectedIds?: string[];
+  filterMode?: DeepSeekFilterMode;
+  aiQuery?: string;
+  aiMatchedIds?: ReadonlySet<string> | null;
+  previewSessionId?: string | null;
+  receipt?: DeepSeekImportBatchResult | null;
+}
+
+export interface DeepSeekImportPanelProps {
   config: ModelConfig;
   transport: LlmTransport;
   binaryDownloader: BinaryDownloader;
@@ -105,6 +174,9 @@ interface DeepSeekImportPanelProps {
   diagnostics: DiagnosticCollector;
   onPackageDiagnostics: () => void;
   onCancel?: () => void;
+  existingSessionIds?: readonly string[];
+  existingStories?: readonly Pick<Story, 'id' | 'title' | 'sourceSessionId'>[];
+  initialState?: DeepSeekImportPanelInitialState;
 }
 
 export function DeepSeekImportPanel({
@@ -120,26 +192,37 @@ export function DeepSeekImportPanel({
   diagnostics,
   onPackageDiagnostics,
   onCancel,
+  existingSessionIds,
+  existingStories,
+  initialState,
 }: DeepSeekImportPanelProps) {
-  const [sourceMode, setSourceMode] = useState<DeepSeekSourceMode>('file');
+  const [urlSectionOpen, setUrlSectionOpen] = useState(false);
   const [zipUrl, setZipUrl] = useState('');
   const [isFetchingUrl, setIsFetchingUrl] = useState(false);
   const urlAbortRef = useRef<AbortController | null>(null);
   const [loadedSource, setLoadedSource] = useState<'zip_file' | 'url'>('zip_file');
-  const [zipBytes, setZipBytes] = useState<Uint8Array | null>(null);
+  const [zipBytes, setZipBytes] = useState<Uint8Array | null>(initialState?.zipBytes ?? null);
   const zipInputRef = useRef<HTMLInputElement>(null);
-  const [scanResult, setScanResult] = useState<DeepSeekZipScanResult | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [previewSessionId, setPreviewSessionId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterMode, setFilterMode] = useState<DeepSeekFilterMode>('all');
-  const [aiMatchedIds, setAiMatchedIds] = useState<Set<string> | null>(null);
-  const [isAiFiltering, setIsAiFiltering] = useState(false);
-  const [scriptRangeOverrides, setScriptRangeOverrides] = useState<Record<string, ScriptTurnRange>>(
-    {},
+  const [scanResult, setScanResult] = useState<DeepSeekZipScanResult | null>(
+    initialState?.scanResult ?? null,
   );
+  const [selectedIds, setSelectedIds] = useState<string[]>(initialState?.selectedIds ?? []);
+  const [previewSessionId, setPreviewSessionId] = useState<string | null>(
+    initialState?.previewSessionId ?? null,
+  );
+  const [searchQuery, setSearchQuery] = useState('');
+  const [aiQuery, setAiQuery] = useState(initialState?.aiQuery ?? '');
+  const [filterMode, setFilterMode] = useState<DeepSeekFilterMode>(
+    initialState?.filterMode ?? 'all',
+  );
+  const [aiMatchedIds, setAiMatchedIds] = useState<Set<string> | null>(
+    initialState?.aiMatchedIds ? new Set(initialState.aiMatchedIds) : null,
+  );
+  const [isAiFiltering, setIsAiFiltering] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
-  const [receipt, setReceipt] = useState<DeepSeekImportBatchResult | null>(null);
+  const [receipt, setReceipt] = useState<DeepSeekImportBatchResult | null>(
+    initialState?.receipt ?? null,
+  );
   const [importError, setImportError] = useState<DeepSeekImportError | null>(null);
   const [completedImportSessionIds, setCompletedImportSessionIds] = useState<string[]>([]);
   const completedImportResultsRef = useRef<DeepSeekImportBatchResult[]>([]);
@@ -150,6 +233,7 @@ export function DeepSeekImportPanel({
   const aiByokPreviousFilterRef = useRef<DeepSeekFilterMode | null>(null);
   const pendingFilterTabFocusRef = useRef<DeepSeekFilterMode | null>(null);
   const previewTriggerRef = useRef<HTMLButtonElement | null>(null);
+
   useWebHistoryLayer(
     'deepseek-preview',
     60,
@@ -188,6 +272,19 @@ export function DeepSeekImportPanel({
       pendingFilterTabFocusRef.current = null;
     }
   }, [aiMatchedIds, byokOpen, filterMode, isAiFiltering]);
+
+  const existingSessionRefs = useMemo(() => {
+    const refs: Array<Pick<Story, 'sourceSessionId'> | string> = [...(existingSessionIds ?? [])];
+    for (const story of existingStories ?? []) {
+      if (story.sourceSessionId) refs.push(story);
+    }
+    return refs;
+  }, [existingSessionIds, existingStories]);
+
+  const markedSessions = useMemo<MarkedDeepSeekSession[]>(() => {
+    if (!scanResult) return [];
+    return markDuplicateImportSessions(scanResult.sessions, existingSessionRefs);
+  }, [scanResult, existingSessionRefs]);
 
   const recordImportRadar = (
     structure: Partial<DeepSeekStructureStats> | undefined,
@@ -261,24 +358,23 @@ export function DeepSeekImportPanel({
     const scanned = scanDeepSeekExportZip(bytes);
     if (scanned.sessions.length === 0) {
       recordScanFailure(
-        new Error('DeepSeek 导出包中没有可导入的会话。'),
+        new Error('DeepSeek 导出包中没有可导入的对话。'),
         source,
         Date.now() - startedAt,
         scanned.structure,
       );
       setImportError({
         kind: 'empty_zip',
-        message: '这个 .zip 文件中没有可导入的会话。请换一个 DeepSeek 数据导出包，或使用自由剧本导入。',
+        message: '这个 .zip 文件中没有可导入的对话。请换一个 DeepSeek 数据导出包，或改用文本导入。',
       });
     } else {
       setImportError(null);
     }
+    const marked = markDuplicateImportSessions(scanned.sessions, existingSessionRefs);
     setLoadedSource(source);
     setZipBytes(bytes);
     setScanResult(scanned);
-    setScriptRangeOverrides({});
-    const firstLikely = scanned.sessions.find((s) => s.isLikelyFiction) ?? scanned.sessions[0];
-    setSelectedIds(firstLikely ? [firstLikely.sessionId] : []);
+    setSelectedIds(selectDefaultImportSessionIds(marked));
     setPreviewSessionId(null);
   };
 
@@ -372,29 +468,24 @@ export function DeepSeekImportPanel({
     }
   };
 
-  const filteredSessions = useMemo<DeepSeekSessionIndexItem[]>(() => {
-    if (!scanResult) return [];
-    const q = searchQuery.trim().toLowerCase();
-    return scanResult.sessions.filter((s) => {
-      if (filterMode === 'likely' && !s.isLikelyFiction) return false;
-      if (filterMode === 'ai' && !aiMatchedIds?.has(s.sessionId)) return false;
-      if (!q) return true;
-      return (
-        s.title.toLowerCase().includes(q) ||
-        s.firstSnippet.toLowerCase().includes(q) ||
-        s.latestSnippet.toLowerCase().includes(q)
-      );
-    });
-  }, [scanResult, searchQuery, filterMode, aiMatchedIds]);
+  const filteredSessions = useMemo<MarkedDeepSeekSession[]>(
+    () => filterMarkedImportSessions(markedSessions, filterMode, searchQuery, aiMatchedIds),
+    [markedSessions, filterMode, searchQuery, aiMatchedIds],
+  );
 
   const preview = useMemo(() => {
     if (!zipBytes || !previewSessionId) return null;
     try {
-      return previewDeepSeekSessions(zipBytes, [previewSessionId], { scriptRangeOverrides })[0] ?? null;
+      return previewDeepSeekSessions(zipBytes, [previewSessionId])[0] ?? null;
     } catch {
       return null;
     }
-  }, [zipBytes, previewSessionId, scriptRangeOverrides]);
+  }, [zipBytes, previewSessionId]);
+
+  const previewTreeStory = useMemo(
+    () => (preview ? stripDiagnosticsForPreviewTree(preview.story) : null),
+    [preview],
+  );
 
   const toggleSelect = (sessionId: string) => {
     setSelectedIds((prev) => {
@@ -409,6 +500,7 @@ export function DeepSeekImportPanel({
     cfg: ModelConfig,
     zipGeneration: number,
     sessions: readonly DeepSeekSessionIndexItem[],
+    queryText: string,
   ) => {
     if (zipGeneration !== zipGenerationRef.current || isAiFiltering) return;
     setImportError(null);
@@ -418,7 +510,13 @@ export function DeepSeekImportPanel({
     const controller = new AbortController();
     aiAbortRef.current = controller;
     try {
-      const ids = await assistFilterDeepSeekSessions(sessions, transport, cfg, controller.signal);
+      const ids = await assistFilterDeepSeekSessions(
+        sessions,
+        transport,
+        cfg,
+        controller.signal,
+        queryText,
+      );
       if (controller.signal.aborted || zipGeneration !== zipGenerationRef.current) return;
       setAiMatchedIds(new Set(ids));
       setFilterMode('ai');
@@ -435,7 +533,7 @@ export function DeepSeekImportPanel({
       aiPreviousFilterRef.current = null;
       setImportError({
         kind: 'ai_filter',
-        message: toErrorMessage(err, 'AI 辅助筛选失败，请检查模型配置。'),
+        message: toErrorMessage(err, 'AI 帮你挑暂未成功，请确认已连接 DeepSeek。'),
       });
     } finally {
       if (aiAbortRef.current === controller) {
@@ -445,12 +543,8 @@ export function DeepSeekImportPanel({
     }
   };
 
-  const handleAiAssistClick = () => {
+  const handleRunAiFilter = (queryText = aiQuery) => {
     if (!scanResult || isAiFiltering) return;
-    if (aiMatchedIds) {
-      setFilterMode('ai');
-      return;
-    }
     const zipGeneration = zipGenerationRef.current;
     const sessions = scanResult.sessions;
     if (!hasCredentials) {
@@ -459,12 +553,12 @@ export function DeepSeekImportPanel({
       pendingFilterTabFocusRef.current = null;
       setFilterMode('ai');
       onRequireByok(
-        'AI 辅助筛选 DeepSeek 会话',
+        '连接 DeepSeek',
         (cfg) => {
           aiByokPreviousFilterRef.current = null;
           pendingFilterTabFocusRef.current = 'ai';
           setFilterMode('ai');
-          void runAiAssistFilter(cfg, zipGeneration, sessions);
+          void runAiAssistFilter(cfg, zipGeneration, sessions, queryText);
         },
         () => {
           const restoreMode = aiByokPreviousFilterRef.current ?? previousMode;
@@ -475,22 +569,13 @@ export function DeepSeekImportPanel({
       );
       return;
     }
-    void runAiAssistFilter(config, zipGeneration, sessions);
-  };
-
-  const selectSourceMode = (nextMode: DeepSeekSourceMode) => {
-    if (nextMode === 'file') {
-      urlAbortRef.current?.abort();
-    } else {
-      zipReadSeqRef.current += 1;
-    }
-    setSourceMode(nextMode);
-    setImportError(null);
+    void runAiAssistFilter(config, zipGeneration, sessions, queryText);
   };
 
   const selectFilterMode = (nextMode: DeepSeekFilterMode) => {
     if (nextMode === 'ai') {
-      handleAiAssistClick();
+      setImportError((current) => (current?.kind === 'ai_filter' ? null : current));
+      setFilterMode('ai');
       return;
     }
     const activeAiFilter = aiAbortRef.current;
@@ -516,7 +601,7 @@ export function DeepSeekImportPanel({
     onImportBusyChange(true);
     try {
       for (const sessionId of pendingSessionIds) {
-        const result = await onImportBatch(zipBytes, [sessionId], scriptRangeOverrides);
+        const result = await onImportBatch(zipBytes, [sessionId], {});
         completedImportResultsRef.current.push(result);
         setCompletedImportSessionIds((current) => [...current, sessionId]);
       }
@@ -527,6 +612,10 @@ export function DeepSeekImportPanel({
         scanResult?.structure, loadedSource, 'success', result.previews.length,
         Date.now() - startedAt, confidenceCounts,
       );
+      if (shouldOpenImportedStoryDirectly(result)) {
+        onContinueStory(result.stories[0].id);
+        return;
+      }
       setReceipt(result);
     } catch (err) {
       const durationMs = Date.now() - startedAt;
@@ -547,8 +636,8 @@ export function DeepSeekImportPanel({
       setImportError({
         kind: 'import',
         message: savedCount > 0
-          ? `已保存 ${savedCount} 部故事。${toErrorMessage(err, '剩余故事导入失败。')} 重试只会处理未完成会话。`
-          : toErrorMessage(err, '导入所选故事失败。'),
+          ? `已保存 ${savedCount} 个故事。${toErrorMessage(err, '其余对话导入失败。')} 重试只会处理未完成部分。`
+          : toErrorMessage(err, '导入所选对话失败。'),
       });
     } finally {
       setIsImporting(false);
@@ -556,25 +645,7 @@ export function DeepSeekImportPanel({
     }
   };
 
-  const updateScriptRange = (sessionId: string, edge: 'start' | 'end', rawValue: string) => {
-    const val = Number(rawValue);
-    setScriptRangeOverrides((prev) => {
-      const next = { ...prev };
-      if (!Number.isFinite(val) || val < 1) {
-        delete next[sessionId];
-        return next;
-      }
-      const n = Math.floor(val);
-      const current = prev[sessionId];
-      next[sessionId] =
-        edge === 'start'
-          ? { startTurn: n, endTurn: Math.max(n, current?.endTurn ?? n) }
-          : { startTurn: Math.min(n, current?.startTurn ?? 1), endTurn: n };
-      return next;
-    });
-  };
-
-  const step = receipt ? 3 : scanResult ? 2 : 1;
+  const step = scanResult ? 2 : 1;
   const primaryStory = receipt?.stories[0];
   const pendingImportCount = selectedIds.filter(
     (sessionId) => !completedImportSessionIds.includes(sessionId),
@@ -600,7 +671,7 @@ export function DeepSeekImportPanel({
         className="btn btn-primary import-primary-action"
         onClick={() => onContinueStory(primaryStory.id)}
       >
-        继续这条故事
+        进入《{primaryStory.title}》
       </button>
     ) : (
       <button
@@ -625,35 +696,25 @@ export function DeepSeekImportPanel({
       {isImporting
         ? '正在导入…'
         : completedImportSessionIds.length > 0
-          ? `重试导入剩余 ${pendingImportCount} 部`
-          : `确认导入（已选 ${selectedIds.length} 部故事）`}
+          ? `重试导入剩余 ${pendingImportCount} 条`
+          : selectedIds.length > 1
+            ? `导入并开始（已选 ${selectedIds.length} 条）`
+            : '导入并开始'}
     </button>
-  ) : sourceMode === 'url' ? (
-    isFetchingUrl ? (
-      <button
-        type="button"
-        className="btn import-primary-action"
-        onClick={() => {
-          urlAbortRef.current?.abort();
-          setImportError({
-            kind: 'url_fetch',
-            message: '已取消拉取导出压缩包。',
-          });
-        }}
-      >
-        取消拉取
-      </button>
-    ) : (
-      <button
-        type="button"
-        className="btn btn-primary import-primary-action"
-        data-testid="deepseek-fetch-zip"
-        disabled={!zipUrl.trim()}
-        onClick={() => void handleFetchZipUrl()}
-      >
-        拉取并预览
-      </button>
-    )
+  ) : isFetchingUrl ? (
+    <button
+      type="button"
+      className="btn import-primary-action"
+      onClick={() => {
+        urlAbortRef.current?.abort();
+        setImportError({
+          kind: 'url_fetch',
+          message: '已取消拉取导出压缩包。',
+        });
+      }}
+    >
+      取消拉取
+    </button>
   ) : (
     <button
       type="button"
@@ -667,10 +728,10 @@ export function DeepSeekImportPanel({
 
   return (
     <OverlayPageShell
-      title="从 DeepSeek 继续"
+      title="从 DeepSeek 导入"
       testId="deepseek-import-panel"
       step={step}
-      stepCount={3}
+      stepCount={2}
       backDisabled={isImporting}
       onBack={handleBack}
       footer={<div className="import-footer-actions">{footer}</div>}
@@ -686,7 +747,7 @@ export function DeepSeekImportPanel({
                   className="text-action"
                   data-testid="import-error-action-local-zip"
                   onClick={() => {
-                    setSourceMode('file');
+                    setUrlSectionOpen(false);
                     setImportError(null);
                   }}
                 >
@@ -711,7 +772,6 @@ export function DeepSeekImportPanel({
                 data-testid="import-error-action-replace-zip"
                 onClick={() => {
                   resetLoadedZip();
-                  setSourceMode('file');
                   setImportError(null);
                 }}
               >
@@ -723,9 +783,9 @@ export function DeepSeekImportPanel({
                 type="button"
                 className="text-action"
                 data-testid="import-error-action-retry-ai-filter"
-                onClick={handleAiAssistClick}
+                onClick={() => handleRunAiFilter()}
               >
-                重试 AI 筛选
+                重试 AI 帮你挑
               </button>
             )}
             {importError.kind === 'import' && pendingImportCount > 0 && (
@@ -735,11 +795,11 @@ export function DeepSeekImportPanel({
                 data-testid="import-error-action-retry-import"
                 onClick={() => void handleConfirmImport()}
               >
-                重试 {pendingImportCount} 部未完成导入
+                重试 {pendingImportCount} 条未完成导入
               </button>
             )}
             <button type="button" className="text-action" onClick={onPackageDiagnostics}>
-              打包排障日志
+              导出排障日志
             </button>
           </div>
         </BannerAlert>
@@ -748,44 +808,48 @@ export function DeepSeekImportPanel({
       {receipt ? (
         <div className="import-step-content" data-testid="deepseek-import-receipt">
           <div className="import-intro">
-            <h2>故事已导入</h2>
-            <p>所选外部会话已分别保存为本地故事，原始剧本定位到最新激活节点。</p>
+            <h2>已导入 {receipt.stories.length} 个故事</h2>
+            <p>历史对话已整理进「故事设定」并保留全部历史分支，点选任一条即可直接开始。</p>
           </div>
           <div className="import-receipt-summary">
-            <strong>新增 {receipt.stories.length} 部独立故事</strong>
+            <strong>共新增 {receipt.stories.length} 个独立故事</strong>
             <span className="badge badge-ok">已保存在本机</span>
           </div>
           <ul className="ds-receipt-list">
             {receipt.previews.map((item, index) => {
               const savedStory = receipt.stories[index] ?? item.story;
               const status = receipt.summaryStatuses[savedStory.id] ?? 'within_window';
-              const savedAttachments = Object.values(savedStory.attachments ?? {});
-              const missingAttachments = item.skippedAttachments.filter((file) =>
-                !Object.hasOwn(savedStory.attachments ?? {}, file.exportPath));
+              const skippedSummary = summarizeSkippedAttachments(item.skippedAttachments);
               return (
                 <li key={savedStory.id} className="ds-receipt-item">
                   <div className="ds-receipt-heading">
                     <strong>{savedStory.title}</strong>
                     <span className="badge">{SUMMARY_STATUS_LABELS[status]}</span>
                   </div>
-                  <span className="status-text">{item.turnCount} 轮 · {item.forkCount} 处分叉</span>
-                  {savedAttachments.length > 0 && (
+                  <span className="status-text">{item.turnCount} 轮 · {item.forkCount} 条分支</span>
+                  {item.recoveredAttachments.length > 0 && (
                     <span className="status-text">
-                      已保存原始附件：{savedAttachments.map((attachment) => attachment.fileName).join('、')}
+                      已整理进故事设定：{item.recoveredAttachments.map((attachment) => attachment.fileName).join('、')}
                     </span>
                   )}
-                  {missingAttachments.length > 0 && (
+                  {skippedSummary.hasMedia && (
+                    <span className="status-text">图片与 PDF 仅保留原文件备查</span>
+                  )}
+                  {skippedSummary.otherItems.length > 0 && (
                     <div className="turn-diagnostics" role="note">
-                      未能保存原始附件：{missingAttachments
+                      {skippedSummary.otherItems
                         .map((attachment) => `${attachment.fileName}${attachment.hint ? `（${attachment.hint}）` : ''}`)
                         .join('；')}
                     </div>
                   )}
-                  {receipt.stories.length > 1 && (
-                    <button type="button" className="text-action" onClick={() => onContinueStory(savedStory.id)}>
-                      继续《{savedStory.title}》
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className="btn btn-sm ds-receipt-open-btn"
+                    data-testid={`ds-receipt-open-${savedStory.id}`}
+                    onClick={() => onContinueStory(savedStory.id)}
+                  >
+                    进入《{savedStory.title}》
+                  </button>
                 </li>
               );
             })}
@@ -804,123 +868,108 @@ export function DeepSeekImportPanel({
       ) : step === 1 ? (
         <div className="import-step-content">
           <div className="import-intro">
-            <span className="import-privacy-pill">免密钥本地读取</span>
+            <span className="import-privacy-pill">本机解析，无需连接模型</span>
             <h2>选择 DeepSeek 导出包</h2>
-            <p>本地按需筛选会话、预览剧情树和附件。文件只在此设备解析，无需提前填写 API Key。</p>
-          </div>
-          <div className="ds-source-tabs" role="tablist" aria-label="导入来源">
-            {SOURCE_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                id={`deepseek-source-tab-${tab.id}`}
-                type="button"
-                role="tab"
-                data-testid={`deepseek-source-${tab.id}`}
-                aria-selected={sourceMode === tab.id}
-                aria-controls="deepseek-source-panel"
-                tabIndex={sourceMode === tab.id ? 0 : -1}
-                className={`btn ${sourceMode === tab.id ? 'is-selected' : ''}`}
-                onClick={() => selectSourceMode(tab.id)}
-                onKeyDown={(event) =>
-                  moveTabSelection(
-                    event,
-                    sourceMode,
-                    SOURCE_TABS,
-                    selectSourceMode,
-                    'deepseek-source-tab-',
-                  )}
-              >
-                {tab.id === 'file'
-                  ? <FileUp size={17} strokeWidth={1.75} />
-                  : <Link2 size={17} strokeWidth={1.75} />}
-                {tab.label}
-              </button>
-            ))}
+            <p>从本地挑选 DeepSeek 导出的 .zip 压缩包，整理出故事设定与全部剧情分支后直接续写。</p>
           </div>
 
-          <div
-            id="deepseek-source-panel"
-            role="tabpanel"
-            aria-labelledby={`deepseek-source-tab-${sourceMode}`}
-            tabIndex={0}
+          <div className="import-file-card ds-file-card">
+            <button
+              type="button"
+              className="import-file-picker"
+              data-testid="deepseek-zip-picker"
+              onClick={() => zipInputRef.current?.click()}
+            >
+              <FileUp size={24} strokeWidth={1.6} aria-hidden="true" />
+              <span className="import-file-title">选择 DeepSeek 数据导出包</span>
+              <span className="import-file-description">从 DeepSeek「设置 → 数据管理」导出的 .zip 文件</span>
+              <span className="import-file-action">浏览本地文件</span>
+            </button>
+            <input
+              ref={zipInputRef}
+              id="deepseek-zip-input"
+              name="deepseekZip"
+              className="visually-hidden"
+              type="file"
+              tabIndex={-1}
+              accept=".zip"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void handleZipFile(file);
+              }}
+            />
+          </div>
+
+          <details
+            className="import-url-details"
+            data-testid="deepseek-url-details"
+            open={urlSectionOpen}
+            onToggle={(event) => setUrlSectionOpen(event.currentTarget.open)}
           >
-            {sourceMode === 'file' ? (
-              <div className="import-file-card ds-file-card">
-                <button
-                  type="button"
-                  className="import-file-picker"
-                  data-testid="deepseek-zip-picker"
-                  onClick={() => zipInputRef.current?.click()}
-                >
-                  <FileUp size={24} strokeWidth={1.6} aria-hidden="true" />
-                  <span className="import-file-title">选择 DeepSeek 数据导出包</span>
-                  <span className="import-file-description">从「设置 → 数据管理」导出的 .zip 文件</span>
-                  <span className="import-file-action">浏览文件</span>
-                </button>
+            <summary data-testid="deepseek-url-toggle">
+              <Link2 size={16} strokeWidth={1.75} aria-hidden="true" />
+              通过 HTTPS 下载链接导入
+            </summary>
+            <div className="import-url-card">
+              <div className="field">
+                <label htmlFor="deepseek-zip-url-input">粘贴 DeepSeek 数据管理生成的 HTTPS 下载链接</label>
                 <input
-                  ref={zipInputRef}
-                  id="deepseek-zip-input"
-                  name="deepseekZip"
-                  className="visually-hidden"
-                  type="file"
-                  tabIndex={-1}
-                  accept=".zip"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    event.target.value = '';
-                    if (file) void handleZipFile(file);
-                  }}
+                  id="deepseek-zip-url-input"
+                  name="deepseekZipUrl"
+                  type="url"
+                  placeholder="https://..."
+                  value={zipUrl}
+                  disabled={isFetchingUrl}
+                  onChange={(event) => setZipUrl(event.target.value)}
                 />
               </div>
-            ) : (
-              <div className="import-url-card">
-                <div className="field">
-                  <label htmlFor="deepseek-zip-url-input">粘贴 DeepSeek 数据管理生成的 HTTPS 下载链接</label>
-                  <input
-                    id="deepseek-zip-url-input"
-                    name="deepseekZipUrl"
-                    type="url"
-                    placeholder="https://..."
-                    value={zipUrl}
-                    disabled={isFetchingUrl}
-                    onChange={(event) => setZipUrl(event.target.value)}
-                  />
-                </div>
-                <p className="status-text">
-                  下载链接会由浏览器直接拉取。若链接要求登录或来源站点限制跨域，可切换为本地 .zip 文件。
-                </p>
+              <p className="status-text">
+                下载链接会由浏览器直接拉取。若链接需要登录或来源站点受限，可直接使用上方本地 .zip 文件。
+              </p>
+              <div className="import-url-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  data-testid="deepseek-fetch-zip"
+                  disabled={!zipUrl.trim() || isFetchingUrl}
+                  onClick={() => void handleFetchZipUrl()}
+                >
+                  {isFetchingUrl ? '正在拉取…' : '拉取并查看对话'}
+                </button>
               </div>
-            )}
-          </div>
+            </div>
+          </details>
         </div>
       ) : (
         <div className="import-step-content">
           <div className="import-intro">
-            <h2>筛选外部会话</h2>
-            <p>每条勾选会话会独立创建为一部故事。点击右侧箭头可查看最近进度、附件和剧情树。</p>
+            <h2>选择想继续的历史对话</h2>
+            <p>文本附件与初始设定会自动整理进「故事设定」，并完整保留所有分支。点右侧箭头可提前预览。</p>
           </div>
           {scanResult && scanResult.sessions.length > 0 ? (
             <>
               {isImporting && (
                 <p className="status-text" role="status" data-testid="deepseek-import-busy">
-                  正在导入并保存所选故事，请稍候。完成后会显示导入回执。
+                  正在导入并整理「故事设定」，请稍候…
                 </p>
               )}
               <div className="ds-toolbar">
                 <input
                   type="search"
-                  aria-label="搜索外部会话"
-                  placeholder="搜索标题或最近片段…"
+                  aria-label="搜索历史对话"
+                  placeholder="搜索标题或对话片段…"
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                 />
-                <div className="ds-filter-tabs" role="tablist" aria-label="筛选会话">
+                <div className="ds-filter-tabs" role="tablist" aria-label="筛选历史对话">
                   {FILTER_TABS.map((tab) => (
                     <button
                       key={tab.id}
                       id={`deepseek-filter-tab-${tab.id}`}
                       type="button"
                       role="tab"
+                      data-testid={`ds-filter-tab-${tab.id}`}
                       aria-selected={filterMode === tab.id}
                       aria-controls="deepseek-filter-panel"
                       tabIndex={filterMode === tab.id ? 0 : -1}
@@ -935,10 +984,48 @@ export function DeepSeekImportPanel({
                           'deepseek-filter-tab-',
                         )}
                     >
-                      {tab.id === 'ai' && isAiFiltering ? 'AI 筛选中…' : tab.label}
+                      {tab.id === 'ai' && isAiFiltering ? 'AI 挑选中…' : tab.label}
                     </button>
                   ))}
                 </div>
+                {filterMode === 'ai' && (
+                  <div className="ds-ai-filter-bar" data-testid="ds-ai-filter-bar">
+                    <div className="ds-ai-filter-row">
+                      <input
+                        type="text"
+                        data-testid="ds-ai-filter-input"
+                        aria-label="描述你想找回的对话"
+                        placeholder="用自然语言描述，例如：找回上个月写的哨兵向导文游"
+                        value={aiQuery}
+                        disabled={isAiFiltering}
+                        onChange={(event) => setAiQuery(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            handleRunAiFilter(aiQuery);
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn"
+                        data-testid="ds-ai-filter-submit"
+                        disabled={isAiFiltering}
+                        onClick={() => handleRunAiFilter(aiQuery)}
+                      >
+                        <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
+                        {isAiFiltering ? '正在挑选…' : hasCredentials ? '开始挑选' : '连接 DeepSeek'}
+                      </button>
+                    </div>
+                    {!aiMatchedIds && !isAiFiltering && (
+                      <p className="status-text">
+                        {hasCredentials
+                          ? '可输入关键词、题材或时间线索让 AI 帮你挑出对话；留空则自动识别文游对话。'
+                          : '需要连接 DeepSeek 才能使用「AI 帮你挑」；筛选仅在本次导入时进行。'}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
               <div
                 id="deepseek-filter-panel"
@@ -952,10 +1039,15 @@ export function DeepSeekImportPanel({
                     <button
                       type="button"
                       className="text-action"
-                      onClick={() => setSelectedIds((current) => [...new Set([
-                        ...current,
-                        ...filteredSessions.map((session) => session.sessionId),
-                      ])])}
+                      onClick={() => {
+                        const unimported = filteredSessions
+                          .filter((session) => !session.alreadyImported)
+                          .map((session) => session.sessionId);
+                        const targets = unimported.length > 0
+                          ? unimported
+                          : filteredSessions.map((session) => session.sessionId);
+                        setSelectedIds((current) => [...new Set([...current, ...targets])]);
+                      }}
                     >
                       全选
                     </button>
@@ -964,22 +1056,28 @@ export function DeepSeekImportPanel({
                     </button>
                   </div>
                 </div>
-                {filterMode === 'ai' && !aiMatchedIds && !isAiFiltering && (
-                  <p className="status-text">选择「AI 辅助筛选」后会连接你配置的模型，结果只用于本次筛选。</p>
-                )}
-                <ul className="ds-session-list" data-testid="ds-session-list" aria-label="外部会话列表">
+                <ul className="ds-session-list" data-testid="ds-session-list" aria-label="历史对话列表">
                   {filteredSessions.map((session) => {
                     const checked = selectedIds.includes(session.sessionId);
                     const sessionChips = [
+                      session.alreadyImported && (
+                        <span
+                          key="already-imported"
+                          className="badge ds-imported-pill"
+                          data-testid="ds-session-already-imported"
+                        >
+                          已导入过
+                        </span>
+                      ),
                       session.diagnosticCount > 0 && (
                         <span
                           key="diagnostics"
                           className="badge badge-warn"
                           data-testid="ds-session-diagnostic-chip"
-                          aria-label={`${session.diagnosticCount} 条诊断`}
+                          aria-label={`${session.diagnosticCount} 处原平台未完整生成`}
                         >
                           <TriangleAlert size={12} strokeWidth={1.75} aria-hidden="true" />
-                          {session.diagnosticCount}
+                          原平台未完整生成
                         </span>
                       ),
                       session.attachments.length > 0 && (
@@ -997,7 +1095,7 @@ export function DeepSeekImportPanel({
                         className="badge"
                         data-testid="ds-session-turn-fork-chip"
                         aria-label={session.forkCount > 0
-                          ? `${session.turnCount} 轮，${session.forkCount} 处分叉`
+                          ? `${session.turnCount} 轮，${session.forkCount} 条分支`
                           : `${session.turnCount} 轮`}
                       >
                         {session.turnCount} 轮
@@ -1009,7 +1107,7 @@ export function DeepSeekImportPanel({
                           </>
                         )}
                       </span>,
-                    ].filter(Boolean).slice(0, 3);
+                    ].filter(Boolean);
                     return (
                       <li key={session.sessionId} className="ds-session-item" data-testid="ds-session-item">
                         <div className="ds-session-row">
@@ -1043,16 +1141,20 @@ export function DeepSeekImportPanel({
                     );
                   })}
                   {filteredSessions.length === 0 && (
-                    <li className="ds-session-empty">没有符合条件的会话。可以清除搜索或切换筛选方式。</li>
+                    <li className="ds-session-empty">
+                      {filterMode === 'ai' && !aiMatchedIds
+                        ? '在上方输入描述并点击「开始挑选」，即可由 AI 帮你找出对应对话。'
+                        : '没有符合条件的对话。可以清除搜索或切换筛选方式。'}
+                    </li>
                   )}
                 </ul>
               </div>
             </>
           ) : (
             <div className="ds-session-empty" data-testid="ds-session-empty">
-              <strong>没有找到可导入的外部会话</strong>
-              <p>请确认这是 DeepSeek 设置中的数据管理导出包，或使用自由剧本导入。</p>
-              <button type="button" className="text-action" onClick={handleBack}>重新选择来源</button>
+              <strong>没有找到可导入的历史对话</strong>
+              <p>请确认这是 DeepSeek「设置 → 数据管理」导出的 .zip 包，或改用直接粘贴设定导入。</p>
+              <button type="button" className="text-action" onClick={handleBack}>重新选择导出包</button>
             </div>
           )}
         </div>
@@ -1060,8 +1162,8 @@ export function DeepSeekImportPanel({
 
       <SheetDialog
         open={Boolean(preview && previewSessionId && !receipt)}
-        title={preview?.title ?? '外部会话预览'}
-        label="DeepSeek 外部会话预览"
+        title={preview?.title ?? '对话预览'}
+        label="DeepSeek 对话预览"
         testId="deepseek-preview-sheet"
         onClose={() => setPreviewSessionId(null)}
         onExitComplete={() => {
@@ -1072,20 +1174,14 @@ export function DeepSeekImportPanel({
           target?.focus();
         }}
       >
-        {preview && (
+        {preview && previewTreeStory && (
           <div className="ds-preview-content" data-testid="deepseek-preview-card">
             <div className="story-review-meta">
               <span>{preview.turnCount} 轮</span>
-              <span>{preview.forkCount} 处分叉</span>
-              <span>原始剧本 {preview.rawScript.length} 字</span>
-              <span data-testid="ds-script-range-status">
-                {scriptRangeOverrides[preview.sessionId]
-                  ? '已手动调整原始剧本边界'
-                  : preview.scriptConfidence === 'strong'
-                    ? '已识别原始剧本边界'
-                    : '原始剧本边界待确认'}
-              </span>
-              {preview.diagnosticCount > 0 && <span>{preview.diagnosticCount} 条只读平台诊断</span>}
+              <span>{preview.forkCount} 条分支</span>
+              {preview.diagnosticCount > 0 && (
+                <span>含 {preview.diagnosticCount} 处原平台未完整生成</span>
+              )}
             </div>
             {preview.latestSnippet && (
               <div className="story-review-summary">
@@ -1095,53 +1191,36 @@ export function DeepSeekImportPanel({
             )}
             {preview.recoveredAttachments.length > 0 && (
               <div className="import-attachment-note">
-                <strong>可恢复附件</strong>
-                <span>{preview.recoveredAttachments.map((attachment) => attachment.fileName).join('、')}</span>
+                <strong>已整理进故事设定</strong>
+                <span>{preview.recoveredAttachments.map((attachment) => attachment.fileName).join('、')}（原文件也会保留在设定底部按需下载）</span>
               </div>
             )}
-            {preview.skippedAttachments.length > 0 && (
-              <div className="turn-diagnostics" role="note">
-                <strong>跳过的附件</strong>
-                <ul>
-                  {preview.skippedAttachments.map((attachment) => (
-                    <li key={attachment.fileName}>
-                      {attachment.fileName}{attachment.hint ? `：${attachment.hint}` : ''}
-                    </li>
-                  ))}
-                </ul>
+            {(() => {
+              const skippedSummary = summarizeSkippedAttachments(preview.skippedAttachments);
+              if (!skippedSummary.hasMedia && skippedSummary.otherItems.length === 0) return null;
+              return (
+                <div className="import-attachment-note" role="note">
+                  <strong>原文件备查</strong>
+                  {skippedSummary.hasMedia && <span>图片与 PDF 仅保留原文件备查。</span>}
+                  {skippedSummary.otherItems.length > 0 && (
+                    <ul>
+                      {skippedSummary.otherItems.map((attachment) => (
+                        <li key={attachment.fileName}>
+                          {attachment.fileName}{attachment.hint ? `：${attachment.hint}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })()}
+            {preview.diagnosticCount > 0 && (
+              <div className="import-attachment-note" role="note">
+                <strong>原平台生成提示</strong>
+                <span>部分历史回复在原平台未完整生成，导入后会保留记录，不影响继续故事。</span>
               </div>
             )}
-            <StoryTree story={preview.story} defaultExpanded={preview.forkCount > 0} />
-            <details className="import-range-details">
-              <summary>手动调整原始剧本起点/终点</summary>
-              <p className="status-text">留空时会自动识别原始剧本边界。</p>
-              <div className="import-range-fields">
-                <div className="field">
-                  <label htmlFor="ds-script-start">起始玩家轮次</label>
-                  <input
-                    id="ds-script-start"
-                    type="number"
-                    min={1}
-                    max={Math.max(1, preview.turnCount)}
-                    value={scriptRangeOverrides[preview.sessionId]?.startTurn ?? ''}
-                    placeholder="自动识别"
-                    onChange={(event) => updateScriptRange(preview.sessionId, 'start', event.target.value)}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="ds-script-end">结束玩家轮次</label>
-                  <input
-                    id="ds-script-end"
-                    type="number"
-                    min={1}
-                    max={Math.max(1, preview.turnCount)}
-                    value={scriptRangeOverrides[preview.sessionId]?.endTurn ?? ''}
-                    placeholder="自动识别"
-                    onChange={(event) => updateScriptRange(preview.sessionId, 'end', event.target.value)}
-                  />
-                </div>
-              </div>
-            </details>
+            <StoryTree story={previewTreeStory} defaultExpanded={preview.forkCount > 0} />
           </div>
         )}
       </SheetDialog>

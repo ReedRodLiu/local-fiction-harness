@@ -6,6 +6,7 @@ import { DrawerDialog } from './primitives/DrawerDialog.tsx';
 
 export interface LibraryDrawerProps {
   /** Optional normalized entries and their ID-based actions for the two creative categories. */
+  activeCategory?: 'story' | 'work' | 'character';
   works?: LibraryItem[];
   characters?: LibraryItem[];
   activeWorkId?: string;
@@ -33,6 +34,7 @@ export interface LibraryDrawerProps {
 
 export function LibraryDrawer({
   stories,
+  activeCategory,
   works, characters, activeWorkId, activeCharacterId, workActions, characterActions, onNewCreation,
   activeStoryId,
   collapsed,
@@ -77,6 +79,7 @@ export function LibraryDrawer({
   const storyList = () => (
     <StoryLibrary
       stories={stories}
+      activeCategory={activeCategory}
       works={works}
       characters={characters}
       activeWorkId={activeWorkId}
@@ -96,7 +99,7 @@ export function LibraryDrawer({
       type="button"
       className="library-settings-entry"
       data-testid={`${location}-settings-open`}
-      aria-label="设置与模型密钥"
+      aria-label="设置与连接"
       onClick={() => {
         if (mobileOpen) onClose();
         onOpenSettings();
@@ -104,11 +107,11 @@ export function LibraryDrawer({
     >
       <span className="library-settings-main">
         <Settings size={16} strokeWidth={1.75} />
-        <span>设置与模型密钥</span>
+        <span>设置</span>
       </span>
       <span className={`connection-pill ${hasCredentials ? 'is-ready' : 'is-pending'}`}>
         <span className="connection-dot" aria-hidden="true" />
-        {hasCredentials ? 'DeepSeek 已就绪' : '待配置密钥'}
+        {hasCredentials ? 'DeepSeek 已连接' : '连接 DeepSeek'}
       </span>
       <ChevronRight size={14} strokeWidth={1.75} aria-hidden="true" />
     </button>

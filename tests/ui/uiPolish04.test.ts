@@ -11,8 +11,8 @@ import { CreativeWorkspace } from '../../src/ui/CreativeWorkspace.tsx';
 
 vi.mock('../../src/ui/useWebHistoryLayer.ts', () => ({ useWebHistoryLayer: () => undefined }));
 
-describe('UI-POLISH-04 minimalist character chat stage', () => {
-  it('renders minimalist chat bubbles, progressive history disclosure, and zero per-message details clutter', () => {
+describe('UI-POLISH-04 V0.2 unified character chat stage', () => {
+  it('renders unified TurnCard capabilities, hides rewind on active leaf, and exposes 2-tab companion without personal/roleplay split', () => {
     const character = newCharacter('岑灯', '夜航员人设');
     const conv = newConversation(character, 'personal');
     conv.nodes = {
@@ -44,7 +44,8 @@ describe('UI-POLISH-04 minimalist character chat stage', () => {
         id: 'a2',
         parentId: 'u2',
         role: 'assistant',
-        content: '灯塔还亮着。',
+        content: '灯塔还亮着。\n\n```text\nstatus: ok\nlevel: 1\n```',
+        reasoningContent: '保持温和口吻。',
         summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
         createdAt: 13,
         documentReads: [{ scope: 'container', name: '岑灯', versionId: 'char-v1', readAt: 13 }],
@@ -77,21 +78,34 @@ describe('UI-POLISH-04 minimalist character chat stage', () => {
     expect(markup).toContain('第一句问候');
     expect(markup).toContain('灯塔还亮着。');
     expect(markup).toContain('data-testid="turn-history-toggle"');
-    expect(markup).toContain('aria-label="从这里继续"');
-    expect(markup).toContain('aria-label="发送"');
-    expect(markup).toContain('对话与分支');
-    expect(markup).toContain('角色与资料');
-    expect(markup).toContain('空白开聊');
-    expect(markup).toContain('带资料开新对话');
-    expect(markup).toContain('预览导出');
-    expect(markup).toContain('删除对话');
-    expect(markup).toContain('角色人设 · 新对话采用新版');
-    expect(markup).toContain('当前对话资料');
-    expect(markup).toContain('资料版本详情');
-    expect(markup).not.toContain('<summary>对话操作</summary>');
-    expect(markup.match(/<details\b/g)).toHaveLength(1);
-    expect(markup).not.toContain('资料审计');
-    expect(markup).not.toContain('creative-section');
+    expect(markup).toContain('data-testid="reasoning-toggle"');
+    expect(markup).toContain('aria-label="复制正文"');
+    expect(markup).toContain('aria-label="重新生成分支"');
+    expect(markup).toContain('aria-label="编辑并生成新分支"');
+    // Active leaf must NOT render rewind button
+    expect(markup).not.toContain('aria-label="回溯至此"');
+    // Code blocks in character mode stay code blocks instead of HUD terminals
+    expect(markup).toContain('class="md-code-block"');
+    expect(markup).not.toContain('data-testid="hud-panel"');
+    // 2-tab companion without personal/roleplay split or blank/with-docs split
+    expect(markup).toContain('data-testid="character-tab-conversations"');
+    expect(markup).toContain('data-testid="character-tab-profile"');
+    expect(markup).toContain('新开一段对话');
+    expect(markup).toContain('第一句问候');
+    expect(markup).toContain('角色设定');
+    expect(markup).toContain('我的记忆');
+    expect(markup).toContain('分支笔记');
+    for (const retired of [
+      '本人聊天',
+      '扮演对戏',
+      '空白开聊',
+      '带资料开新对话',
+      '资料版本详情',
+      '公共记忆',
+      'creative-section',
+    ]) {
+      expect(markup).not.toContain(retired);
+    }
   });
 
   it('renders a single quiet opening pill when the conversation has no turns', () => {

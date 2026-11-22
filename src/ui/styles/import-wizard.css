@@ -190,18 +190,30 @@
 }
 
 .import-title-details,
-.import-range-details {
+.import-url-details {
   border-bottom: 1px solid var(--border-hairline);
 }
 
 .import-title-details > summary,
-.import-range-details > summary {
+.import-url-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-height: 44px;
   padding: 9px 0;
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+}
+
+.import-url-details > .import-url-card {
+  margin-bottom: 12px;
+}
+
+.import-url-actions {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .import-title-details .field {
@@ -292,6 +304,39 @@
   flex-direction: column;
   gap: 10px;
   min-width: 0;
+}
+
+.ds-ai-filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ds-ai-filter-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ds-ai-filter-row > input[type='text'] {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 11px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.ds-ai-filter-row > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  min-height: 44px;
+  white-space: nowrap;
 }
 
 .ds-toolbar > input[type='search'] {
@@ -439,9 +484,8 @@
 
 .ds-session-chips {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 5px;
-  overflow: hidden;
 }
 
 .ds-session-chips .badge {
@@ -449,11 +493,21 @@
   align-items: center;
   gap: 3px;
   flex: 0 0 auto;
-  max-width: 42%;
+  max-width: 100%;
   overflow: hidden;
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ds-imported-pill {
+  background: var(--bg-surface-hover);
+  color: var(--text-muted);
+}
+
+.ds-receipt-open-btn {
+  align-self: flex-start;
+  min-height: 44px;
 }
 
 .ds-session-empty {

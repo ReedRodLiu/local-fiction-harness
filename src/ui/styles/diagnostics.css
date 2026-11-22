@@ -50,20 +50,67 @@
   font-size: 12px;
 }
 
-.diagnostics-safe {
+.diagnostics-checklist {
   display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 11px 12px;
-  border: 1px solid var(--status-ok);
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-hairline);
   border-radius: var(--radius-md);
   background: var(--bg-surface);
-  color: var(--status-ok);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
-.diagnostics-safe svg {
+.diagnostics-checklist-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.diagnostics-checklist-item svg {
   flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.diagnostics-checklist-include {
+  color: var(--text-primary);
+}
+
+.diagnostics-checklist-include svg {
+  color: var(--status-ok);
+}
+
+.diagnostics-checklist-exclude {
+  color: var(--text-secondary);
+}
+
+.diagnostics-checklist-exclude svg {
+  color: var(--accent-fiction);
+}
+
+.diagnostics-note-field {
+  margin: 0;
+}
+
+.diagnostics-raw-details {
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  padding: 4px 10px;
+}
+
+.diagnostics-raw-details summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.diagnostics-raw-details[open] {
+  padding-bottom: 10px;
 }
 
 .diagnostics-action-row {

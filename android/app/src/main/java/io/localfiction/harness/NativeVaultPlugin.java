@@ -263,7 +263,16 @@ public class NativeVaultPlugin extends Plugin {
             sendIntent.putExtra(Intent.EXTRA_SUBJECT, outFile.getName());
             sendIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-            Intent chooser = Intent.createChooser(sendIntent, attachment ? "保存附件" : markdown ? "导出 Markdown" : "导出故事 JSON 备份");
+            boolean diagnosticLog = outFile.getName().startsWith("folio-logs-")
+                || (fileName != null && fileName.trim().startsWith("folio-logs-"));
+            String chooserTitle = attachment
+                ? "保存附件"
+                : markdown
+                    ? "导出 Markdown"
+                    : diagnosticLog
+                        ? "分享排障日志"
+                        : "导出 Folio 备份";
+            Intent chooser = Intent.createChooser(sendIntent, chooserTitle);
             Activity activity = getActivity();
             if (activity != null) {
                 activity.runOnUiThread(() -> {

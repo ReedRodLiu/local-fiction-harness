@@ -21,6 +21,7 @@ export interface LibraryItemActions {
 
 export interface StoryLibraryProps {
   stories: Story[];
+  activeCategory?: 'story' | 'work' | 'character';
   works?: LibraryItem[];
   characters?: LibraryItem[];
   activeWorkId?: string;
@@ -36,6 +37,7 @@ export interface StoryLibraryProps {
 
 export function StoryLibrary({
   stories,
+  activeCategory = 'story',
   works = [],
   characters = [],
   activeWorkId,
@@ -48,7 +50,11 @@ export function StoryLibrary({
   onDeleteStory,
   onExportStoryBackup,
 }: StoryLibraryProps) {
-  const [category, setCategory] = useState<'story' | 'work' | 'character'>('story');
+  const [category, setCategory] = useState<'story' | 'work' | 'character'>(activeCategory);
+
+  useEffect(() => {
+    setCategory(activeCategory);
+  }, [activeCategory]);
   const [deleteItem, setDeleteItem] = useState<{
     id: string;
     title: string;
@@ -265,7 +271,7 @@ export function StoryLibrary({
                               actions?.onExport(item.id);
                             }}
                           >
-                            导出 {category === 'story' ? '.lfh.json' : '.md'}
+                            导出 Markdown (.md)
                           </button>
                           <button
                             type="button"

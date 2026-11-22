@@ -1,11 +1,27 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, PencilLine, RefreshCw, RotateCcw, Sparkles } from 'lucide-react';
-import type { SiblingBranchInfo, StoryAttachment, TurnNode } from '../harness/index.ts';
+import type {
+  AssistantMode,
+  SiblingBranchInfo,
+  StoryAttachment,
+  TurnNode,
+  TurnProposalRecord,
+} from '../harness/index.ts';
 import { MessageContent } from './MessageContent.tsx';
+import { ProposalCard } from './ProposalCard.tsx';
 import { formatDiagnosticTags } from './StoryTree.tsx';
+
+export interface ResolvedProposalTargetState {
+  currentMarkdown: string;
+  currentVersionId?: string;
+  targetLabel?: string;
+}
 
 interface TurnCardProps {
   node: TurnNode;
+  mode?: AssistantMode;
+  userLabel?: string;
+  assistantLabel?: string;
   isActiveLeaf: boolean;
   isLatestTurn: boolean;
   isSetupNode: boolean;
@@ -15,18 +31,27 @@ interface TurnCardProps {
   isBusy: boolean;
   isStreaming: boolean;
   siblings: SiblingBranchInfo;
-  onSelectChoice: (choiceText: string) => void;
+  onSelectChoice?: (choiceText: string) => void;
   onSwitchBranch: (targetNodeId: string) => void;
-  onEditAndBranch: (targetUserNodeId: string, newContent: string) => void;
-  onRegenerate: (targetAssistantNodeId: string) => void;
-  onWriteFrom?: (nodeId: string) => void;
+  onEditAndBranch?: (targetUserNodeId: string, newContent: string) => void;
+  onRegenerate?: (targetAssistantNodeId: string) => void;
   attachments?: StoryAttachment[];
   onExportAttachment?: (attachment: StoryAttachment) => void;
   onRewindToNode: (targetNodeId: string) => void;
+  resolveProposalTargetState?: (proposal: TurnProposalRecord) => ResolvedProposalTargetState;
+  onApplyProposal?: (nodeId: string, proposal: TurnProposalRecord, resolvedMarkdown: string) => void | Promise<void>;
+  onDismissProposal?: (nodeId: string, proposal: TurnProposalRecord) => void | Promise<void>;
+  onRevertProposal?: (nodeId: string, proposal: TurnProposalRecord) => void | Promise<void>;
+  onOpenProposalEditor?: (proposal: TurnProposalRecord) => void;
+  onAskAiReorganizeProposal?: (proposal: TurnProposalRecord) => void;
+  afterAssistantContent?: ReactNode;
 }
 
 export function TurnCard({
   node,
+  mode = 'story',
+  userLabel = '玩家行动',
+  assistantLabel = 'AI 叙事',
   isActiveLeaf,
   isLatestTurn,
   isSetupNode,
@@ -41,9 +66,15 @@ export function TurnCard({
   onEditAndBranch,
   onRegenerate,
   onRewindToNode,
-  onWriteFrom,
   attachments,
   onExportAttachment,
+  resolveProposalTargetState,
+  onApplyProposal,
+  onDismissProposal,
+  onRevertProposal,
+  onOpenProposalEditor,
+  onAskAiReorganizeProposal,
+  afterAssistantContent,
 }: TurnCardProps) {
   const [historyActionsOpen, setHistoryActionsOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -96,10 +127,6 @@ export function TurnCard({
 
       {node.role === 'assistant' && (
         <>
-          {onWriteFrom && <button type="button" className="btn turn-action-button" disabled={isBusy}
-            title="从这里开稿" aria-label="从这里开稿" onClick={() => onWriteFrom(node.id)}>
-            <PencilLine size={16} strokeWidth={1.75} aria-hidden="true" />
-          </button>}
           <button
             type="button"
             className="btn turn-action-button"
@@ -110,16 +137,18 @@ export function TurnCard({
           >
             <Copy size={16} strokeWidth={1.75} aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            className="btn turn-action-button"
-            disabled={isBusy}
-            aria-label="重新生成分支"
-            title="重新生成分支"
-            onClick={() => onRegenerate(node.id)}
-          >
-            <RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />
-          </button>
+          {onRegenerate && (
+            <button
+              type="button"
+              className="btn turn-action-button"
+              disabled={isBusy}
+              aria-label="重新生成分支"
+              title="重新生成分支"
+              onClick={() => onRegenerate(node.id)}
+            >
+              <RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+          )}
           {!isActiveLeaf && (
             <button
               type="button"
@@ -132,7 +161,7 @@ export function TurnCard({
               <RotateCcw size={16} strokeWidth={1.75} aria-hidden="true" />
             </button>
           )}
-          {editableUserNode && (
+          {editableUserNode && onEditAndBranch && (
             <button
               type="button"
               className="btn turn-action-button"
@@ -164,7 +193,7 @@ export function TurnCard({
 
   const historySubject = isSetupNode
     ? '故事设定'
-    : node.role === 'user' ? '玩家行动' : 'AI 叙事';
+    : node.role === 'user' ? userLabel : assistantLabel;
   const historyLabel = `第 ${turnNumber} 轮 · ${historySubject}${
     siblings.total > 1 ? ` · 分支 ${siblings.currentIndex + 1}/${siblings.total}` : ''
   }`;
@@ -187,12 +216,12 @@ export function TurnCard({
       className={`turn-card ${node.role}${!isLatestTurn ? ' is-history' : ''}`}
       data-testid={roleTestId}
       data-node-id={node.id}
-      aria-label={node.role === 'user' ? '玩家行动' : '叙事 AI 回复'}
+      aria-label={node.role === 'user' ? userLabel : `${assistantLabel}回复`}
     >
       <div className="turn-expanded-content">
         {diagnosticTags.length > 0 && (
           <div className="turn-diagnostics" data-testid="turn-diagnostics" role="note">
-            只读来源诊断（不进入模型上下文）：{diagnosticTags.join(' · ')}
+            来源提示：{diagnosticTags.join(' · ')}
           </div>
         )}
 
@@ -212,9 +241,9 @@ export function TurnCard({
           </details>
         )}
 
-        {isEditing && editableUserNode ? (
+        {isEditing && editableUserNode && onEditAndBranch ? (
           <div className="turn-edit-form">
-            <label htmlFor={`edit-node-${editableUserNode.id}`}>编辑此行动并创建新分支</label>
+            <label htmlFor={`edit-node-${editableUserNode.id}`}>编辑此内容并创建新分支</label>
             <textarea
               id={`edit-node-${editableUserNode.id}`}
               rows={3}
@@ -260,10 +289,51 @@ export function TurnCard({
             ) : (
               <MessageContent
                 content={node.content}
+                mode={mode}
                 showChoices={isActiveLeaf}
                 disabled={isBusy}
                 onSelectChoice={onSelectChoice}
-                afterContent={contentActions}
+                afterContent={(
+                  <>
+                    {node.proposals && node.proposals.length > 0 && (
+                      <div className="turn-proposals-stack" data-testid="turn-proposals">
+                        {node.proposals.map((proposal) => {
+                          const targetState = resolveProposalTargetState?.(proposal);
+                          return (
+                            <ProposalCard
+                              key={proposal.id}
+                              proposal={proposal}
+                              mode={mode}
+                              currentMarkdown={targetState?.currentMarkdown}
+                              currentVersionId={targetState?.currentVersionId}
+                              targetLabel={targetState?.targetLabel}
+                              isBusy={isBusy}
+                              onApply={
+                                onApplyProposal
+                                  ? (p, resolved) => onApplyProposal(node.id, p, resolved)
+                                  : undefined
+                              }
+                              onDismiss={
+                                onDismissProposal
+                                  ? (p) => onDismissProposal(node.id, p)
+                                  : undefined
+                              }
+                              onRevert={
+                                onRevertProposal
+                                  ? (p) => onRevertProposal(node.id, p)
+                                  : undefined
+                              }
+                              onOpenEditor={onOpenProposalEditor}
+                              onAskAiReorganize={onAskAiReorganizeProposal}
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
+                    {afterAssistantContent}
+                    {contentActions}
+                  </>
+                )}
               />
             )}
 

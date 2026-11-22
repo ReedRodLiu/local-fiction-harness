@@ -17,15 +17,14 @@ export interface StoryTreeProps {
   isRenameBusy?: boolean;
   onSwitchBranch?: (targetNodeId: string) => void;
   onRenameBranch?: (branchEntryNodeId: string, name: string) => Promise<void> | void;
-  onExtractBranchGist?: (branchEntryNodeId: string) => Promise<void> | void;
   defaultExpanded?: boolean;
   collapsible?: boolean;
 }
 
 const DIAGNOSTIC_LABELS: Record<NodeDiagnosticStatus, string> = {
-  CONTENT_FILTER: '内容过滤中断 (CONTENT_FILTER)',
-  TIMEOUT: '响应超时 (TIMEOUT)',
-  INCOMPLETE: '输出未完成 (INCOMPLETE)',
+  CONTENT_FILTER: '这条历史消息在原平台未完整生成',
+  TIMEOUT: '这条历史消息生成时响应超时',
+  INCOMPLETE: '这条历史消息未完整生成',
 };
 
 interface ExpandedSpanNode {
@@ -39,7 +38,7 @@ export function formatDiagnosticTags(
 ): string[] {
   const tags = statuses.map((s) => DIAGNOSTIC_LABELS[s] ?? s);
   if (hasContentRisk) {
-    tags.push('平台风控标记 (CONTENT_RISK)');
+    tags.push('原平台曾提示内容注意');
   }
   return tags;
 }
@@ -50,7 +49,6 @@ export function StoryTree({
   isRenameBusy,
   onSwitchBranch,
   onRenameBranch,
-  onExtractBranchGist,
   defaultExpanded = true,
   collapsible = true,
 }: StoryTreeProps) {
@@ -59,7 +57,6 @@ export function StoryTree({
   const [expandedSpanNodes, setExpandedSpanNodes] = useState<Record<string, ExpandedSpanNode[]>>({});
   const [renamingEntryId, setRenamingEntryId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
-  const [extractingGistId, setExtractingGistId] = useState<string | null>(null);
   const renameBusy = isRenameBusy ?? isBusy;
   const treeOpen = !collapsible || isPanelOpen;
   const spanIdPrefix = useId();
@@ -104,21 +101,11 @@ export function StoryTree({
     setRenameDraft('');
   };
 
-  const triggerGist = async (branchEntryNodeId: string) => {
-    if (!onExtractBranchGist || isBusy || extractingGistId) return;
-    setExtractingGistId(branchEntryNodeId);
-    try {
-      await onExtractBranchGist(branchEntryNodeId);
-    } finally {
-      setExtractingGistId(null);
-    }
-  };
-
   return (
     <section className="story-tree-panel" data-testid="story-tree-panel" aria-label="剧情树">
       <div className="panel-header">
         <div className="story-tree-heading">
-          <h4>剧情树（Story Tree）</h4>
+          <h4>剧情树</h4>
           <span className="status-text">
             主干 {spine.totalActiveTurns} 轮 · {spine.forkCount} 处分叉
           </span>
@@ -140,7 +127,7 @@ export function StoryTree({
         <div className="story-tree-body">
           {spine.items.length === 0 ? (
             <p className="status-text" style={{ margin: 0 }}>
-              尚无对话节点，发送第一轮行动即可生成主干剧情树。
+              尚无对话节点，发送第一轮行动即可生成剧情树。
             </p>
           ) : (
             <ol className="story-tree-spine">
@@ -177,7 +164,7 @@ export function StoryTree({
                         </span>
                         {item.diagnosticsCount > 0 && (
                           <span className="badge badge-warn">
-                            含 {item.diagnosticsCount} 条诊断标记
+                            含 {item.diagnosticsCount} 条来源提示
                           </span>
                         )}
                         <span className="story-tree-preview-inline">{item.preview}</span>
@@ -211,7 +198,7 @@ export function StoryTree({
                                 </p>
                                 {diagnostics.length > 0 && (
                                   <span className="story-tree-span-node-diagnostics" role="note">
-                                    只读诊断：{diagnostics.join(' · ')}
+                                    来源提示：{diagnostics.join(' · ')}
                                   </span>
                                 )}
                               </li>
@@ -287,13 +274,9 @@ export function StoryTree({
 
                               <div className="story-tree-preview">{branch.preview}</div>
 
-                              {branch.aiGist && (
-                                <div className="story-tree-gist">AI 梗概：{branch.aiGist}</div>
-                              )}
-
                               {diagTags.length > 0 && (
                                 <div className="story-tree-diagnostics" role="note">
-                                  只读诊断（不发往模型）：{diagTags.join(' · ')}
+                                  来源提示：{diagTags.join(' · ')}
                                 </div>
                               )}
 
@@ -355,19 +338,6 @@ export function StoryTree({
                                       onClick={() => startRename(branch)}
                                     >
                                       重命名
-                                    </button>
-                                  )}
-                                  {onExtractBranchGist && (
-                                    <button
-                                      type="button"
-                                      className="btn btn-sm"
-                                      data-testid="story-tree-action"
-                                      disabled={isBusy || extractingGistId === branch.entryNodeId}
-                                      onClick={() => void triggerGist(branch.entryNodeId)}
-                                    >
-                                      {extractingGistId === branch.entryNodeId
-                                        ? '提炼中…'
-                                        : 'AI 提炼梗概'}
                                     </button>
                                   )}
                                 </div>

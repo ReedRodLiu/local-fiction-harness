@@ -1,22 +1,24 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { Story, ThreeZoneMetrics } from '../../src/harness/index.ts';
-import { ContextOverview } from '../../src/ui/ContextOverview.tsx';
-import { DocumentDialog } from '../../src/ui/DocumentDialog.tsx';
-import { DocumentReadDetails } from '../../src/ui/DocumentReadDetails.tsx';
-import { WelcomeView } from '../../src/ui/WelcomeView.tsx';
-import { isBlueprintEditCurrent } from '../../src/ui/StoryBlueprintCard.tsx';
-import { StoryReview } from '../../src/ui/StoryReview.tsx';
+import {
+  EMPTY_SUMMARY_SNAPSHOT,
+  emptyWorkspace,
+  newCharacter,
+  newConversation,
+  type Story,
+} from '../../src/harness/index.ts';
+import { CompanionSheet } from '../../src/ui/CompanionSheet.tsx';
 import { CreativeWorkspace } from '../../src/ui/CreativeWorkspace.tsx';
-import { emptyWorkspace, newCharacter, newConversation, EMPTY_SUMMARY_SNAPSHOT } from '../../src/harness/index.ts';
+import { DocumentDialog } from '../../src/ui/DocumentDialog.tsx';
+import { WelcomeView } from '../../src/ui/WelcomeView.tsx';
 
 vi.mock('../../src/ui/useWebHistoryLayer.ts', () => ({ useWebHistoryLayer: () => undefined }));
 
 const story: Story = {
   id: 'story-1',
   title: '雨夜车站',
-  rawScript: '原始剧本锚点',
+  rawScript: '',
   blueprint: {
     title: '雨夜车站',
     worldRules: [],
@@ -26,36 +28,46 @@ const story: Story = {
     openingHook: '',
     extractionStatus: 'partial_fallback',
   },
-  nodes: {},
-  rootNodeIds: [],
-  activeLeafNodeId: null,
+  nodes: {
+    'turn-1': {
+      id: 'turn-1',
+      parentId: null,
+      role: 'user',
+      content: '走进站台',
+      createdAt: 10,
+      summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+    },
+    'turn-2': {
+      id: 'turn-2',
+      parentId: 'turn-1',
+      role: 'assistant',
+      content: '夜风吹动站牌。',
+      createdAt: 11,
+      summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      diagnostics: { sourceStatus: 'CONTENT_FILTER' },
+    },
+  },
+  rootNodeIds: ['turn-1'],
+  activeLeafNodeId: 'turn-2',
   createdAt: 1,
   updatedAt: 1,
 };
 
-const metrics: ThreeZoneMetrics = {
-  anchorChars: 7,
-  summaryChars: 0,
-  recentChars: 0,
-  recentNodeCount: 0,
-  totalEstimatedTokens: 42,
-};
-
-describe('UI-POLISH-01 companion panel', () => {
-  it('shows only the active conversation path in character document reads', () => {
+describe('UI-POLISH-01 V0.2 companion & jargon-free contracts', () => {
+  it('renders CharacterPane without exposing raw versionIds or DocumentReadDetails', () => {
     const character = newCharacter('小雨', '人设');
     const active = newConversation(character, 'personal');
-    const other = newConversation(character, 'roleplay');
     const node = (id: string, parentId: string | null, versionId: string) => ({
-      id, parentId, role: 'assistant' as const, content: id, createdAt: 10,
+      id, parentId, role: 'assistant' as const, content: `回复-${id}`, createdAt: 10,
       summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
       documentReads: [{ scope: 'container' as const, name: '人设', versionId, readAt: 10 }],
     });
-    active.nodes = { root: node('root', null, 'root-version'), current: node('current', 'root', 'current-version'), sibling: node('sibling', 'root', 'sibling-version') };
+    active.nodes = {
+      root: node('root', null, 'root-version'),
+      current: node('current', 'root', 'current-version'),
+    };
     active.activeLeafNodeId = 'current';
-    other.nodes = { other: node('other', null, 'other-version') };
-    other.activeLeafNodeId = 'other';
-    character.conversations = [active, other];
+    character.conversations = [active];
     character.activeConversationId = active.id;
     const workspace = { ...emptyWorkspace(), characters: [character], activeCharacterId: character.id };
     const markup = renderToStaticMarkup(createElement(CreativeWorkspace, {
@@ -65,112 +77,67 @@ describe('UI-POLISH-01 companion panel', () => {
       openDocument: () => undefined, initialTurn: null, onConsumeInitialTurn: () => undefined,
       companionOpen: true, setCompanionOpen: () => undefined,
     }));
-    expect(markup).toContain('root-version');
-    expect(markup).toContain('current-version');
-    expect(markup).toContain('第 1 轮 · 小雨');
-    expect(markup).toContain('资料版本详情');
-    expect(markup).not.toContain('小雨 · current');
-    expect(markup).not.toContain('sibling-version');
-    expect(markup).not.toContain('other-version');
-  });
-  it('rejects a stale blueprint edit baseline', () => {
-    expect(isBlueprintEditCurrent(story, story)).toBe(true);
-    expect(isBlueprintEditCurrent({ ...story, updatedAt: 2 }, story)).toBe(false);
-    expect(isBlueprintEditCurrent({ ...story, blueprint: { ...story.blueprint, protagonist: 'changed' } }, story)).toBe(false);
-    expect(isBlueprintEditCurrent({ ...story, activeLeafNodeId: 'other' }, story)).toBe(false);
+
+    expect(markup).toContain('历史对话');
+    expect(markup).toContain('角色设定');
+    expect(markup).toContain('我的记忆');
+    expect(markup).toContain('分支笔记');
+    expect(markup).not.toContain('root-version');
+    expect(markup).not.toContain('current-version');
+    expect(markup).not.toContain('资料版本详情');
+    expect(markup).not.toContain('公共记忆');
   });
 
-  it('shows plot review metrics and summary without a document-audit disclosure', () => {
-    const markup = renderToStaticMarkup(createElement(StoryReview, {
+  it('renders Story CompanionSheet with 2 tabs, quiet recap, markdown export, and collapsed branch note without jargon', () => {
+    const markup = renderToStaticMarkup(createElement(CompanionSheet, {
+      open: true,
       story,
-      metrics,
-      isBusy: false,
-      isSummarizing: false,
-    }));
-
-    expect(markup).toContain('当前路线剧情摘要');
-    expect(markup).toContain('分支记忆独立隔离');
-    expect(markup).toContain('aria-label="剧情摘要指标"');
-    expect(markup).toContain('上下文预算 Token');
-    expect(markup).not.toContain('资料审计');
-    expect(markup).not.toContain('<details');
-  });
-
-  it('keeps reply document reads in the collapsed companion context details', () => {
-    const storyWithRead: Story = {
-      ...story,
-      nodes: {
-        'other': { id: 'other', parentId: null, role: 'assistant', content: 'other branch', createdAt: 11, summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 }, documentReads: [{ scope: 'container', name: 'other', versionId: 'other-version', readAt: 11 }] },
-        'reply-1': {
-          id: 'reply-1',
-          parentId: null,
-          role: 'assistant',
-          content: '雨停后，车站亮起一盏灯。',
-          createdAt: 10,
-          summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
-          documentReads: [{
-            scope: 'container',
-            name: '雨夜车站',
-            versionId: 'container-v3',
-            readAt: 10,
-          }],
-        },
-      },
-      rootNodeIds: ['reply-1', 'other'],
-      activeLeafNodeId: 'reply-1',
-      importCandidate: '待核对剧本',
-    };
-    const markup = renderToStaticMarkup(createElement(ContextOverview, {
-      story: storyWithRead,
-      summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
-      metrics,
+      summarySnapshot: { content: '主角已抵达雨夜车站。', coveredUpToNodeId: 'turn-2', summarizedTurnCount: 2 },
       isStreaming: false,
-      onOpenDocuments: {
-        container: () => undefined,
-        local: () => undefined,
-        public: () => undefined,
-        adoptScript: () => undefined,
-      },
-      onSaveBlueprintTweak: async () => true,
-      onReextractBlueprint: () => undefined,
+      isSummarizing: false,
+      isBranchSwitching: false,
+      onSwitchBranch: () => undefined,
+      onRenameBranch: () => undefined,
+      onEditSetting: () => undefined,
+      onOpenMyMemory: () => undefined,
+      onEditBranchNote: () => undefined,
+      onExportMarkdown: () => undefined,
+      onClose: () => undefined,
     }));
 
-    expect(markup).toContain('aria-label="资料"');
-    expect(markup.match(/class="companion-document-row"/g)).toHaveLength(4);
-    expect(markup).toContain('核对候选剧本');
-    expect(markup).toContain('>微调</button>');
-    expect(markup).toContain('三区上下文与资料版本详情');
-    expect(markup).toContain('container-v3');
-    expect(markup).toContain('第 1 轮 · AI 回复');
-    expect(markup).not.toContain('reply-1');
-    expect(markup).not.toContain('other-version');
-    expect(markup).toContain('雨夜车站');
-    expect(markup).not.toContain('资料审计');
-    expect(markup).not.toMatch(/<details[^>]* open=/);
+    expect(markup).toContain('data-testid="companion-tab-branches"');
+    expect(markup).toContain('data-testid="companion-tab-settings"');
+    expect(markup).toContain('当前进展回顾');
+    expect(markup).toContain('主角已抵达雨夜车站。');
+    expect(markup).toContain('故事设定');
+    expect(markup).toContain('我的记忆');
+    expect(markup).toContain('导出 Markdown (.md)');
+    expect(markup).toContain('分支笔记');
+    expect(markup).not.toMatch(/<details[^>]*data-testid="branch-note-details"[^>]*open/);
+    for (const forbidden of [
+      '故事蓝图',
+      '补拆',
+      '核对候选剧本',
+      '三区上下文',
+      '公共记忆',
+      '当前路径资料',
+      '立即补算剧情摘要',
+      'AI 提炼梗概',
+      'tokens',
+      'CONTENT_FILTER',
+      'TIMEOUT',
+      'INCOMPLETE',
+    ]) {
+      expect(markup).not.toContain(forbidden);
+    }
   });
 
-  it('renders one collapsed audit disclosure for a creative mode read group', () => {
-    const markup = renderToStaticMarkup(createElement(DocumentReadDetails, {
-      testId: 'creative-document-reads',
-      summary: '资料版本详情',
-      entries: [{
-        id: 'writing-reply-1',
-        label: '开书讨论回复',
-        createdAt: 10,
-        reads: [{ scope: 'container', name: '纸月车站', versionId: 'work-v2', readAt: 10 }],
-      }],
-    }));
-
-    expect(markup).toContain('资料版本详情');
-    expect(markup).toContain('纸月车站 · 容器 · work-v2');
-    expect(markup).not.toMatch(/<details[^>]* open=/);
-  });
-
-  it('omits current base version from DocumentDialog history and renders up to 3 recent creative chips in WelcomeView', () => {
+  it('omits current base version from DocumentDialog history, provides Edit/Preview tabs, and renders single-entry WelcomeView', () => {
     const dialogMarkup = renderToStaticMarkup(createElement(DocumentDialog, {
       onClose: () => undefined,
       edit: {
-        title: '作品资料',
+        title: '作品设定',
+        mode: 'writing',
         base: { id: 'v2', previous: 'v1', markdown: 'second', savedAt: 2000, source: 'user' },
         history: [
           { id: 'v1', previous: null, markdown: 'first', savedAt: 1000, source: 'migration' },
@@ -180,18 +147,17 @@ describe('UI-POLISH-01 companion panel', () => {
       },
     }));
     expect(dialogMarkup).toContain('历史版本');
-    expect(dialogMarkup).toContain('旧档重建');
-    expect(dialogMarkup).not.toContain('用户保存');
+    expect(dialogMarkup).toContain('版本迁移');
+    expect(dialogMarkup).toContain('>编辑</button>');
+    expect(dialogMarkup).toContain('>预览</button>');
+    expect(dialogMarkup).not.toContain('手动保存');
 
     const welcomeMarkup = renderToStaticMarkup(createElement(WelcomeView, {
       stories: [],
-      mode: 'writing',
-      onModeChange: () => undefined,
-      characterName: '',
-      onCharacterNameChange: () => undefined,
-      onStartDeepSeekImport: () => undefined,
-      onStartScriptImport: () => undefined,
-      onStartManuscript: () => undefined,
+      neutralTurns: [],
+      isStreaming: false,
+      streamContent: '',
+      streamReasoning: '',
       onSelectStory: () => undefined,
       recentCreative: [
         { id: 'w1', title: '作品一', kindLabel: '写故事', activate: () => undefined },
@@ -202,7 +168,8 @@ describe('UI-POLISH-01 companion panel', () => {
     expect(welcomeMarkup).toContain('作品一');
     expect(welcomeMarkup).toContain('角色一');
     expect(welcomeMarkup).toContain('作品二');
-    expect(welcomeMarkup).toContain('welcome-mode-pill');
-    expect(welcomeMarkup).toContain('welcome-quick-pill');
+    expect(welcomeMarkup).not.toContain('welcome-mode-pill');
+    expect(welcomeMarkup).not.toContain('welcome-quick-pill');
+    expect(welcomeMarkup).not.toContain('welcome-character-name');
   });
 });

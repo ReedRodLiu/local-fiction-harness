@@ -1,57 +1,23 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp, Terminal } from 'lucide-react';
-import { parseAssistantMessage, type ParsedChoice } from '../harness/index.ts';
+import type { Token, Tokens } from 'marked';
+import {
+  extractAssistantChoices,
+  isHudCodeBlock,
+  parseHudFields,
+  stripProposalBlocksForDisplay,
+  type AssistantMode,
+  type ParsedChoice,
+} from '../harness/index.ts';
+import { lexMarkdownTokens, renderMarkdownTokens } from './MarkdownView.tsx';
 
 interface MessageContentProps {
   content: string;
+  mode?: AssistantMode;
   showChoices?: boolean;
   disabled?: boolean;
   onSelectChoice?: (choiceText: string) => void;
   afterContent?: ReactNode;
-}
-
-interface HudField {
-  key: string;
-  value: string;
-  isWide: boolean;
-}
-
-interface ParsedHud {
-  heading: string | null;
-  fields: HudField[];
-}
-
-function parseHudFields(code: string): ParsedHud | null {
-  const trimmed = code.trim();
-  const hasBracketedHeading = trimmed.startsWith('[') && trimmed.endsWith(']');
-  const body = hasBracketedHeading ? trimmed.slice(1, -1) : trimmed;
-  let heading: string | null = null;
-  const parts = body.split(/\r?\n|[|｜]/).map((part) => part.trim()).filter(Boolean);
-  const fields: HudField[] = [];
-
-  for (const [index, part] of parts.entries()) {
-    const separator = part.search(/[:：]/);
-    if (separator < 1) {
-      if (hasBracketedHeading && index === 0) {
-        heading = part;
-        continue;
-      }
-      return null;
-    }
-    const key = part.slice(0, separator).trim();
-    const value = part.slice(separator + 1).trim();
-    if (!key || !value) return null;
-    const cjkGlyphCount = Array.from(value).filter((glyph) =>
-      /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(glyph),
-    ).length;
-    fields.push({
-      key,
-      value,
-      isWide: value.length >= 28 || cjkGlyphCount >= 20,
-    });
-  }
-
-  return fields.length >= 2 ? { heading, fields } : null;
 }
 
 function stripTrailingChoices(content: string, choices: ParsedChoice[]): string {
@@ -148,33 +114,66 @@ function HudPanel({ code }: { code: string }) {
   );
 }
 
+type PartitionedBlock =
+  | { type: 'hud'; code: string }
+  | { type: 'markdown'; tokens: Token[] };
+
+function partitionTokens(tokens: Token[], mode: AssistantMode): PartitionedBlock[] {
+  const blocks: PartitionedBlock[] = [];
+  let currentRun: Token[] = [];
+
+  const flushRun = () => {
+    const meaningful = currentRun.some((token) => token.type !== 'space' && token.type !== 'def');
+    if (meaningful) {
+      blocks.push({ type: 'markdown', tokens: currentRun });
+    }
+    currentRun = [];
+  };
+
+  for (const token of tokens) {
+    if (token.type === 'code') {
+      const codeToken = token as Tokens.Code;
+      if (isHudCodeBlock(codeToken.lang, codeToken.text, mode)) {
+        flushRun();
+        blocks.push({ type: 'hud', code: codeToken.text });
+        continue;
+      }
+    }
+    currentRun.push(token);
+  }
+
+  flushRun();
+  return blocks;
+}
+
 export function MessageContent({
   content,
+  mode = 'story',
   showChoices = false,
   disabled = false,
   onSelectChoice,
   afterContent,
 }: MessageContentProps) {
-  const parsed = parseAssistantMessage(content);
-  const visibleChoices = showChoices && onSelectChoice ? parsed.choices : [];
-  const finalTextSegment = parsed.segments.reduce(
-    (lastIndex, segment, index) => (segment.type === 'text' ? index : lastIndex),
-    -1,
-  );
+  const { visibleChoices, blocks } = useMemo(() => {
+    const clean = stripProposalBlocksForDisplay(content);
+    const { displayContent, choices } = extractAssistantChoices(clean);
+    const activeChoices = showChoices && onSelectChoice ? choices : [];
+    const narrativeMarkdown = stripTrailingChoices(displayContent, activeChoices);
+    const tokens = lexMarkdownTokens(narrativeMarkdown);
+    return {
+      visibleChoices: activeChoices,
+      blocks: partitionTokens(tokens, mode),
+    };
+  }, [content, mode, showChoices, onSelectChoice]);
 
   return (
     <div className="message-content">
-      {parsed.segments.map((seg, idx) =>
-        seg.type === 'codeblock' ? (
-          <HudPanel key={`code-${idx}`} code={seg.code} />
+      {blocks.map((block, idx) =>
+        block.type === 'hud' ? (
+          <HudPanel key={`hud-${idx}`} code={block.code} />
         ) : (
-          <div key={`text-${idx}`} className="turn-body" data-testid="turn-body">
-            {(idx === finalTextSegment
-              ? stripTrailingChoices(seg.content, visibleChoices)
-              : seg.content
-            ).split(/\n\n+/).map((paragraph, paragraphIndex) => (
-              <p key={`paragraph-${paragraphIndex}`}>{paragraph}</p>
-            ))}
+          <div key={`md-${idx}`} className="turn-body md-view" data-testid="turn-body">
+            {renderMarkdownTokens(block.tokens, { mode, keyPrefix: `seg-${idx}` })}
           </div>
         ),
       )}

@@ -1,8 +1,8 @@
 ---
-
-> 现行模型与本文条款的演进见 [ADR 0011](0011-three-mode-markdown-harness.md)。
-status: accepted
+status: superseded by ADR-0012
 ---
+
+> 本决议已由 [ADR 0012](0012-natural-language-single-entry-and-single-markdown-setting.md) 取代（此前阶段演进见 [ADR 0011](0011-three-mode-markdown-harness.md)）。
 
 # LLM 蓝图拆解与原始剧本全量锚定并存
 

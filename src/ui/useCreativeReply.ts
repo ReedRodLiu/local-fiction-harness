@@ -94,6 +94,7 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
   const mounted = useRef(true);
   const [busy, setBusy] = useState(false);
   const [output, setOutput] = useState('');
+  const [reasoning, setReasoning] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -107,8 +108,14 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
   function start(
     label: string,
     run: (
-      request: (messages: LlmMessage[]) => ReturnType<typeof streamCreativeReply>,
+      request: (
+        messages: LlmMessage[],
+        options?: { onVisibleDelta?: (delta: string) => void },
+      ) => ReturnType<typeof streamCreativeReply>,
       signal: AbortSignal,
+      config: ModelConfig,
+      setStreamText: (next: string) => void,
+      appendReasoning: (delta: string) => void,
     ) => Promise<void>,
   ) {
     requestModel(label, (config) => {
@@ -118,15 +125,29 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
       setBusy(true);
       setError('');
       setOutput('');
+      setReasoning('');
       void run(
-        (messages) =>
+        (messages, options) =>
           streamCreativeReply(runtime.transport, config, messages, {
             signal: controller.signal,
+            onReasoningDelta: (delta) => {
+              if (!controller.signal.aborted) setReasoning((text) => text + delta);
+            },
             onContentDelta: (delta) => {
-              if (!controller.signal.aborted) setOutput((text) => text + delta);
+              if (!controller.signal.aborted) {
+                if (options?.onVisibleDelta) options.onVisibleDelta(delta);
+                else setOutput((text) => text + delta);
+              }
             },
           }),
         controller.signal,
+        config,
+        (next) => {
+          if (!controller.signal.aborted) setOutput(next);
+        },
+        (delta) => {
+          if (!controller.signal.aborted) setReasoning((text) => text + delta);
+        },
       )
         .catch((err) => {
           if (!controller.signal.aborted) setError(toErrorMessage(err, '生成失败，请重试。'));
@@ -136,11 +157,12 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
           active.current = null;
           if (!mounted.current) return;
           setOutput('');
+          setReasoning('');
           setBusy(false);
         });
     });
   }
 
   const fail = (err: unknown) => setError(toErrorMessage(err, '本地操作失败。'));
-  return { start, busy, output, error, fail, stop: () => active.current?.abort() };
+  return { start, busy, output, reasoning, error, fail, stop: () => active.current?.abort() };
 }
