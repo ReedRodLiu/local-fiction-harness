@@ -158,6 +158,15 @@
   line-height: 1.4;
 }
 
+.writing-manuscript-status.is-error {
+  color: var(--status-warn);
+}
+
+.manuscript-status-retry {
+  margin-left: 10px;
+  color: var(--status-warn);
+}
+
 .writing-manuscript-canvas .creative-manuscript {
   box-sizing: border-box;
   width: 100%;
