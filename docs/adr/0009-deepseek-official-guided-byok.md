@@ -4,6 +4,8 @@ status: accepted
 
 # 首版锁定 DeepSeek 官方渠道与引导式 BYOK 接入
 
+> 部分修订：本决议中“隐藏模型名称并锁定单模型”的约束已由 [ADR 0014](0014-deepseek-model-selection-and-reasoning-effort.md) 调整为开放官方双模型选择与四档思考强度控制；官方地址锁定与引导式 BYOK 原则继续生效。
+
 ## Decision
 
 面向零编程经验的普通手机用户，首版生产环境彻底隐藏 `Base URL` 与模型名称配置界面，默认且强制归一化为 DeepSeek 官方地址（`https://api.deepseek.com`）与主力模型 `deepseek-flash`（仅内部开发代理 `.env.local` 与 E2E 测试通道保留注入覆盖能力）。延续**延迟 BYOK（自带 API Key）**原则，允许未配 Key 用户先导入剧本与浏览剧情树，仅在首次触发模型请求或主动点击绑定入口时弹出统一的三步引导向导（外链系统浏览器前往 DeepSeek 开放平台创建 Key -> 一键粘贴/手动输入并清洗空白 -> 调用零 Token 消耗的 `GET /models` 在线验真后持久化保存），并在已绑定态提供脱敏尾号展示、更换 Key 与「清除已保存的key」操作。
