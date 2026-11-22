@@ -153,11 +153,17 @@
   justify-content: center;
   padding: 0;
   border: 0;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
   text-align: center;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.import-file-picker:active:not(:disabled) {
+  background: var(--bg-surface-active);
 }
 
 .import-file-title {
@@ -200,11 +206,18 @@
   align-items: center;
   gap: 6px;
   min-height: 44px;
-  padding: 9px 0;
+  padding: 9px 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.import-title-details > summary:active,
+.import-url-details > summary:active {
+  background: var(--bg-surface-active);
 }
 
 .import-url-details > .import-url-card {
@@ -247,8 +260,9 @@
   align-items: center;
   min-width: 44px;
   min-height: 44px;
-  padding: 6px 4px;
+  padding: 6px 6px;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -257,9 +271,15 @@
   text-decoration: underline;
   text-underline-offset: 3px;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
 }
 
-.text-action:hover {
+.text-action:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.text-action:active:not(:disabled) {
+  background: var(--bg-surface-active);
   color: var(--text-primary);
 }
 
@@ -369,6 +389,11 @@
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.ds-filter-tabs button:active:not(:disabled) {
+  background: var(--bg-surface-active);
 }
 
 .ds-filter-tabs button[aria-selected='true'] {
@@ -467,10 +492,16 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+  transition: background-color 120ms ease-out, transform 120ms ease-out;
 }
 
-.ds-session-preview-trigger:hover {
+.ds-session-preview-trigger:hover:not(:disabled) {
   background: var(--bg-surface-hover);
+}
+
+.ds-session-preview-trigger:active:not(:disabled) {
+  background: var(--bg-surface-active);
+  transform: scale(0.95);
 }
 
 .ds-session-latest {
