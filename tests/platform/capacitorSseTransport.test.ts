@@ -94,7 +94,8 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
       for await (const delta of transport.streamChat({
         baseUrl: 'https://no-cors.example/v1',
         apiKey: 'sk-android-1',
-        model: 'deepseek-chat',
+        model: 'deepseek-v4-pro',
+        reasoningEffort: 'max',
         messages: [{ role: 'user', content: '进门' }],
       })) {
         deltas.push(delta);
@@ -108,6 +109,11 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
       url: 'https://no-cors.example/v1/chat/completions',
     });
     expect(fake.started[0].headers.Authorization).toBe('Bearer sk-android-1');
+    expect(JSON.parse(fake.started[0].body)).toMatchObject({
+      model: 'deepseek-v4-pro',
+      thinking: { type: 'enabled' },
+      reasoning_effort: 'max',
+    });
 
     // Emit in 5-byte fragments to split multi-byte UTF-8 characters
     for (let i = 0; i < sseBytes.length; i += 5) {

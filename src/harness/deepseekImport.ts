@@ -5,6 +5,7 @@ import { getActiveBranchNodes } from './context.ts';
 import { decodeUtf8WithGbFallback } from './encoding.ts';
 import { isAbortError, type FictionHarness } from './harness.ts';
 import { createDefaultId } from './id.ts';
+import { createBackgroundModelConfig } from './keyConfig.ts';
 import { newDocument } from './markdownDocuments.ts';
 import { DEFAULT_STORY_TITLE, parseScriptInput } from './scriptParser.ts';
 import type {
@@ -1033,11 +1034,13 @@ async function streamJsonObject(
   messages: Array<{ role: 'system' | 'user'; content: string }>,
   signal?: AbortSignalLike,
 ): Promise<Record<string, unknown> | null> {
+  const bgConfig = createBackgroundModelConfig(config);
   let rawResponse = '';
   for await (const delta of transport.streamChat({
-    baseUrl: config.baseUrl,
-    apiKey: config.apiKey,
-    model: config.model,
+    baseUrl: bgConfig.baseUrl,
+    apiKey: bgConfig.apiKey,
+    model: bgConfig.model,
+    reasoningEffort: bgConfig.reasoningEffort,
     signal,
     messages,
   })) {

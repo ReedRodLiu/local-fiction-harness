@@ -1,11 +1,14 @@
 import { createDefaultBlueprint } from './blueprint.ts';
+import { isOfficialDeepSeekModel, isReasoningEffort } from './keyConfig.ts';
 import { documentVersion, migrateStoryDocuments, replaceDocumentProgress, validateDocumentReads, validateMarkdownDocument, writeDocument, type StoryDocuments } from './markdownDocuments.ts';
 import { createDefaultId } from './id.ts';
 import type {
   ActiveStorySelection,
+  GenerationPreference,
   NodeDiagnosticStatus,
   NodeDiagnostics,
   PlotSummarySnapshot,
+  ReasoningEffort,
   Story,
   StoryAttachment,
   StoryBackupEnvelope,
@@ -271,6 +274,30 @@ function validateProposals(raw: unknown, nodeId: string): TurnProposalRecord[] |
   });
 }
 
+export function validateGenerationPreference(
+  raw: unknown,
+  contextLabel: string,
+): GenerationPreference | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    throw new Error(`${contextLabel} 的 generationPreference 必须为对象。`);
+  }
+  const pref: GenerationPreference = {};
+  if (raw.model !== undefined) {
+    if (!isOfficialDeepSeekModel(raw.model)) {
+      throw new Error(`${contextLabel} 的 generationPreference.model 无效。`);
+    }
+    pref.model = raw.model;
+  }
+  if (raw.reasoningEffort !== undefined) {
+    if (!isReasoningEffort(raw.reasoningEffort)) {
+      throw new Error(`${contextLabel} 的 generationPreference.reasoningEffort 无效。`);
+    }
+    pref.reasoningEffort = raw.reasoningEffort;
+  }
+  return Object.keys(pref).length > 0 ? pref : undefined;
+}
+
 export function validateTurnNodeEntry(entry: unknown, expectedId?: string): TurnNode {
   if (
     !isRecord(entry) ||
@@ -282,9 +309,13 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
     typeof entry.content !== 'string' ||
     typeof entry.createdAt !== 'number' ||
     !Number.isFinite(entry.createdAt) ||
-    (entry.reasoningContent !== undefined && typeof entry.reasoningContent !== 'string')
+    (entry.reasoningContent !== undefined && typeof entry.reasoningContent !== 'string') ||
+    (entry.model !== undefined && typeof entry.model !== 'string')
   ) {
     throw new Error(`备份文件中的节点 ${expectedId ?? '(unknown)'} 格式无效。`);
+  }
+  if (entry.reasoningEffort !== undefined && !isReasoningEffort(entry.reasoningEffort)) {
+    throw new Error(`备份文件中的节点 ${expectedId ?? entry.id} 的 reasoningEffort 无效。`);
   }
   const diagnostics = validateDiagnostics(entry.diagnostics, entry.id);
   const attachmentIds = entry.attachmentIds === undefined ? undefined : assertStringArray(entry.attachmentIds, 'node.attachmentIds');
@@ -295,12 +326,15 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
     typeof documents.local !== 'string' || typeof documents.container !== 'string')) {
     throw new Error('备份中的节点文档引用无效。');
   }
+  const trimmedModel = typeof entry.model === 'string' && entry.model.trim() ? entry.model.trim() : undefined;
   return {
     id: entry.id,
     parentId: entry.parentId,
     role: entry.role,
     content: entry.content,
     ...(entry.reasoningContent !== undefined ? { reasoningContent: entry.reasoningContent } : {}),
+    ...(trimmedModel !== undefined ? { model: trimmedModel } : {}),
+    ...(entry.reasoningEffort !== undefined ? { reasoningEffort: entry.reasoningEffort as ReasoningEffort } : {}),
     ...(diagnostics ? { diagnostics } : {}),
     ...(attachmentIds ? { attachmentIds } : {}),
     createdAt: entry.createdAt,
@@ -482,12 +516,18 @@ export function validateStoryPayload(rawStory: unknown, schemaVersion: 1 | 2 | 3
     }
   }
 
+  const generationPreference = validateGenerationPreference(
+    rawStory.generationPreference,
+    `备份故事 ${rawStory.id}`,
+  );
+
   return {
     ...(documents ? { documents } : {}),
     ...(Object.keys(attachments).length > 0 ? { attachments } : {}),
     ...(typeof rawStory.importCandidate === 'string' ? { importCandidate: rawStory.importCandidate } : {}),
     ...(typeof rawStory.sourceSessionId === 'string' ? { sourceSessionId: rawStory.sourceSessionId } : {}),
     ...(rawStory.v2Migrated === true ? { v2Migrated: true } : {}),
+    ...(generationPreference ? { generationPreference } : {}),
     id: rawStory.id,
     title: rawStory.title,
     ...(sourceKind ? { sourceKind } : {}),

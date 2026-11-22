@@ -1,3 +1,4 @@
+import { createBackgroundModelConfig } from './keyConfig.ts';
 import {
   CHANGE_PROMPT,
   documentMessages,
@@ -591,15 +592,17 @@ export async function summarizeCreativeTurnNodes(
     Math.floor(options.budget?.summaryBatchMaxChars ?? DEFAULT_CONTEXT_BUDGET.summaryBatchMaxChars),
   );
 
+  const bgConfig = createBackgroundModelConfig(config);
   const runBatch = async (previousContent: string, batchNodes: TurnNode[]): Promise<string | null> => {
     if (signal?.aborted) return null;
     try {
       let content = '';
       let finishReason: string | null | undefined;
       for await (const delta of transport.streamChat({
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        model: config.model,
+        baseUrl: bgConfig.baseUrl,
+        apiKey: bgConfig.apiKey,
+        model: bgConfig.model,
+        reasoningEffort: bgConfig.reasoningEffort,
         messages: buildSummaryCompressionMessages(previousContent, batchNodes, undefined, maxBatchChars),
         signal,
       })) {
