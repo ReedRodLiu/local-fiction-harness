@@ -47,6 +47,7 @@ export type TurnProposalTarget =
   | 'note'
   | 'character'
   | 'draft'
+  | 'manuscript'
   | 'container'
   | 'public'
   | 'local';

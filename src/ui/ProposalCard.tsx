@@ -70,6 +70,8 @@ export function getProposalTargetBadgeLabel(
       return '分支笔记';
     case 'draft':
       return '新开写故事';
+    case 'manuscript':
+      return '作品正文';
     case 'character':
       return '新建角色';
   }

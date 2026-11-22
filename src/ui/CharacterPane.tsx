@@ -18,6 +18,7 @@ import {
   resolveEffectiveModelConfig,
   summarizeCharacterConversation,
   writeDocument,
+  DEFAULT_MODEL_CONFIG,
   type CharacterConversation,
   type CreativeWorkspaceState,
   type GenerationPreference,
@@ -62,7 +63,7 @@ type CharacterCompanionTab = 'conversations' | 'profile';
 interface CharacterPaneProps {
   character: LocalCharacter;
   workspace: CreativeWorkspaceState;
-  defaultConfig: ModelConfig;
+  defaultConfig?: ModelConfig;
   save: SaveWorkspace;
   read: () => Promise<CreativeWorkspaceState>;
   runtime: PlatformRuntime;
@@ -461,7 +462,7 @@ export function CharacterPane(props: CharacterPaneProps) {
   };
 
   const effectiveGenerationConfig = resolveEffectiveModelConfig(
-    props.defaultConfig,
+    props.defaultConfig ?? DEFAULT_MODEL_CONFIG,
     character.generationPreference,
   );
 

@@ -105,12 +105,8 @@ const MANUSCRIPT_INTENT_SYSTEM_PROMPT = [
   '你已自动获得「我的记忆」「作品设定」「正文参考窗口」和「近期聊天」上下文。',
   '请根据作者这次输入自然判断意图：',
   '- 若作者明确要求修改「作品设定」「我的记忆」或「分支笔记」：请使用 ```lfh-proposal 围栏提出增量修改提案，并在围栏外用一两句点明改动，不要长篇解释修改理由。',
-  '- 若作者是在提问、讨论剧情漏洞、核对设定或闲聊而非要直接插入正文：请在回复开头输出：',
-  '```lfh-manuscript-intent',
-  'intent: chat',
-  '```',
-  '紧接着像敏锐的创作搭档一样直奔重点回答，不要套用“首先/其次/总结”的模板分点或客套寒暄；仅当作者明确要求大纲、人物表或分条拆解时才使用结构化清单。',
-  '- 若作者要求续写、扩写、改写或润色某段正文：直接输出干净、可直接写入正文的小说文本，不加寒暄、修改说明或后记，避免翻译腔、套路化 AI 比喻和说教式收尾。',
+  '- 若作者要求续写、扩写、改写或润色某段正文：请写出干净克制的小说正文（避免翻译腔、套路化 AI 比喻和说教式收尾），并附带 target: manuscript 的 ```lfh-proposal 围栏（有选区或替换原句时优先用 op: patch 配合 <<<<<<< SEARCH / ======= / >>>>>>> REPLACE，在末尾续写用 op: append，整篇重写用 op: full）。',
+  '- 若作者是在提问、讨论剧情漏洞、核对设定或闲聊而非要直接写入正文：直接像敏锐的创作搭档一样直奔重点回答（也可在开头附 ```lfh-manuscript-intent / intent: chat 围栏），不要套用“首先/其次/总结”的模板分点或客套寒暄；仅当作者明确要求大纲、人物表或分条拆解时才使用结构化清单。',
   '若「我的记忆」或「当前设定」中明确指定了文风、人称或结构偏好，以用户设定为准。',
 ].join('\n');
 
@@ -651,7 +647,7 @@ export function getManuscriptIntentSystemPrompt(): string {
 
 export function parseManuscriptAssistantReply(
   rawContent: string,
-  userPrompt: string,
+  _userPrompt: string,
   reasoningContent = '',
 ): ManuscriptReplyIntent {
   const { intent, cleaned } = extractManuscriptIntentFence(rawContent);
@@ -668,24 +664,10 @@ export function parseManuscriptAssistantReply(
     };
   }
 
-  if (intent === 'chat') {
+  if (intent === 'suggestion') {
     return {
-      kind: 'chat',
-      content: parsed.content || cleaned,
-      ...(parsed.turnSummary ? { turnSummary: parsed.turnSummary } : {}),
-      reasoningContent,
-    };
-  }
-
-  const trimmedPrompt = userPrompt.trim();
-  const looksLikeQuestion =
-    /[?？]$/.test(trimmedPrompt) &&
-    !/^(?:续写|扩写|改写|润色|重写|接下去写|接着写)/.test(trimmedPrompt) &&
-    /^(?:为什么|怎么|如何|是不是|能不能|哪里|谁|什么|帮我分析|讨论)/.test(trimmedPrompt);
-
-  if (intent === null && looksLikeQuestion) {
-    return {
-      kind: 'chat',
+      kind: 'suggestion',
+      text: parsed.content || cleaned,
       content: parsed.content || cleaned,
       ...(parsed.turnSummary ? { turnSummary: parsed.turnSummary } : {}),
       reasoningContent,
@@ -693,9 +675,9 @@ export function parseManuscriptAssistantReply(
   }
 
   return {
-    kind: 'suggestion',
-    text: parsed.content || cleaned,
+    kind: 'chat',
     content: parsed.content || cleaned,
+    ...(parsed.turnSummary ? { turnSummary: parsed.turnSummary } : {}),
     reasoningContent,
   };
 }

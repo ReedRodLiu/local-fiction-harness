@@ -214,7 +214,12 @@ export async function verifyThreeModes(browser, port, helpers) {
         if (input.includes('节奏是不是太快')) {
           content = `${fence}lfh-manuscript-intent\nintent: chat\n${fence}\n节奏刚好，可以在钟响后补写一句环境细节。`;
         } else if (input.includes('接着写一小段')) {
-          content = '第三声钟响，船离岸了。';
+          content = `已为你续写下一段：\n${proposalV2({
+            target: 'manuscript',
+            op: 'append',
+            summary: '续写第三声钟响段落',
+            body: '第三声钟响，船离岸了。',
+          })}`;
         }
         await route.fulfill({
           status: 200,
@@ -253,7 +258,12 @@ export async function verifyThreeModes(browser, port, helpers) {
           body: '## 开书讨论\n失物招领员认出了自己的旧行李。',
         })}`;
       } else if (input.includes('试写一段车站开头')) {
-        content = '月台灯柱下只剩一只褪色皮箱，风吹过铁轨发出轻响。';
+        content = `月台灯柱下只剩一只褪色皮箱，风吹过铁轨发出轻响。\n\n${proposalV2({
+          target: 'manuscript',
+          op: 'append',
+          summary: '将车站开头段落写入作品正文',
+          body: '月台灯柱下只剩一只褪色皮箱，风吹过铁轨发出轻响。',
+        })}`;
       } else if (input.includes('断尾提案')) {
         content = `我刚整理到一半：\n${fence}lfh-proposal\ntarget: setting\nop: append\nsummary: 未闭合提案\n---\n这条设定提案被网络中断了`;
       } else if (input.includes('开始第一幕')) {
@@ -387,13 +397,14 @@ export async function verifyThreeModes(browser, port, helpers) {
     await page.goBack();
     await writingSheet.waitFor({ state: 'hidden' });
 
-    // Chat-to-manuscript safe push
+    // Chat-to-manuscript trial writing via target: manuscript ProposalCard
     await page.getByLabel('聊天内容').fill('试写一段车站开头');
     await button('发送').click();
     await writing.getByTestId('writing-discussion-timeline').getByText('月台灯柱下只剩一只褪色皮箱', { exact: false }).waitFor();
-    await writing.getByTestId('push-to-manuscript-btn').last().click();
-    await writing.getByTestId('push-manuscript-confirm').waitFor();
-    await writing.getByTestId('push-manuscript-append').click();
+    const chatManuscriptProposal = writing.locator('section[data-testid^="proposal-card-"]').filter({ hasText: '作品正文' }).last();
+    await chatManuscriptProposal.waitFor();
+    await chatManuscriptProposal.getByTestId('proposal-card-toggle').click();
+    await chatManuscriptProposal.getByTestId('proposal-apply-btn').click();
     await writing.getByTestId('manuscript-undo-banner').waitFor();
     await writing.getByTestId('jump-to-manuscript-btn').click();
     await writing.getByTestId('creative-manuscript').waitFor();
@@ -612,8 +623,8 @@ export async function verifyThreeModes(browser, port, helpers) {
     });
     await page.getByLabel('写作要求').fill('接着写一小段');
     await button('发送请求').click();
-    const suggestionCard = writing.getByTestId('writing-suggestion-card');
-    await suggestionCard.getByRole('button', { name: '采纳建议', exact: true }).waitFor();
+    const inlineManuscriptProposal = writing.getByTestId('manuscript-inline-proposal');
+    await inlineManuscriptProposal.getByTestId('proposal-apply-btn').waitFor();
     await manuscript.fill(`${half}（补充）`);
     await page.waitForFunction(async (expectedBody) => {
       const db = await new Promise((resolve, reject) => {
@@ -629,8 +640,7 @@ export async function verifyThreeModes(browser, port, helpers) {
       db.close();
       return entry?.value?.works?.some((work) => work.body === expectedBody) === true;
     }, `${half}（补充）`);
-    await suggestionCard.getByRole('button', { name: '采纳建议', exact: true }).click();
-    await suggestionCard.getByRole('button', { name: '确认采纳', exact: true }).click();
+    await inlineManuscriptProposal.getByTestId('proposal-apply-btn').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=creative-manuscript]')?.value.includes('第三声钟响'));
     await writing.getByTestId('manuscript-undo-btn').waitFor();
 

@@ -1,13 +1,18 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { EMPTY_SUMMARY_SNAPSHOT, emptyWorkspace, newWork } from '../../src/harness/index.ts';
+import {
+  DEFAULT_MODEL_CONFIG,
+  EMPTY_SUMMARY_SNAPSHOT,
+  emptyWorkspace,
+  newWork,
+} from '../../src/harness/index.ts';
 import { CreativeWorkspace } from '../../src/ui/CreativeWorkspace.tsx';
 
 vi.mock('../../src/ui/useWebHistoryLayer.ts', () => ({ useWebHistoryLayer: () => undefined }));
 
 describe('UI-POLISH-03 V0.2 unified writing stage', () => {
-  it('renders chat view using unified TurnCard with branch/copy/regenerate/push-to-manuscript and zero forced gate', () => {
+  it('renders chat view using unified TurnCard with branch/copy/regenerate/manuscript ProposalCard and no raw push button', () => {
     const work = {
       ...newWork('纸月车站'),
       discussion: [
@@ -28,6 +33,17 @@ describe('UI-POLISH-03 V0.2 unified writing stage', () => {
           summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
           createdAt: 101,
           documentReads: [{ scope: 'container' as const, name: '纸月车站', versionId: 'work-v1', readAt: 101 }],
+          proposals: [
+            {
+              id: 'p-ms-1',
+              target: 'manuscript' as const,
+              op: 'append' as const,
+              summary: '将开篇皮箱段落写入作品正文',
+              status: 'pending' as const,
+              body: '月台灯柱下只剩一只褪色皮箱。',
+              baseVersionId: '0',
+            },
+          ],
         },
       ],
     };
@@ -35,6 +51,7 @@ describe('UI-POLISH-03 V0.2 unified writing stage', () => {
     const markup = renderToStaticMarkup(createElement(CreativeWorkspace, {
       mode: 'writing',
       workspace,
+      defaultConfig: DEFAULT_MODEL_CONFIG,
       ready: true,
       storageError: '',
       save: async () => workspace,
@@ -58,8 +75,9 @@ describe('UI-POLISH-03 V0.2 unified writing stage', () => {
     expect(markup).toContain('aria-label="复制正文"');
     expect(markup).toContain('aria-label="重新生成分支"');
     expect(markup).toContain('aria-label="编辑并生成新分支"');
-    expect(markup).toContain('data-testid="push-to-manuscript-btn"');
-    expect(markup).toContain('写入正文');
+    expect(markup).toContain('data-testid="proposal-card-p-ms-1"');
+    expect(markup).toContain('作品正文');
+    expect(markup).not.toContain('data-testid="push-to-manuscript-btn"');
     // Code blocks in 写故事 must NOT become HUD terminals
     expect(markup).toContain('class="md-code-block"');
     expect(markup).not.toContain('data-testid="hud-panel"');
@@ -100,6 +118,7 @@ describe('UI-POLISH-03 V0.2 unified writing stage', () => {
     const markup = renderToStaticMarkup(createElement(CreativeWorkspace, {
       mode: 'writing',
       workspace,
+      defaultConfig: DEFAULT_MODEL_CONFIG,
       ready: true,
       storageError: '',
       save: async () => workspace,

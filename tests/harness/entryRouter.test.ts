@@ -190,10 +190,37 @@ describe('V0.2 entryRouter & unified mode helpers', () => {
       expect(cRes.content).toBe('他留在车站是为了等那班不存在的列车。');
     }
 
-    const sRes = parseManuscriptAssistantReply('站台上的时钟忽然倒转了半圈。', '帮我续写下一句');
-    expect(sRes.kind).toBe('suggestion');
-    if (sRes.kind === 'suggestion') {
-      expect(sRes.text).toBe('站台上的时钟忽然倒转了半圈。');
+    // Untagged replies default safely to chat (never a raw one-click suggestion splice)
+    const untaggedChat = parseManuscriptAssistantReply('站台上的时钟忽然倒转了半圈。', '帮我续写下一句');
+    expect(untaggedChat.kind).toBe('chat');
+
+    // Explicit target: manuscript lfh-proposal parses as proposal targeting manuscript
+    const manuscriptProposalRaw = [
+      '已为你试写下一段：\n\n',
+      '```lfh-proposal\n',
+      'target: manuscript\n',
+      'op: append\n',
+      'summary: 续写站台倒转段落\n',
+      '---\n',
+      '站台上的时钟忽然倒转了半圈。\n',
+      '```',
+    ].join('');
+    const mpRes = parseManuscriptAssistantReply(manuscriptProposalRaw, '帮我续写下一句');
+    expect(mpRes.kind).toBe('proposal');
+    if (mpRes.kind === 'proposal') {
+      expect(mpRes.proposals).toHaveLength(1);
+      expect(mpRes.proposals[0].target).toBe('manuscript');
+      expect(mpRes.proposals[0].op).toBe('append');
+    }
+
+    // Explicit legacy intent: suggestion still parses as suggestion
+    const explicitSug = parseManuscriptAssistantReply(
+      '```lfh-manuscript-intent\nintent: suggestion\n```\n站台上的时钟忽然倒转了半圈。',
+      '帮我续写下一句',
+    );
+    expect(explicitSug.kind).toBe('suggestion');
+    if (explicitSug.kind === 'suggestion') {
+      expect(explicitSug.text).toBe('站台上的时钟忽然倒转了半圈。');
     }
   });
 

@@ -14,7 +14,7 @@ import type { SaveWorkspace } from './useCreativeWorkspace.ts';
 interface Props {
   mode: 'writing' | 'character';
   workspace: CreativeWorkspaceState;
-  defaultConfig: ModelConfig;
+  defaultConfig?: ModelConfig;
   ready: boolean;
   storageError: string;
   save: SaveWorkspace;

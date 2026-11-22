@@ -27,6 +27,7 @@ import {
   visibleReplyPrefix,
   workContext,
   writeDocument,
+  DEFAULT_MODEL_CONFIG,
   type CreativeWorkspaceState,
   type DraftWork,
   type GenerationPreference,
@@ -72,7 +73,7 @@ type WritingCompanionTab = 'discussion' | 'documents';
 interface DraftPaneProps {
   work: DraftWork;
   workspace: CreativeWorkspaceState;
-  defaultConfig: ModelConfig;
+  defaultConfig?: ModelConfig;
   save: SaveWorkspace;
   read: () => Promise<CreativeWorkspaceState>;
   runtime: PlatformRuntime;
@@ -116,7 +117,6 @@ export function DraftPane(props: DraftPaneProps) {
     suggestion: WritingSuggestion;
     target: WritingSuggestion;
   } | null>(null);
-  const [pendingPushTurnId, setPendingPushTurnId] = useState<string | null>(null);
   const [manuscriptChatAnswer, setManuscriptChatAnswer] = useState<string | null>(null);
   const [manuscriptProposalRef, setManuscriptProposalRef] = useState<{
     nodeId: string;
@@ -333,7 +333,7 @@ export function DraftPane(props: DraftPaneProps) {
       const workDoc = documentVersion(live.document);
       const proposalRecords = buildTurnProposalRecords(
         { proposals: result.proposals, unparsedBlocks: result.unparsedBlocks },
-        { setting: workDoc.id, memory: publicDoc.id },
+        { setting: workDoc.id, memory: publicDoc.id, manuscript: String(live.bodyRevision) },
       );
 
       let assistantId = '';
@@ -455,27 +455,45 @@ export function DraftPane(props: DraftPaneProps) {
       const workDoc = documentVersion(live.document);
 
       if (routed.kind === 'suggestion') {
-        const newId = createDefaultId();
+        const hasSelection = start < end && Boolean(selectedText);
+        const proposalId = createDefaultId();
+        const patchBody = hasSelection
+          ? `<<<<<<< SEARCH\n${selectedText}\n=======\n${routed.text}\n>>>>>>> REPLACE`
+          : routed.text;
+        const synthesizedRecord: TurnProposalRecord = {
+          id: proposalId,
+          target: 'manuscript',
+          op: hasSelection ? 'patch' : 'append',
+          summary: hasSelection ? '替换所选作品正文片段' : '向作品正文追加段落',
+          status: 'pending',
+          body: patchBody,
+          baseVersionId: String(live.bodyRevision),
+        };
+        let assistantId = '';
         await save((nowState) =>
-          updateWork(nowState, live.id, (latest) => ({
-            ...latest,
-            suggestions: [
-              ...latest.suggestions,
-              {
-                id: newId,
-                instruction: input,
-                text: routed.text,
-                revision: latest.bodyRevision,
-                start,
-                end,
-                documentReads: ctx.reads,
-              },
-            ],
-          })),
+          updateWork(nowState, live.id, (latest) => {
+            const u = appendWorkDiscussionTurn(latest, { role: 'user', content: input });
+            const a = appendWorkDiscussionTurn(u.work, {
+              role: 'assistant',
+              content: routed.text,
+              ...(routed.turnSummary ? { turnSummary: routed.turnSummary } : {}),
+              reasoningContent: reasoningContent || undefined,
+              model: effectiveConfig.model,
+              reasoningEffort,
+              parentId: u.node.id,
+              documentReads: ctx.reads,
+              proposals: [synthesizedRecord],
+            });
+            assistantId = a.node.id;
+            return a.work;
+          }),
         );
         if (!signal.aborted) {
           setManuscriptInput('');
-          setFocusedSuggestionId(newId);
+          if (assistantId) {
+            setManuscriptProposalRef({ nodeId: assistantId, proposalId });
+          }
+          recordProposalCreationBreadcrumbs(runtime.diagnostics, [synthesizedRecord]);
         }
         return;
       }
@@ -483,7 +501,7 @@ export function DraftPane(props: DraftPaneProps) {
       if (routed.kind === 'proposal') {
         const proposalRecords = buildTurnProposalRecords(
           { proposals: routed.proposals, unparsedBlocks: routed.unparsedBlocks },
-          { setting: workDoc.id, memory: publicDoc.id },
+          { setting: workDoc.id, memory: publicDoc.id, manuscript: String(live.bodyRevision) },
         );
         let assistantId = '';
         await save((nowState) =>
@@ -611,24 +629,6 @@ export function DraftPane(props: DraftPaneProps) {
     await adopt(suggestion, chosen);
   }
 
-  async function pushChatPassageToManuscript(passage: string, mode: 'append' | 'replace') {
-    const clean = passage.trim();
-    if (!clean) return;
-    const base = autosave.text;
-    const nextBody =
-      mode === 'replace'
-        ? clean
-        : base.trim()
-          ? `${base.replace(/\n+$/, '')}\n\n${clean}`
-          : clean;
-    autosave.adoptSuggestion(nextBody, {
-      label: mode === 'replace' ? '已用对话内容替换正文' : '已追加到正文末尾',
-    });
-    await autosave.flush();
-    setPendingPushTurnId(null);
-    setExported(false);
-  }
-
   function exportManuscript() {
     void currentWork()
       .then(({ live }) => {
@@ -693,7 +693,7 @@ export function DraftPane(props: DraftPaneProps) {
       const workDoc = documentVersion(live.document);
       const proposalRecords = buildTurnProposalRecords(
         { proposals: result.proposals, unparsedBlocks: result.unparsedBlocks },
-        { setting: workDoc.id, memory: publicDoc.id },
+        { setting: workDoc.id, memory: publicDoc.id, manuscript: String(live.bodyRevision) },
       );
 
       let assistantId = '';
@@ -735,7 +735,7 @@ export function DraftPane(props: DraftPaneProps) {
   };
 
   const effectiveGenerationConfig = resolveEffectiveModelConfig(
-    props.defaultConfig,
+    props.defaultConfig ?? DEFAULT_MODEL_CONFIG,
     work.generationPreference,
   );
 
@@ -760,6 +760,13 @@ export function DraftPane(props: DraftPaneProps) {
       const mem = documentVersion(workspace.publicDocument);
       return { currentMarkdown: mem.markdown, currentVersionId: mem.id, targetLabel: '我的记忆' };
     }
+    if (normalized === 'manuscript') {
+      return {
+        currentMarkdown: autosave.text,
+        currentVersionId: String(work.bodyRevision),
+        targetLabel: '作品正文',
+      };
+    }
     if (normalized === 'character' || normalized === 'draft') {
       return { currentMarkdown: '', targetLabel: normalized === 'character' ? '新建角色' : '新开写故事' };
     }
@@ -775,6 +782,36 @@ export function DraftPane(props: DraftPaneProps) {
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
     let createdAsset: { kind: 'character' | 'work'; id: string; label: string } | null = null;
     try {
+      if (normalized === 'manuscript') {
+        const prevRev = String(work.bodyRevision);
+        autosave.adoptSuggestion(resolvedMarkdown, {
+          label: '已写入作品正文',
+        });
+        await autosave.flush();
+        await save((state) =>
+          updateWork(state, work.id, (live) => {
+            const tree = getWorkDiscussionTree(live);
+            const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
+              ...p,
+              status: 'applied',
+              previousVersionId: prevRev,
+              appliedVersionId: String(live.bodyRevision),
+            }));
+            return {
+              ...live,
+              discussionNodes: nextNodes,
+              discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
+            };
+          }),
+        );
+        setExported(false);
+        if (proposal.baseVersionId && proposal.baseVersionId !== prevRev) {
+          recordProposalDiagnostic(runtime.diagnostics, 'patch_reapplied', proposal);
+        }
+        recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
+        return;
+      }
+
       await save((state) => {
         if (normalized === 'memory') {
           const prevId = state.publicDocument.head;
@@ -868,6 +905,27 @@ export function DraftPane(props: DraftPaneProps) {
   const handleRevertProposal = async (nodeId: string, proposal: TurnProposalRecord) => {
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
     try {
+      if (normalized === 'manuscript') {
+        autosave.undo();
+        await autosave.flush();
+        await save((state) =>
+          updateWork(state, work.id, (live) => {
+            const tree = getWorkDiscussionTree(live);
+            const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
+              ...p,
+              status: 'reverted',
+            }));
+            return {
+              ...live,
+              discussionNodes: nextNodes,
+              discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
+            };
+          }),
+        );
+        recordProposalDiagnostic(runtime.diagnostics, 'proposal_reverted', proposal);
+        return;
+      }
+
       await save((state) => {
         if (normalized === 'memory') {
           const { nextDocument } = revertDocumentToVersion(state.publicDocument, proposal);
@@ -910,6 +968,10 @@ export function DraftPane(props: DraftPaneProps) {
 
   const handleOpenProposalEditor = (proposal: TurnProposalRecord) => {
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
+    if (normalized === 'manuscript') {
+      if (!editing) props.onStartManuscript?.();
+      return;
+    }
     if (normalized === 'memory') {
       openPublic(proposal.status === 'needs_review' ? proposal.body : undefined);
       return;
@@ -1036,7 +1098,6 @@ export function DraftPane(props: DraftPaneProps) {
                   ? discussionTree.nodes[node.parentId]
                   : undefined;
               const editableUserNode = parentNode?.role === 'user' ? parentNode : undefined;
-              const isConfirmingPush = pendingPushTurnId === node.id;
 
               return (
                 <TurnCard
@@ -1065,58 +1126,8 @@ export function DraftPane(props: DraftPaneProps) {
                   onOpenProposalEditor={handleOpenProposalEditor}
                   onAskAiReorganizeProposal={(p) =>
                     submitChatTurn(
-                      `我刚刚修改了「作品设定」，请结合最新设定重新整理这条建议：${p.summary}`,
+                      `我刚刚修改了「${resolveProposalTarget(p).targetLabel ?? '作品设定'}」，请结合最新内容重新整理这条建议：${p.summary}`,
                     )
-                  }
-                  afterAssistantContent={
-                    node.role === 'assistant' && node.content.trim() ? (
-                      isConfirmingPush ? (
-                        <div className="push-manuscript-card" data-testid="push-manuscript-confirm">
-                          <span className="push-manuscript-label">将这段内容写入正文：</span>
-                          <div className="push-manuscript-actions">
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-primary"
-                              data-testid="push-manuscript-append"
-                              disabled={reply.busy}
-                              onClick={() => void pushChatPassageToManuscript(node.content, 'append')}
-                            >
-                              追加到正文末尾
-                            </button>
-                            {autosave.text.trim() && (
-                              <button
-                                type="button"
-                                className="btn btn-sm"
-                                data-testid="push-manuscript-replace"
-                                disabled={reply.busy}
-                                onClick={() => void pushChatPassageToManuscript(node.content, 'replace')}
-                              >
-                                替换当前正文
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="btn btn-sm"
-                              onClick={() => setPendingPushTurnId(null)}
-                            >
-                              取消
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="push-manuscript-trigger-row">
-                          <button
-                            type="button"
-                            className="writing-enter-pill push-manuscript-trigger"
-                            data-testid="push-to-manuscript-btn"
-                            disabled={reply.busy}
-                            onClick={() => setPendingPushTurnId(node.id)}
-                          >
-                            写入正文
-                          </button>
-                        </div>
-                      )
-                    ) : undefined
                   }
                 />
               );
