@@ -90,6 +90,7 @@ export interface TurnNode {
   parentId: string | null;
   role: 'user' | 'assistant';
   content: string;
+  prefillContent?: string;
   turnSummary?: string;
   reasoningContent?: string;
   model?: string;
@@ -145,6 +146,10 @@ export interface LlmStreamRequest {
   apiKey: string;
   model: string;
   messages: LlmMessage[];
+  prefixCompletion?: {
+    content: string;
+    reasoningContent?: string;
+  };
   reasoningEffort?: ReasoningEffort;
   thinking?: DeepSeekThinkingParam;
   reasoning_effort?: ReasoningEffort;

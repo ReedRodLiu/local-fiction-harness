@@ -129,6 +129,47 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
     expect(fake.listenerCounts()).toEqual({ chunk: 0, complete: 0, error: 0 });
   });
 
+  it('derives the beta request and applies the same prefix echo cursor on Android', async () => {
+    const fake = createFakeNativeSsePlugin();
+    const transport = createCapacitorSseTransport(fake.plugin, () => 'req-prefix');
+    const output: string[] = [];
+
+    const run = (async () => {
+      for await (const delta of transport.streamChat({
+        baseUrl: 'https://api.deepseek.com',
+        apiKey: 'sk-android-prefix',
+        model: 'deepseek-flash',
+        messages: [{ role: 'user', content: '继续' }],
+        prefixCompletion: { content: '预填' },
+      })) {
+        if (delta.contentDelta) output.push(delta.contentDelta);
+      }
+    })();
+
+    await vi.waitFor(() => expect(fake.started).toHaveLength(1));
+    expect(fake.started[0].url).toBe('https://api.deepseek.com/beta/chat/completions');
+    expect(JSON.parse(fake.started[0].body).messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      content: '预填',
+      prefix: true,
+    });
+
+    fake.emitChunk(
+      'req-prefix',
+      new TextEncoder().encode('data: {"choices":[{"delta":{"content":"预填"}}]}\n\n'),
+    );
+    fake.emitChunk(
+      'req-prefix',
+      new TextEncoder().encode(
+        'data: {"choices":[{"delta":{"content":"续写"},"finish_reason":"stop"}]}\n\n',
+      ),
+    );
+    fake.emitComplete('req-prefix');
+
+    await run;
+    expect(output.join('')).toBe('预填续写');
+  });
+
   it('isolates concurrent streams by requestId', async () => {
     const fake = createFakeNativeSsePlugin();
     let seq = 0;

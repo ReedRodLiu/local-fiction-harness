@@ -1,6 +1,7 @@
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import {
   buildOpenAiChatRequest,
+  applyPrefixEchoCursor,
   createDefaultId,
   parseOpenAiSseStream,
   type LlmStreamDelta,
@@ -139,7 +140,10 @@ export function createCapacitorSseTransport(
           }
         }
 
-        yield* parseOpenAiSseStream(rawByteChunks());
+        yield* applyPrefixEchoCursor(
+          parseOpenAiSseStream(rawByteChunks()),
+          req.prefixCompletion?.content ?? '',
+        );
       } finally {
         unbind();
         if (started && !streamDone && !streamError) {

@@ -193,6 +193,134 @@ export function resolveChatCompletionsUrl(baseUrl: string): string {
   return `${cleaned}/chat/completions`;
 }
 
+export function resolveBetaChatCompletionsUrl(baseUrl: string): string {
+  const cleaned = baseUrl.trim().replace(/\/+$/, '');
+  if (!cleaned) {
+    throw new Error('Model Base URL cannot be empty.');
+  }
+  if (cleaned.endsWith('/beta/chat/completions')) {
+    return cleaned;
+  }
+  if (cleaned.endsWith('/beta')) {
+    return `${cleaned}/chat/completions`;
+  }
+  return `${cleaned}/beta/chat/completions`;
+}
+
+/**
+ * Normalizes the two provider behaviors for Chat Prefix Completion: a provider
+ * may echo the assistant prefix before continuing, or may start directly with
+ * new content. Until the prefix is either confirmed or contradicted, content
+ * is held so a partial match is never silently discarded.
+ */
+export async function* applyPrefixEchoCursor(
+  deltas: AsyncIterable<LlmStreamDelta>,
+  prefillContent: string,
+): AsyncIterable<LlmStreamDelta> {
+  if (!prefillContent) {
+    yield* deltas;
+    return;
+  }
+
+  type EchoState = 'pending' | 'echoed' | 'diverged';
+  let state: EchoState = 'pending';
+  let heldContent = '';
+  let emittedPrefill = false;
+
+  const takePrefillDelta = (): LlmStreamDelta | undefined => {
+    if (emittedPrefill) return undefined;
+    emittedPrefill = true;
+    return { contentDelta: prefillContent };
+  };
+
+  const emitNonContentParts = (delta: LlmStreamDelta): LlmStreamDelta | undefined => {
+    if (delta.reasoningDelta === undefined && delta.finishReason === undefined) {
+      return undefined;
+    }
+    return {
+      ...(delta.reasoningDelta !== undefined
+        ? { reasoningDelta: delta.reasoningDelta }
+        : {}),
+      ...(delta.finishReason !== undefined ? { finishReason: delta.finishReason } : {}),
+    };
+  };
+
+  for await (const delta of deltas) {
+    const hasContent = typeof delta.contentDelta === 'string';
+    const isTerminal = typeof delta.finishReason === 'string';
+    let outputContent: string | undefined;
+
+    if (hasContent) {
+      const content = delta.contentDelta!;
+      if (state === 'pending') {
+        const candidate = heldContent + content;
+        if (prefillContent.startsWith(candidate)) {
+          heldContent = candidate;
+          if (candidate === prefillContent) {
+            state = 'echoed';
+          }
+        } else if (candidate.startsWith(prefillContent)) {
+          state = 'echoed';
+          heldContent = '';
+          outputContent = candidate.slice(prefillContent.length);
+        } else {
+          state = 'diverged';
+          heldContent = '';
+          outputContent = candidate;
+        }
+      } else {
+        outputContent = content;
+      }
+    }
+
+    if (isTerminal && state === 'pending') {
+      state = 'diverged';
+      outputContent = (outputContent ?? '') + heldContent;
+      heldContent = '';
+    }
+
+    if (outputContent !== undefined && outputContent.length > 0) {
+      const prefixDelta = takePrefillDelta();
+      if (prefixDelta) yield prefixDelta;
+      yield { ...delta, contentDelta: outputContent };
+      continue;
+    }
+
+    if (hasContent) {
+      const nonContentParts = emitNonContentParts(delta);
+      if (nonContentParts) {
+        if (isTerminal) {
+          const prefixDelta = takePrefillDelta();
+          if (prefixDelta) yield prefixDelta;
+        }
+        yield nonContentParts;
+      } else if (delta.contentDelta === '' && state !== 'pending') {
+        const prefixDelta = takePrefillDelta();
+        if (prefixDelta) yield prefixDelta;
+        yield { ...delta, contentDelta: '' };
+      }
+      continue;
+    }
+
+    if (isTerminal) {
+      const prefixDelta = takePrefillDelta();
+      if (prefixDelta) yield prefixDelta;
+    }
+    yield delta;
+  }
+
+  if (state === 'pending') {
+    const prefixDelta = takePrefillDelta();
+    if (prefixDelta) yield prefixDelta;
+    if (heldContent) {
+      yield { contentDelta: heldContent };
+    }
+  } else {
+    const prefixDelta = takePrefillDelta();
+    if (prefixDelta) yield prefixDelta;
+  }
+}
+
 export function mapReasoningEffortToDeepSeekParams(effort: ReasoningEffort = 'high'): {
   thinking: DeepSeekThinkingParam;
   reasoning_effort: ReasoningEffort;
@@ -209,7 +337,6 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
   headers: Record<string, string>;
   body: string;
 } {
-  const url = resolveChatCompletionsUrl(req.baseUrl);
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'text/event-stream',
@@ -224,12 +351,29 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
   const mapped = mapReasoningEffortToDeepSeekParams(effort);
   const thinking = req.thinking ?? mapped.thinking;
   const reasoning_effort = req.reasoning_effort ?? mapped.reasoning_effort;
+  const allowReasoning = thinking.type !== 'disabled' && reasoning_effort !== 'none';
+  const messages = req.prefixCompletion
+    ? [
+        ...req.messages,
+        {
+          role: 'assistant' as const,
+          content: req.prefixCompletion.content,
+          prefix: true as const,
+          ...(allowReasoning && req.prefixCompletion.reasoningContent !== undefined
+            ? { reasoning_content: req.prefixCompletion.reasoningContent }
+            : {}),
+        },
+      ]
+    : req.messages;
+  const url = req.prefixCompletion
+    ? resolveBetaChatCompletionsUrl(req.baseUrl)
+    : resolveChatCompletionsUrl(req.baseUrl);
   return {
     url,
     headers,
     body: JSON.stringify({
       model: req.model,
-      messages: req.messages,
+      messages,
       stream: true,
       thinking,
       reasoning_effort,
@@ -276,7 +420,10 @@ export function createOpenAiTransport(fetchImpl?: FetchLike): LlmTransport {
         throw new Error('Model response body is empty.');
       }
 
-      yield* parseOpenAiSseStream(toAsyncChunks(response.body));
+      yield* applyPrefixEchoCursor(
+        parseOpenAiSseStream(toAsyncChunks(response.body)),
+        req.prefixCompletion?.content ?? '',
+      );
     },
   };
 }
