@@ -9,7 +9,7 @@ import {
   type PromptPackContextOptions,
   type PromptPackSlotChars,
 } from './promptPack.ts';
-import { judgeHardRefusal, judgeRefusal, type RefusalVerdict } from './refusalPatterns.ts';
+import { judgeRefusal, type RefusalVerdict } from './refusalPatterns.ts';
 import { routeRefusal, type DeliveryMode, type RefusalRoute } from './thinDelivery.ts';
 import type {
   AbortSignalLike,
@@ -333,13 +333,6 @@ async function runAttempt(
   let finishReason: string | null | undefined;
   let shown = '';
   let gateOpen = false;
-  let earlyRefusal: AttemptRefusal | null = null;
-  // Delivery-confirmation window: L1 can be followed by a scene or protocol
-  // artifact in the same stream. Keep the hard verdict pending until the next
-  // content delta confirms the reply is still a thin refusal; this protects
-  // short partial deliveries from early abort. The existing single-retry
-  // contract is unchanged once the confirmation still routes to retry.
-  let pendingHardRefusal: RefusalVerdict | null = null;
 
   const emitVisible = (): void => {
     const visible = toVisible(raw);
@@ -361,6 +354,24 @@ async function runAttempt(
     };
   };
 
+  const resultFor = (
+    evaluated: ReturnType<typeof evaluateFull>,
+  ): AttemptResult => ({
+    kind: 'result',
+    raw,
+    reasoningContent,
+    finishReason,
+    ...(evaluated.route === 'partial_refused'
+      ? {
+          diagnostics: {
+            refusalRoute: 'partial_refused',
+            ...(evaluated.matchedRuleId ? { matchedRuleId: evaluated.matchedRuleId } : {}),
+          } satisfies NodeDiagnostics,
+        }
+      : {}),
+    ...(prefixContent !== undefined ? { prefillContent: prefixContent } : {}),
+  });
+
   try {
     for await (const delta of options.transport.streamChat(request)) {
       if (options.callbacks?.signal?.aborted) throw createAbortError();
@@ -373,45 +384,20 @@ async function runAttempt(
         raw += delta.contentDelta;
         if (gateOpen) {
           emitVisible();
-        } else {
-          if (!isStop(finishReason)) {
-            const { body, hasProtocolArtifacts } = splitRefusalProtocolContent(raw);
-            if (pendingHardRefusal) {
-              const route = routeRefusal(
-                body,
-                true,
-                deliveryOptions(options.mode, hasProtocolArtifacts),
-              );
-              if (route === 'retry') {
-                earlyRefusal = {
-                  kind: 'refusal',
-                  route: 'retry',
-                  raw,
-                  reasoningContent,
-                  matchedRuleId: pendingHardRefusal.ruleId,
-                };
-                internalAbort.abort();
-                break;
-              }
-              // A partial delivery has been confirmed: open the gate now and
-              // preserve the body/protocol while waiting for the terminal stop.
-              gateOpen = true;
-              emitVisible();
-            } else if (raw.length <= REFUSAL_OBSERVATION_CHARS) {
-              const hardVerdict = judgeHardRefusal(body);
-              if (hardVerdict) pendingHardRefusal = hardVerdict;
-            }
-          }
-          if (raw.length > REFUSAL_OBSERVATION_CHARS) {
-            gateOpen = true;
-            emitVisible();
-          }
+        } else if (raw.length > REFUSAL_OBSERVATION_CHARS) {
+          // The 120-character window is the final protection against chunk
+          // boundaries. Once it is exceeded, open the gate and never retry.
+          gateOpen = true;
+          emitVisible();
         }
       }
 
-      if (isStop(finishReason) && !gateOpen) {
+      if (isStop(finishReason)) {
         const evaluated = evaluateFull();
-        if (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton') {
+        if (
+          !gateOpen &&
+          (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton')
+        ) {
           return {
             kind: 'refusal',
             route: evaluated.route,
@@ -421,73 +407,21 @@ async function runAttempt(
           };
         }
         emitVisible();
-        return {
-          kind: 'result',
-          raw,
-          reasoningContent,
-          finishReason,
-          ...(evaluated.route === 'partial_refused'
-            ? {
-                diagnostics: {
-                  refusalRoute: 'partial_refused',
-                  ...(evaluated.matchedRuleId ? { matchedRuleId: evaluated.matchedRuleId } : {}),
-                } satisfies NodeDiagnostics,
-              }
-            : {}),
-          ...(prefixContent !== undefined ? { prefillContent: prefixContent } : {}),
-        };
-      }
-
-      if (isStop(finishReason) && gateOpen) {
-        const evaluated = evaluateFull();
-        return {
-          kind: 'result',
-          raw,
-          reasoningContent,
-          finishReason,
-          ...(evaluated.route === 'partial_refused'
-            ? {
-                diagnostics: {
-                  refusalRoute: 'partial_refused',
-                  ...(evaluated.matchedRuleId ? { matchedRuleId: evaluated.matchedRuleId } : {}),
-                } satisfies NodeDiagnostics,
-              }
-            : {}),
-          ...(prefixContent !== undefined ? { prefillContent: prefixContent } : {}),
-        };
+        return resultFor(evaluated);
       }
     }
 
-    if (earlyRefusal) return earlyRefusal;
-    if (pendingHardRefusal) {
-      const { body, hasProtocolArtifacts } = splitRefusalProtocolContent(raw);
-      const route = routeRefusal(body, true, deliveryOptions(options.mode, hasProtocolArtifacts));
-      if (route === 'retry') {
-        return {
-          kind: 'refusal',
-          route: 'retry',
-          raw,
-          reasoningContent,
-          matchedRuleId: pendingHardRefusal.ruleId,
-        };
-      }
-      gateOpen = true;
-      emitVisible();
-    }
+    // A provider may close a normally completed stream without a finishReason.
+    // Re-evaluate only to preserve partial-refusal diagnostics; the caller can
+    // still reject the missing terminal reason through the existing checks.
+    const evaluated = evaluateFull();
     emitVisible();
-    return {
-      kind: 'result',
-      raw,
-      reasoningContent,
-      finishReason,
-      ...(prefixContent !== undefined ? { prefillContent: prefixContent } : {}),
-    };
+    return resultFor(evaluated);
   } catch (error) {
     if (options.callbacks?.signal?.aborted) {
       emitVisible();
       throw createAbortError();
     }
-    if (earlyRefusal) return earlyRefusal;
     emitVisible();
     throw error;
   } finally {
@@ -497,7 +431,9 @@ async function runAttempt(
 
 /**
  * Wraps one foreground generation stream with the 120-character refusal observation
- * window and at most one silent retry. Background summary/import streams must not use it.
+ * window and at most one silent retry. The observation window is the final guard
+ * against unreliable chunk boundaries: no L1 verdict aborts a stream mid-flight.
+ * Background summary/import streams must not use it.
  */
 export async function streamWithRefusalHandling(
   options: RefusalHandlingOptions,
