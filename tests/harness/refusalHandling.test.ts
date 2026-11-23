@@ -194,7 +194,119 @@ describe('Spec #132 120-character refusal wrapper', () => {
     expect(actions).toEqual(['refusal_partial_delivered']);
   });
 
+  it('keeps a short L1 refusal when the same delta continues with scene delivery', async () => {
+    const raw = '抱歉，我不能帮你写这段内容。\n（她放下杯子，抬眼看你。）';
+    const visible: string[] = [];
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: raw },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onContentDelta: (delta) => visible.push(delta) },
+    }));
+
+    expect(transport.requests).toHaveLength(1);
+    expect(visible.join('')).toBe(raw);
+    expect(result.content).toBe(raw);
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'partial_refused',
+      matchedRuleId: 'L1-02',
+    });
+  });
+
+  it('keeps a short L1 refusal when the same delta contains protocol artifacts', async () => {
+    const raw = '抱歉，我不能帮你写这段内容。\n```lfh-summary\n她把茶推过来，等他先开口。\n```';
+    const visible: string[] = [];
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: raw },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onContentDelta: (delta) => visible.push(delta) },
+    }));
+
+    expect(transport.requests).toHaveLength(1);
+    expect(visible.join('')).toBe(raw);
+    expect(result.content).toBe(raw);
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'partial_refused',
+      matchedRuleId: 'L1-02',
+    });
+  });
+
+  it('waits for a confirming delta before opening a split short L1 scene delivery', async () => {
+    const raw = '抱歉，我不能帮你写这段内容。\n（她放下杯子，抬眼看你。）';
+    const visible: string[] = [];
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: '抱歉，我不能帮你写这段内容。' },
+        { contentDelta: '\n（她放下杯子，抬眼看你。）' },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onContentDelta: (delta) => visible.push(delta) },
+    }));
+
+    expect(transport.requests).toHaveLength(1);
+    expect(visible.join('')).toBe(raw);
+    expect(result.content).toBe(raw);
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'partial_refused',
+      matchedRuleId: 'L1-02',
+    });
+  });
+
+  it('still early-retries a thin L1 after one confirming content delta', async () => {
+    const firstRaw = '这个请求我不会提供，嗯。';
+    const retryRaw = '雨声落在窗沿上，他推门走进屋里，看见桌上还留着半盏温茶。';
+    const retry = vi.fn();
+    const visible: string[] = [];
+    let observedConfirmation = false;
+    let firstRequestAborted = false;
+    const transport = scriptedTransport([
+      (req) => ({
+        async *[Symbol.asyncIterator]() {
+          try {
+            yield { contentDelta: '这个请求我不会提供' };
+            observedConfirmation = true;
+            yield { contentDelta: '，嗯。' };
+          } finally {
+            firstRequestAborted = Boolean(req.signal?.aborted);
+          }
+        },
+      }),
+      () => stream([
+        { contentDelta: retryRaw },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onRefusalRetry: retry, onContentDelta: (delta) => visible.push(delta) },
+    }));
+
+    expect(observedConfirmation).toBe(true);
+    expect(firstRequestAborted).toBe(true);
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(transport.requests).toHaveLength(2);
+    expect(visible.join('')).toBe(retryRaw);
+    expect(result.content).toBe(retryRaw);
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'retry',
+      recoveredFromText: firstRaw,
+    });
+  });
+
   it('aborts an L1 hard refusal before stop and retries once with Pack.tail and a beta prefill', async () => {
+    const firstRaw = '抱歉，我不能帮你写这段内容。嗯。';
     const retry = vi.fn();
     const visible: string[] = [];
     let firstRequestAborted = false;
@@ -203,6 +315,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
         async *[Symbol.asyncIterator]() {
           try {
             yield { contentDelta: '抱歉，我不能帮你写这段内容。' };
+            yield { contentDelta: '嗯。' };
           } finally {
             firstRequestAborted = Boolean(req.signal?.aborted);
           }
@@ -227,7 +340,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
     expect(result.prefillContent).toBe(buildModePrefill('story'));
     expect(result.diagnostics).toMatchObject({
       refusalRoute: 'retry',
-      recoveredFromText: '抱歉，我不能帮你写这段内容。',
+      recoveredFromText: firstRaw,
       retriedWithPrefix: true,
       matchedRuleId: 'L1-02',
     });
@@ -381,6 +494,37 @@ describe('Spec #132 120-character refusal wrapper', () => {
       matchedRuleId: 'L1-02',
     });
     expect(actions).toEqual(['refusal_detected', 'refusal_partial_delivered']);
+  });
+
+  it('delivers a short L1 retry that continues with scene delivery instead of exhausting it', async () => {
+    const firstRaw = '抱歉，我不能帮你写这段内容。';
+    const retryRaw = '抱歉，我不能帮你写这段内容。\n（她放下杯子，抬眼看你。）';
+    const visible: string[] = [];
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: firstRaw },
+        { finishReason: 'stop' },
+      ]),
+      () => stream([
+        { contentDelta: retryRaw },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onContentDelta: (delta) => visible.push(delta) },
+    }));
+
+    expect(transport.requests).toHaveLength(2);
+    expect(visible.join('')).toBe(retryRaw);
+    expect(result.content).toBe(retryRaw);
+    expect(result.finishReason).toBe('stop');
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'partial_refused',
+      recoveredFromText: firstRaw,
+      retriedWithPrefix: true,
+      matchedRuleId: 'L1-02',
+    });
   });
 
   it.each(['throw', 'yield'] as const)(

@@ -334,6 +334,12 @@ async function runAttempt(
   let shown = '';
   let gateOpen = false;
   let earlyRefusal: AttemptRefusal | null = null;
+  // Delivery-confirmation window: L1 can be followed by a scene or protocol
+  // artifact in the same stream. Keep the hard verdict pending until the next
+  // content delta confirms the reply is still a thin refusal; this protects
+  // short partial deliveries from early abort. The existing single-retry
+  // contract is unchanged once the confirmation still routes to retry.
+  let pendingHardRefusal: RefusalVerdict | null = null;
 
   const emitVisible = (): void => {
     const visible = toVisible(raw);
@@ -369,18 +375,31 @@ async function runAttempt(
           emitVisible();
         } else {
           if (!isStop(finishReason)) {
-            const { body } = splitRefusalProtocolContent(raw);
-            const hardVerdict = raw.length <= REFUSAL_OBSERVATION_CHARS ? judgeHardRefusal(body) : null;
-            if (hardVerdict) {
-              earlyRefusal = {
-                kind: 'refusal',
-                route: 'retry',
-                raw,
-                reasoningContent,
-                matchedRuleId: hardVerdict.ruleId,
-              };
-              internalAbort.abort();
-              break;
+            const { body, hasProtocolArtifacts } = splitRefusalProtocolContent(raw);
+            if (pendingHardRefusal) {
+              const route = routeRefusal(
+                body,
+                true,
+                deliveryOptions(options.mode, hasProtocolArtifacts),
+              );
+              if (route === 'retry') {
+                earlyRefusal = {
+                  kind: 'refusal',
+                  route: 'retry',
+                  raw,
+                  reasoningContent,
+                  matchedRuleId: pendingHardRefusal.ruleId,
+                };
+                internalAbort.abort();
+                break;
+              }
+              // A partial delivery has been confirmed: open the gate now and
+              // preserve the body/protocol while waiting for the terminal stop.
+              gateOpen = true;
+              emitVisible();
+            } else if (raw.length <= REFUSAL_OBSERVATION_CHARS) {
+              const hardVerdict = judgeHardRefusal(body);
+              if (hardVerdict) pendingHardRefusal = hardVerdict;
             }
           }
           if (raw.length > REFUSAL_OBSERVATION_CHARS) {
@@ -440,6 +459,21 @@ async function runAttempt(
     }
 
     if (earlyRefusal) return earlyRefusal;
+    if (pendingHardRefusal) {
+      const { body, hasProtocolArtifacts } = splitRefusalProtocolContent(raw);
+      const route = routeRefusal(body, true, deliveryOptions(options.mode, hasProtocolArtifacts));
+      if (route === 'retry') {
+        return {
+          kind: 'refusal',
+          route: 'retry',
+          raw,
+          reasoningContent,
+          matchedRuleId: pendingHardRefusal.ruleId,
+        };
+      }
+      gateOpen = true;
+      emitVisible();
+    }
     emitVisible();
     return {
       kind: 'result',
