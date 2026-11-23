@@ -278,6 +278,7 @@ export function App({ runtime }: AppProps) {
   storyRef.current = story;
   const branchSwitchBusyRef = useRef(false);
   const branchSwitchTransitionRef = useRef(false);
+  const modeConversionPendingRef = useRef(false);
   const configEditSeqRef = useRef(0);
   const configSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const suppressedAbortRef = useRef<WeakSet<AbortController>>(new WeakSet());
@@ -967,16 +968,17 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleConvertStageMode = async (targetMode: StageAssetMode) => {
-    if (isStreaming || branchSwitchBusyRef.current) return;
+    if (isStreaming || branchSwitchBusyRef.current || modeConversionPendingRef.current) return;
     const fromMode: StageAssetMode = creativePage ?? 'story';
     if (fromMode === targetMode) return;
+    modeConversionPendingRef.current = true;
     setErrorMsg(null);
-    await flushActiveManuscripts();
-    const latestWorkspace = await creative.read();
-    const activeWorkNow = latestWorkspace.works.find((item) => item.id === latestWorkspace.activeWorkId);
-    const activeCharacterNow = latestWorkspace.characters.find((item) => item.id === latestWorkspace.activeCharacterId);
 
     try {
+      await flushActiveManuscripts();
+      const latestWorkspace = await creative.read();
+      const activeWorkNow = latestWorkspace.works.find((item) => item.id === latestWorkspace.activeWorkId);
+      const activeCharacterNow = latestWorkspace.characters.find((item) => item.id === latestWorkspace.activeCharacterId);
       const converted = convertActiveAssetMode({
         fromMode,
         toMode: targetMode,
@@ -1000,6 +1002,8 @@ export function App({ runtime }: AppProps) {
       setStatusNotice(`已切换为「${modeName}」，原有设定与对话已完整保留。`);
     } catch (err) {
       setErrorMsg(toErrorMessage(err, '模式切换失败。'));
+    } finally {
+      modeConversionPendingRef.current = false;
     }
   };
 
@@ -1012,6 +1016,7 @@ export function App({ runtime }: AppProps) {
     if (
       !trimmed ||
       branchSwitchBusyRef.current ||
+      modeConversionPendingRef.current ||
       abortRef.current ||
       isStreaming ||
       isSummarizing
@@ -1144,12 +1149,13 @@ export function App({ runtime }: AppProps) {
 
   const handleWelcomeEntrySubmit = (rawPrompt: string) => {
     const trimmed = rawPrompt.trim();
-    if (!trimmed || creationPending.current || isStreaming || creating) return;
+    if (!trimmed || creationPending.current || modeConversionPendingRef.current || isStreaming || creating) return;
     const prefAtSubmit = pendingWelcomePref;
 
     if (neutralTurns.length > 0) {
       const switchTarget = detectNaturalModeSwitchIntent(trimmed);
       if (switchTarget) {
+        modeConversionPendingRef.current = true;
         const materialized = materializeAssetFromNodes({
           targetMode: switchTarget,
           title: neutralTurns[0]?.content.slice(0, 20) || '新创作',
@@ -1171,7 +1177,10 @@ export function App({ runtime }: AppProps) {
               // Ignore diagnostics error.
             }
           })
-          .catch((err) => setErrorMsg(toErrorMessage(err, '转换模式失败。')));
+          .catch((err) => setErrorMsg(toErrorMessage(err, '转换模式失败。')))
+          .finally(() => {
+            modeConversionPendingRef.current = false;
+          });
         return;
       }
     }

@@ -12,6 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "node tests/e2e/run-e2e.mjs",
+    "test:e2e:issue-127": "node tests/e2e/issue-127-mode-intent.mjs",
+    "test:e2e:markdown": "node tests/e2e/markdown-message-rendering.mjs",
     "test:ui-impl-05:dev": "LFH_UI_IMPL_05_ONLY=1 node tests/e2e/run-e2e.mjs",
     "test:ui-impl-05:production": "LFH_E2E_PRODUCTION=1 LFH_UI_IMPL_05_PRODUCTION_ONLY=1 node tests/e2e/run-e2e.mjs",
     "android:sync": "npm run build && npx cap sync android",
@@ -20,7 +22,7 @@
     "test:android-back": "npm run android:build && node scripts/android-back-regression.mjs",
     "audit:artifacts": "node scripts/audit-artifacts.mjs",
     "audit:ui": "node scripts/audit-ui-tokens.mjs",
-    "verify:all": "npm run typecheck:harness && npm run typecheck && npm run build && npm run test:ui-impl-05:dev && npm run test:ui-impl-05:production && npm test && npm run test:e2e && npm run android:build && npm run audit:artifacts && npm run audit:ui"
+    "verify:all": "npm run typecheck:harness && npm run typecheck && npm run build && npm run test:ui-impl-05:dev && npm run test:ui-impl-05:production && npm test && npm run test:e2e && npm run test:e2e:issue-127 && npm run test:e2e:markdown && npm run android:build && npm run audit:artifacts && npm run audit:ui"
   },
   "dependencies": {
     "@capacitor/android": "^8.6.2",

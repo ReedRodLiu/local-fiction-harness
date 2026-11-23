@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { verifyInactiveStoryReload, verifyThreeModes } from './three-modes.mjs';
+import { verifyIssue126ModeConversion } from './issue-126-mode-conversion.mjs';
 
 const require = createRequire(import.meta.url);
 const playwrightCorePath =
@@ -2104,9 +2105,13 @@ async function verifyDisplayPreferenceMatrix(page, port) {
       await page.setViewportSize(viewport);
       await settings.getByTestId(`theme-option-${theme}`).click();
       await settings.getByTestId(`theme-option-${theme}`).scrollIntoViewIfNeeded();
-      const layout = await settings.evaluate((element) => {
+      const layout = await settings.evaluate(async (element) => {
         const root = document.documentElement;
         const option = element.querySelector('[data-testid="theme-option-warm"]');
+        // Measure the selected theme after the button's color transition settles.
+        if (option) {
+          await Promise.allSettled(option.getAnimations().map((animation) => animation.finished));
+        }
         const optionStyle = option ? getComputedStyle(option) : null;
         const rootStyle = getComputedStyle(root);
         return {
@@ -2954,6 +2959,13 @@ async function main() {
         holdNextStoryStorageCommit, releaseHeldStoryStorageCommit,
       });
       console.log('THREE_MODE_HARNESS_E2E_PASSED');
+      await verifyIssue126ModeConversion(browser, port, {
+        newOfflineContext,
+        mockSuccessfulKeyVerification,
+        completePendingSetup,
+        sseResponse,
+      });
+      console.log('ISSUE_126_MODE_CONVERSION_E2E_PASSED');
       if (process.env.LFH_CREATIVE_ONLY === '1') return;
     }
 

@@ -3,10 +3,12 @@ import {
   EMPTY_SUMMARY_SNAPSHOT,
   characterContext,
   classifyEntryHeuristic,
+  conversationLocalVersion,
   convertActiveAssetMode,
   createFictionHarness,
   createInMemoryStoryStorage,
   detectNaturalModeSwitchIntent,
+  documentLineage,
   documentVersion,
   formatCharacterConversationTitle,
   materializeAssetFromNodes,
@@ -18,6 +20,7 @@ import {
   routeEntryMessage,
   storyExportMarkdown,
   visibleEntryRoutePrefix,
+  writeDocument,
   type LlmTransport,
   type ModelConfig,
   type TurnNode,
@@ -163,6 +166,326 @@ describe('V0.2 entryRouter & unified mode helpers', () => {
     expect(asCharacter.character!.name).toBe('灯塔守夜人');
     expect(documentVersion(asCharacter.character!.document).markdown).toContain('孤岛灯塔');
     expect(Object.keys(asCharacter.character!.conversations[0].nodes)).toHaveLength(4);
+  });
+
+  it('keeps story branch-note history readable after converting to character interaction', () => {
+    const materialized = materializeAssetFromNodes({
+      targetMode: 'story',
+      title: '灯塔守夜人',
+      settingMarkdown: '## 设定\n\n孤岛灯塔。',
+      turns: [
+        {
+          id: 'n1',
+          parentId: null,
+          role: 'user',
+          content: '推开灯塔的门。',
+          createdAt: 100,
+          summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        },
+        {
+          id: 'n2',
+          parentId: 'n1',
+          role: 'assistant',
+          content: '门轴在潮湿空气里发出低鸣。',
+          createdAt: 101,
+          summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        },
+      ],
+    });
+    const story = materialized.story!;
+    const branchNote = writeDocument(
+      story.documents!.local,
+      story.documents!.local.head,
+      '## 当前进度\n\n灯塔门锁已经打开。',
+      'user',
+      'story-local-v2',
+    );
+    const activeLeaf = story.nodes[story.activeLeafNodeId!];
+    const storyWithHistory = {
+      ...story,
+      documents: { ...story.documents!, local: branchNote },
+      nodes: {
+        ...story.nodes,
+        [activeLeaf.id]: {
+          ...activeLeaf,
+          documents: { ...activeLeaf.documents!, local: 'story-local-v2' },
+        },
+      },
+    };
+
+    const converted = convertActiveAssetMode({
+      fromMode: 'story',
+      toMode: 'character',
+      story: storyWithHistory,
+    });
+    const conversation = converted.character!.conversations[0];
+    const localVersion = documentVersion(conversation.document, conversationLocalVersion(conversation));
+    const context = characterContext(newDocument('偏好自然对白'), converted.character!, conversation, '继续往里走');
+    const contextText = context.messages.map((message) => message.content).join('\n');
+
+    expect(localVersion.markdown).toContain('灯塔门锁已经打开');
+    expect(contextText).toContain('孤岛灯塔');
+    expect(contextText).toContain('灯塔门锁已经打开');
+    expect(Object.values(conversation.nodes).every((node) => (
+      Object.hasOwn(conversation.document.versions, node.documents!.local) &&
+      Object.hasOwn(converted.character!.document.versions, node.documents!.container)
+    ))).toBe(true);
+    expect(documentVersion(storyWithHistory.documents.local, 'story-local-v2').markdown).toContain('灯塔门锁已经打开');
+    expect(Object.values(conversation.nodes).map((node) => node.content)).toEqual([
+      '推开灯塔的门。',
+      '门轴在潮湿空气里发出低鸣。',
+    ]);
+  });
+
+  it('keeps active-path document revisions and edit anchors in both directions without side-branch leaks', () => {
+    const storyBase = newDocument('## 当前进度\n\n故事起点', 'migration', 'path-original');
+    const storyFirst = writeDocument(
+      storyBase,
+      'path-original',
+      '## 当前进度\n\n故事第一轮',
+      'automatic',
+      'path-n1',
+    );
+    const storySecond = writeDocument(
+      storyFirst,
+      'path-n1',
+      '## 当前进度\n\n故事第二轮',
+      'automatic',
+      'path-n2',
+    );
+    const storyEdited = writeDocument(
+      storySecond,
+      'path-n2',
+      '## 当前进度\n\n故事第二轮的编辑版本',
+      'user',
+      'path-n2-edit',
+    );
+    const storySide = writeDocument(
+      storyBase,
+      'path-original',
+      '## 当前进度\n\n不应带走的侧支秘密',
+      'automatic',
+      'path-side',
+    );
+    const story = materializeAssetFromNodes({
+      targetMode: 'story',
+      title: '灯塔守夜人',
+      settingMarkdown: '## 设定\n\n孤岛灯塔。',
+      turns: [
+        {
+          id: 'n1',
+          parentId: null,
+          role: 'user',
+          content: '推开灯塔的门。',
+          createdAt: 100,
+          summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        },
+        {
+          id: 'n2',
+          parentId: 'n1',
+          role: 'assistant',
+          content: '门轴在潮湿空气里发出低鸣。',
+          createdAt: 101,
+          summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        },
+      ],
+    }).story!;
+    const activeStoryN1 = Object.values(story.nodes).find((node) => node.content === '推开灯塔的门。')!;
+    const activeStoryN2 = Object.values(story.nodes).find((node) => node.content === '门轴在潮湿空气里发出低鸣。')!;
+    story.documents = {
+      ...story.documents!,
+      local: {
+        head: 'path-original',
+        versions: { ...storyEdited.versions, ...storySide.versions },
+      },
+      edits: { [activeStoryN2.id]: 'path-n2-edit' },
+    };
+    story.nodes[activeStoryN1.id] = {
+      ...activeStoryN1,
+      documents: { ...activeStoryN1.documents!, local: 'path-n1' },
+    };
+    story.nodes[activeStoryN2.id] = {
+      ...activeStoryN2,
+      documents: { ...activeStoryN2.documents!, local: 'path-n2' },
+    };
+    story.nodes.side = {
+      id: 'side',
+      parentId: activeStoryN1.id,
+      role: 'assistant',
+      content: '旁支内容',
+      createdAt: 102,
+      summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      documents: { ...activeStoryN2.documents!, local: 'path-side' },
+    };
+    const sourceStoryJson = JSON.stringify(story);
+
+    const character = convertActiveAssetMode({
+      fromMode: 'story',
+      toMode: 'character',
+      story,
+    }).character!;
+    const conversation = character.conversations[0];
+    const convertedN1 = Object.values(conversation.nodes).find((node) => node.content === '推开灯塔的门。')!;
+    const convertedN2 = Object.values(conversation.nodes).find((node) => node.content === '门轴在潮湿空气里发出低鸣。')!;
+    const effectiveVersion = conversationLocalVersion(conversation);
+
+    expect(Object.keys(conversation.nodes)).not.toContain('n1');
+    expect(convertedN1.documents?.local).toBe('path-n1');
+    expect(convertedN2.documents?.local).toBe('path-n2');
+    expect(conversation.edits).toEqual({ [convertedN2.id]: 'path-n2-edit' });
+    expect(effectiveVersion).toBe('path-n2-edit');
+    expect(documentVersion(conversation.document, effectiveVersion).markdown).toContain('故事第二轮的编辑版本');
+    expect(documentLineage(conversation.document, effectiveVersion).map((version) => version.id)).toEqual([
+      'path-n2-edit',
+      'path-n2',
+      'path-n1',
+      'path-original',
+    ]);
+    expect(conversation.document.versions).not.toHaveProperty('path-side');
+    expect(JSON.stringify(conversation.document)).not.toContain('不应带走的侧支秘密');
+    expect(JSON.stringify(story)).toBe(sourceStoryJson);
+    expect(documentVersion(story.documents!.local, 'path-side').markdown).toContain('不应带走的侧支秘密');
+
+    const characterBase = newDocument('## 设定\n\n角色设定初稿', 'user', 'char-v1');
+    const characterCurrent = writeDocument(
+      characterBase,
+      'char-v1',
+      '## 设定\n\n角色设定当前版',
+      'user',
+      'char-v2',
+    );
+    const sourceCharacter = newCharacter('岑灯', '');
+    sourceCharacter.document = characterCurrent;
+    const sourceConversation = newConversation(sourceCharacter, 'personal');
+    sourceConversation.document = {
+      head: 'path-original',
+      versions: { ...storyEdited.versions, ...storySide.versions },
+    };
+    sourceConversation.nodes = {
+      c1: {
+        id: 'c1',
+        parentId: null,
+        role: 'user',
+        content: '灯塔今晚亮吗？',
+        createdAt: 200,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        documents: { container: 'char-v1', local: 'path-n1' },
+      },
+      c2: {
+        id: 'c2',
+        parentId: 'c1',
+        role: 'assistant',
+        content: '灯一直亮着。',
+        createdAt: 201,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        documents: { container: 'char-v1', local: 'path-n2' },
+      },
+    };
+    sourceConversation.characterVersion = 'char-v2';
+    sourceConversation.activeLeafNodeId = 'c2';
+    sourceConversation.edits = { c2: 'path-n2-edit' };
+    sourceCharacter.conversations = [sourceConversation];
+    sourceCharacter.activeConversationId = sourceConversation.id;
+    const sourceCharacterJson = JSON.stringify(sourceCharacter);
+
+    const reverseStory = convertActiveAssetMode({
+      fromMode: 'character',
+      toMode: 'story',
+      character: sourceCharacter,
+    }).story!;
+    const reverseN1 = Object.values(reverseStory.nodes).find((node) => node.content === '灯塔今晚亮吗？')!;
+    const reverseN2 = Object.values(reverseStory.nodes).find((node) => node.content === '灯一直亮着。')!;
+
+    expect(reverseN1.documents?.container).toBe('char-v1');
+    expect(reverseN2.documents?.container).toBe('char-v1');
+    expect(reverseN1.documents?.local).toBe('path-n1');
+    expect(reverseN2.documents?.local).toBe('path-n2');
+    expect(reverseStory.documents?.containerEdits).toEqual({ [(reverseStory.activeLeafNodeId ?? '')]: 'char-v2' });
+    expect(reverseStory.documents?.edits).toEqual({ [(reverseStory.activeLeafNodeId ?? '')]: 'path-n2-edit' });
+    expect(documentLineage(reverseStory.documents!.container, 'char-v2').map((version) => version.id)).toEqual([
+      'char-v2',
+      'char-v1',
+    ]);
+    expect(reverseStory.documents!.local.versions).not.toHaveProperty('path-side');
+    expect(JSON.stringify(reverseStory.documents!.local)).not.toContain('不应带走的侧支秘密');
+    expect(JSON.stringify(sourceCharacter)).toBe(sourceCharacterJson);
+    expect(documentVersion(sourceCharacter.conversations[0].document, 'path-side').markdown).toContain(
+      '不应带走的侧支秘密',
+    );
+  });
+
+  it('keeps document references valid across empty, writing, and reverse mode conversions', () => {
+    const emptyWork = materializeAssetFromNodes({
+      targetMode: 'writing',
+      title: '空白作品',
+      settingMarkdown: '## 设定\n\n尚未开始。',
+      turns: [],
+    }).work!;
+    const emptyCharacter = convertActiveAssetMode({
+      fromMode: 'writing',
+      toMode: 'character',
+      work: emptyWork,
+    }).character!;
+    expect(emptyCharacter.conversations[0].nodes).toEqual({});
+    expect(documentVersion(
+      emptyCharacter.conversations[0].document,
+      conversationLocalVersion(emptyCharacter.conversations[0]),
+    ).markdown).toBe('');
+
+    const character = newCharacter('岑灯', '## 设定\n\n守塔人。');
+    const conversation = newConversation(character, 'personal', '## 当前进度\n\n收到了远航船的回信。');
+    conversation.nodes = {
+      c1: {
+        id: 'c1',
+        parentId: null,
+        role: 'user',
+        content: '灯塔今晚亮吗？',
+        createdAt: 100,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        documents: { container: character.document.head, local: conversation.document.head },
+      },
+    };
+    conversation.activeLeafNodeId = 'c1';
+    character.conversations = [conversation];
+    character.activeConversationId = conversation.id;
+
+    const asStory = convertActiveAssetMode({
+      fromMode: 'character',
+      toMode: 'story',
+      character,
+    }).story!;
+    expect(documentVersion(asStory.documents!.local).markdown).toContain('收到了远航船的回信');
+    expect(Object.values(asStory.nodes).every((node) => (
+      Object.hasOwn(asStory.documents!.local.versions, node.documents!.local) &&
+      Object.hasOwn(asStory.documents!.container.versions, node.documents!.container)
+    ))).toBe(true);
+    expect(documentVersion(character.document).markdown).toContain('守塔人');
+
+    const writing = materializeAssetFromNodes({
+      targetMode: 'writing',
+      title: '灯塔来信',
+      settingMarkdown: '## 设定\n\n远航船。',
+      turns: [
+        {
+          id: 'w1',
+          parentId: null,
+          role: 'assistant',
+          content: '海面先亮了起来。',
+          createdAt: 200,
+          summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        },
+      ],
+    }).work!;
+    const asCharacter = convertActiveAssetMode({
+      fromMode: 'writing',
+      toMode: 'character',
+      work: writing,
+    }).character!;
+    const loadedConversation = asCharacter.conversations[0];
+    expect(Object.values(loadedConversation.nodes).every((node) => (
+      Object.hasOwn(loadedConversation.document.versions, node.documents!.local) &&
+      Object.hasOwn(asCharacter.document.versions, node.documents!.container)
+    ))).toBe(true);
   });
 
   it('routes manuscript bottom composer replies into suggestion, chat, and proposal intents', () => {
