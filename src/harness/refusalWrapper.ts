@@ -268,6 +268,7 @@ function isStop(finishReason: string | null | undefined): boolean {
 async function streamPassThrough(
   options: RefusalHandlingOptions,
 ): Promise<RefusalHandlingResult> {
+  throwIfAborted(options);
   let raw = '';
   let reasoningContent = '';
   let finishReason: string | null | undefined;
@@ -397,7 +398,10 @@ async function runAttempt(
         raw += delta.contentDelta;
         if (gateOpen) {
           emitVisible();
-        } else if (raw.length > REFUSAL_OBSERVATION_CHARS) {
+        } else if (
+          splitRefusalProtocolContent(raw).body.replace(/\s/g, '').length >
+          REFUSAL_OBSERVATION_CHARS
+        ) {
           // The 120-character window is the final protection against chunk
           // boundaries. Once it is exceeded, open the gate and never retry.
           gateOpen = true;
@@ -456,6 +460,20 @@ export async function streamWithRefusalHandling(
 
   const first = await runAttempt(options, effective, 'first');
   if (first.kind === 'result') {
+    if (
+      first.diagnostics?.sourceStatus === 'REFUSAL' &&
+      (first.diagnostics.refusalRoute === 'retry' ||
+        first.diagnostics.refusalRoute === 'retry-skeleton')
+    ) {
+      emitDiagnostic(
+        options,
+        effective,
+        'refusal_detected',
+        first.diagnostics.refusalRoute,
+        0,
+        first.diagnostics.matchedRuleId,
+      );
+    }
     if (first.diagnostics?.refusalRoute === 'partial_refused') {
       emitDiagnostic(
         options,

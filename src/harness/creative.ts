@@ -594,7 +594,10 @@ export async function streamCreativeReply(
     toVisibleContent: visibleReplyPrefix,
   });
   if (callbacks.signal?.aborted) throw new Error('生成已取消。');
-  if (result.finishReason !== 'stop') {
+  const isRefusalResult =
+    result.diagnostics?.sourceStatus === 'REFUSAL' ||
+    result.diagnostics?.refusalRoute === 'partial_refused';
+  if (result.finishReason !== 'stop' && !isRefusalResult) {
     transport.recordMarkdownProposal?.('incomplete');
     throw new Error('回复未完成，请重试。');
   }
@@ -618,7 +621,7 @@ export async function streamCreativeReply(
     unparsedBlocks: parsed.unparsedBlocks,
     reasoningContent: result.reasoningContent,
     ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
-    ...(result.prefillContent ? { prefillContent: result.prefillContent } : {}),
+    ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
     model: config.model,
     reasoningEffort,
   };

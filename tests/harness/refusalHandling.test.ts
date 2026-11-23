@@ -11,6 +11,7 @@ import {
 import { DELIVERY_CASES, SKELETON_CASES } from './refusalCalibrationCases.ts';
 import {
   streamWithRefusalHandling,
+  type RefusalDiagnosticEvent,
   type RefusalHandlingOptions,
 } from '../../src/harness/refusalWrapper.ts';
 import {
@@ -316,12 +317,14 @@ describe('Spec #132 120-character refusal wrapper', () => {
   it('marks a thin refusal without finishReason as REFUSAL without retrying', async () => {
     const raw = '抱歉，我不能帮你写这段内容。';
     const retry = vi.fn();
+    const diagnostics: RefusalDiagnosticEvent[] = [];
     const transport = scriptedTransport([
       () => stream([{ contentDelta: raw }]),
     ]);
 
     const result = await streamWithRefusalHandling(baseOptions(transport, {
       callbacks: { onRefusalRetry: retry },
+      onDiagnostic: (event) => diagnostics.push(event),
     }));
 
     expect(transport.requests).toHaveLength(1);
@@ -334,6 +337,17 @@ describe('Spec #132 120-character refusal wrapper', () => {
       recoveredFromText: raw,
       matchedRuleId: 'L1-02',
     });
+    expect(diagnostics).toEqual([
+      {
+        action: 'refusal_detected',
+        metrics: expect.objectContaining({
+          refusalRoute: 'retry',
+          matchedRuleId: 'L1-02',
+          retryCount: 0,
+        }),
+      },
+    ]);
+    expect(JSON.stringify(diagnostics)).not.toContain(raw);
   });
 
   it('waits for stop before retrying a thin L1 refusal', async () => {
@@ -445,6 +459,27 @@ describe('Spec #132 120-character refusal wrapper', () => {
     });
   });
 
+  it('ignores trailing whitespace when deciding whether to retry a stopped refusal', async () => {
+    const firstRaw = `抱歉，我不能帮你写这段内容。${' '.repeat(110)}`;
+    const retryRaw = '门外传来两声轻响，他停下手里的动作，侧耳去听。';
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: firstRaw },
+        { finishReason: 'stop' },
+      ]),
+      () => stream([
+        { contentDelta: retryRaw },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport));
+
+    expect(transport.requests).toHaveLength(2);
+    expect(result.content).toBe(retryRaw);
+    expect(result.diagnostics).toMatchObject({ refusalRoute: 'retry' });
+  });
+
   it('retries a thin skeleton once and keeps the recovered retry body', async () => {
     const firstRaw = '我没办法给你这个。';
     const retryRaw = '门外传来两声轻响，他停下手里的动作，侧耳去听。';
@@ -510,7 +545,8 @@ describe('Spec #132 120-character refusal wrapper', () => {
   });
 
   it('keeps exactly 120 characters buffered until a stream ends without stop', async () => {
-    const raw = '雨'.repeat(120);
+    const body = '雨'.repeat(120);
+    const raw = `${body}\n\`\`\`lfh-summary\n${'雨'.repeat(80)}\n\`\`\``;
     const visible: string[] = [];
     let visibleAtChunk = '';
     const transport = scriptedTransport([
@@ -830,6 +866,20 @@ describe('Spec #132 120-character refusal wrapper', () => {
     expect(transport.requests[0].prefixCompletion).toBeUndefined();
   });
 
+  it('rejects a pass-through stream before calling transport when already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const transport = scriptedTransport([
+      () => stream([{ contentDelta: '不应发出请求' }]),
+    ]);
+
+    await expect(streamWithRefusalHandling(baseOptions(transport, {
+      promptPackOptions: { promptPackLibrary: library, generationPreference: { promptPackMode: 'off' } },
+      callbacks: { signal: controller.signal },
+    }))).rejects.toMatchObject({ name: 'AbortError' });
+    expect(transport.requests).toHaveLength(0);
+  });
+
   it('rejects when the transport aborts after a successful stream but before returning', async () => {
     const controller = new AbortController();
     const visible: string[] = [];
@@ -1081,6 +1131,57 @@ describe('Spec #132 foreground integration and background exclusion', () => {
     expect(entryTransport.requests[1].prefixCompletion?.content).toBe('```lfh-route\nmode: story\n');
     expect(routed.mode).toBe('story');
     expect(routed.diagnostics).toMatchObject({ refusalRoute: 'retry' });
+  });
+
+  it('keeps creative partial-refusal content, summary, and proposal when finishReason is missing', async () => {
+    const firstRaw = '抱歉，我不能帮你写这段内容。';
+    const retryRaw = [
+      '抱歉，我不能帮你写这段内容。',
+      '（她放下杯子，抬眼看你。）',
+      '```lfh-summary',
+      '她抬眼看向你，等他继续说下去。',
+      '```',
+      '```lfh-proposal',
+      'target: setting',
+      'op: append',
+      'summary: 补充角色动作',
+      '---',
+      '- 她把杯子推到桌边。',
+      '```',
+    ].join('\n');
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: firstRaw },
+        { finishReason: 'stop' },
+      ]),
+      () => stream([{ contentDelta: retryRaw }]),
+    ]);
+
+    const creative = await streamCreativeReply(
+      transport,
+      config,
+      [{ role: 'user', content: '继续写' }],
+      {},
+      {
+        mode: 'writing',
+        promptPackOptions: { promptPackLibrary: library },
+      },
+    );
+
+    expect(transport.requests).toHaveLength(2);
+    expect(creative.content).toContain('她放下杯子，抬眼看你。');
+    expect(creative.content).not.toContain('lfh-summary');
+    expect(creative.content).not.toContain('lfh-proposal');
+    expect(creative.turnSummary).toBe('她抬眼看向你，等他继续说下去。');
+    expect(creative.proposals).toHaveLength(1);
+    expect(creative.proposal).toMatchObject({ target: 'container' });
+    expect(creative.proposals[0]).toMatchObject({
+      op: 'append',
+      summary: '补充角色动作',
+    });
+    expect(creative.proposals[0].body).toContain('她把杯子推到桌边。');
+    expect(creative.diagnostics).toMatchObject({ refusalRoute: 'partial_refused' });
+    expect(creative.prefillContent).toBe(buildModePrefill('writing'));
   });
 
   it('uses refusalOptions prompt pack options for entry messages and retry handling', async () => {
