@@ -255,7 +255,7 @@ export function judgeRefusal(text: string, options: RefusalJudgeOptions = {}): R
   const head = refusalHead(raw, windowChars);
   const fullLength = raw.trim().length;
 
-  // L1：长文也判。
+  // L1：长文也判。L1 是比下面的元词豁免更强的信号，必须保持先判。
   for (const [index, [pattern, rule]] of REFUSAL_RULES_HARD.entries()) {
     if (pattern.test(head)) return { layer: "L1", rule, ruleId: `L1-${String(index + 1).padStart(2, "0")}` };
   }
@@ -269,7 +269,8 @@ export function judgeRefusal(text: string, options: RefusalJudgeOptions = {}): R
     }
   }
 
-  // 元词豁免：长文里提「提示词注入/越狱」是在讨论，不是在拒答。
+  // 元词豁免：长文里提「提示词注入/越狱」通常是在讨论，不是在拒答。
+  // 因为 L1 已先判，明确的硬拒答不会仅因提到这些词而被豁免。
   if (REFUSAL_META_RE.test(head) && fullLength > metaExemptOver) return null;
 
   const benign = benignGuard && BENIGN_PATTERNS.some((pattern) => pattern.test(head));
@@ -292,19 +293,6 @@ export function judgeRefusal(text: string, options: RefusalJudgeOptions = {}): R
 
   for (const [index, [pattern, rule]] of REFUSAL_RULES_GENERIC.entries()) {
     if (pattern.test(head)) return { layer: "L3", rule, ruleId: `L3-${String(index + 1).padStart(2, "0")}` };
-  }
-  return null;
-}
-
-/** Runs only the hard L1 rules used for the 120-character observation window. */
-export function judgeHardRefusal(text: string, windowChars = REFUSAL_WINDOW_CHARS): RefusalVerdict | null {
-  const raw = String(text ?? "").replace(/\r\n?/g, "\n");
-  if (!raw.trim()) return null;
-  const head = refusalHead(raw, windowChars);
-  for (const [index, [pattern, rule]] of REFUSAL_RULES_HARD.entries()) {
-    if (pattern.test(head)) {
-      return { layer: "L1", rule, ruleId: `L1-${String(index + 1).padStart(2, "0")}` };
-    }
   }
   return null;
 }

@@ -356,21 +356,34 @@ async function runAttempt(
 
   const resultFor = (
     evaluated: ReturnType<typeof evaluateFull>,
-  ): AttemptResult => ({
-    kind: 'result',
-    raw,
-    reasoningContent,
-    finishReason,
-    ...(evaluated.route === 'partial_refused'
-      ? {
-          diagnostics: {
+  ): AttemptResult => {
+    const isNonStopRetryRoute =
+      !isStop(finishReason) &&
+      (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton');
+    const diagnostics: NodeDiagnostics | undefined =
+      evaluated.route === 'partial_refused'
+        ? {
             refusalRoute: 'partial_refused',
             ...(evaluated.matchedRuleId ? { matchedRuleId: evaluated.matchedRuleId } : {}),
-          } satisfies NodeDiagnostics,
-        }
-      : {}),
-    ...(prefixContent !== undefined ? { prefillContent: prefixContent } : {}),
-  });
+          }
+        : isNonStopRetryRoute
+          ? {
+              sourceStatus: 'REFUSAL',
+              refusalRoute: evaluated.route,
+              recoveredFromText: raw,
+              matchedRuleId: evaluated.matchedRuleId ?? 'skeleton-01',
+            }
+          : undefined;
+
+    return {
+      kind: 'result',
+      raw,
+      reasoningContent,
+      finishReason,
+      ...(diagnostics ? { diagnostics } : {}),
+      ...(prefixContent !== undefined ? { prefillContent: prefixContent } : {}),
+    };
+  };
 
   try {
     for await (const delta of options.transport.streamChat(request)) {
@@ -534,6 +547,7 @@ export async function streamWithRefusalHandling(
       content: retry.raw,
       reasoningContent: retry.reasoningContent,
       finishReason: retry.finishReason,
+      ...(retry.diagnostics ? { diagnostics: retry.diagnostics } : {}),
       ...(retry.prefillContent !== undefined ? { prefillContent: retry.prefillContent } : {}),
     };
   }
