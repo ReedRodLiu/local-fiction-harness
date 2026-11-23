@@ -1,5 +1,5 @@
 import { createDefaultBlueprint } from './blueprint.ts';
-import { isOfficialDeepSeekModel, isReasoningEffort } from './keyConfig.ts';
+import { isOfficialDeepSeekModel, isPrefixCompletionMode, isReasoningEffort } from './keyConfig.ts';
 import { documentVersion, migrateStoryDocuments, replaceDocumentProgress, validateDocumentReads, validateMarkdownDocument, writeDocument, type StoryDocuments } from './markdownDocuments.ts';
 import { createDefaultId } from './id.ts';
 import type {
@@ -295,6 +295,18 @@ export function validateGenerationPreference(
       throw new Error(`${contextLabel} 的 generationPreference.reasoningEffort 无效。`);
     }
     pref.reasoningEffort = raw.reasoningEffort;
+  }
+  if (raw.promptPackMode !== undefined) {
+    if (typeof raw.promptPackMode !== 'string' || !raw.promptPackMode.trim()) {
+      throw new Error(`${contextLabel} 的 generationPreference.promptPackMode 无效。`);
+    }
+    pref.promptPackMode = raw.promptPackMode.trim();
+  }
+  if (raw.prefixCompletion !== undefined) {
+    if (!isPrefixCompletionMode(raw.prefixCompletion)) {
+      throw new Error(`${contextLabel} 的 generationPreference.prefixCompletion 无效。`);
+    }
+    pref.prefixCompletion = raw.prefixCompletion;
   }
   return Object.keys(pref).length > 0 ? pref : undefined;
 }

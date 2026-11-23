@@ -8,8 +8,16 @@ import {
   storyDocumentState,
   type MarkdownVersion,
 } from './markdownDocuments.ts';
+import {
+  buildPromptPackAnchorMessages,
+  promptPackTailMessage,
+  resolvePromptPackContext,
+  type PromptPackContextOptions,
+  type PromptPackLibrary,
+} from './promptPack.ts';
 import type {
   AbortSignalLike,
+  GenerationPreference,
   LlmMessage,
   LlmTransport,
   ModelConfig,
@@ -122,16 +130,25 @@ const DEFAULT_STORY_SYSTEM_PROMPT = [
   '若「我的记忆」或「当前设定」中明确指定了文风、人称、格式或叙事偏好，以用户设定为准。',
 ].join('\n');
 
-export function buildSystemAnchorPrompt(story: Story, nodeId = story.activeLeafNodeId, selected?: MarkdownVersion): string {
+export function buildSystemAnchorPrompt(
+  story: Story,
+  nodeId = story.activeLeafNodeId,
+  selected?: MarkdownVersion,
+  promptPack?: PromptPackContextOptions,
+  includeSetting = true,
+): string {
   const markdown = selected?.markdown ?? (story.documents
     ? documentVersion(story.documents.container, storyDocumentState({ ...story, documents: story.documents }, nodeId,
       nodeId === story.activeLeafNodeId).container).markdown
     : legacyStoryMarkdown(story));
-  return [
+  const basePrompt = [
     DEFAULT_STORY_SYSTEM_PROMPT,
     CHANGE_PROMPT,
-    markdown && `以下是当前故事 Markdown。\n\n${markdown}`,
-  ].filter(Boolean).join('\n\n');
+  ].join('\n\n');
+  if (!includeSetting) return basePrompt;
+  return [basePrompt, markdown && `以下是当前故事 Markdown。\n\n${markdown}`]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 export const SETUP_NODE_PLACEHOLDER =
@@ -243,10 +260,38 @@ export function assembleThreeZoneContext(
   userInput?: string,
   budgetOverrides?: Partial<ContextBudgetConfig>,
   requireHistory = false,
-  requestDocuments?: { publicVersion?: MarkdownVersion; container: MarkdownVersion; local: MarkdownVersion; snapshot: PlotSummarySnapshot },
+  requestDocuments?: {
+    publicVersion?: MarkdownVersion;
+    container: MarkdownVersion;
+    local: MarkdownVersion;
+    snapshot: PlotSummarySnapshot;
+    promptPackLibrary?: PromptPackLibrary;
+    generationPreference?: GenerationPreference;
+    promptPack?: PromptPackContextOptions['promptPack'];
+    includePromptPackTail?: boolean;
+    includeTail?: boolean;
+  },
+  promptPackOptions?: PromptPackContextOptions,
 ): ThreeZoneContextResult {
   const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...budgetOverrides };
-  const anchorText = buildSystemAnchorPrompt(story, targetParentId, requestDocuments?.container);
+  const resolvedPromptPackOptions: PromptPackContextOptions = {
+    ...(requestDocuments?.promptPackLibrary ? { promptPackLibrary: requestDocuments.promptPackLibrary } : {}),
+    ...(requestDocuments?.generationPreference ? { generationPreference: requestDocuments.generationPreference } : {}),
+    ...(requestDocuments?.promptPack !== undefined ? { promptPack: requestDocuments.promptPack } : {}),
+    ...(requestDocuments?.includePromptPackTail !== undefined
+      ? { includePromptPackTail: requestDocuments.includePromptPackTail }
+      : {}),
+    ...(requestDocuments?.includeTail !== undefined ? { includeTail: requestDocuments.includeTail } : {}),
+    ...promptPackOptions,
+  };
+  const effectivePromptPack = resolvePromptPackContext(resolvedPromptPackOptions);
+  const anchorText = buildSystemAnchorPrompt(
+    story,
+    targetParentId,
+    requestDocuments?.container,
+    resolvedPromptPackOptions,
+    false,
+  );
   const setupFilter = getSetupNodeFilter(story, targetParentId, requestDocuments?.container);
   const snapshot = requestDocuments?.snapshot ?? getActiveSummarySnapshot(story, targetParentId);
   const branchNodes = getActiveBranchNodes(story, targetParentId);
@@ -263,7 +308,23 @@ export function assembleThreeZoneContext(
   const readDocs = requestDocuments?.publicVersion
     ? documentMessages([['我的记忆', requestDocuments.publicVersion]])
     : [];
-  const messages: LlmMessage[] = [{ role: 'system', content: anchorText }, ...readDocs];
+  const settingMarkdown = requestDocuments?.container?.markdown ?? (story.documents
+    ? documentVersion(
+        story.documents.container,
+        storyDocumentState({ ...story, documents: story.documents }, targetParentId, targetParentId === story.activeLeafNodeId).container,
+      ).markdown
+    : legacyStoryMarkdown(story));
+  const settingMessage = settingMarkdown.trim()
+    ? { role: 'system' as const, content: `以下是当前故事 Markdown。\n\n${settingMarkdown}` }
+    : null;
+  const anchorMessages = effectivePromptPack.enabled
+    ? [
+        ...buildPromptPackAnchorMessages(anchorText, effectivePromptPack),
+        ...readDocs,
+        ...(settingMessage ? [settingMessage] : []),
+      ]
+    : [{ role: 'system' as const, content: anchorText }, ...readDocs, ...(settingMessage ? [settingMessage] : [])];
+  const messages: LlmMessage[] = [...anchorMessages];
   let summaryChars = 0;
 
   if (requestDocuments?.local?.markdown.trim()) {
@@ -286,16 +347,24 @@ export function assembleThreeZoneContext(
     });
   }
 
+  const tail = promptPackTailMessage(
+    effectivePromptPack,
+    resolvedPromptPackOptions.includePromptPackTail ?? resolvedPromptPackOptions.includeTail ?? false,
+  );
+  if (tail) messages.push(tail);
+
   if (trimmedInput) {
     recentChars += trimmedInput.length;
     messages.push({ role: 'user', content: trimmedInput });
   }
 
-  const totalChars = anchorText.length + readDocs.reduce((sum, doc) => sum + doc.content.length, 0) + summaryChars + recentChars;
+  const anchorChars = anchorMessages.reduce((sum, message) => sum + message.content.length, 0) +
+    (tail?.content.length ?? 0);
+  const totalChars = anchorChars + summaryChars + recentChars;
   return {
     messages,
     metrics: {
-      anchorChars: anchorText.length,
+      anchorChars,
       summaryChars,
       recentChars,
       recentNodeCount: recentNodes.length,
@@ -430,6 +499,11 @@ export interface CreativeThreeZoneContextInput {
   targetParentId: string | null;
   userInput?: string;
   budgetOverrides?: Partial<ContextBudgetConfig>;
+  promptPackLibrary?: PromptPackLibrary;
+  generationPreference?: GenerationPreference;
+  promptPack?: PromptPackContextOptions['promptPack'];
+  includePromptPackTail?: boolean;
+  includeTail?: boolean;
 }
 
 /**
@@ -440,8 +514,18 @@ export function assembleCreativeThreeZoneContext(
   input: CreativeThreeZoneContextInput,
 ): ThreeZoneContextResult {
   const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...input.budgetOverrides };
+  const promptPackOptions: PromptPackContextOptions = {
+    ...(input.promptPackLibrary ? { promptPackLibrary: input.promptPackLibrary } : {}),
+    ...(input.generationPreference ? { generationPreference: input.generationPreference } : {}),
+    ...(input.promptPack !== undefined ? { promptPack: input.promptPack } : {}),
+    ...(input.includePromptPackTail !== undefined ? { includePromptPackTail: input.includePromptPackTail } : {}),
+    ...(input.includeTail !== undefined ? { includeTail: input.includeTail } : {}),
+  };
+  const effectivePromptPack = resolvePromptPackContext(promptPackOptions);
   const anchorMessages: LlmMessage[] = [
-    { role: 'system', content: input.systemPrompt },
+    ...(effectivePromptPack.enabled
+      ? buildPromptPackAnchorMessages(input.systemPrompt, effectivePromptPack)
+      : [{ role: 'system' as const, content: input.systemPrompt }]),
     ...documentMessages(input.documents ?? []),
   ];
   const manuscript = input.manuscriptWindow?.trim();
@@ -487,12 +571,19 @@ export function assembleCreativeThreeZoneContext(
     });
   }
 
+  const tail = promptPackTailMessage(
+    effectivePromptPack,
+    input.includePromptPackTail ?? input.includeTail ?? false,
+  );
+  if (tail) messages.push(tail);
+
   if (trimmedInput) {
     recentChars += trimmedInput.length;
     messages.push({ role: 'user', content: trimmedInput });
   }
 
-  const anchorChars = anchorMessages.reduce((sum, msg) => sum + msg.content.length, 0);
+  const anchorChars = anchorMessages.reduce((sum, msg) => sum + msg.content.length, 0) +
+    (tail?.content.length ?? 0);
   const totalChars = anchorChars + summaryChars + recentChars;
   return {
     messages,

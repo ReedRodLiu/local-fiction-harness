@@ -34,6 +34,7 @@ import {
   type SetupNodeFilter,
   type ThreeZoneContextResult,
 } from './context.ts';
+import type { PromptPackLibrary } from './promptPack.ts';
 import type {
   AbortSignalLike,
   DocumentRead,
@@ -57,6 +58,7 @@ export interface FictionHarnessDeps {
   loadPublicDocument?: () => Promise<MarkdownDocument | undefined>;
   now?: () => number;
   createId?: () => string;
+  promptPackLibrary?: PromptPackLibrary;
 }
 
 export interface CreateStoryInput {
@@ -567,7 +569,11 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       trimmedInput,
       deps.contextBudget,
       true,
-      prepared.request,
+      {
+        ...prepared.request,
+        ...(deps.promptPackLibrary ? { promptPackLibrary: deps.promptPackLibrary } : {}),
+        generationPreference: workingStory.generationPreference,
+      },
     );
 
     const result = await streamText(config, messages, callbacks, true);
@@ -767,7 +773,18 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       targetParentId = story.activeLeafNodeId,
       userInput?: string,
     ): ThreeZoneContextResult {
-      return assembleThreeZoneContext(story, targetParentId, userInput, deps.contextBudget);
+      return assembleThreeZoneContext(
+        story,
+        targetParentId,
+        userInput,
+        deps.contextBudget,
+        false,
+        undefined,
+        {
+          ...(deps.promptPackLibrary ? { promptPackLibrary: deps.promptPackLibrary } : {}),
+          generationPreference: story.generationPreference,
+        },
+      );
     },
 
     async extractStoryBlueprint(
@@ -849,7 +866,11 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         userNode.content,
         deps.contextBudget,
         true,
-        prepared.request,
+        {
+          ...prepared.request,
+          ...(deps.promptPackLibrary ? { promptPackLibrary: deps.promptPackLibrary } : {}),
+          generationPreference: workingStory.generationPreference,
+        },
       );
       const result = await streamText(config, messages, callbacks, true);
       const parsed = parseProposalReply(result.content, { finishReason: result.finishReason });

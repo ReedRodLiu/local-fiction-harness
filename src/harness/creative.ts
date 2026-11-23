@@ -27,6 +27,13 @@ import {
   type MarkdownVersion,
   type StoryDocuments,
 } from './markdownDocuments.ts';
+import {
+  buildPromptPackAnchorMessages,
+  promptPackTailMessage,
+  resolvePromptPackContext,
+  type PromptPackContextOptions,
+  type PromptPackLibrary,
+} from './promptPack.ts';
 import type {
   AbortSignalLike,
   DocumentRead,
@@ -283,13 +290,21 @@ export function creativeContext(
   entries: readonly [string, MarkdownVersion][],
   path: TurnNode[],
   input: string,
+  promptPackOptions?: PromptPackContextOptions,
 ): LlmMessage[] {
-  return [
-    { role: 'system', content: appendChangePrompt(prompt) },
-    ...documentMessages(entries),
-    ...turnMessages(path),
-    { role: 'user', content: input },
-  ];
+  const effectivePromptPack = resolvePromptPackContext(promptPackOptions);
+  const basePrompt = appendChangePrompt(prompt);
+  const messages: LlmMessage[] = effectivePromptPack.enabled
+    ? buildPromptPackAnchorMessages(basePrompt, effectivePromptPack)
+    : [{ role: 'system', content: basePrompt }];
+  messages.push(...documentMessages(entries), ...turnMessages(path));
+  const tail = promptPackTailMessage(
+    effectivePromptPack,
+    promptPackOptions?.includePromptPackTail ?? promptPackOptions?.includeTail ?? false,
+  );
+  if (tail) messages.push(tail);
+  messages.push({ role: 'user', content: input });
+  return messages;
 }
 
 export function characterContext(
@@ -298,6 +313,7 @@ export function characterContext(
   conversation: CharacterConversation,
   input: string,
   budgetOverrides?: Partial<ContextBudgetConfig>,
+  promptPackOptions?: PromptPackContextOptions,
 ) {
   const publicVersion = documentVersion(global);
   const persona = documentVersion(character.document, conversation.characterVersion);
@@ -313,6 +329,17 @@ export function characterContext(
     targetParentId: conversation.activeLeafNodeId,
     userInput: input || '按当前人设和情境自然开场，由你先说第一句。',
     budgetOverrides,
+    ...(promptPackOptions?.promptPackLibrary
+      ? { promptPackLibrary: promptPackOptions.promptPackLibrary }
+      : {}),
+    ...(promptPackOptions?.generationPreference
+      ? { generationPreference: promptPackOptions.generationPreference }
+      : { generationPreference: character.generationPreference }),
+    ...(promptPackOptions?.promptPack !== undefined ? { promptPack: promptPackOptions.promptPack } : {}),
+    ...(promptPackOptions?.includePromptPackTail !== undefined
+      ? { includePromptPackTail: promptPackOptions.includePromptPackTail }
+      : {}),
+    ...(promptPackOptions?.includeTail !== undefined ? { includeTail: promptPackOptions.includeTail } : {}),
   });
   return {
     messages: assembled.messages,
@@ -332,6 +359,12 @@ export interface WorkContextOptions {
   bodyWindowMaxChars?: number;
   budgetOverrides?: Partial<ContextBudgetConfig>;
   targetParentId?: string | null;
+  promptPackOptions?: PromptPackContextOptions;
+  promptPackLibrary?: PromptPackLibrary;
+  generationPreference?: GenerationPreference;
+  promptPack?: PromptPackContextOptions['promptPack'];
+  includePromptPackTail?: boolean;
+  includeTail?: boolean;
 }
 
 /**
@@ -360,6 +393,31 @@ export function workContext(
     targetParentId,
     userInput: input,
     budgetOverrides: options.budgetOverrides,
+    ...(options.promptPackLibrary
+      ? { promptPackLibrary: options.promptPackLibrary }
+      : options.promptPackOptions?.promptPackLibrary
+        ? { promptPackLibrary: options.promptPackOptions.promptPackLibrary }
+        : {}),
+    ...(options.generationPreference
+      ? { generationPreference: options.generationPreference }
+      : options.promptPackOptions?.generationPreference
+        ? { generationPreference: options.promptPackOptions.generationPreference }
+        : { generationPreference: work.generationPreference }),
+    ...(options.promptPack !== undefined
+      ? { promptPack: options.promptPack }
+      : options.promptPackOptions?.promptPack !== undefined
+        ? { promptPack: options.promptPackOptions.promptPack }
+        : {}),
+    ...(options.includePromptPackTail !== undefined
+      ? { includePromptPackTail: options.includePromptPackTail }
+      : options.promptPackOptions?.includePromptPackTail !== undefined
+        ? { includePromptPackTail: options.promptPackOptions.includePromptPackTail }
+        : {}),
+    ...(options.includeTail !== undefined
+      ? { includeTail: options.includeTail }
+      : options.promptPackOptions?.includeTail !== undefined
+        ? { includeTail: options.promptPackOptions.includeTail }
+        : {}),
   });
   return {
     messages: assembled.messages,

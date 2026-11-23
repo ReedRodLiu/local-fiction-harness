@@ -1,8 +1,7 @@
 import type { ReactNode } from 'react';
 import {
   REASONING_EFFORTS,
-  isOfficialDeepSeekModel,
-  isReasoningEffort,
+  normalizeGenerationPreference,
   normalizeOfficialDeepSeekModel,
   normalizeReasoningEffort,
   type GenerationPreference,
@@ -55,18 +54,15 @@ export function mergeGenerationPreference(
   current: GenerationPreference | undefined,
   patch: Partial<GenerationPreference>,
 ): GenerationPreference | undefined {
-  const merged: GenerationPreference = {};
-  const nextModel = patch.model !== undefined ? patch.model : current?.model;
-  const nextEffort =
-    patch.reasoningEffort !== undefined ? patch.reasoningEffort : current?.reasoningEffort;
-
-  if (isOfficialDeepSeekModel(nextModel)) {
-    merged.model = nextModel;
-  }
-  if (isReasoningEffort(nextEffort)) {
-    merged.reasoningEffort = nextEffort;
-  }
-  return Object.keys(merged).length > 0 ? merged : undefined;
+  return normalizeGenerationPreference({
+    model: patch.model !== undefined ? patch.model : current?.model,
+    reasoningEffort:
+      patch.reasoningEffort !== undefined ? patch.reasoningEffort : current?.reasoningEffort,
+    promptPackMode:
+      patch.promptPackMode !== undefined ? patch.promptPackMode : current?.promptPackMode,
+    prefixCompletion:
+      patch.prefixCompletion !== undefined ? patch.prefixCompletion : current?.prefixCompletion,
+  });
 }
 
 /**
