@@ -318,7 +318,8 @@ function validateCharacterConversation(
   }
   const edits: Record<string, string> = {};
   for (const [anchor, rev] of Object.entries(raw.edits)) {
-    if (typeof rev !== 'string' || !Object.hasOwn(document.versions, rev) || (anchor && !Object.hasOwn(nodes, anchor))) {
+    // Migration can recover a stale revision from the node's valid local version.
+    if (typeof rev !== 'string' || (anchor && !Object.hasOwn(nodes, anchor))) {
       throw new Error(`备份角色 ${character.id} 的对话版本引用无效。`);
     }
     edits[anchor] = rev;

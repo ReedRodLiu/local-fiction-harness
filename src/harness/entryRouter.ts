@@ -1,6 +1,7 @@
 import { createDefaultBlueprint } from './blueprint.ts';
 import { EMPTY_SUMMARY_SNAPSHOT, getActiveBranchNodes } from './context.ts';
 import {
+  conversationLocalVersion,
   getWorkActiveDiscussionNodes,
   newCharacter,
   newConversation,
@@ -22,6 +23,7 @@ import {
   parseProposalReply,
   storyDocumentState,
   visibleReplyPrefix,
+  type MarkdownDocument,
   type ParsedProposal,
   type UnparsedProposalBlock,
 } from './markdownDocuments.ts';
@@ -430,6 +432,109 @@ function normalizeGenerationPreference(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+interface ActiveDocumentSource {
+  document: MarkdownDocument;
+  edits?: Record<string, string>;
+  activeVersion?: string;
+}
+
+interface MaterializeSourceDocuments {
+  container?: ActiveDocumentSource;
+  local?: ActiveDocumentSource;
+}
+
+interface PreparedActiveDocument {
+  document: MarkdownDocument;
+  versionsByNode: Map<string, string>;
+  edits: Record<string, string>;
+}
+
+function prepareActiveDocument(
+  source: ActiveDocumentSource | undefined,
+  turns: readonly TurnNode[],
+  scope: 'container' | 'local',
+  fallbackMarkdown: string,
+): PreparedActiveDocument {
+  if (!source) {
+    return { document: newDocument(fallbackMarkdown, 'migration'), versionsByNode: new Map(), edits: {} };
+  }
+
+  const hasVersion = (version: string | null | undefined): version is string =>
+    typeof version === 'string' && Object.hasOwn(source.document.versions, version);
+  const activeNodeIds = new Set(turns.map((turn) => turn.id));
+  const edits: Record<string, string> = {};
+  for (const [anchor, revision] of Object.entries(source.edits ?? {})) {
+    if ((anchor === '' || activeNodeIds.has(anchor)) && hasVersion(revision)) {
+      edits[anchor] = revision;
+    }
+  }
+
+  const versionsByNode = new Map<string, string>();
+  for (const turn of turns) {
+    const version = hasVersion(turn.documents?.[scope])
+      ? turn.documents![scope]
+      : edits[turn.id];
+    if (version && hasVersion(version)) versionsByNode.set(turn.id, version);
+  }
+
+  const activeTurnId = turns.at(-1)?.id;
+  const activeVersion = [
+    source.activeVersion,
+    activeTurnId ? edits[activeTurnId] : undefined,
+    activeTurnId ? versionsByNode.get(activeTurnId) : undefined,
+    source.document.head,
+  ].find(hasVersion);
+  if (!activeVersion) {
+    return { document: newDocument(fallbackMarkdown, 'migration'), versionsByNode: new Map(), edits: {} };
+  }
+
+  if (activeTurnId) {
+    const nodeVersion = versionsByNode.get(activeTurnId);
+    if (!nodeVersion) {
+      versionsByNode.set(activeTurnId, activeVersion);
+    } else if (nodeVersion !== activeVersion && !edits[activeTurnId]) {
+      edits[activeTurnId] = activeVersion;
+    }
+  }
+
+  const versions: MarkdownDocument['versions'] = {};
+  const copied = new Set<string>();
+  const copyLineage = (versionId: string | null | undefined) => {
+    if (!hasVersion(versionId) || copied.has(versionId)) return;
+    copied.add(versionId);
+    const version = source.document.versions[versionId];
+    const previous = hasVersion(version.previous) ? version.previous : null;
+    versions[versionId] = { ...version, previous };
+    copyLineage(previous);
+  };
+
+  for (const versionId of versionsByNode.values()) copyLineage(versionId);
+  for (const versionId of Object.values(edits)) copyLineage(versionId);
+  copyLineage(activeVersion);
+
+  return {
+    document: { head: activeVersion, versions },
+    versionsByNode,
+    edits,
+  };
+}
+
+function remapDocumentEditAnchors(
+  edits: Record<string, string>,
+  idMap: ReadonlyMap<string, string>,
+): Record<string, string> {
+  const remapped: Record<string, string> = {};
+  for (const [anchor, revision] of Object.entries(edits)) {
+    if (anchor === '') {
+      remapped[''] = revision;
+      continue;
+    }
+    const nextAnchor = idMap.get(anchor);
+    if (nextAnchor) remapped[nextAnchor] = revision;
+  }
+  return remapped;
+}
+
 /**
  * Materializes neutral (unpersisted) or existing turns + setting Markdown into a persisted target mode asset.
  */
@@ -437,6 +542,8 @@ export function materializeAssetFromNodes(opts: {
   targetMode: StageAssetMode;
   title: string;
   settingMarkdown: string;
+  localMarkdown?: string;
+  sourceDocuments?: MaterializeSourceDocuments;
   turns: readonly TurnNode[];
   body?: string;
   characterName?: string;
@@ -474,8 +581,20 @@ export function materializeAssetFromNodes(opts: {
 
   if (opts.targetMode === 'story') {
     const storyId = createId();
-    const containerDoc = newDocument(opts.settingMarkdown, 'user', 'story-original');
-    const localDoc = newDocument('', 'migration', 'path-original');
+    const containerMapping = prepareActiveDocument(
+      opts.sourceDocuments?.container,
+      opts.turns,
+      'container',
+      opts.settingMarkdown,
+    );
+    const localMapping = prepareActiveDocument(
+      opts.sourceDocuments?.local,
+      opts.turns,
+      'local',
+      opts.localMarkdown ?? '',
+    );
+    const containerEdits = remapDocumentEditAnchors(containerMapping.edits, idMap);
+    const localEdits = remapDocumentEditAnchors(localMapping.edits, idMap);
     const rootNodeIds = clonedNodes.filter((n) => n.parentId === null).map((n) => n.id);
     const story: Story = {
       id: storyId,
@@ -486,15 +605,25 @@ export function materializeAssetFromNodes(opts: {
       rawScript: '',
       blueprint: createDefaultBlueprint(opts.title.trim() || '新故事'),
       documents: {
-        container: containerDoc,
-        local: localDoc,
-        edits: {},
+        container: containerMapping.document,
+        local: localMapping.document,
+        edits: localEdits,
+        ...(Object.keys(containerEdits).length > 0 ? { containerEdits } : {}),
       },
       nodes: Object.fromEntries(
-        clonedNodes.map((n) => [
-          n.id,
-          { ...n, documents: { container: containerDoc.head, local: localDoc.head } },
-        ]),
+        clonedNodes.map((node, index) => {
+          const sourceNode = opts.turns[index];
+          return [
+            node.id,
+            {
+              ...node,
+              documents: {
+                container: containerMapping.versionsByNode.get(sourceNode.id) ?? containerMapping.document.head,
+                local: localMapping.versionsByNode.get(sourceNode.id) ?? localMapping.document.head,
+              },
+            },
+          ];
+        }),
       ),
       rootNodeIds,
       activeLeafNodeId: leafId,
@@ -520,8 +649,38 @@ export function materializeAssetFromNodes(opts: {
 
   const charName = opts.characterName?.trim() || opts.title.trim() || '未命名角色';
   const baseChar = newCharacter(charName, opts.settingMarkdown);
-  const conv = newConversation(baseChar, 'personal', '', clonedNodes[0]?.content.slice(0, 20));
-  conv.nodes = nodeMap;
+  const containerMapping = prepareActiveDocument(
+    opts.sourceDocuments?.container,
+    opts.turns,
+    'container',
+    opts.settingMarkdown,
+  );
+  const localMapping = prepareActiveDocument(
+    opts.sourceDocuments?.local,
+    opts.turns,
+    'local',
+    opts.localMarkdown ?? '',
+  );
+  baseChar.document = containerMapping.document;
+  const conv = newConversation(baseChar, 'personal', opts.localMarkdown ?? '', clonedNodes[0]?.content.slice(0, 20));
+  conv.document = localMapping.document;
+  conv.edits = remapDocumentEditAnchors(localMapping.edits, idMap);
+  conv.characterVersion = baseChar.document.head;
+  conv.nodes = Object.fromEntries(
+    clonedNodes.map((node, index) => {
+      const sourceNode = opts.turns[index];
+      return [
+        node.id,
+        {
+          ...nodeMap[node.id],
+          documents: {
+            container: containerMapping.versionsByNode.get(sourceNode.id) ?? containerMapping.document.head,
+            local: localMapping.versionsByNode.get(sourceNode.id) ?? localMapping.document.head,
+          },
+        },
+      ];
+    }),
+  );
   conv.activeLeafNodeId = leafId;
   const character: LocalCharacter = {
     ...baseChar,
@@ -548,6 +707,8 @@ export function convertActiveAssetMode(opts: {
 }): { story?: Story; work?: DraftWork; character?: LocalCharacter } {
   let title = '未命名创作';
   let settingMarkdown = '';
+  let localMarkdown = '';
+  let sourceDocuments: MaterializeSourceDocuments | undefined;
   let turns: TurnNode[] = [];
   let body = '';
   let generationPreference: GenerationPreference | undefined;
@@ -559,6 +720,19 @@ export function convertActiveAssetMode(opts: {
       const scoped = { ...opts.story, documents: opts.story.documents };
       const state = storyDocumentState(scoped, opts.story.activeLeafNodeId, true);
       settingMarkdown = documentVersion(scoped.documents.container, state.container).markdown;
+      localMarkdown = documentVersion(scoped.documents.local, state.local).markdown;
+      sourceDocuments = {
+        container: {
+          document: scoped.documents.container,
+          edits: scoped.documents.containerEdits,
+          activeVersion: state.container,
+        },
+        local: {
+          document: scoped.documents.local,
+          edits: scoped.documents.edits,
+          activeVersion: state.local,
+        },
+      };
     } else {
       settingMarkdown = opts.story.rawScript;
     }
@@ -575,12 +749,28 @@ export function convertActiveAssetMode(opts: {
     settingMarkdown = documentVersion(opts.character.document).markdown;
     const conv = opts.character.conversations.find((c) => c.id === opts.character!.activeConversationId);
     turns = conv ? getActiveBranchNodes(conv) : [];
+    localMarkdown = conv ? documentVersion(conv.document, conversationLocalVersion(conv)).markdown : '';
+    sourceDocuments = {
+      container: {
+        document: opts.character.document,
+        activeVersion: conv?.characterVersion ?? opts.character.document.head,
+      },
+      ...(conv ? {
+        local: {
+          document: conv.document,
+          edits: conv.edits,
+          activeVersion: conversationLocalVersion(conv),
+        },
+      } : {}),
+    };
   }
 
   return materializeAssetFromNodes({
     targetMode: opts.toMode,
     title,
     settingMarkdown,
+    localMarkdown,
+    sourceDocuments,
     turns,
     body,
     characterName: opts.toMode === 'character' ? title : undefined,
