@@ -11,6 +11,12 @@ import {
 } from './creative.ts';
 import { createDefaultId } from './id.ts';
 import {
+  publicResearchContextMessage,
+  resolvePublicResearchForTurn,
+  type PublicResearchProvider,
+  type PublicResearchReference,
+} from './publicResearch.ts';
+import {
   isOfficialDeepSeekModel,
   isReasoningEffort,
   normalizeReasoningEffort,
@@ -52,6 +58,7 @@ export interface EntryRouteResult {
   proposals: ParsedProposal[];
   unparsedBlocks: UnparsedProposalBlock[];
   usedFallback: boolean;
+  publicResearch?: PublicResearchReference;
 }
 
 export type ManuscriptReplyIntent =
@@ -344,6 +351,7 @@ export function buildEntryRouteMessages(
   userInput: string,
   neutralHistory: readonly TurnNode[] = [],
   publicMemoryMarkdown = '',
+  publicResearch?: PublicResearchReference,
 ): LlmMessage[] {
   const messages: LlmMessage[] = [{ role: 'system', content: ENTRY_ROUTE_SYSTEM_PROMPT }];
   if (publicMemoryMarkdown.trim()) {
@@ -352,11 +360,18 @@ export function buildEntryRouteMessages(
       content: `以下是作为资料使用的「我的记忆」Markdown。\n\n${publicMemoryMarkdown}`,
     });
   }
+  if (publicResearch) {
+    messages.push(publicResearchContextMessage(publicResearch));
+  }
   for (const node of neutralHistory) {
     messages.push({ role: node.role, content: node.content });
   }
   messages.push({ role: 'user', content: userInput });
   return messages;
+}
+
+export interface EntryRouteOptions {
+  publicResearch?: PublicResearchProvider;
 }
 
 export async function routeEntryMessage(
@@ -366,8 +381,21 @@ export async function routeEntryMessage(
   config: ModelConfig,
   callbacks: TurnCallbacks = {},
   publicMemoryMarkdown = '',
+  options: EntryRouteOptions = {},
 ): Promise<EntryRouteResult> {
-  const messages = buildEntryRouteMessages(userInput, neutralHistory, publicMemoryMarkdown);
+  const heuristicMode = classifyEntryHeuristic(userInput, neutralHistory);
+  const publicResearch = heuristicMode === 'writing' || heuristicMode === 'ambiguous'
+    ? null
+    : await resolvePublicResearchForTurn({
+        provider: options.publicResearch,
+        nodes: {},
+        parentId: null,
+        settingMarkdown: userInput,
+        userInput,
+        config,
+        signal: callbacks.signal,
+      });
+  const messages = buildEntryRouteMessages(userInput, neutralHistory, publicMemoryMarkdown, publicResearch ?? undefined);
   let raw = '';
   let reasoningContent = '';
   let finishReason: string | null | undefined;
@@ -409,10 +437,12 @@ export async function routeEntryMessage(
   if (finishReason !== 'stop' && !raw.trim()) {
     throw new Error('回复未完成，请重试。');
   }
+  const parsed = parseEntryRouteReply(raw, userInput, neutralHistory, reasoningContent);
   return {
-    ...parseEntryRouteReply(raw, userInput, neutralHistory, reasoningContent),
+    ...parsed,
     model: config.model,
     reasoningEffort,
+    ...(publicResearch && parsed.mode !== 'writing' ? { publicResearch } : {}),
   };
 }
 

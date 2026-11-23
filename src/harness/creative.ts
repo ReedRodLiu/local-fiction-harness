@@ -27,6 +27,7 @@ import {
   type MarkdownVersion,
   type StoryDocuments,
 } from './markdownDocuments.ts';
+import type { PublicResearchReference } from './publicResearch.ts';
 import type {
   AbortSignalLike,
   DocumentRead,
@@ -298,6 +299,7 @@ export function characterContext(
   conversation: CharacterConversation,
   input: string,
   budgetOverrides?: Partial<ContextBudgetConfig>,
+  publicResearch?: PublicResearchReference,
 ) {
   const publicVersion = documentVersion(global);
   const persona = documentVersion(character.document, conversation.characterVersion);
@@ -310,6 +312,7 @@ export function characterContext(
     ],
     localDocument: local,
     nodes: conversation.nodes,
+    ...(publicResearch ? { publicResearch } : {}),
     targetParentId: conversation.activeLeafNodeId,
     userInput: input || '按当前人设和情境自然开场，由你先说第一句。',
     budgetOverrides,

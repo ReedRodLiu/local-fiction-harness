@@ -92,6 +92,7 @@ describe('PlatformRuntime detection & Web adapter', () => {
 
     expect(runtime.platform).toBe('web');
     expect(runtime.supportsMemoryOnlySession).toBe(true);
+    expect(runtime.publicResearch).toBeTruthy();
 
     await runtime.secretStore.saveApiKey('sk-web-123');
     expect(await runtime.secretStore.loadApiKey()).toBe('sk-web-123');

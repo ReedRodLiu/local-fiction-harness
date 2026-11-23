@@ -15,6 +15,11 @@ import {
 } from './blueprint.ts';
 import { findLeafForBranchNode } from './branches.ts';
 import {
+  resolvePublicResearchForTurn,
+  type PublicResearchProvider,
+  type PublicResearchReference,
+} from './publicResearch.ts';
+import {
   buildBranchGistMessages,
   computeActiveReviewState,
   type ActiveReviewState,
@@ -55,6 +60,7 @@ export interface FictionHarnessDeps {
   storage?: StoryStorage;
   contextBudget?: Partial<ContextBudgetConfig>;
   loadPublicDocument?: () => Promise<MarkdownDocument | undefined>;
+  publicResearch?: PublicResearchProvider;
   now?: () => number;
   createId?: () => string;
 }
@@ -384,9 +390,11 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
   const prepareTurn = async (
     story: Story,
     parentId: string | null,
+    userInput: string,
     config: ModelConfig,
     signal?: AbortSignalLike,
     applyEdit = parentId === story.activeLeafNodeId,
+    preferredResearch?: PublicResearchReference,
   ) => {
     const globalDocument = await deps.loadPublicDocument?.();
     const publicVersion = globalDocument ? documentVersion(globalDocument) : undefined;
@@ -402,6 +410,17 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     const local = snapshot.content === progress ? { ...scoped.documents.local, head: base.id } :
       writeDocument(scoped.documents.local, base.id, replaceDocumentProgress(base.markdown, snapshot.content), 'automatic');
     const container = documentVersion(scoped.documents.container, state.container);
+    const publicResearch = await resolvePublicResearchForTurn({
+      provider: deps.publicResearch,
+      nodes: scoped.nodes,
+      parentId,
+      settingMarkdown: container.markdown,
+      title: scoped.title,
+      userInput,
+      config,
+      signal,
+      preferred: preferredResearch,
+    });
     const reads: DocumentRead[] = [
       ...(publicVersion ? [referenceDocument('public', '我的记忆', publicVersion)] : []),
       referenceDocument('container', scoped.title, container),
@@ -419,7 +438,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       snapshot,
       expectedUpdatedAt: saved?.updatedAt,
       reads,
-      request: { publicVersion, container, local: documentVersion(local), snapshot },
+      request: { publicVersion, container, local: documentVersion(local), snapshot, publicResearch: publicResearch ?? undefined },
     };
   };
 
@@ -477,6 +496,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     rootNodeIds: string[];
     config: ModelConfig;
     signal?: AbortSignalLike;
+    publicResearch?: PublicResearchReference;
   }): Promise<TurnExecutionResult> => {
     const assistantCreatedAt = Math.max(now(), opts.baseStory.updatedAt + 1);
     const reasoningEffort = normalizeReasoningEffort(opts.config.reasoningEffort);
@@ -493,6 +513,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       summarySnapshot: opts.baseSnapshot,
       documents: opts.documentState,
       documentReads: opts.reads,
+      ...(opts.publicResearch ? { publicResearch: opts.publicResearch } : {}),
       ...(opts.proposals && opts.proposals.length > 0 ? { proposals: opts.proposals } : {}),
     };
 
@@ -558,7 +579,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     config: ModelConfig,
     callbacks?: TurnCallbacks,
   ): Promise<TurnExecutionResult> => {
-    const prepared = await prepareTurn(story, parentId, config, callbacks?.signal);
+    const prepared = await prepareTurn(story, parentId, trimmedInput, config, callbacks?.signal);
     const { story: workingStory, snapshot: parentSnapshot } = prepared;
 
     const { messages } = assembleThreeZoneContext(
@@ -618,6 +639,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         parentId === null ? [...workingStory.rootNodeIds, userNode.id] : workingStory.rootNodeIds,
       config,
       signal: callbacks?.signal,
+      publicResearch: prepared.request.publicResearch,
     });
   };
 
@@ -838,9 +860,11 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       const prepared = await prepareTurn(
         story,
         userNode.parentId,
+        userNode.content,
         config,
         callbacks?.signal,
         false,
+        targetNode.publicResearch,
       );
       const { story: workingStory, snapshot: parentSnapshot } = prepared;
       const { messages } = assembleThreeZoneContext(
@@ -888,6 +912,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         rootNodeIds: workingStory.rootNodeIds,
         config,
         signal: callbacks?.signal,
+        publicResearch: prepared.request.publicResearch,
       });
     },
 

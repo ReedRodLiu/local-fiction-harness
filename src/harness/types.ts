@@ -1,6 +1,7 @@
 import type { MarkdownProposal, MarkdownProposalStatus, StoryDocumentState, StoryDocuments } from './markdownDocuments.ts';
 import type { CreativeStorage } from './creative.ts';
 import type { DiagnosticCollector } from './diagnostics.ts';
+import type { PublicResearchProvider, PublicResearchReference } from './publicResearch.ts';
 
 export interface StoryBlueprint {
   title: string;
@@ -101,6 +102,7 @@ export interface TurnNode {
   documentReads?: DocumentRead[];
   attachmentIds?: string[];
   proposals?: TurnProposalRecord[];
+  publicResearch?: PublicResearchReference;
 }
 
 export interface Story {
@@ -223,6 +225,7 @@ export interface PlatformRuntime {
   platform: 'web' | 'android';
   diagnostics: DiagnosticCollector;
   transport: LlmTransport;
+  publicResearch?: PublicResearchProvider;
   binaryDownloader: BinaryDownloader;
   storyStorage: StoryStorage;
   secretStore: SecretStore;

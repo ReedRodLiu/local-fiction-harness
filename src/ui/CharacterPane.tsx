@@ -16,6 +16,7 @@ import {
   newConversation,
   normalizeProposalTarget,
   resolveEffectiveModelConfig,
+  resolvePublicResearchForTurn,
   summarizeCharacterConversation,
   writeDocument,
   DEFAULT_MODEL_CONFIG,
@@ -267,8 +268,27 @@ export function CharacterPane(props: CharacterPaneProps) {
 
       const targetConv: CharacterConversation =
         options.parentId !== undefined ? { ...target, activeLeafNodeId: options.parentId } : target;
-      const ctx = characterContext(state.publicDocument, current, targetConv, trimmed);
       const effectiveConfig = resolveEffectiveModelConfig(config, current.generationPreference);
+      const personaMarkdown = documentVersion(current.document, targetConv.characterVersion).markdown;
+      const publicResearch = await resolvePublicResearchForTurn({
+        provider: runtime.publicResearch,
+        nodes: targetConv.nodes,
+        parentId: targetConv.activeLeafNodeId,
+        settingMarkdown: personaMarkdown,
+        title: current.name,
+        userInput: trimmed,
+        config: effectiveConfig,
+        signal,
+      });
+      if (signal.aborted) return;
+      const ctx = characterContext(
+        state.publicDocument,
+        current,
+        targetConv,
+        trimmed,
+        undefined,
+        publicResearch ?? undefined,
+      );
       const result = await request(ctx.messages, { config: effectiveConfig });
       if (signal.aborted) return;
 
@@ -304,6 +324,7 @@ export function CharacterPane(props: CharacterPaneProps) {
               reasoningEffort: result.reasoningEffort,
               documents: docs,
               documentReads: ctx.reads,
+              ...(publicResearch ? { publicResearch } : {}),
               ...(proposalRecords.length > 0 ? { proposals: proposalRecords } : {}),
             };
             assistantId = assistant.id;

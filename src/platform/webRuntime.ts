@@ -2,6 +2,7 @@ import {
   createDiagnosticCollector,
   createDiagnosticStoryStorage,
   createDiagnosticTransport,
+  createDeepSeekPublicResearchProvider,
   createKeyValueSecretStore,
   createOpenAiTransport,
   createWebBinaryDownloader,
@@ -12,6 +13,7 @@ import {
   type FetchLike,
   type KeyValueStorage,
   type PlatformRuntime,
+  type PublicResearchProvider,
   type StoryStorage,
 } from '../harness/index.ts';
 import { createIndexedDbStoryStorage } from '../ui/indexedDbStorage.ts';
@@ -23,6 +25,7 @@ export interface WebRuntimeOptions {
   storyStorage?: StoryStorage;
   creativeStorage?: CreativeStorage;
   fetchImpl?: FetchLike;
+  publicResearch?: PublicResearchProvider;
   binaryFetchImpl?: BinaryFetchLike;
   binaryDownloader?: BinaryDownloader;
   exportJsonFile?: (fileName: string, jsonContent: string) => Promise<void>;
@@ -91,10 +94,15 @@ export function createWebPlatformRuntime(options: WebRuntimeOptions = {}): Platf
 
   const indexedDb = createIndexedDbStoryStorage();
   const exporter = createDomBackupExporter();
+  const transport = createDiagnosticTransport(createOpenAiTransport(devAwareFetch), diagnostics);
   return {
     platform: 'web',
     diagnostics,
-    transport: createDiagnosticTransport(createOpenAiTransport(devAwareFetch), diagnostics),
+    transport,
+    publicResearch: options.publicResearch ?? createDeepSeekPublicResearchProvider({
+      fetcher: devAwareFetch,
+      transport,
+    }),
     binaryDownloader: options.binaryDownloader ?? createWebBinaryDownloader(binaryFetch),
     storyStorage: createDiagnosticStoryStorage(
       options.storyStorage ?? indexedDb,

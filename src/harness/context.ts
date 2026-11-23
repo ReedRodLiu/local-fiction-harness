@@ -8,6 +8,7 @@ import {
   storyDocumentState,
   type MarkdownVersion,
 } from './markdownDocuments.ts';
+import { publicResearchContextMessage, type PublicResearchReference } from './publicResearch.ts';
 import type {
   AbortSignalLike,
   LlmMessage,
@@ -243,7 +244,13 @@ export function assembleThreeZoneContext(
   userInput?: string,
   budgetOverrides?: Partial<ContextBudgetConfig>,
   requireHistory = false,
-  requestDocuments?: { publicVersion?: MarkdownVersion; container: MarkdownVersion; local: MarkdownVersion; snapshot: PlotSummarySnapshot },
+  requestDocuments?: {
+    publicVersion?: MarkdownVersion;
+    container: MarkdownVersion;
+    local: MarkdownVersion;
+    snapshot: PlotSummarySnapshot;
+    publicResearch?: PublicResearchReference;
+  },
 ): ThreeZoneContextResult {
   const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...budgetOverrides };
   const anchorText = buildSystemAnchorPrompt(story, targetParentId, requestDocuments?.container);
@@ -263,7 +270,14 @@ export function assembleThreeZoneContext(
   const readDocs = requestDocuments?.publicVersion
     ? documentMessages([['我的记忆', requestDocuments.publicVersion]])
     : [];
-  const messages: LlmMessage[] = [{ role: 'system', content: anchorText }, ...readDocs];
+  const researchMessage = requestDocuments?.publicResearch
+    ? publicResearchContextMessage(requestDocuments.publicResearch)
+    : undefined;
+  const messages: LlmMessage[] = [
+    { role: 'system', content: anchorText },
+    ...readDocs,
+    ...(researchMessage ? [researchMessage] : []),
+  ];
   let summaryChars = 0;
 
   if (requestDocuments?.local?.markdown.trim()) {
@@ -291,7 +305,11 @@ export function assembleThreeZoneContext(
     messages.push({ role: 'user', content: trimmedInput });
   }
 
-  const totalChars = anchorText.length + readDocs.reduce((sum, doc) => sum + doc.content.length, 0) + summaryChars + recentChars;
+  const totalChars = anchorText.length +
+    readDocs.reduce((sum, doc) => sum + doc.content.length, 0) +
+    (researchMessage?.content.length ?? 0) +
+    summaryChars +
+    recentChars;
   return {
     messages,
     metrics: {
@@ -430,6 +448,7 @@ export interface CreativeThreeZoneContextInput {
   targetParentId: string | null;
   userInput?: string;
   budgetOverrides?: Partial<ContextBudgetConfig>;
+  publicResearch?: PublicResearchReference;
 }
 
 /**
@@ -444,6 +463,10 @@ export function assembleCreativeThreeZoneContext(
     { role: 'system', content: input.systemPrompt },
     ...documentMessages(input.documents ?? []),
   ];
+  const researchMessage = input.publicResearch ? publicResearchContextMessage(input.publicResearch) : undefined;
+  if (researchMessage) {
+    anchorMessages.push(researchMessage);
+  }
   const manuscript = input.manuscriptWindow?.trim();
   if (manuscript) {
     anchorMessages.push({

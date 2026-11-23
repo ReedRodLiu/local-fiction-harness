@@ -200,6 +200,7 @@ export function App({ runtime }: AppProps) {
       createFictionHarness({
         transport: runtime.transport,
         storage: runtime.storyStorage,
+        publicResearch: runtime.publicResearch,
         loadPublicDocument: async () => (await runtime.creativeStorage?.load())?.publicDocument ?? emptyWorkspace().publicDocument,
       }),
     [runtime],
@@ -1206,6 +1207,7 @@ export function App({ runtime }: AppProps) {
           },
         },
         publicMem,
+        { publicResearch: runtime.publicResearch },
       )
         .then(async (routed) => {
           if (controller.signal.aborted || !isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) {
@@ -1233,6 +1235,7 @@ export function App({ runtime }: AppProps) {
             ...(routed.turnSummary ? { turnSummary: routed.turnSummary } : {}),
             ...(routed.reasoningContent ? { reasoningContent: routed.reasoningContent } : {}),
             model: routed.model ?? effectiveWelcomeCfg.model,
+            ...(routed.publicResearch ? { publicResearch: routed.publicResearch } : {}),
             reasoningEffort: routed.reasoningEffort ?? normalizeReasoningEffort(effectiveWelcomeCfg.reasoningEffort),
             createdAt: now + 1,
             summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
