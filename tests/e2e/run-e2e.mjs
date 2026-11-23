@@ -2104,9 +2104,13 @@ async function verifyDisplayPreferenceMatrix(page, port) {
       await page.setViewportSize(viewport);
       await settings.getByTestId(`theme-option-${theme}`).click();
       await settings.getByTestId(`theme-option-${theme}`).scrollIntoViewIfNeeded();
-      const layout = await settings.evaluate((element) => {
+      const layout = await settings.evaluate(async (element) => {
         const root = document.documentElement;
         const option = element.querySelector('[data-testid="theme-option-warm"]');
+        // Measure the selected theme after the button's color transition settles.
+        if (option) {
+          await Promise.allSettled(option.getAnimations().map((animation) => animation.finished));
+        }
         const optionStyle = option ? getComputedStyle(option) : null;
         const rootStyle = getComputedStyle(root);
         return {
