@@ -178,6 +178,19 @@ export function detectNaturalModeSwitchIntent(input: string): StageAssetMode | n
   return 'character';
 }
 
+function hasAffirmedIntent(text: string, pattern: RegExp): boolean {
+  const matcher = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+  const negatedBefore = /(?:不要|不是|并非|而非|无需|不必|禁止|不能|不用|不想|勿|别(?:再|把|将|写成|写|做成|做|用|按|转|设|当作|当成|来|搞|弄)?$)/u;
+  for (const clause of text.split(/[\n，,。！？!?；;]+/u)) {
+    for (const match of clause.matchAll(matcher)) {
+      const prefix = clause.slice(0, match.index);
+      const localPrefix = prefix.split(/(?:而是|而要|但是|不过|然而|但|而|却)/u).at(-1) ?? prefix;
+      if (!negatedBefore.test(localPrefix)) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Heuristic fallback classifier when LLM output does not include an `lfh-route` metadata block.
  */
@@ -191,13 +204,13 @@ export function classifyEntryHeuristic(
   const combined = [...history.map((n) => n.content), userInput].join('\n').trim();
   if (!combined) return 'ambiguous';
 
-  if (/(?:角色人设|角色设定|角色互动|角色聊天|扮演对戏|(?:创建|建|找|来)一个?.{0,16}角色|和.{1,16}聊天|^名称[：:]|^姓名[：:])/m.test(combined)) {
+  if (hasAffirmedIntent(combined, /(?:角色人设|角色设定|角色互动|角色聊天|扮演对戏|(?:创建|建|找|来)一个?.{0,16}角色|和.{1,16}聊天|^名称[：:]|^姓名[：:])/mu)) {
     return 'character';
   }
-  if (/(?:写故事|写小说|同人|大纲|写正文|开书|小说草稿|稿纸|写一篇)/.test(combined)) {
+  if (hasAffirmedIntent(combined, /(?:写故事|写小说|同人|大纲|写正文|开书|小说草稿|稿纸|写一篇)/u)) {
     return 'writing';
   }
-  if (/(?:文游|跑团|第一幕|状态栏|规则|世界观|主角|开局|剧情推进|冒险|攻略)/.test(combined)) {
+  if (hasAffirmedIntent(combined, /(?:文游|跑团|第一幕|状态栏|规则|世界观|主角|开局|剧情推进|冒险|攻略)/u)) {
     return 'story';
   }
 
@@ -407,9 +420,11 @@ export interface EntryRouteOptions {
   publicResearch?: PublicResearchProvider;
 }
 
-function hasExplicitStageIntent(userInput: string, history: readonly TurnNode[]): boolean {
-  const combined = [...history.map((node) => node.content), userInput].join('\n');
-  return /(?:文游|跑团|互动叙事|互动故事|互动小说|第一幕|角色互动|角色聊天|扮演对戏|直接.{0,16}(?:对话|对戏|互动))/im.test(combined);
+function hasExplicitStageIntent(userInput: string): boolean {
+  return hasAffirmedIntent(
+    userInput,
+    /(?:文游|跑团|互动叙事|互动故事|互动小说|角色互动|角色聊天|扮演对戏|直接.{0,16}(?:对话|对戏|互动))/iu,
+  );
 }
 
 export async function routeEntryMessage(
@@ -423,7 +438,7 @@ export async function routeEntryMessage(
 ): Promise<EntryRouteResult> {
   const heuristicMode = classifyEntryHeuristic(userInput, neutralHistory);
   const canResolveResearch = heuristicMode !== 'ambiguous' &&
-    (heuristicMode !== 'writing' || hasExplicitStageIntent(userInput, neutralHistory));
+    (heuristicMode !== 'writing' || hasExplicitStageIntent(userInput));
   const publicResearch = !canResolveResearch
     ? { reference: null }
     : await resolvePublicResearchForTurn({
