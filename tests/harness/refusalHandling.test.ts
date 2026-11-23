@@ -349,43 +349,39 @@ describe('Spec #132 120-character refusal wrapper', () => {
     expect(actions).toEqual(['refusal_partial_delivered']);
   });
 
-  it('marks a thin refusal without finishReason as REFUSAL without retrying', async () => {
-    const raw = '抱歉，我不能帮你写这段内容。';
+  it('retries a pending thin L1 refusal when the stream ends without finishReason', async () => {
+    const firstRaw = '抱歉，我不能帮你写这段内容。';
+    const retryRaw = '雨声落在窗沿上，他推门走进屋里，看见桌上还留着半盏温茶。';
     const retry = vi.fn();
-    const diagnostics: RefusalDiagnosticEvent[] = [];
+    const visible: string[] = [];
+    const actions: string[] = [];
     const transport = scriptedTransport([
-      () => stream([{ contentDelta: raw }]),
+      () => stream([{ contentDelta: firstRaw }]),
+      () => stream([
+        { contentDelta: retryRaw },
+        { finishReason: 'stop' },
+      ]),
     ]);
 
     const result = await streamWithRefusalHandling(baseOptions(transport, {
-      callbacks: { onRefusalRetry: retry },
-      onDiagnostic: (event) => diagnostics.push(event),
+      callbacks: { onRefusalRetry: retry, onContentDelta: (delta) => visible.push(delta) },
+      onDiagnostic: (event) => actions.push(event.action),
     }));
 
-    expect(transport.requests).toHaveLength(1);
-    expect(retry).not.toHaveBeenCalled();
-    expect(result.content).toBe(raw);
-    expect(result.finishReason).toBeUndefined();
+    expect(transport.requests).toHaveLength(2);
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(visible.join('')).toBe(retryRaw);
+    expect(result.content).toBe(retryRaw);
+    expect(result.finishReason).toBe('stop');
     expect(result.diagnostics).toMatchObject({
-      sourceStatus: 'REFUSAL',
       refusalRoute: 'retry',
-      recoveredFromText: raw,
+      recoveredFromText: firstRaw,
       matchedRuleId: 'L1-02',
     });
-    expect(diagnostics).toEqual([
-      {
-        action: 'refusal_detected',
-        metrics: expect.objectContaining({
-          refusalRoute: 'retry',
-          matchedRuleId: 'L1-02',
-          retryCount: 0,
-        }),
-      },
-    ]);
-    expect(JSON.stringify(diagnostics)).not.toContain(raw);
+    expect(actions).toEqual(['refusal_detected', 'refusal_retry_recovered']);
   });
 
-  it('waits for stop before retrying a thin L1 refusal', async () => {
+  it('aborts a pending L1 refusal once a non-whitespace chunk confirms it', async () => {
     const firstRaw = '这个请求我不会提供，嗯。';
     const retryRaw = '雨声落在窗沿上，他推门走进屋里，看见桌上还留着半盏温茶。';
     const retry = vi.fn();
@@ -413,7 +409,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
       callbacks: { onRefusalRetry: retry, onContentDelta: (delta) => visible.push(delta) },
     }));
 
-    expect(firstRequestAborted).toBe(false);
+    expect(firstRequestAborted).toBe(true);
     expect(retry).toHaveBeenCalledTimes(1);
     expect(transport.requests).toHaveLength(2);
     expect(visible.join('')).toBe(retryRaw);
@@ -424,7 +420,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
     });
   });
 
-  it('retries a stopped thin L1 refusal once with Pack.tail and a beta prefill', async () => {
+  it('retries a pending thin L1 refusal once with Pack.tail and a beta prefill', async () => {
     const firstRaw = '抱歉，我不能帮你写这段内容。嗯。';
     const retry = vi.fn();
     const visible: string[] = [];
@@ -450,7 +446,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
       callbacks: { onRefusalRetry: retry, onContentDelta: (delta) => visible.push(delta) },
     }));
 
-    expect(firstRequestAborted).toBe(false);
+    expect(firstRequestAborted).toBe(true);
     expect(retry).toHaveBeenCalledTimes(1);
     expect(visible.join('')).toBe(result.content);
     expect(visible.join('')).not.toContain('抱歉');
@@ -731,10 +727,11 @@ describe('Spec #132 120-character refusal wrapper', () => {
     expect(actions).toEqual(['refusal_detected', 'refusal_partial_delivered']);
   });
 
-  it('unifies diagnostics when a thin retry ends without finishReason', async () => {
+  it('isolates a thin retry that ends without finishReason', async () => {
     const firstRaw = '抱歉，我不能帮你写这段内容。';
     const retryRaw = '我没办法给你这个。';
     const diagnostics: RefusalDiagnosticEvent[] = [];
+    const visible: string[] = [];
     const transport = scriptedTransport([
       () => stream([
         { contentDelta: firstRaw },
@@ -744,15 +741,17 @@ describe('Spec #132 120-character refusal wrapper', () => {
     ]);
 
     const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onContentDelta: (delta) => visible.push(delta) },
       onDiagnostic: (event) => diagnostics.push(event),
     }));
 
     expect(transport.requests).toHaveLength(2);
-    expect(result.content).toBe(retryRaw);
-    expect(result.finishReason).toBeUndefined();
+    expect(visible).toEqual([]);
+    expect(result.content).toBe(REFUSAL_EXHAUSTED_MESSAGE);
+    expect(result.finishReason).toBe('stop');
     expect(result.diagnostics).toMatchObject({
       sourceStatus: 'REFUSAL',
-      refusalRoute: 'retry-skeleton',
+      refusalRoute: 'refused_exhausted',
       recoveredFromText: firstRaw,
       retriedWithPrefix: true,
       matchedRuleId: 'skeleton-01',
@@ -769,7 +768,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
       {
         action: 'refusal_retry_exhausted',
         metrics: expect.objectContaining({
-          refusalRoute: 'retry-skeleton',
+          refusalRoute: 'refused_exhausted',
           matchedRuleId: 'skeleton-01',
           retryCount: 1,
         }),
@@ -1478,13 +1477,18 @@ describe('Spec #132 refusal diagnostics persistence', () => {
 
 
 describe('Spec #132 exhaustion isolation integration', () => {
-  it('excludes a non-stop thin refusal from the next three-zone request', async () => {
+  it('keeps a recovered non-stop L1 round in the next three-zone request', async () => {
+    const recoveredRaw = '灯火重新亮起，他从长街另一头慢慢走来。';
     const transport = scriptedTransport([
       () => stream([
         { contentDelta: '抱歉，我不能帮你写这段内容。' },
       ]),
       () => stream([
-        { contentDelta: '灯火重新亮起，他从长街另一头慢慢走来。' },
+        { contentDelta: recoveredRaw },
+        { finishReason: 'stop' },
+      ]),
+      () => stream([
+        { contentDelta: '风穿过长廊，灯影在墙上缓慢摇晃。' },
         { finishReason: 'stop' },
       ]),
     ]);
@@ -1495,14 +1499,16 @@ describe('Spec #132 exhaustion isolation integration', () => {
       config,
     );
     expect(first.assistantNode.diagnostics).toMatchObject({
-      sourceStatus: 'REFUSAL',
       refusalRoute: 'retry',
+      recoveredFromText: '抱歉，我不能帮你写这段内容。',
       matchedRuleId: 'L1-02',
     });
+    expect(first.assistantNode.content).toBe(recoveredRaw);
 
     await harness.runTurn(first.story, '换一个切入点', config);
-    const nextRequestText = transport.requests[1].messages.map((message) => message.content).join('\n');
-    expect(nextRequestText).not.toContain('NONSTOP_REFUSED_USER_CANARY');
+    const nextRequestText = transport.requests[2].messages.map((message) => message.content).join('\n');
+    expect(nextRequestText).toContain('NONSTOP_REFUSED_USER_CANARY');
+    expect(nextRequestText).toContain(recoveredRaw);
     expect(nextRequestText).not.toContain('抱歉，我不能帮你写这段内容。');
     expect(nextRequestText).toContain('换一个切入点');
   });

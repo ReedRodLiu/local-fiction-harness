@@ -213,6 +213,13 @@ function stripSentPrefix(raw: string, prefixContent: string | undefined): string
   return raw.slice(prefixContent.length);
 }
 
+function hasPotentialProtocolFenceStart(text: string): boolean {
+  const lastLine = String(text ?? '').replace(/\r\n?/g, '\n').split('\n').at(-1) ?? '';
+  // A protocol fence may arrive as `` + `lfh-`, `` + `lfh-s`, etc. Hold one
+  // more delta instead of aborting before the complete lfh-* line is visible.
+  return /^[ \t]{0,3}`+[ \t]*(?:l(?:f(?:h(?:-[a-z-]*)?)?)?)?$/i.test(lastLine);
+}
+
 function withRetryTail(messages: LlmMessage[], tail: string): LlmMessage[] {
   const normalizedTail = tail.trim();
   if (
@@ -344,6 +351,7 @@ async function runAttempt(
   let finishReason: string | null | undefined;
   let shown = '';
   let gateOpen = false;
+  let pendingL1 = false;
 
   const emitVisible = (): void => {
     const visible = toVisible(raw);
@@ -356,6 +364,9 @@ async function runAttempt(
   const evaluateFull = (): {
     route: RefusalRoute;
     matchedRuleId?: string;
+    layer?: RefusalVerdict['layer'];
+    bodyChars: number;
+    detectedContent: string;
   } => {
     const detectedContent = stripSentPrefix(raw, prefixContent);
     const { body, hasProtocolArtifacts } = splitRefusalProtocolContent(detectedContent);
@@ -363,6 +374,9 @@ async function runAttempt(
     return {
       route: routeRefusal(body, Boolean(verdict), deliveryOptions(options.mode, hasProtocolArtifacts)),
       ...(ruleIdFor(verdict) ? { matchedRuleId: ruleIdFor(verdict)! } : {}),
+      ...(verdict ? { layer: verdict.layer } : {}),
+      bodyChars: normalizeDeliveryBody(body).length,
+      detectedContent,
     };
   };
 
@@ -409,16 +423,33 @@ async function runAttempt(
         raw += delta.contentDelta;
         if (gateOpen) {
           emitVisible();
-        } else if (
-          normalizeDeliveryBody(
-            splitRefusalProtocolContent(stripSentPrefix(raw, prefixContent)).body,
-          ).length >
-          REFUSAL_OBSERVATION_CHARS
-        ) {
-          // The 120-character window is the final protection against chunk
-          // boundaries. Once it is exceeded, open the gate and never retry.
-          gateOpen = true;
-          emitVisible();
+        } else if (!isStop(finishReason)) {
+          const evaluated = evaluateFull();
+          const wasPendingL1 = pendingL1;
+          if (evaluated.route === 'partial_refused' || evaluated.bodyChars > REFUSAL_OBSERVATION_CHARS) {
+            // Delivery evidence wins over an earlier L1 verdict. The 120-character
+            // window is the final protection against chunk boundaries.
+            gateOpen = true;
+            emitVisible();
+          } else if (wasPendingL1) {
+            const deltaHasContent = delta.contentDelta.trim().length > 0;
+            if (
+              deltaHasContent &&
+              !hasPotentialProtocolFenceStart(evaluated.detectedContent) &&
+              (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton')
+            ) {
+              internalAbort.abort();
+              return {
+                kind: 'refusal',
+                route: evaluated.route,
+                raw,
+                reasoningContent,
+                matchedRuleId: evaluated.matchedRuleId ?? 'skeleton-01',
+              };
+            }
+          } else if (evaluated.layer === 'L1') {
+            pendingL1 = true;
+          }
         }
       }
 
@@ -442,9 +473,30 @@ async function runAttempt(
     }
 
     // A provider may close a normally completed stream without a finishReason.
-    // Re-evaluate only to preserve partial-refusal diagnostics; the caller can
-    // still reject the missing terminal reason through the existing checks.
+    // A pending L1 refusal must still get its single retry; partial delivery is
+    // preserved with diagnostics, and other non-stop thin results retain their
+    // existing REFUSAL markers for context isolation.
     const evaluated = evaluateFull();
+    if (
+      !gateOpen &&
+      pendingL1 &&
+      (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton')
+    ) {
+      return {
+        kind: 'refusal',
+        route: evaluated.route,
+        raw,
+        reasoningContent,
+        matchedRuleId: evaluated.matchedRuleId ?? 'skeleton-01',
+      };
+    }
+    if (
+      attempt === 'retry' &&
+      !isStop(finishReason) &&
+      (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton')
+    ) {
+      return resultFor(evaluated);
+    }
     emitVisible();
     return resultFor(evaluated);
   } catch (error) {
@@ -461,8 +513,9 @@ async function runAttempt(
 
 /**
  * Wraps one foreground generation stream with the 120-character refusal observation
- * window and at most one silent retry. The observation window is the final guard
- * against unreliable chunk boundaries: no L1 verdict aborts a stream mid-flight.
+ * window and at most one silent retry. L1 is confirmed across chunk boundaries:
+ * whitespace and possible protocol-fence prefixes keep the stream buffered, while a
+ * later non-empty chunk that still has no delivery evidence aborts the first stream.
  * Background summary/import streams must not use it.
  */
 export async function streamWithRefusalHandling(
@@ -580,7 +633,7 @@ export async function streamWithRefusalHandling(
     const matchedRuleId = retry.diagnostics.matchedRuleId ?? first.matchedRuleId;
     const diagnostics: NodeDiagnostics = {
       sourceStatus: 'REFUSAL',
-      refusalRoute: retry.diagnostics.refusalRoute ?? 'refused_exhausted',
+      refusalRoute: 'refused_exhausted',
       recoveredFromText: first.raw,
       retriedWithPrefix,
       ...(matchedRuleId ? { matchedRuleId } : {}),
@@ -589,17 +642,16 @@ export async function streamWithRefusalHandling(
       options,
       effective,
       'refusal_retry_exhausted',
-      diagnostics.refusalRoute ?? 'refused_exhausted',
+      'refused_exhausted',
       1,
       matchedRuleId,
     );
     throwIfAborted(options);
     return {
-      content: retry.raw,
-      reasoningContent: retry.reasoningContent,
-      finishReason: retry.finishReason,
+      content: REFUSAL_EXHAUSTED_MESSAGE,
+      reasoningContent: '',
+      finishReason: 'stop',
       diagnostics,
-      ...(retry.prefillContent !== undefined ? { prefillContent: retry.prefillContent } : {}),
     };
   }
 
