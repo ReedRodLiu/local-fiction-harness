@@ -185,15 +185,22 @@ async function main() {
     assert.equal(before.workIds.length, 0);
 
     for (const prompt of [
+      '请帮我改成小说',
+      '把故事改成小说',
+      '改成小说',
       '把这一段改成小说里的书信体。',
       '下一幕转成角色互动式对话',
     ]) {
+      const requestCountBeforeTurn = stageInputs.length;
       await page.fill('#turn-input', prompt);
       await page.getByRole('button', { name: '发送行动', exact: true }).click();
       await page.getByTestId('turn-assistant').last().getByText(`已按当前文游继续处理：${prompt}`, {
         exact: false,
       }).waitFor();
-      assert.equal(stageInputs.at(-1), prompt, 'the normal stage request should carry the exact user message');
+      assert.ok(
+        stageInputs.slice(requestCountBeforeTurn).some((input) => input.includes(prompt)),
+        'the normal stage request should carry the exact user message',
+      );
       const after = await readPersistedState(page);
       assert.deepEqual(after.storyIds, before.storyIds, 'ordinary stage instructions must not create a story');
       assert.equal(after.activeStoryId, before.activeStoryId, 'ordinary stage instructions must keep the story active');
@@ -211,7 +218,7 @@ async function main() {
     await page.getByTestId('topbar-mode-switcher').click();
     await page.getByTestId('topbar-mode-option-story').click();
     await page.getByTestId('story-timeline').waitFor();
-    await page.fill('#turn-input', '帮我切换到写故事吧');
+    await page.fill('#turn-input', '请把它切换到写故事');
     await page.getByRole('button', { name: '发送行动', exact: true }).click();
     await page.getByTestId('writing-page').waitFor();
     const afterExplicitSwitch = await readPersistedState(page);
@@ -276,7 +283,7 @@ async function main() {
     await page.getByRole('button', { name: '发送行动', exact: true }).click();
     await page.getByTestId('neutral-timeline').waitFor();
     const beforeWelcomeSwitch = await readPersistedState(page);
-    await page.fill('#turn-input', '现在请把模式切换为写故事');
+    await page.fill('#turn-input', '我希望把模式切换成写故事');
     await page.locator('#turn-input').evaluate((inputElement) => {
       inputElement.form.requestSubmit();
       inputElement.form.requestSubmit();

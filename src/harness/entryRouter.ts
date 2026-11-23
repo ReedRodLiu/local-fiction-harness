@@ -130,12 +130,38 @@ export function detectNaturalModeSwitchIntent(input: string): StageAssetMode | n
     .replace(/[。！？!?]+$/u, '')
     .trim();
   if (!normalized || normalized.length > 48) return null;
+
+  const requestPrefix =
+    '(?:(?:现在|立刻|马上)?(?:(?:请|麻烦)(?:帮我|帮忙)?|我想|我希望|我要|帮我|帮忙)?)';
+  const modeReference = '(?:当前(?:的)?|这个)?(?:(?:App|应用)(?:的)?)?模式';
+  const switchObject = `(?:(?:把|将)?(?:它|${modeReference}))?`;
+  const suffix = '(?:吧|呀|啊)?';
+  const allModeTargets = '(文游|互动故事|互动小说|写故事|写小说|小说|角色互动|角色聊天|对戏)';
+  const namedModeTargets = '(文游|互动故事|互动小说|写故事|写小说|角色互动|角色聊天|对戏)';
+
+  const clearSwitchPattern = new RegExp(
+    `^${requestPrefix}${switchObject}(?:切换到|切换成|切换为|切回|转去)(?:「)?${allModeTargets}(?:」)?(?:模式)?${suffix}$`,
+    'u',
+  );
+  const namedConversionPattern = new RegExp(
+    `^${requestPrefix}${switchObject}(?:转成|转为|改成|改为|换成|变成)(?:「)?${namedModeTargets}(?:」)?(?:模式)?${suffix}$`,
+    'u',
+  );
+  const genericConversionWithModeObjectPattern = new RegExp(
+    `^${requestPrefix}(?:(?:把|将)?${modeReference})(?:转成|转为|改成|改为|换成|变成)(?:「)?小说(?:」)?(?:模式)?${suffix}$`,
+    'u',
+  );
+  const genericConversionWithModeSuffixPattern = new RegExp(
+    `^${requestPrefix}${switchObject}(?:转成|转为|改成|改为|换成|变成)(?:「)?小说(?:」)?模式${suffix}$`,
+    'u',
+  );
   const switchMatch =
-    /^(?:现在|立刻|马上)?(?:(?:请|麻烦)(?:帮我|帮忙)?|帮我|帮忙)?(?:(?:把|将)?(?:当前(?:的)?|这个)?(?:(?:App|应用)(?:的)?)?(?:模式|故事|作品|对话)?)?(?:切换成|切换到|切换为|转成|转为|改成|改为|换成|转去|切回|变成)(?:「)?(文游|互动故事|互动小说|写故事|写小说|小说|角色互动|角色聊天|对戏)(?:」)?(?:模式)?(?:吧|呀|啊)?$/u.exec(
-      normalized,
-    );
+    clearSwitchPattern.exec(normalized) ??
+    namedConversionPattern.exec(normalized) ??
+    genericConversionWithModeObjectPattern.exec(normalized) ??
+    genericConversionWithModeSuffixPattern.exec(normalized);
   if (!switchMatch) return null;
-  const target = switchMatch[1];
+  const target = switchMatch[1] ?? '小说';
   if (target === '文游' || target === '互动故事' || target === '互动小说') return 'story';
   if (target === '写故事' || target === '写小说' || target === '小说') return 'writing';
   return 'character';
