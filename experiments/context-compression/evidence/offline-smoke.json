@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "mode": "offline-simulated",
   "generatedAt": "2026-11-22T16:00:00.000Z",
   "providerRuns": 0,
@@ -109,22 +109,22 @@
         "nested:turn-855",
         "nested:turn-856"
       ],
-      "records": 40,
-      "outboundRequestCount": 40,
+      "records": 61,
+      "outboundRequestCount": 61,
       "localRetrievalCount": 0,
       "missingUsageRecords": 0,
       "usage": {
-        "promptCacheHitTokens": 46666,
-        "promptCacheMissTokens": 35381,
-        "completionTokens": 2232
+        "promptCacheHitTokens": 136749,
+        "promptCacheMissTokens": 122694,
+        "completionTokens": 2904
       },
       "costUsd": null,
       "costPer100TurnsUsd": null,
-      "cacheHitRate": 0.5687715577656709,
+      "cacheHitRate": 0.5270868745736058,
       "firstContentLatencyMsP50": 928,
       "firstContentLatencyMsP95": 1113,
       "branchSwitchFirstContentLatencyMsP50": 965,
-      "peakInputTokens": 17907,
+      "peakInputTokens": 4315,
       "completionRate": 1
     },
     "retrievable": {
@@ -175,17 +175,17 @@
       "localRetrievalCount": 30,
       "missingUsageRecords": 0,
       "usage": {
-        "promptCacheHitTokens": 21974,
-        "promptCacheMissTokens": 7655,
+        "promptCacheHitTokens": 7605,
+        "promptCacheMissTokens": 4501,
         "completionTokens": 1944
       },
       "costUsd": null,
       "costPer100TurnsUsd": null,
-      "cacheHitRate": 0.741638259813021,
+      "cacheHitRate": 0.6282008921196102,
       "firstContentLatencyMsP50": 928,
       "firstContentLatencyMsP95": 1113,
       "branchSwitchFirstContentLatencyMsP50": 965,
-      "peakInputTokens": 17907,
+      "peakInputTokens": 592,
       "completionRate": 1
     }
   },
@@ -207,15 +207,127 @@
   "branchLifecycle": {
     "continuedTurns": 2,
     "reopenedAfterRestart": true,
-    "editedSiblingIsolated": true
+    "editedSiblingIsolated": true,
+    "oldTurnEdit": {
+      "entry": "FictionHarness.editAndBranch",
+      "execution": "offline-pure-harness",
+      "transport": "in-process-fake",
+      "modelCalls": 1,
+      "providerCalls": 0,
+      "originalBranchPreserved": true,
+      "siblingIsolated": true,
+      "passed": true
+    }
+  },
+  "routeReturns": {
+    "aToBToA": {
+      "steps": [
+        "A",
+        "B",
+        "A"
+      ],
+      "routeIds": [
+        "route-01",
+        "route-02",
+        "route-01"
+      ],
+      "switchCount": 3,
+      "measurements": [
+        {
+          "step": "A",
+          "routeId": "route-01",
+          "pathNodeCount": 146,
+          "pathCharCount": 2396,
+          "contextEstimatedTokens": 903,
+          "uniqueFactPresent": true,
+          "foreignRouteFactCount": 0
+        },
+        {
+          "step": "B",
+          "routeId": "route-02",
+          "pathNodeCount": 146,
+          "pathCharCount": 2400,
+          "contextEstimatedTokens": 903,
+          "uniqueFactPresent": true,
+          "foreignRouteFactCount": 0
+        },
+        {
+          "step": "A",
+          "routeId": "route-01",
+          "pathNodeCount": 146,
+          "pathCharCount": 2396,
+          "contextEstimatedTokens": 903,
+          "uniqueFactPresent": true,
+          "foreignRouteFactCount": 0
+        }
+      ],
+      "passed": true,
+      "returnedPathIdentical": true
+    },
+    "aToBToC": {
+      "steps": [
+        "A",
+        "B",
+        "C"
+      ],
+      "routeIds": [
+        "route-01",
+        "route-02",
+        "route-03"
+      ],
+      "switchCount": 3,
+      "measurements": [
+        {
+          "step": "A",
+          "routeId": "route-01",
+          "pathNodeCount": 146,
+          "pathCharCount": 2396,
+          "contextEstimatedTokens": 903,
+          "uniqueFactPresent": true,
+          "foreignRouteFactCount": 0
+        },
+        {
+          "step": "B",
+          "routeId": "route-02",
+          "pathNodeCount": 146,
+          "pathCharCount": 2400,
+          "contextEstimatedTokens": 903,
+          "uniqueFactPresent": true,
+          "foreignRouteFactCount": 0
+        },
+        {
+          "step": "C",
+          "routeId": "route-03",
+          "pathNodeCount": 146,
+          "pathCharCount": 2394,
+          "contextEstimatedTokens": 920,
+          "uniqueFactPresent": true,
+          "foreignRouteFactCount": 0
+        }
+      ],
+      "passed": true
+    }
+  },
+  "folioSummaryPolicy": {
+    "simulation": "deterministic-offline",
+    "policy": "production-selectNodesToSummarize-with-rolling-batches",
+    "recentMaxNodes": 8,
+    "recentMaxChars": 6000,
+    "summaryBatchMaxNodes": 16,
+    "summaryBatchMaxChars": 10000,
+    "contextsChecked": 30,
+    "simulatedSummaryRequests": 30,
+    "coverageViolations": 0,
+    "sharedProbeCount": 13,
+    "passed": true
   },
   "officialPreflight": {
     "ok": true,
-    "requestCount": 102,
-    "maxEstimatedCostUsd": 0.12871694999999997,
+    "requestCount": 123,
+    "maxEstimatedCostUsd": 0.17205944999999995,
     "violations": [],
     "budget": {
-      "maxRequests": 120,
+      "maxRequests": 128,
       "maxRetriesPerOperation": 1,
       "maxInputTokensPerRequest": 256000,
       "maxOutputTokensPerRequest": 512,
@@ -245,7 +357,11 @@
       "arm": "full",
       "scenario": "continuous",
       "inputNodeCount": 580,
-      "inputTailNodeId": "turn-290-a"
+      "inputTailNodeId": "turn-290-a",
+      "inputCharCount": 8738,
+      "messageCount": 582,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "1ecaeb6c"
     },
     {
       "requestId": "anonymous-full-continuous-02",
@@ -263,7 +379,11 @@
       "arm": "full",
       "scenario": "continuous",
       "inputNodeCount": 582,
-      "inputTailNodeId": "turn-291-a"
+      "inputTailNodeId": "turn-291-a",
+      "inputCharCount": 8766,
+      "messageCount": 584,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "dbc49c7d"
     },
     {
       "requestId": "anonymous-full-continuous-03",
@@ -281,7 +401,11 @@
       "arm": "full",
       "scenario": "continuous",
       "inputNodeCount": 584,
-      "inputTailNodeId": "turn-292-a"
+      "inputTailNodeId": "turn-292-a",
+      "inputCharCount": 8792,
+      "messageCount": 586,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "f4200e87"
     },
     {
       "requestId": "anonymous-full-continuous-04",
@@ -299,7 +423,11 @@
       "arm": "full",
       "scenario": "continuous",
       "inputNodeCount": 586,
-      "inputTailNodeId": "turn-293-a"
+      "inputTailNodeId": "turn-293-a",
+      "inputCharCount": 8820,
+      "messageCount": 588,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "3458e8eb"
     },
     {
       "requestId": "anonymous-full-continuous-05",
@@ -317,7 +445,11 @@
       "arm": "full",
       "scenario": "continuous",
       "inputNodeCount": 588,
-      "inputTailNodeId": "turn-294-a"
+      "inputTailNodeId": "turn-294-a",
+      "inputCharCount": 8849,
+      "messageCount": 590,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "3951155e"
     },
     {
       "requestId": "anonymous-full-continuous-06",
@@ -335,7 +467,11 @@
       "arm": "full",
       "scenario": "continuous",
       "inputNodeCount": 590,
-      "inputTailNodeId": "turn-295-a"
+      "inputTailNodeId": "turn-295-a",
+      "inputCharCount": 8878,
+      "messageCount": 592,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "9530bde9"
     },
     {
       "requestId": "anonymous-full-continuous-07",
@@ -353,7 +489,11 @@
       "arm": "full",
       "scenario": "continuous",
       "inputNodeCount": 592,
-      "inputTailNodeId": "turn-296-a"
+      "inputTailNodeId": "turn-296-a",
+      "inputCharCount": 8907,
+      "messageCount": 594,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "2190f92b"
     },
     {
       "requestId": "anonymous-full-continuous-08",
@@ -371,7 +511,11 @@
       "arm": "full",
       "scenario": "continuous",
       "inputNodeCount": 594,
-      "inputTailNodeId": "turn-297-a"
+      "inputTailNodeId": "turn-297-a",
+      "inputCharCount": 8936,
+      "messageCount": 596,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "93ab01b7"
     },
     {
       "requestId": "anonymous-full-continuous-09",
@@ -389,7 +533,11 @@
       "arm": "full",
       "scenario": "continuous",
       "inputNodeCount": 596,
-      "inputTailNodeId": "turn-298-a"
+      "inputTailNodeId": "turn-298-a",
+      "inputCharCount": 8965,
+      "messageCount": 598,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "5e6552c2"
     },
     {
       "requestId": "anonymous-full-continuous-10",
@@ -407,7 +555,11 @@
       "arm": "full",
       "scenario": "continuous",
       "inputNodeCount": 598,
-      "inputTailNodeId": "turn-299-a"
+      "inputTailNodeId": "turn-299-a",
+      "inputCharCount": 8994,
+      "messageCount": 600,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "1798eb56"
     },
     {
       "requestId": "anonymous-full-branching-01",
@@ -425,7 +577,11 @@
       "arm": "full",
       "scenario": "branching",
       "inputNodeCount": 136,
-      "inputTailNodeId": "turn-68-a"
+      "inputTailNodeId": "turn-68-a",
+      "inputCharCount": 2154,
+      "messageCount": 138,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "a51aa38f"
     },
     {
       "requestId": "anonymous-full-branching-02",
@@ -443,7 +599,11 @@
       "arm": "full",
       "scenario": "branching",
       "inputNodeCount": 138,
-      "inputTailNodeId": "turn-69-a"
+      "inputTailNodeId": "turn-69-a",
+      "inputCharCount": 2183,
+      "messageCount": 140,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "15c005ba"
     },
     {
       "requestId": "anonymous-full-branching-03",
@@ -461,7 +621,11 @@
       "arm": "full",
       "scenario": "branching",
       "inputNodeCount": 140,
-      "inputTailNodeId": "turn-70-a"
+      "inputTailNodeId": "turn-70-a",
+      "inputCharCount": 2212,
+      "messageCount": 142,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "037bef6d"
     },
     {
       "requestId": "anonymous-full-branching-04",
@@ -479,7 +643,11 @@
       "arm": "full",
       "scenario": "branching",
       "inputNodeCount": 142,
-      "inputTailNodeId": "turn-71-a"
+      "inputTailNodeId": "turn-71-a",
+      "inputCharCount": 2241,
+      "messageCount": 144,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "45d1e7af"
     },
     {
       "requestId": "anonymous-full-branching-05",
@@ -497,7 +665,11 @@
       "arm": "full",
       "scenario": "branching",
       "inputNodeCount": 144,
-      "inputTailNodeId": "turn-72-a"
+      "inputTailNodeId": "turn-72-a",
+      "inputCharCount": 2270,
+      "messageCount": 146,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "f40ffd4b"
     },
     {
       "requestId": "anonymous-full-branching-06",
@@ -515,7 +687,11 @@
       "arm": "full",
       "scenario": "branching",
       "inputNodeCount": 134,
-      "inputTailNodeId": "turn-297-a"
+      "inputTailNodeId": "turn-297-a",
+      "inputCharCount": 2131,
+      "messageCount": 136,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "7a1e92ae"
     },
     {
       "requestId": "anonymous-full-branching-07",
@@ -533,7 +709,11 @@
       "arm": "full",
       "scenario": "branching",
       "inputNodeCount": 136,
-      "inputTailNodeId": "turn-298-a"
+      "inputTailNodeId": "turn-298-a",
+      "inputCharCount": 2160,
+      "messageCount": 138,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "f8beb25b"
     },
     {
       "requestId": "anonymous-full-branching-08",
@@ -551,7 +731,11 @@
       "arm": "full",
       "scenario": "branching",
       "inputNodeCount": 138,
-      "inputTailNodeId": "turn-299-a"
+      "inputTailNodeId": "turn-299-a",
+      "inputCharCount": 2189,
+      "messageCount": 140,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "6880e313"
     },
     {
       "requestId": "anonymous-full-branching-09",
@@ -569,7 +753,11 @@
       "arm": "full",
       "scenario": "branching",
       "inputNodeCount": 140,
-      "inputTailNodeId": "turn-300-a"
+      "inputTailNodeId": "turn-300-a",
+      "inputCharCount": 2217,
+      "messageCount": 142,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "1cd9a626"
     },
     {
       "requestId": "anonymous-full-branching-10",
@@ -587,7 +775,11 @@
       "arm": "full",
       "scenario": "branching",
       "inputNodeCount": 142,
-      "inputTailNodeId": "turn-301-a"
+      "inputTailNodeId": "turn-301-a",
+      "inputCharCount": 2246,
+      "messageCount": 144,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "32ab976c"
     },
     {
       "requestId": "anonymous-full-nested-01",
@@ -605,7 +797,11 @@
       "arm": "full",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-195-a"
+      "inputTailNodeId": "turn-195-a",
+      "inputCharCount": 3615,
+      "messageCount": 238,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "175a41b5"
     },
     {
       "requestId": "anonymous-full-nested-02",
@@ -623,7 +819,11 @@
       "arm": "full",
       "scenario": "nested",
       "inputNodeCount": 238,
-      "inputTailNodeId": "turn-196-a"
+      "inputTailNodeId": "turn-196-a",
+      "inputCharCount": 3644,
+      "messageCount": 240,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "fe705fcb"
     },
     {
       "requestId": "anonymous-full-nested-03",
@@ -641,7 +841,11 @@
       "arm": "full",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-365-a"
+      "inputTailNodeId": "turn-365-a",
+      "inputCharCount": 3622,
+      "messageCount": 238,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "8e929eae"
     },
     {
       "requestId": "anonymous-full-nested-04",
@@ -659,7 +863,11 @@
       "arm": "full",
       "scenario": "nested",
       "inputNodeCount": 238,
-      "inputTailNodeId": "turn-366-a"
+      "inputTailNodeId": "turn-366-a",
+      "inputCharCount": 3650,
+      "messageCount": 240,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "6ead0a97"
     },
     {
       "requestId": "anonymous-full-nested-05",
@@ -677,7 +885,11 @@
       "arm": "full",
       "scenario": "nested",
       "inputNodeCount": 234,
-      "inputTailNodeId": "turn-534-a"
+      "inputTailNodeId": "turn-534-a",
+      "inputCharCount": 3642,
+      "messageCount": 236,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "c937a854"
     },
     {
       "requestId": "anonymous-full-nested-06",
@@ -695,7 +907,11 @@
       "arm": "full",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-535-a"
+      "inputTailNodeId": "turn-535-a",
+      "inputCharCount": 3671,
+      "messageCount": 238,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "da9ecc13"
     },
     {
       "requestId": "anonymous-full-nested-07",
@@ -713,7 +929,11 @@
       "arm": "full",
       "scenario": "nested",
       "inputNodeCount": 234,
-      "inputTailNodeId": "turn-694-a"
+      "inputTailNodeId": "turn-694-a",
+      "inputCharCount": 3589,
+      "messageCount": 236,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "7cd2e653"
     },
     {
       "requestId": "anonymous-full-nested-08",
@@ -731,7 +951,11 @@
       "arm": "full",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-695-a"
+      "inputTailNodeId": "turn-695-a",
+      "inputCharCount": 3619,
+      "messageCount": 238,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "04702e1d"
     },
     {
       "requestId": "anonymous-full-nested-09",
@@ -749,7 +973,11 @@
       "arm": "full",
       "scenario": "nested",
       "inputNodeCount": 234,
-      "inputTailNodeId": "turn-854-a"
+      "inputTailNodeId": "turn-854-a",
+      "inputCharCount": 3622,
+      "messageCount": 236,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "5a9c9873"
     },
     {
       "requestId": "anonymous-full-nested-10",
@@ -767,7 +995,11 @@
       "arm": "full",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-855-a"
+      "inputTailNodeId": "turn-855-a",
+      "inputCharCount": 3650,
+      "messageCount": 238,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "96f93086"
     },
     {
       "requestId": "anonymous-full-retry-001",
@@ -784,7 +1016,11 @@
       "arm": "full",
       "scenario": "continuous",
       "inputNodeCount": 598,
-      "inputTailNodeId": "turn-299-a"
+      "inputTailNodeId": "turn-299-a",
+      "inputCharCount": 8994,
+      "messageCount": 600,
+      "contextPolicy": "full-history",
+      "contextFingerprint": "1798eb56"
     },
     {
       "requestId": "anonymous-folio-continuous-01",
@@ -793,8 +1029,8 @@
       "logicalTurnId": "continuous:turn-291",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 761,
-        "promptCacheMissTokens": 799,
+        "promptCacheHitTokens": 2105,
+        "promptCacheMissTokens": 2210,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 780,
@@ -802,7 +1038,33 @@
       "arm": "folio",
       "scenario": "continuous",
       "inputNodeCount": 580,
-      "inputTailNodeId": "turn-290-a"
+      "inputTailNodeId": "turn-290-a",
+      "inputCharCount": 2217,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "2c25bbf4",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-286-a",
+        "coveredNodeCount": 572,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 570,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-continuous-01-01",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "continuous:turn-291",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2071,
+        "promptCacheMissTokens": 2173,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 719,
+      "arm": "folio",
+      "scenario": "continuous"
     },
     {
       "requestId": "anonymous-folio-continuous-02",
@@ -811,8 +1073,8 @@
       "logicalTurnId": "continuous:turn-292",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 773,
-        "promptCacheMissTokens": 786,
+        "promptCacheHitTokens": 2139,
+        "promptCacheMissTokens": 2174,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 817,
@@ -820,7 +1082,33 @@
       "arm": "folio",
       "scenario": "continuous",
       "inputNodeCount": 582,
-      "inputTailNodeId": "turn-291-a"
+      "inputTailNodeId": "turn-291-a",
+      "inputCharCount": 2216,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "290d2add",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-287-a",
+        "coveredNodeCount": 574,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 572,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-continuous-01-02",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "continuous:turn-292",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2106,
+        "promptCacheMissTokens": 2141,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 738,
+      "arm": "folio",
+      "scenario": "continuous"
     },
     {
       "requestId": "anonymous-folio-continuous-03",
@@ -829,8 +1117,8 @@
       "logicalTurnId": "continuous:turn-293",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 782,
-        "promptCacheMissTokens": 771,
+        "promptCacheHitTokens": 2170,
+        "promptCacheMissTokens": 2137,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 854,
@@ -838,7 +1126,33 @@
       "arm": "folio",
       "scenario": "continuous",
       "inputNodeCount": 584,
-      "inputTailNodeId": "turn-292-a"
+      "inputTailNodeId": "turn-292-a",
+      "inputCharCount": 2213,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "5d65f3be",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-288-a",
+        "coveredNodeCount": 576,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 574,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-continuous-01-03",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "continuous:turn-293",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2140,
+        "promptCacheMissTokens": 2107,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 757,
+      "arm": "folio",
+      "scenario": "continuous"
     },
     {
       "requestId": "anonymous-folio-continuous-04",
@@ -847,8 +1161,8 @@
       "logicalTurnId": "continuous:turn-294",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 794,
-        "promptCacheMissTokens": 757,
+        "promptCacheHitTokens": 2204,
+        "promptCacheMissTokens": 2101,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 891,
@@ -856,17 +1170,28 @@
       "arm": "folio",
       "scenario": "continuous",
       "inputNodeCount": 586,
-      "inputTailNodeId": "turn-293-a"
+      "inputTailNodeId": "turn-293-a",
+      "inputCharCount": 2212,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "14314b6f",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-289-a",
+        "coveredNodeCount": 578,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 576,
+        "contiguous": true
+      }
     },
     {
-      "requestId": "anonymous-folio-summary-continuous-04",
+      "requestId": "anonymous-folio-summary-continuous-01-04",
       "phase": "summary",
       "status": "completed",
       "logicalTurnId": "continuous:turn-294",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 789,
-        "promptCacheMissTokens": 753,
+        "promptCacheHitTokens": 2174,
+        "promptCacheMissTokens": 2073,
         "completionTokens": 32
       },
       "firstContentLatencyMs": 776,
@@ -880,8 +1205,8 @@
       "logicalTurnId": "continuous:turn-295",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 806,
-        "promptCacheMissTokens": 745,
+        "promptCacheHitTokens": 2211,
+        "promptCacheMissTokens": 2041,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 928,
@@ -889,7 +1214,33 @@
       "arm": "folio",
       "scenario": "continuous",
       "inputNodeCount": 588,
-      "inputTailNodeId": "turn-294-a"
+      "inputTailNodeId": "turn-294-a",
+      "inputCharCount": 2185,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "584a138a",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-290-a",
+        "coveredNodeCount": 580,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 578,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-continuous-01-05",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "continuous:turn-295",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2234,
+        "promptCacheMissTokens": 2064,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 795,
+      "arm": "folio",
+      "scenario": "continuous"
     },
     {
       "requestId": "anonymous-folio-continuous-06",
@@ -898,8 +1249,8 @@
       "logicalTurnId": "continuous:turn-296",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 819,
-        "promptCacheMissTokens": 734,
+        "promptCacheHitTokens": 2244,
+        "promptCacheMissTokens": 2006,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 965,
@@ -907,7 +1258,33 @@
       "arm": "folio",
       "scenario": "continuous",
       "inputNodeCount": 590,
-      "inputTailNodeId": "turn-295-a"
+      "inputTailNodeId": "turn-295-a",
+      "inputCharCount": 2184,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "64c4a16b",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-291-a",
+        "coveredNodeCount": 582,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 580,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-continuous-01-06",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "continuous:turn-296",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2242,
+        "promptCacheMissTokens": 2006,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 814,
+      "arm": "folio",
+      "scenario": "continuous"
     },
     {
       "requestId": "anonymous-folio-continuous-07",
@@ -916,8 +1293,8 @@
       "logicalTurnId": "continuous:turn-297",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 832,
-        "promptCacheMissTokens": 721,
+        "promptCacheHitTokens": 2279,
+        "promptCacheMissTokens": 1973,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1002,
@@ -925,17 +1302,28 @@
       "arm": "folio",
       "scenario": "continuous",
       "inputNodeCount": 592,
-      "inputTailNodeId": "turn-296-a"
+      "inputTailNodeId": "turn-296-a",
+      "inputCharCount": 2185,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "ad73fdbe",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-292-a",
+        "coveredNodeCount": 584,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 582,
+        "contiguous": true
+      }
     },
     {
-      "requestId": "anonymous-folio-summary-continuous-07",
+      "requestId": "anonymous-folio-summary-continuous-01-07",
       "phase": "summary",
       "status": "completed",
       "logicalTurnId": "continuous:turn-297",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 826,
-        "promptCacheMissTokens": 716,
+        "promptCacheHitTokens": 2274,
+        "promptCacheMissTokens": 1970,
         "completionTokens": 32
       },
       "firstContentLatencyMs": 833,
@@ -949,8 +1337,8 @@
       "logicalTurnId": "continuous:turn-298",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 844,
-        "promptCacheMissTokens": 709,
+        "promptCacheHitTokens": 2316,
+        "promptCacheMissTokens": 1942,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1039,
@@ -958,7 +1346,33 @@
       "arm": "folio",
       "scenario": "continuous",
       "inputNodeCount": 594,
-      "inputTailNodeId": "turn-297-a"
+      "inputTailNodeId": "turn-297-a",
+      "inputCharCount": 2188,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "6c53c63f",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-293-a",
+        "coveredNodeCount": 586,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 584,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-continuous-01-08",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "continuous:turn-298",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2306,
+        "promptCacheMissTokens": 1934,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 852,
+      "arm": "folio",
+      "scenario": "continuous"
     },
     {
       "requestId": "anonymous-folio-continuous-09",
@@ -967,8 +1381,8 @@
       "logicalTurnId": "continuous:turn-299",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 857,
-        "promptCacheMissTokens": 696,
+        "promptCacheHitTokens": 2351,
+        "promptCacheMissTokens": 1909,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1076,
@@ -976,7 +1390,33 @@
       "arm": "folio",
       "scenario": "continuous",
       "inputNodeCount": 596,
-      "inputTailNodeId": "turn-298-a"
+      "inputTailNodeId": "turn-298-a",
+      "inputCharCount": 2189,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "21657183",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-294-a",
+        "coveredNodeCount": 588,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 586,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-continuous-01-09",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "continuous:turn-299",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2342,
+        "promptCacheMissTokens": 1902,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 871,
+      "arm": "folio",
+      "scenario": "continuous"
     },
     {
       "requestId": "anonymous-folio-continuous-10",
@@ -985,8 +1425,8 @@
       "logicalTurnId": "continuous:turn-300",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 869,
-        "promptCacheMissTokens": 684,
+        "promptCacheHitTokens": 2385,
+        "promptCacheMissTokens": 1875,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1113,
@@ -994,17 +1434,28 @@
       "arm": "folio",
       "scenario": "continuous",
       "inputNodeCount": 598,
-      "inputTailNodeId": "turn-299-a"
+      "inputTailNodeId": "turn-299-a",
+      "inputCharCount": 2189,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "24b865e0",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-295-a",
+        "coveredNodeCount": 590,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 588,
+        "contiguous": true
+      }
     },
     {
-      "requestId": "anonymous-folio-summary-continuous-10",
+      "requestId": "anonymous-folio-summary-continuous-01-10",
       "phase": "summary",
       "status": "completed",
       "logicalTurnId": "continuous:turn-300",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 863,
-        "promptCacheMissTokens": 679,
+        "promptCacheHitTokens": 2377,
+        "promptCacheMissTokens": 1869,
         "completionTokens": 32
       },
       "firstContentLatencyMs": 890,
@@ -1018,8 +1469,8 @@
       "logicalTurnId": "branching:turn-69",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 828,
-        "promptCacheMissTokens": 870,
+        "promptCacheHitTokens": 2073,
+        "promptCacheMissTokens": 2175,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 780,
@@ -1027,7 +1478,33 @@
       "arm": "folio",
       "scenario": "branching",
       "inputNodeCount": 136,
-      "inputTailNodeId": "turn-68-a"
+      "inputTailNodeId": "turn-68-a",
+      "inputCharCount": 2185,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "a2fb1319",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-64-a",
+        "coveredNodeCount": 128,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 126,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-branching-01-01",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "branching:turn-69",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2070,
+        "promptCacheMissTokens": 2172,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 719,
+      "arm": "folio",
+      "scenario": "branching"
     },
     {
       "requestId": "anonymous-folio-branching-02",
@@ -1036,8 +1513,8 @@
       "logicalTurnId": "branching:turn-70",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 842,
-        "promptCacheMissTokens": 856,
+        "promptCacheHitTokens": 2107,
+        "promptCacheMissTokens": 2141,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 817,
@@ -1045,7 +1522,33 @@
       "arm": "folio",
       "scenario": "branching",
       "inputNodeCount": 138,
-      "inputTailNodeId": "turn-69-a"
+      "inputTailNodeId": "turn-69-a",
+      "inputCharCount": 2185,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "0dfe2d35",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-65-a",
+        "coveredNodeCount": 130,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 128,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-branching-01-02",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "branching:turn-70",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2104,
+        "promptCacheMissTokens": 2138,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 738,
+      "arm": "folio",
+      "scenario": "branching"
     },
     {
       "requestId": "anonymous-folio-branching-03",
@@ -1054,8 +1557,8 @@
       "logicalTurnId": "branching:turn-71",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 856,
-        "promptCacheMissTokens": 844,
+        "promptCacheHitTokens": 2139,
+        "promptCacheMissTokens": 2107,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 854,
@@ -1063,7 +1566,33 @@
       "arm": "folio",
       "scenario": "branching",
       "inputNodeCount": 140,
-      "inputTailNodeId": "turn-70-a"
+      "inputTailNodeId": "turn-70-a",
+      "inputCharCount": 2184,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "ccbd25e1",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-66-a",
+        "coveredNodeCount": 132,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 130,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-branching-01-03",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "branching:turn-71",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2138,
+        "promptCacheMissTokens": 2106,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 757,
+      "arm": "folio",
+      "scenario": "branching"
     },
     {
       "requestId": "anonymous-folio-branching-04",
@@ -1072,8 +1601,8 @@
       "logicalTurnId": "branching:turn-72",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 870,
-        "promptCacheMissTokens": 830,
+        "promptCacheHitTokens": 2174,
+        "promptCacheMissTokens": 2074,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 891,
@@ -1081,17 +1610,28 @@
       "arm": "folio",
       "scenario": "branching",
       "inputNodeCount": 142,
-      "inputTailNodeId": "turn-71-a"
+      "inputTailNodeId": "turn-71-a",
+      "inputCharCount": 2185,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "feae854d",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-67-a",
+        "coveredNodeCount": 134,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 132,
+        "contiguous": true
+      }
     },
     {
-      "requestId": "anonymous-folio-summary-branching-04",
+      "requestId": "anonymous-folio-summary-branching-01-04",
       "phase": "summary",
       "status": "completed",
       "logicalTurnId": "branching:turn-72",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 864,
-        "promptCacheMissTokens": 825,
+        "promptCacheHitTokens": 2170,
+        "promptCacheMissTokens": 2070,
         "completionTokens": 32
       },
       "firstContentLatencyMs": 776,
@@ -1105,8 +1645,8 @@
       "logicalTurnId": "branching:turn-73",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 884,
-        "promptCacheMissTokens": 816,
+        "promptCacheHitTokens": 2212,
+        "promptCacheMissTokens": 2042,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 928,
@@ -1114,7 +1654,33 @@
       "arm": "folio",
       "scenario": "branching",
       "inputNodeCount": 144,
-      "inputTailNodeId": "turn-72-a"
+      "inputTailNodeId": "turn-72-a",
+      "inputCharCount": 2188,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "c3a06a9d",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-68-a",
+        "coveredNodeCount": 136,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 134,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-branching-01-05",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "branching:turn-73",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2202,
+        "promptCacheMissTokens": 2034,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 795,
+      "arm": "folio",
+      "scenario": "branching"
     },
     {
       "requestId": "anonymous-folio-branching-06",
@@ -1123,8 +1689,8 @@
       "logicalTurnId": "branching:turn-298",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 902,
-        "promptCacheMissTokens": 807,
+        "promptCacheHitTokens": 2246,
+        "promptCacheMissTokens": 2008,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 965,
@@ -1132,7 +1698,33 @@
       "arm": "folio",
       "scenario": "branching",
       "inputNodeCount": 134,
-      "inputTailNodeId": "turn-297-a"
+      "inputTailNodeId": "turn-297-a",
+      "inputCharCount": 2188,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "620cc28e",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-293-a",
+        "coveredNodeCount": 126,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 124,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-branching-01-06",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "branching:turn-298",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2236,
+        "promptCacheMissTokens": 2000,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 814,
+      "arm": "folio",
+      "scenario": "branching"
     },
     {
       "requestId": "anonymous-folio-branching-07",
@@ -1141,8 +1733,8 @@
       "logicalTurnId": "branching:turn-299",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 916,
-        "promptCacheMissTokens": 793,
+        "promptCacheHitTokens": 2281,
+        "promptCacheMissTokens": 1975,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1002,
@@ -1150,17 +1742,28 @@
       "arm": "folio",
       "scenario": "branching",
       "inputNodeCount": 136,
-      "inputTailNodeId": "turn-298-a"
+      "inputTailNodeId": "turn-298-a",
+      "inputCharCount": 2189,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "8d8d722d",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-294-a",
+        "coveredNodeCount": 128,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 126,
+        "contiguous": true
+      }
     },
     {
-      "requestId": "anonymous-folio-summary-branching-07",
+      "requestId": "anonymous-folio-summary-branching-01-07",
       "phase": "summary",
       "status": "completed",
       "logicalTurnId": "branching:turn-299",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 910,
-        "promptCacheMissTokens": 789,
+        "promptCacheHitTokens": 2272,
+        "promptCacheMissTokens": 1968,
         "completionTokens": 32
       },
       "firstContentLatencyMs": 833,
@@ -1174,8 +1777,8 @@
       "logicalTurnId": "branching:turn-300",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 929,
-        "promptCacheMissTokens": 780,
+        "promptCacheHitTokens": 2315,
+        "promptCacheMissTokens": 1941,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1039,
@@ -1183,7 +1786,33 @@
       "arm": "folio",
       "scenario": "branching",
       "inputNodeCount": 138,
-      "inputTailNodeId": "turn-299-a"
+      "inputTailNodeId": "turn-299-a",
+      "inputCharCount": 2189,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "0dadcc86",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-295-a",
+        "coveredNodeCount": 130,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 128,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-branching-01-08",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "branching:turn-300",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2307,
+        "promptCacheMissTokens": 1935,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 852,
+      "arm": "folio",
+      "scenario": "branching"
     },
     {
       "requestId": "anonymous-folio-branching-09",
@@ -1192,8 +1821,8 @@
       "logicalTurnId": "branching:turn-301",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 943,
-        "promptCacheMissTokens": 766,
+        "promptCacheHitTokens": 2348,
+        "promptCacheMissTokens": 1906,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1076,
@@ -1201,7 +1830,33 @@
       "arm": "folio",
       "scenario": "branching",
       "inputNodeCount": 140,
-      "inputTailNodeId": "turn-300-a"
+      "inputTailNodeId": "turn-300-a",
+      "inputCharCount": 2188,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "af120aa1",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-296-a",
+        "coveredNodeCount": 132,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 130,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-branching-01-09",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "branching:turn-301",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2341,
+        "promptCacheMissTokens": 1901,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 871,
+      "arm": "folio",
+      "scenario": "branching"
     },
     {
       "requestId": "anonymous-folio-branching-10",
@@ -1210,8 +1865,8 @@
       "logicalTurnId": "branching:turn-302",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 957,
-        "promptCacheMissTokens": 752,
+        "promptCacheHitTokens": 2382,
+        "promptCacheMissTokens": 1872,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1113,
@@ -1219,17 +1874,28 @@
       "arm": "folio",
       "scenario": "branching",
       "inputNodeCount": 142,
-      "inputTailNodeId": "turn-301-a"
+      "inputTailNodeId": "turn-301-a",
+      "inputCharCount": 2188,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "67ff7aa4",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-297-a",
+        "coveredNodeCount": 134,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 132,
+        "contiguous": true
+      }
     },
     {
-      "requestId": "anonymous-folio-summary-branching-10",
+      "requestId": "anonymous-folio-summary-branching-01-10",
       "phase": "summary",
       "status": "completed",
       "logicalTurnId": "branching:turn-302",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 951,
-        "promptCacheMissTokens": 748,
+        "promptCacheHitTokens": 2375,
+        "promptCacheMissTokens": 1867,
         "completionTokens": 32
       },
       "firstContentLatencyMs": 890,
@@ -1243,8 +1909,8 @@
       "logicalTurnId": "nested:turn-196",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 803,
-        "promptCacheMissTokens": 843,
+        "promptCacheHitTokens": 2077,
+        "promptCacheMissTokens": 2180,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 780,
@@ -1252,7 +1918,33 @@
       "arm": "folio",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-195-a"
+      "inputTailNodeId": "turn-195-a",
+      "inputCharCount": 2189,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "fd36d91b",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-191-a",
+        "coveredNodeCount": 228,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 226,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-nested-01-01",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "nested:turn-196",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2070,
+        "promptCacheMissTokens": 2173,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 719,
+      "arm": "folio",
+      "scenario": "nested"
     },
     {
       "requestId": "anonymous-folio-nested-02",
@@ -1261,8 +1953,8 @@
       "logicalTurnId": "nested:turn-197",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 816,
-        "promptCacheMissTokens": 830,
+        "promptCacheHitTokens": 2111,
+        "promptCacheMissTokens": 2146,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 817,
@@ -1270,7 +1962,33 @@
       "arm": "folio",
       "scenario": "nested",
       "inputNodeCount": 238,
-      "inputTailNodeId": "turn-196-a"
+      "inputTailNodeId": "turn-196-a",
+      "inputCharCount": 2189,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "5b2b6c40",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-192-a",
+        "coveredNodeCount": 230,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 228,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-nested-01-02",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "nested:turn-197",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2104,
+        "promptCacheMissTokens": 2139,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 738,
+      "arm": "folio",
+      "scenario": "nested"
     },
     {
       "requestId": "anonymous-folio-nested-03",
@@ -1279,8 +1997,8 @@
       "logicalTurnId": "nested:turn-366",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 836,
-        "promptCacheMissTokens": 824,
+        "promptCacheHitTokens": 2147,
+        "promptCacheMissTokens": 2114,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 854,
@@ -1288,7 +2006,33 @@
       "arm": "folio",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-365-a"
+      "inputTailNodeId": "turn-365-a",
+      "inputCharCount": 2191,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "bbbea9cc",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-361-a",
+        "coveredNodeCount": 228,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 226,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-nested-01-03",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "nested:turn-366",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2137,
+        "promptCacheMissTokens": 2104,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 757,
+      "arm": "folio",
+      "scenario": "nested"
     },
     {
       "requestId": "anonymous-folio-nested-04",
@@ -1297,8 +2041,8 @@
       "logicalTurnId": "nested:turn-367",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 848,
-        "promptCacheMissTokens": 810,
+        "promptCacheHitTokens": 2180,
+        "promptCacheMissTokens": 2079,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 891,
@@ -1306,17 +2050,28 @@
       "arm": "folio",
       "scenario": "nested",
       "inputNodeCount": 238,
-      "inputTailNodeId": "turn-366-a"
+      "inputTailNodeId": "turn-366-a",
+      "inputCharCount": 2190,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "a0863932",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-362-a",
+        "coveredNodeCount": 230,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 228,
+        "contiguous": true
+      }
     },
     {
-      "requestId": "anonymous-folio-summary-nested-04",
+      "requestId": "anonymous-folio-summary-nested-01-04",
       "phase": "summary",
       "status": "completed",
       "logicalTurnId": "nested:turn-367",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 844,
-        "promptCacheMissTokens": 806,
+        "promptCacheHitTokens": 2172,
+        "promptCacheMissTokens": 2071,
         "completionTokens": 32
       },
       "firstContentLatencyMs": 776,
@@ -1330,8 +2085,8 @@
       "logicalTurnId": "nested:turn-535",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 911,
-        "promptCacheMissTokens": 842,
+        "promptCacheHitTokens": 2209,
+        "promptCacheMissTokens": 2040,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 928,
@@ -1339,7 +2094,33 @@
       "arm": "folio",
       "scenario": "nested",
       "inputNodeCount": 234,
-      "inputTailNodeId": "turn-534-a"
+      "inputTailNodeId": "turn-534-a",
+      "inputCharCount": 2186,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "18aeedc3",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-530-a",
+        "coveredNodeCount": 226,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 224,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-nested-01-05",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "nested:turn-535",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2204,
+        "promptCacheMissTokens": 2036,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 795,
+      "arm": "folio",
+      "scenario": "nested"
     },
     {
       "requestId": "anonymous-folio-nested-06",
@@ -1348,8 +2129,8 @@
       "logicalTurnId": "nested:turn-536",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 925,
-        "promptCacheMissTokens": 828,
+        "promptCacheHitTokens": 2242,
+        "promptCacheMissTokens": 2005,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 965,
@@ -1357,7 +2138,33 @@
       "arm": "folio",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-535-a"
+      "inputTailNodeId": "turn-535-a",
+      "inputCharCount": 2185,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "3f530f1d",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-531-a",
+        "coveredNodeCount": 228,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 226,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-nested-01-06",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "nested:turn-536",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2239,
+        "promptCacheMissTokens": 2003,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 814,
+      "arm": "folio",
+      "scenario": "nested"
     },
     {
       "requestId": "anonymous-folio-nested-07",
@@ -1366,8 +2173,8 @@
       "logicalTurnId": "nested:turn-695",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 885,
-        "promptCacheMissTokens": 767,
+        "promptCacheHitTokens": 2281,
+        "promptCacheMissTokens": 1976,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1002,
@@ -1375,17 +2182,28 @@
       "arm": "folio",
       "scenario": "nested",
       "inputNodeCount": 234,
-      "inputTailNodeId": "turn-694-a"
+      "inputTailNodeId": "turn-694-a",
+      "inputCharCount": 2189,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "f9e2b0de",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-690-a",
+        "coveredNodeCount": 226,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 224,
+        "contiguous": true
+      }
     },
     {
-      "requestId": "anonymous-folio-summary-nested-07",
+      "requestId": "anonymous-folio-summary-nested-01-07",
       "phase": "summary",
       "status": "completed",
       "logicalTurnId": "nested:turn-695",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 880,
-        "promptCacheMissTokens": 762,
+        "promptCacheHitTokens": 2274,
+        "promptCacheMissTokens": 1969,
         "completionTokens": 32
       },
       "firstContentLatencyMs": 833,
@@ -1399,8 +2217,8 @@
       "logicalTurnId": "nested:turn-696",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 899,
-        "promptCacheMissTokens": 755,
+        "promptCacheHitTokens": 2317,
+        "promptCacheMissTokens": 1944,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1039,
@@ -1408,7 +2226,33 @@
       "arm": "folio",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-695-a"
+      "inputTailNodeId": "turn-695-a",
+      "inputCharCount": 2191,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "b6f214db",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-691-a",
+        "coveredNodeCount": 228,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 226,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-nested-01-08",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "nested:turn-696",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2307,
+        "promptCacheMissTokens": 1934,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 852,
+      "arm": "folio",
+      "scenario": "nested"
     },
     {
       "requestId": "anonymous-folio-nested-09",
@@ -1417,8 +2261,8 @@
       "logicalTurnId": "nested:turn-855",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 946,
-        "promptCacheMissTokens": 769,
+        "promptCacheHitTokens": 2350,
+        "promptCacheMissTokens": 1908,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1076,
@@ -1426,7 +2270,33 @@
       "arm": "folio",
       "scenario": "nested",
       "inputNodeCount": 234,
-      "inputTailNodeId": "turn-854-a"
+      "inputTailNodeId": "turn-854-a",
+      "inputCharCount": 2190,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "5baf726d",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-850-a",
+        "coveredNodeCount": 226,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 224,
+        "contiguous": true
+      }
+    },
+    {
+      "requestId": "anonymous-folio-summary-nested-01-09",
+      "phase": "summary",
+      "status": "completed",
+      "logicalTurnId": "nested:turn-855",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 2341,
+        "promptCacheMissTokens": 1901,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 871,
+      "arm": "folio",
+      "scenario": "nested"
     },
     {
       "requestId": "anonymous-folio-nested-10",
@@ -1435,8 +2305,8 @@
       "logicalTurnId": "nested:turn-856",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 959,
-        "promptCacheMissTokens": 754,
+        "promptCacheHitTokens": 2383,
+        "promptCacheMissTokens": 1873,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1113,
@@ -1444,17 +2314,28 @@
       "arm": "folio",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-855-a"
+      "inputTailNodeId": "turn-855-a",
+      "inputCharCount": 2189,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "683e8d38",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-851-a",
+        "coveredNodeCount": 228,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 226,
+        "contiguous": true
+      }
     },
     {
-      "requestId": "anonymous-folio-summary-nested-10",
+      "requestId": "anonymous-folio-summary-nested-01-10",
       "phase": "summary",
       "status": "completed",
       "logicalTurnId": "nested:turn-856",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 954,
-        "promptCacheMissTokens": 751,
+        "promptCacheHitTokens": 2375,
+        "promptCacheMissTokens": 1867,
         "completionTokens": 32
       },
       "firstContentLatencyMs": 890,
@@ -1468,15 +2349,26 @@
       "logicalTurnId": "continuous:turn-300",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 12893,
-        "promptCacheMissTokens": 5014,
+        "promptCacheHitTokens": 3067,
+        "promptCacheMissTokens": 1193,
         "completionTokens": 24
       },
       "firstContentLatencyMs": 980,
       "arm": "folio",
       "scenario": "continuous",
       "inputNodeCount": 598,
-      "inputTailNodeId": "turn-299-a"
+      "inputTailNodeId": "turn-299-a",
+      "inputCharCount": 2189,
+      "messageCount": 11,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "24b865e0",
+      "summaryCoverage": {
+        "coveredUpToNodeId": "turn-295-a",
+        "coveredNodeCount": 590,
+        "uncoveredNodeCount": 8,
+        "fixturePrefixNodeCount": 588,
+        "contiguous": true
+      }
     },
     {
       "requestId": "anonymous-retrievable-continuous-01",
@@ -1494,7 +2386,11 @@
       "arm": "retrievable",
       "scenario": "continuous",
       "inputNodeCount": 580,
-      "inputTailNodeId": "turn-290-a"
+      "inputTailNodeId": "turn-290-a",
+      "inputCharCount": 247,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "47fbe59c"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-01",
@@ -1526,7 +2422,11 @@
       "arm": "retrievable",
       "scenario": "continuous",
       "inputNodeCount": 582,
-      "inputTailNodeId": "turn-291-a"
+      "inputTailNodeId": "turn-291-a",
+      "inputCharCount": 240,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "b1165a19"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-02",
@@ -1558,7 +2458,11 @@
       "arm": "retrievable",
       "scenario": "continuous",
       "inputNodeCount": 584,
-      "inputTailNodeId": "turn-292-a"
+      "inputTailNodeId": "turn-292-a",
+      "inputCharCount": 324,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "2365ed82"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-03",
@@ -1590,7 +2494,11 @@
       "arm": "retrievable",
       "scenario": "continuous",
       "inputNodeCount": 586,
-      "inputTailNodeId": "turn-293-a"
+      "inputTailNodeId": "turn-293-a",
+      "inputCharCount": 209,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "09e786ac"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-04",
@@ -1622,7 +2530,11 @@
       "arm": "retrievable",
       "scenario": "continuous",
       "inputNodeCount": 588,
-      "inputTailNodeId": "turn-294-a"
+      "inputTailNodeId": "turn-294-a",
+      "inputCharCount": 211,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "4678b14b"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-05",
@@ -1654,7 +2566,11 @@
       "arm": "retrievable",
       "scenario": "continuous",
       "inputNodeCount": 590,
-      "inputTailNodeId": "turn-295-a"
+      "inputTailNodeId": "turn-295-a",
+      "inputCharCount": 212,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "0e00bfb4"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-06",
@@ -1686,7 +2602,11 @@
       "arm": "retrievable",
       "scenario": "continuous",
       "inputNodeCount": 592,
-      "inputTailNodeId": "turn-296-a"
+      "inputTailNodeId": "turn-296-a",
+      "inputCharCount": 215,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "a93746d0"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-07",
@@ -1718,7 +2638,11 @@
       "arm": "retrievable",
       "scenario": "continuous",
       "inputNodeCount": 594,
-      "inputTailNodeId": "turn-297-a"
+      "inputTailNodeId": "turn-297-a",
+      "inputCharCount": 216,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "68a4d4f9"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-08",
@@ -1750,7 +2674,11 @@
       "arm": "retrievable",
       "scenario": "continuous",
       "inputNodeCount": 596,
-      "inputTailNodeId": "turn-298-a"
+      "inputTailNodeId": "turn-298-a",
+      "inputCharCount": 216,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "bd617c7b"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-09",
@@ -1782,7 +2710,11 @@
       "arm": "retrievable",
       "scenario": "continuous",
       "inputNodeCount": 598,
-      "inputTailNodeId": "turn-299-a"
+      "inputTailNodeId": "turn-299-a",
+      "inputCharCount": 216,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "8be3a00f"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-10",
@@ -1814,7 +2746,11 @@
       "arm": "retrievable",
       "scenario": "branching",
       "inputNodeCount": 136,
-      "inputTailNodeId": "turn-68-a"
+      "inputTailNodeId": "turn-68-a",
+      "inputCharCount": 206,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "259e4d7b"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-01",
@@ -1846,7 +2782,11 @@
       "arm": "retrievable",
       "scenario": "branching",
       "inputNodeCount": 138,
-      "inputTailNodeId": "turn-69-a"
+      "inputTailNodeId": "turn-69-a",
+      "inputCharCount": 208,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "120894c9"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-02",
@@ -1878,7 +2818,11 @@
       "arm": "retrievable",
       "scenario": "branching",
       "inputNodeCount": 140,
-      "inputTailNodeId": "turn-70-a"
+      "inputTailNodeId": "turn-70-a",
+      "inputCharCount": 209,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "74434102"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-03",
@@ -1910,7 +2854,11 @@
       "arm": "retrievable",
       "scenario": "branching",
       "inputNodeCount": 142,
-      "inputTailNodeId": "turn-71-a"
+      "inputTailNodeId": "turn-71-a",
+      "inputCharCount": 212,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "1ce9101c"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-04",
@@ -1942,7 +2890,11 @@
       "arm": "retrievable",
       "scenario": "branching",
       "inputNodeCount": 144,
-      "inputTailNodeId": "turn-72-a"
+      "inputTailNodeId": "turn-72-a",
+      "inputCharCount": 213,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "07dcbced"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-05",
@@ -1974,7 +2926,11 @@
       "arm": "retrievable",
       "scenario": "branching",
       "inputNodeCount": 134,
-      "inputTailNodeId": "turn-297-a"
+      "inputTailNodeId": "turn-297-a",
+      "inputCharCount": 214,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "877bcb27"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-06",
@@ -2006,7 +2962,11 @@
       "arm": "retrievable",
       "scenario": "branching",
       "inputNodeCount": 136,
-      "inputTailNodeId": "turn-298-a"
+      "inputTailNodeId": "turn-298-a",
+      "inputCharCount": 214,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "c6601ded"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-07",
@@ -2038,7 +2998,11 @@
       "arm": "retrievable",
       "scenario": "branching",
       "inputNodeCount": 138,
-      "inputTailNodeId": "turn-299-a"
+      "inputTailNodeId": "turn-299-a",
+      "inputCharCount": 214,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "bce782b1"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-08",
@@ -2070,7 +3034,11 @@
       "arm": "retrievable",
       "scenario": "branching",
       "inputNodeCount": 140,
-      "inputTailNodeId": "turn-300-a"
+      "inputTailNodeId": "turn-300-a",
+      "inputCharCount": 210,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "c616ebea"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-09",
@@ -2102,7 +3070,11 @@
       "arm": "retrievable",
       "scenario": "branching",
       "inputNodeCount": 142,
-      "inputTailNodeId": "turn-301-a"
+      "inputTailNodeId": "turn-301-a",
+      "inputCharCount": 213,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "9a9d11ac"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-10",
@@ -2134,7 +3106,11 @@
       "arm": "retrievable",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-195-a"
+      "inputTailNodeId": "turn-195-a",
+      "inputCharCount": 212,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "a185d415"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-01",
@@ -2166,7 +3142,11 @@
       "arm": "retrievable",
       "scenario": "nested",
       "inputNodeCount": 238,
-      "inputTailNodeId": "turn-196-a"
+      "inputTailNodeId": "turn-196-a",
+      "inputCharCount": 214,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "8a469f7f"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-02",
@@ -2198,7 +3178,11 @@
       "arm": "retrievable",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-365-a"
+      "inputTailNodeId": "turn-365-a",
+      "inputCharCount": 221,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "827e5b8b"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-03",
@@ -2230,7 +3214,11 @@
       "arm": "retrievable",
       "scenario": "nested",
       "inputNodeCount": 238,
-      "inputTailNodeId": "turn-366-a"
+      "inputTailNodeId": "turn-366-a",
+      "inputCharCount": 212,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "59a262cf"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-04",
@@ -2262,7 +3250,11 @@
       "arm": "retrievable",
       "scenario": "nested",
       "inputNodeCount": 234,
-      "inputTailNodeId": "turn-534-a"
+      "inputTailNodeId": "turn-534-a",
+      "inputCharCount": 210,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "813b20f1"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-05",
@@ -2294,7 +3286,11 @@
       "arm": "retrievable",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-535-a"
+      "inputTailNodeId": "turn-535-a",
+      "inputCharCount": 212,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "f4551fc0"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-06",
@@ -2326,7 +3322,11 @@
       "arm": "retrievable",
       "scenario": "nested",
       "inputNodeCount": 234,
-      "inputTailNodeId": "turn-694-a"
+      "inputTailNodeId": "turn-694-a",
+      "inputCharCount": 214,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "c1c98382"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-07",
@@ -2358,7 +3358,11 @@
       "arm": "retrievable",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-695-a"
+      "inputTailNodeId": "turn-695-a",
+      "inputCharCount": 219,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "3060789a"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-08",
@@ -2390,7 +3394,11 @@
       "arm": "retrievable",
       "scenario": "nested",
       "inputNodeCount": 234,
-      "inputTailNodeId": "turn-854-a"
+      "inputTailNodeId": "turn-854-a",
+      "inputCharCount": 215,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "681e4d69"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-09",
@@ -2422,7 +3430,11 @@
       "arm": "retrievable",
       "scenario": "nested",
       "inputNodeCount": 236,
-      "inputTailNodeId": "turn-855-a"
+      "inputTailNodeId": "turn-855-a",
+      "inputCharCount": 211,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "0c5548a4"
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-10",
@@ -2445,19 +3457,25 @@
       "logicalTurnId": "continuous:turn-300",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 14683,
-        "promptCacheMissTokens": 3224,
+        "promptCacheHitTokens": 314,
+        "promptCacheMissTokens": 70,
         "completionTokens": 24
       },
       "firstContentLatencyMs": 980,
       "arm": "retrievable",
       "scenario": "continuous",
       "inputNodeCount": 598,
-      "inputTailNodeId": "turn-299-a"
+      "inputTailNodeId": "turn-299-a",
+      "inputCharCount": 216,
+      "messageCount": 11,
+      "contextPolicy": "branch-retrieval",
+      "contextFingerprint": "8be3a00f"
     }
   ],
   "limitations": [
     "Offline simulated usage validates branch identity and measurement plumbing only.",
+    "Folio summary text and request cadence are deterministic offline simulations driven by the production summary-selection and rolling-batch policy.",
+    "Route-return and old-turn edit probes use the pure Harness entry points with an in-process fake model transport; no provider response quality is measured.",
     "It cannot establish quality, real prefix-cache behavior, latency, or API savings.",
     "No DeepSeek credential was read and no funded request was sent."
   ]

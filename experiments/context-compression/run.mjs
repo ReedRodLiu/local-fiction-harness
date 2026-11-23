@@ -30,7 +30,14 @@ if (!Number.isFinite(nowMs)) {
 }
 
 const report = await runOfflineSmoke({ seed, now: () => nowMs });
-if (!report.branchIsolation.passed || !report.branchLifecycle.reopenedAfterRestart || !report.branchLifecycle.editedSiblingIsolated) {
+if (
+  !report.branchIsolation.passed ||
+  !report.branchLifecycle.reopenedAfterRestart ||
+  !report.branchLifecycle.editedSiblingIsolated ||
+  !report.routeReturns.aToBToA.passed ||
+  !report.routeReturns.aToBToC.passed ||
+  !report.folioSummaryPolicy.passed
+) {
   throw new Error('Offline branch isolation or lifecycle verification failed.');
 }
 
@@ -54,6 +61,9 @@ console.log(JSON.stringify({
   credentialStatus: report.credentialStatus,
   branchIsolation: report.branchIsolation,
   branchLifecycle: report.branchLifecycle,
+  routeReturns: report.routeReturns,
+  folioSummaryPolicy: report.folioSummaryPolicy,
+  officialPreflight: report.officialPreflight,
   groups: Object.fromEntries(Object.entries(report.groups).map(([arm, summary]) => [arm, {
     records: summary.records,
     effectiveTurns: summary.effectiveTurns,

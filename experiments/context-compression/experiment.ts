@@ -1,8 +1,13 @@
 import {
   assembleCreativeThreeZoneContext,
+  buildSummaryCompressionMessages,
+  DEFAULT_CONTEXT_BUDGET,
   EMPTY_SUMMARY_SNAPSHOT,
   getActiveBranchNodes,
+  getUncoveredNodes,
+  selectNodesToSummarize,
 } from '../../src/harness/context.ts';
+import { createFictionHarness } from '../../src/harness/harness.ts';
 import {
   DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
   estimateContextSavings,
@@ -17,7 +22,7 @@ import {
   type ContextExperimentSummary,
   type ContextSavingsEstimate,
 } from './savings.ts';
-import type { LlmMessage, TurnNode } from '../../src/harness/types.ts';
+import type { LlmMessage, PlotSummarySnapshot, Story, TurnNode } from '../../src/harness/types.ts';
 
 export type ExperimentScenarioName = 'continuous' | 'branching' | 'nested';
 
@@ -364,7 +369,7 @@ export function generateExperimentScenario(
 }
 
 export const OFFICIAL_SHORT_RUN_BUDGET: ContextExperimentBudget = {
-  maxRequests: 120,
+  maxRequests: 128,
   maxRetriesPerOperation: 1,
   maxInputTokensPerRequest: 256_000,
   maxOutputTokensPerRequest: 512,
@@ -378,8 +383,65 @@ export interface OfflineSmokeOptions {
   now?: () => number;
 }
 
+export type ContextExperimentContextPolicy =
+  | 'full-history'
+  | 'rolling-summary'
+  | 'branch-retrieval';
+
+export interface OfflineSummaryCoverage {
+  coveredUpToNodeId: string | null;
+  coveredNodeCount: number;
+  uncoveredNodeCount: number;
+  fixturePrefixNodeCount: number;
+  contiguous: boolean;
+}
+
+export interface OfflineFolioSummaryPolicy {
+  simulation: 'deterministic-offline';
+  policy: 'production-selectNodesToSummarize-with-rolling-batches';
+  recentMaxNodes: number;
+  recentMaxChars: number;
+  summaryBatchMaxNodes: number;
+  summaryBatchMaxChars: number;
+  contextsChecked: number;
+  simulatedSummaryRequests: number;
+  coverageViolations: number;
+  sharedProbeCount: number;
+  passed: boolean;
+}
+
+export interface OfflineRouteMeasurement {
+  step: string;
+  routeId: string;
+  pathNodeCount: number;
+  pathCharCount: number;
+  contextEstimatedTokens: number;
+  uniqueFactPresent: boolean;
+  foreignRouteFactCount: number;
+}
+
+export interface OfflineRouteReturn {
+  steps: string[];
+  routeIds: string[];
+  switchCount: number;
+  measurements: OfflineRouteMeasurement[];
+  returnedPathIdentical?: boolean;
+  passed: boolean;
+}
+
+export interface OfflineOldTurnEditResult {
+  entry: 'FictionHarness.editAndBranch';
+  execution: 'offline-pure-harness';
+  transport: 'in-process-fake';
+  modelCalls: number;
+  providerCalls: 0;
+  originalBranchPreserved: boolean;
+  siblingIsolated: boolean;
+  passed: boolean;
+}
+
 export interface OfflineSmokeReport {
-  schemaVersion: 2;
+  schemaVersion: 3;
   mode: 'offline-simulated';
   generatedAt: string;
   providerRuns: 0;
@@ -398,13 +460,24 @@ export interface OfflineSmokeReport {
     continuedTurns: number;
     reopenedAfterRestart: boolean;
     editedSiblingIsolated: boolean;
+    oldTurnEdit: OfflineOldTurnEditResult;
   };
+  routeReturns: {
+    aToBToA: OfflineRouteReturn;
+    aToBToC: OfflineRouteReturn;
+  };
+  folioSummaryPolicy: OfflineFolioSummaryPolicy;
   officialPreflight: ContextExperimentPreflight & { budget: ContextExperimentBudget };
   requests: Array<ContextExperimentRequestRecord & {
     arm: ContextExperimentArm;
     scenario: ExperimentScenarioName;
     inputNodeCount?: number;
     inputTailNodeId?: string | null;
+    inputCharCount?: number;
+    messageCount?: number;
+    contextPolicy?: ContextExperimentContextPolicy;
+    contextFingerprint?: string;
+    summaryCoverage?: OfflineSummaryCoverage;
   }>;
   limitations: string[];
 }
@@ -456,45 +529,124 @@ function pathMessages(
   ];
 }
 
+const OFFLINE_FOLIO_BUDGET = {
+  recentMaxNodes: 8,
+  recentMaxChars: 6_000,
+  summaryBatchMaxNodes: DEFAULT_CONTEXT_BUDGET.summaryBatchMaxNodes,
+  summaryBatchMaxChars: DEFAULT_CONTEXT_BUDGET.summaryBatchMaxChars,
+} as const;
+
+const OFFLINE_FOLIO_FIXTURE_TAIL_NODES = 10;
+
+interface OfflineArmContext {
+  messages: LlmMessage[];
+  policy: ContextExperimentContextPolicy;
+  retrievalCount: number;
+  summaryRequests: LlmMessage[][];
+  summaryCoverage?: OfflineSummaryCoverage;
+}
+
+function offlineSummaryText(previous: string, nodes: readonly TurnNode[]): string {
+  const addition = nodes.map((node) => {
+    const detail = (node.turnSummary ?? node.content).replace(/\s+/g, ' ').trim().slice(0, 40);
+    return `${node.role === 'user' ? '行动' : '叙事'}：${detail}`;
+  }).join('；');
+  return `${previous}${previous ? '；' : ''}${addition}`.slice(-2_000);
+}
+
+function takeOfflineSummaryBatch(nodes: readonly TurnNode[]): TurnNode[] {
+  let end = 0;
+  let chars = 0;
+  for (const node of nodes) {
+    if (end >= OFFLINE_FOLIO_BUDGET.summaryBatchMaxNodes) break;
+    if (chars + node.content.length > OFFLINE_FOLIO_BUDGET.summaryBatchMaxChars && end > 0) break;
+    chars += node.content.length;
+    end += 1;
+  }
+  if (end < nodes.length && end > 1 && nodes[end - 1]?.role === 'user') end -= 1;
+  return nodes.slice(0, end);
+}
+
 function folioMessages(
   scenario: GeneratedExperimentScenario,
   parentLeafId: string | null,
   action: string,
-): LlmMessage[] {
+): OfflineArmContext {
   const path = getActiveBranchNodes(
     { nodes: scenario.nodes, activeLeafNodeId: parentLeafId },
     parentLeafId,
   );
-  const target = path[path.length - 1];
-  const older = path.slice(0, Math.max(0, path.length - 8));
-  const summaryContent = older.slice(-40).map((node) => node.content).join(' ').slice(-2_000);
-  const nodes = summaryContent && target
+  const fixturePrefixNodeCount = Math.max(0, path.length - OFFLINE_FOLIO_FIXTURE_TAIL_NODES);
+  const fixturePrefix = path.slice(0, fixturePrefixNodeCount);
+  let snapshot: PlotSummarySnapshot = fixturePrefixNodeCount > 0
+    ? {
+        content: offlineSummaryText('', fixturePrefix),
+        coveredUpToNodeId: fixturePrefix[fixturePrefix.length - 1].id,
+        summarizedTurnCount: fixturePrefix.length,
+      }
+    : EMPTY_SUMMARY_SNAPSHOT;
+  const summaryRequests: LlmMessage[][] = [];
+
+  while (true) {
+    const uncovered = getUncoveredNodes(path, snapshot.coveredUpToNodeId);
+    const selected = selectNodesToSummarize(uncovered, OFFLINE_FOLIO_BUDGET);
+    if (selected.length === 0) break;
+    const batch = takeOfflineSummaryBatch(selected);
+    if (batch.length === 0) break;
+    summaryRequests.push(buildSummaryCompressionMessages(
+      snapshot.content,
+      batch,
+      undefined,
+      OFFLINE_FOLIO_BUDGET.summaryBatchMaxChars,
+    ));
+    snapshot = {
+      content: offlineSummaryText(snapshot.content, batch),
+      coveredUpToNodeId: batch[batch.length - 1].id,
+      summarizedTurnCount: snapshot.summarizedTurnCount + batch.length,
+    };
+  }
+
+  const target = path.at(-1);
+  const nodes = target
     ? {
         ...scenario.nodes,
-        [target.id]: {
-          ...target,
-          summarySnapshot: {
-            content: summaryContent,
-            coveredUpToNodeId: older[older.length - 1]?.id ?? null,
-            summarizedTurnCount: older.length,
-          },
-        },
+        [target.id]: { ...target, summarySnapshot: snapshot },
       }
     : scenario.nodes;
-  return assembleCreativeThreeZoneContext({
+  const messages = assembleCreativeThreeZoneContext({
     systemPrompt: `${scenario.setting}\n故事：${scenario.title}`,
     nodes,
     targetParentId: parentLeafId,
     userInput: action,
-    budgetOverrides: { recentMaxNodes: 8, recentMaxChars: 6_000 },
+    budgetOverrides: OFFLINE_FOLIO_BUDGET,
   }).messages;
+  const coveredNodeCount = snapshot.coveredUpToNodeId
+    ? path.findIndex((node) => node.id === snapshot.coveredUpToNodeId) + 1
+    : 0;
+
+  return {
+    messages,
+    policy: 'rolling-summary',
+    retrievalCount: 0,
+    summaryRequests,
+    summaryCoverage: {
+      coveredUpToNodeId: snapshot.coveredUpToNodeId,
+      coveredNodeCount,
+      uncoveredNodeCount: path.length - coveredNodeCount,
+      fixturePrefixNodeCount,
+      contiguous:
+        coveredNodeCount >= 0 &&
+        coveredNodeCount <= path.length &&
+        snapshot.summarizedTurnCount === coveredNodeCount,
+    },
+  };
 }
 
 function retrievableMessages(
   scenario: GeneratedExperimentScenario,
   parentLeafId: string | null,
   action: string,
-): { messages: LlmMessage[]; retrievalCount: number } {
+): OfflineArmContext {
   const path = getActiveBranchNodes(
     { nodes: scenario.nodes, activeLeafNodeId: parentLeafId },
     parentLeafId,
@@ -512,8 +664,40 @@ function retrievableMessages(
       ...path.slice(-6).map((node) => ({ role: node.role, content: node.content } as LlmMessage)),
       { role: 'user', content: action },
     ],
+    policy: 'branch-retrieval',
     retrievalCount: retrieval.selected.length,
+    summaryRequests: [],
   };
+}
+
+function contextForArm(
+  arm: ContextExperimentArm,
+  scenario: GeneratedExperimentScenario,
+  parentLeafId: string | null,
+  action: string,
+): OfflineArmContext {
+  if (arm === 'full') {
+    return {
+      messages: pathMessages(scenario, parentLeafId, action),
+      policy: 'full-history',
+      retrievalCount: 0,
+      summaryRequests: [],
+    };
+  }
+  return arm === 'folio'
+    ? folioMessages(scenario, parentLeafId, action)
+    : retrievableMessages(scenario, parentLeafId, action);
+}
+
+function contextFingerprint(messages: readonly LlmMessage[]): string {
+  let hash = 0x811c9dc5;
+  for (const message of messages) {
+    for (const character of `${message.role}\0${message.content}\0`) {
+      hash ^= character.codePointAt(0) ?? 0;
+      hash = Math.imul(hash, 0x01000193);
+    }
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 function simulatedTokens(value: string): number {
@@ -537,7 +721,101 @@ function simulatedUsage(
   };
 }
 
-function verifyBranchLifecycle(seed: number): OfflineSmokeReport['branchLifecycle'] {
+function createOfflineHarness() {
+  return createFictionHarness({
+    transport: {
+      async *streamChat() {
+        yield { contentDelta: '离线纯 Harness 回复。', finishReason: 'stop' };
+      },
+    },
+  });
+}
+
+function storyFromScenario(
+  harness: ReturnType<typeof createOfflineHarness>,
+  scenario: GeneratedExperimentScenario,
+): Story {
+  const base = harness.createStory({ title: scenario.title, rawScript: scenario.setting });
+  const rootNodeIds = Object.values(scenario.nodes)
+    .filter((node) => node.parentId === null)
+    .map((node) => node.id);
+  return {
+    ...base,
+    nodes: structuredClone(scenario.nodes),
+    rootNodeIds,
+    activeLeafNodeId: scenario.routes[0]?.leafId ?? null,
+  };
+}
+
+async function measureRouteSequence(
+  scenario: GeneratedExperimentScenario,
+  steps: readonly ['A', 'B', 'A'] | readonly ['A', 'B', 'C'],
+  routeIndexes: readonly number[],
+): Promise<{ result: OfflineRouteReturn; activePathIdsByStep: string[][] }> {
+  const harness = createOfflineHarness();
+  let story = storyFromScenario(harness, scenario);
+  const routeIds = routeIndexes.map((index) => scenario.routes[index].id);
+  const measurements: OfflineRouteMeasurement[] = [];
+  const activePathIdsByStep: string[][] = [];
+
+  for (let index = 0; index < routeIndexes.length; index += 1) {
+    const route = scenario.routes[routeIndexes[index]];
+    story = await harness.switchBranch(story, route.leafId);
+    const path = getActiveBranchNodes(
+      { nodes: story.nodes, activeLeafNodeId: story.activeLeafNodeId },
+      story.activeLeafNodeId,
+    );
+    const pathText = path.map((node) => node.content).join('\n');
+    const foreignFacts = scenario.routes
+      .filter((candidate) => candidate.id !== route.id)
+      .flatMap((candidate) => [candidate.uniqueFact, candidate.characterState]);
+    const context = harness.assembleContext(story, story.activeLeafNodeId, '离线路线返回测量');
+    activePathIdsByStep.push(path.map((node) => node.id));
+    measurements.push({
+      step: steps[index],
+      routeId: route.id,
+      pathNodeCount: path.length,
+      pathCharCount: pathText.length,
+      contextEstimatedTokens: context.metrics.totalEstimatedTokens,
+      uniqueFactPresent:
+        pathText.includes(route.uniqueFact) && pathText.includes(route.characterState),
+      foreignRouteFactCount: foreignFacts.filter((fact) => pathText.includes(fact)).length,
+    });
+  }
+
+  return {
+    result: {
+      steps: [...steps],
+      routeIds,
+      switchCount: routeIndexes.length,
+      measurements,
+      passed: measurements.every(
+        (measurement) =>
+          measurement.uniqueFactPresent && measurement.foreignRouteFactCount === 0,
+      ),
+    },
+    activePathIdsByStep,
+  };
+}
+
+async function verifyRouteReturns(seed: number): Promise<OfflineSmokeReport['routeReturns']> {
+  const scenario = generateExperimentScenario('branching', seed);
+  const aToBToA = await measureRouteSequence(scenario, ['A', 'B', 'A'], [0, 1, 0]);
+  const returnedPathIdentical = JSON.stringify(aToBToA.activePathIdsByStep[0]) ===
+    JSON.stringify(aToBToA.activePathIdsByStep[2]);
+  const aToBToC = await measureRouteSequence(scenario, ['A', 'B', 'C'], [0, 1, 2]);
+
+  return {
+    aToBToA: {
+      ...aToBToA.result,
+      returnedPathIdentical,
+      passed: aToBToA.result.passed && returnedPathIdentical,
+    },
+    aToBToC: aToBToC.result,
+  };
+}
+
+async function verifyBranchLifecycle(seed: number): Promise<OfflineSmokeReport['branchLifecycle']> {
   const scenario = generateExperimentScenario('branching', seed);
   const [routeA, routeB] = scenario.routes;
   const nodes = structuredClone(scenario.nodes);
@@ -587,24 +865,79 @@ function verifyBranchLifecycle(seed: number): OfflineSmokeReport['branchLifecycl
     !reopenedB.includes(routeA.characterState) &&
     !reopenedB.includes('A线继续写');
 
-  const editParent = getActiveBranchNodes(
-    { nodes: reopenedNodes, activeLeafNodeId: continuedA },
-    continuedA,
-  ).at(-3);
-  const editedLeaf = append(editParent!.id, 'lifecycle-edit', '改写旧轮');
+  let modelCalls = 0;
+  const harness = createFictionHarness({
+    transport: {
+      async *streamChat() {
+        modelCalls += 1;
+        yield { contentDelta: '纯 Harness 旧轮改写回复。', finishReason: 'stop' };
+      },
+    },
+    contextBudget: { recentMaxNodes: 8, recentMaxChars: 6_000 },
+  });
+  const storyBase = harness.createStory({ title: '离线旧轮编辑', rawScript: scenario.setting });
+  const story: Story = {
+    ...storyBase,
+    nodes: {
+      'edit-u1': {
+        id: 'edit-u1', parentId: null, role: 'user', content: '旧轮根行动。', createdAt: 1,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+      'edit-a1': {
+        id: 'edit-a1', parentId: 'edit-u1', role: 'assistant', content: '旧轮根回复。', createdAt: 2,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+      'edit-u2': {
+        id: 'edit-u2', parentId: 'edit-a1', role: 'user', content: '原始旧轮行动。', createdAt: 3,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+      'edit-a2': {
+        id: 'edit-a2', parentId: 'edit-u2', role: 'assistant', content: '原始旧轮回复。', createdAt: 4,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+    },
+    rootNodeIds: ['edit-u1'],
+    activeLeafNodeId: 'edit-a2',
+  };
+  const originalUserNode = { ...story.nodes['edit-u2'] };
+  const originalAssistantNode = { ...story.nodes['edit-a2'] };
+  const edited = await harness.editAndBranch(story, 'edit-u2', '纯 Harness 旧轮改写', {
+    baseUrl: 'https://api.deepseek.com',
+    apiKey: 'offline-fake',
+    model: 'deepseek-flash',
+    reasoningEffort: 'none',
+    memoryOnly: true,
+  });
   const editedPath = getActiveBranchNodes(
-    { nodes, activeLeafNodeId: editedLeaf },
-    editedLeaf,
+    { nodes: edited.story.nodes, activeLeafNodeId: edited.story.activeLeafNodeId },
+    edited.story.activeLeafNodeId,
   ).map((node) => node.content).join('\n');
-  const editedSiblingIsolated =
-    editedPath.includes('改写旧轮') &&
-    editedPath.includes(scenario.sharedFact) &&
-    !editedPath.includes('A线继续写');
+  const originalBranchPreserved =
+    edited.story.nodes['edit-u2']?.content === originalUserNode.content &&
+    edited.story.nodes['edit-u2']?.parentId === originalUserNode.parentId &&
+    edited.story.nodes['edit-a2']?.content === originalAssistantNode.content &&
+    edited.story.nodes['edit-a2']?.parentId === originalAssistantNode.parentId;
+  const siblingIsolated =
+    editedPath.includes('纯 Harness 旧轮改写') &&
+    editedPath.includes('纯 Harness 旧轮改写回复。') &&
+    !editedPath.includes('原始旧轮行动。') &&
+    !editedPath.includes('原始旧轮回复。');
+  const oldTurnEdit: OfflineOldTurnEditResult = {
+    entry: 'FictionHarness.editAndBranch',
+    execution: 'offline-pure-harness',
+    transport: 'in-process-fake',
+    modelCalls,
+    providerCalls: 0,
+    originalBranchPreserved,
+    siblingIsolated,
+    passed: modelCalls === 1 && originalBranchPreserved && siblingIsolated,
+  };
 
   return {
     continuedTurns: 2,
     reopenedAfterRestart,
-    editedSiblingIsolated,
+    editedSiblingIsolated: oldTurnEdit.passed,
+    oldTurnEdit,
   };
 }
 
@@ -625,6 +958,8 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
   const allRequests: OfflineSmokeReport['requests'] = [];
   let leakedRequests = 0;
   let checkedRequests = 0;
+  let folioContextsChecked = 0;
+  let folioCoverageViolations = 0;
 
   for (const arm of ['full', 'folio', 'retrievable'] as const) {
     for (const scenario of scenarios) {
@@ -641,16 +976,11 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
         const forbiddenFacts = scenario.routes
           .filter((route) => route.id !== routed.routeId)
           .flatMap((route) => [route.uniqueFact, route.characterState]);
-        let messages: LlmMessage[];
-        let retrievalCount = 0;
-        if (arm === 'full') {
-          messages = pathMessages(scenario, routed.parentLeafId, routed.action);
-        } else if (arm === 'folio') {
-          messages = folioMessages(scenario, routed.parentLeafId, routed.action);
-        } else {
-          const candidate = retrievableMessages(scenario, routed.parentLeafId, routed.action);
-          messages = candidate.messages;
-          retrievalCount = candidate.retrievalCount;
+        const context = contextForArm(arm, scenario, routed.parentLeafId, routed.action);
+        const messages = context.messages;
+        if (arm === 'folio') {
+          folioContextsChecked += 1;
+          if (!context.summaryCoverage?.contiguous) folioCoverageViolations += 1;
         }
         checkedRequests += 1;
         const serialized = messages.map((message) => message.content).join('\n');
@@ -679,6 +1009,11 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
           scenario: scenario.spec.name,
           inputNodeCount: path.length,
           inputTailNodeId: path.at(-1)?.id ?? null,
+          inputCharCount: messages.reduce((total, message) => total + message.content.length, 0),
+          messageCount: messages.length,
+          contextPolicy: context.policy,
+          contextFingerprint: contextFingerprint(messages),
+          ...(context.summaryCoverage ? { summaryCoverage: context.summaryCoverage } : {}),
         });
         plans.push({
           operationId: `${arm}-${scenario.spec.name}-${sceneTurn}`,
@@ -687,7 +1022,7 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
           maxOutputTokens: 512,
         });
 
-        if (retrievalCount > 0) {
+        if (context.retrievalCount > 0) {
           const retrievalRecord: ContextExperimentRequestRecord = {
             requestId: `anonymous-${arm}-retrieval-${scenario.spec.name}-${String(sampleNumber).padStart(2, '0')}`,
             phase: 'retrieval',
@@ -700,10 +1035,11 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
           allRequests.push({ ...retrievalRecord, arm, scenario: scenario.spec.name });
         }
 
-        if (arm === 'folio' && sceneTurn > 0 && sceneTurn % 3 === 0) {
-          const summaryUsage = simulatedUsage(arm, messages.slice(0, -1), sampleNumber, 32);
+        for (let summaryIndex = 0; summaryIndex < context.summaryRequests.length; summaryIndex += 1) {
+          const summaryMessages = context.summaryRequests[summaryIndex];
+          const summaryUsage = simulatedUsage(arm, summaryMessages, sampleNumber, 32);
           const summaryRecord: ContextExperimentRequestRecord = {
-            requestId: `anonymous-${arm}-summary-${scenario.spec.name}-${String(sampleNumber).padStart(2, '0')}`,
+            requestId: `anonymous-${arm}-summary-${scenario.spec.name}-${String(summaryIndex + 1).padStart(2, '0')}-${String(sampleNumber).padStart(2, '0')}`,
             phase: 'summary',
             status: 'completed',
             logicalTurnId: routed.logicalTurnId,
@@ -714,9 +1050,11 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
           recordsByArm[arm].push(summaryRecord);
           allRequests.push({ ...summaryRecord, arm, scenario: scenario.spec.name });
           plans.push({
-            operationId: `summary-${scenario.spec.name}-${sceneTurn}`,
+            operationId: `summary-${scenario.spec.name}-${summaryIndex}-${sceneTurn}`,
             attempt: 0,
-            maxInputTokens: new TextEncoder().encode(messages.slice(0, -1).map((message) => message.content).join('\n')).length,
+            maxInputTokens: new TextEncoder().encode(
+              summaryMessages.map((message) => message.content).join('\n'),
+            ).length,
             maxOutputTokens: 512,
           });
         }
@@ -726,7 +1064,8 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
     const retryTurnIndex = scenarios[0].actions.length - 1;
     const retryParentId = `turn-${retryTurnIndex}-a`;
     const retryAction = scenarios[0].actions[retryTurnIndex];
-    const retryMessages = pathMessages(scenarios[0], retryParentId, retryAction);
+    const retryContext = contextForArm(arm, scenarios[0], retryParentId, retryAction);
+    const retryMessages = retryContext.messages;
     const retryUsage = simulatedUsage(arm, retryMessages, 30, 24);
     const retryRecord: ContextExperimentRequestRecord = {
       requestId: `anonymous-${arm}-retry-001`,
@@ -744,6 +1083,11 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
       scenario: 'continuous',
       inputNodeCount: retryTurnIndex * 2,
       inputTailNodeId: retryParentId,
+      inputCharCount: retryMessages.reduce((total, message) => total + message.content.length, 0),
+      messageCount: retryMessages.length,
+      contextPolicy: retryContext.policy,
+      contextFingerprint: contextFingerprint(retryMessages),
+      ...(retryContext.summaryCoverage ? { summaryCoverage: retryContext.summaryCoverage } : {}),
     });
     plans.push({
       operationId: `${arm}-retry`,
@@ -776,7 +1120,7 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
   ) as Record<ContextExperimentArm, ContextExperimentSummary>;
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     mode: 'offline-simulated',
     generatedAt: new Date(now()).toISOString(),
     providerRuns: 0,
@@ -791,11 +1135,27 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
       leakedRequests,
       passed: leakedRequests === 0,
     },
-    branchLifecycle: verifyBranchLifecycle(seed),
+    branchLifecycle: await verifyBranchLifecycle(seed),
+    routeReturns: await verifyRouteReturns(seed),
+    folioSummaryPolicy: {
+      simulation: 'deterministic-offline',
+      policy: 'production-selectNodesToSummarize-with-rolling-batches',
+      recentMaxNodes: OFFLINE_FOLIO_BUDGET.recentMaxNodes,
+      recentMaxChars: OFFLINE_FOLIO_BUDGET.recentMaxChars,
+      summaryBatchMaxNodes: OFFLINE_FOLIO_BUDGET.summaryBatchMaxNodes,
+      summaryBatchMaxChars: OFFLINE_FOLIO_BUDGET.summaryBatchMaxChars,
+      contextsChecked: folioContextsChecked,
+      simulatedSummaryRequests: recordsByArm.folio.filter((record) => record.phase === 'summary').length,
+      coverageViolations: folioCoverageViolations,
+      sharedProbeCount: scenarios.reduce((total, scenario) => total + scenario.probes.length, 0),
+      passed: folioContextsChecked === 30 && folioCoverageViolations === 0,
+    },
     officialPreflight: { ...preflight, budget: OFFICIAL_SHORT_RUN_BUDGET },
     requests: allRequests,
     limitations: [
       'Offline simulated usage validates branch identity and measurement plumbing only.',
+      'Folio summary text and request cadence are deterministic offline simulations driven by the production summary-selection and rolling-batch policy.',
+      'Route-return and old-turn edit probes use the pure Harness entry points with an in-process fake model transport; no provider response quality is measured.',
       'It cannot establish quality, real prefix-cache behavior, latency, or API savings.',
       'No DeepSeek credential was read and no funded request was sent.',
     ],

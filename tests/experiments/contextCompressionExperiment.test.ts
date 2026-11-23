@@ -98,7 +98,7 @@ describe('branch-safe context retrieval', () => {
   it('runs the 30-turn three-arm smoke offline with anonymous usage, counted background calls, and no cost claim', async () => {
     const report = await runOfflineSmoke({ seed: 20261123, now: () => 1_765_000_000_000 });
 
-    expect(report.schemaVersion).toBe(2);
+    expect(report.schemaVersion).toBe(3);
     expect(report.mode).toBe('offline-simulated');
     for (const arm of ['full', 'folio', 'retrievable'] as const) {
       expect(report.groups[arm].effectiveTurns).toBe(30);
@@ -126,7 +126,7 @@ describe('branch-safe context retrieval', () => {
       ok: true,
       violations: [],
       budget: {
-        maxRequests: 120,
+        maxRequests: 128,
         maxRetriesPerOperation: 1,
         maxInputTokensPerRequest: 256_000,
         maxOutputTokensPerRequest: 512,
@@ -135,7 +135,7 @@ describe('branch-safe context retrieval', () => {
       },
     });
     expect(report.officialPreflight.maxEstimatedCostUsd).toBeGreaterThan(0);
-    expect(report.officialPreflight.requestCount).toBe(102);
+    expect(report.officialPreflight.requestCount).toBe(123);
     const outboundRecords = report.requests.filter((record) => record.transport === 'outbound-http');
     const localRetrievalRecords = report.requests.filter((record) => record.transport === 'local');
     expect(report.officialPreflight.requestCount).toBe(outboundRecords.length);
@@ -159,5 +159,121 @@ describe('branch-safe context retrieval', () => {
       const targetTurn = Number(record.logicalTurnId?.match(/:turn-(\d+)$/)?.[1]);
       expect(record.inputTailNodeId).toBe(`turn-${targetTurn - 1}-a`);
     }
+  });
+
+  it('keeps offline Folio summary coverage contiguous and retains the shared retrieval probes', async () => {
+    const report = await runOfflineSmoke({ seed: 20261123, now: () => 1_765_000_000_000 });
+    const probes = (['continuous', 'branching', 'nested'] as const)
+      .flatMap((scenario) => generateExperimentScenario(scenario, 20261123).probes);
+
+    expect(report.schemaVersion).toBe(3);
+    expect(report.folioSummaryPolicy).toMatchObject({
+      simulation: 'deterministic-offline',
+      policy: 'production-selectNodesToSummarize-with-rolling-batches',
+      contextsChecked: 30,
+      coverageViolations: 0,
+      sharedProbeCount: probes.length,
+      passed: true,
+    });
+    expect(report.folioSummaryPolicy.simulatedSummaryRequests).toBeGreaterThan(0);
+
+    const folioContexts = report.requests.filter(
+      (record) =>
+        record.arm === 'folio' &&
+        (record.phase === 'generation' || record.phase === 'retry'),
+    );
+    for (const record of folioContexts) {
+      expect(record.contextPolicy).toBe('rolling-summary');
+      expect(record.summaryCoverage).toBeDefined();
+      const coverage = record.summaryCoverage!;
+      expect(coverage.contiguous).toBe(true);
+      expect(coverage.coveredNodeCount + coverage.uncoveredNodeCount).toBe(record.inputNodeCount);
+      expect(coverage.coveredNodeCount).toBeLessThanOrEqual(record.inputNodeCount!);
+    }
+  });
+
+  it('uses each arm policy for retry instead of replaying the full-history payload', async () => {
+    const report = await runOfflineSmoke({ seed: 20261123, now: () => 1_765_000_000_000 });
+    const expectedPolicies = {
+      full: 'full-history',
+      folio: 'rolling-summary',
+      retrievable: 'branch-retrieval',
+    } as const;
+    const retryFingerprints: string[] = [];
+
+    for (const arm of ['full', 'folio', 'retrievable'] as const) {
+      const retry = report.requests.find(
+        (record) => record.arm === arm && record.phase === 'retry',
+      );
+      const generation = report.requests.find(
+        (record) =>
+          record.arm === arm &&
+          record.scenario === 'continuous' &&
+          record.phase === 'generation' &&
+          record.logicalTurnId === retry?.logicalTurnId,
+      );
+
+      expect(retry?.contextPolicy).toBe(expectedPolicies[arm]);
+      expect(retry?.contextFingerprint).toBe(generation?.contextFingerprint);
+      expect(retry?.inputCharCount).toBe(generation?.inputCharCount);
+      expect(retry?.messageCount).toBe(generation?.messageCount);
+      expect(retry?.contextFingerprint).toMatch(/^[0-9a-f]{8}$/);
+      retryFingerprints.push(retry!.contextFingerprint!);
+
+      if (arm === 'folio') {
+        expect(retry?.summaryCoverage).toMatchObject({
+          contiguous: true,
+          coveredNodeCount: expect.any(Number),
+          uncoveredNodeCount: expect.any(Number),
+        });
+      }
+    }
+
+    expect(new Set(retryFingerprints).size).toBe(3);
+  });
+
+  it('exercises and measures A/B/A and A/B/C route returns through the pure Harness branch switcher', async () => {
+    const report = await runOfflineSmoke({ seed: 20261123, now: () => 1_765_000_000_000 });
+    const [routeA, routeB, routeC] = generateExperimentScenario('branching', 20261123).routes;
+
+    expect(report.routeReturns.aToBToA).toMatchObject({
+      steps: ['A', 'B', 'A'],
+      routeIds: [routeA.id, routeB.id, routeA.id],
+      switchCount: 3,
+      returnedPathIdentical: true,
+      passed: true,
+    });
+    expect(report.routeReturns.aToBToC).toMatchObject({
+      steps: ['A', 'B', 'C'],
+      routeIds: [routeA.id, routeB.id, routeC.id],
+      switchCount: 3,
+      passed: true,
+    });
+
+    for (const traversal of [report.routeReturns.aToBToA, report.routeReturns.aToBToC]) {
+      expect(traversal.measurements).toHaveLength(3);
+      for (const measurement of traversal.measurements) {
+        expect(measurement.pathNodeCount).toBeGreaterThan(0);
+        expect(measurement.contextEstimatedTokens).toBeGreaterThan(0);
+        expect(measurement.uniqueFactPresent).toBe(true);
+        expect(measurement.foreignRouteFactCount).toBe(0);
+      }
+    }
+  });
+
+  it('uses the pure Harness editAndBranch entry for old-turn sibling isolation', async () => {
+    const report = await runOfflineSmoke({ seed: 20261123, now: () => 1_765_000_000_000 });
+
+    expect(report.branchLifecycle.oldTurnEdit).toEqual({
+      entry: 'FictionHarness.editAndBranch',
+      execution: 'offline-pure-harness',
+      transport: 'in-process-fake',
+      modelCalls: 1,
+      providerCalls: 0,
+      originalBranchPreserved: true,
+      siblingIsolated: true,
+      passed: true,
+    });
+    expect(report.branchLifecycle.editedSiblingIsolated).toBe(true);
   });
 });
