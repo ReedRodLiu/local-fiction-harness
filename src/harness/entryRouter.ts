@@ -63,6 +63,7 @@ export interface EntryRouteResult {
   usedFallback: boolean;
   publicResearch?: PublicResearchReference;
   publicResearchFailure?: PublicResearchFailure;
+  publicResearchSettingKey?: string;
 }
 
 export type ManuscriptReplyIntent =
@@ -505,6 +506,9 @@ export async function routeEntryMessage(
     reasoningEffort,
     ...(retainsPublicResearch && publicResearch.reference ? { publicResearch: publicResearch.reference } : {}),
     ...(retainsPublicResearch && publicResearch.failure ? { publicResearchFailure: publicResearch.failure } : {}),
+    ...(retainsPublicResearch && publicResearch.settingKey
+      ? { publicResearchSettingKey: publicResearch.settingKey }
+      : {}),
   };
 }
 

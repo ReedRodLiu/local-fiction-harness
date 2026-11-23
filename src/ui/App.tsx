@@ -1246,6 +1246,9 @@ export function App({ runtime }: AppProps) {
             model: routed.model ?? effectiveWelcomeCfg.model,
             ...(routed.publicResearch ? { publicResearch: routed.publicResearch } : {}),
             ...(routed.publicResearchFailure ? { publicResearchFailure: routed.publicResearchFailure } : {}),
+            ...(routed.publicResearchSettingKey
+              ? { publicResearchSettingKey: routed.publicResearchSettingKey }
+              : {}),
             reasoningEffort: routed.reasoningEffort ?? normalizeReasoningEffort(effectiveWelcomeCfg.reasoningEffort),
             createdAt: now + 1,
             summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,

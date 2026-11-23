@@ -27,6 +27,7 @@ export interface PublicResearchFailure {
 export interface PublicResearchResolution {
   reference: PublicResearchReference | null;
   failure?: PublicResearchFailure;
+  settingKey?: string;
 }
 
 export interface PublicResearchRequest {
@@ -46,17 +47,21 @@ export interface PublicResearchIdentityInput {
 }
 
 function cleanField(value: string | undefined, fallback = ''): string {
-  return (value ?? '')
+  let cleaned = (value ?? '')
+    .trim()
     .replace(/^[\s>*_`-]+/, '')
+    .replace(/[\s*_`]+$/, '');
+  if (cleaned.endsWith('。')) cleaned = cleaned.slice(0, -1).trimEnd();
+  cleaned = cleaned
     .replace(/[\s*_`]+$/, '')
-    .replace(/^[《「『"']|[》」』"']$/g, '')
+    .replace(/^[《「『"']+|[》」』"']+$/g, '');
+  return cleaned
     .replace(/\s+/g, ' ')
     .trim() || fallback;
 }
 
 function labelledValue(text: string, labels: readonly string[]): string | undefined {
-  const labelPattern = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-  const match = new RegExp(`(?:[-*+]\\s*)?(?:${labelPattern})\\s*[:：]\\s*([^\\n]+)`, 'i').exec(text);
+  const match = labelledPattern(labels, false).exec(text);
   return match?.[1] ? cleanField(match[1]) : undefined;
 }
 
@@ -65,14 +70,22 @@ function labelledValues(text: string, labels: readonly string[]): string[] {
 }
 
 function rawLabelledValues(text: string, labels: readonly string[]): string[] {
-  const labelPattern = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-  const pattern = new RegExp(`(?:[-*+]\\s*)?(?:${labelPattern})\\s*[:：]\\s*([^\\n]+)`, 'gi');
+  const pattern = labelledPattern(labels, true);
   const values: string[] = [];
   for (const match of text.matchAll(pattern)) {
     const value = match[1]?.trim();
     if (value) values.push(value);
   }
   return values;
+}
+
+function labelledPattern(labels: readonly string[], global: boolean): RegExp {
+  const labelPattern = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  const emphasis = '(?:\\*{1,3}|_{1,3}|`{1,3})?';
+  return new RegExp(
+    `(?:[-*+]\\s*)?${emphasis}(?:${labelPattern})${emphasis}\\s*${emphasis}?[:：]\\s*${emphasis}?([^\\n]+)`,
+    global ? 'gi' : 'i',
+  );
 }
 
 function uniqueCharacters(raw: string): string[] {
@@ -83,11 +96,23 @@ function uniqueCharacters(raw: string): string[] {
     const name = cleanField(item)
       .replace(/^(?:角色|人物)\s*[:：]?/, '')
       .trim();
-    if (!name || name.length > 30 || seen.has(name)) continue;
+    if (
+      !name ||
+      name.length > 30 ||
+      hasUnsafeMetadataMarker(name) ||
+      /[。！？!?；;:：]/u.test(name) ||
+      seen.has(name)
+    ) {
+      continue;
+    }
     seen.add(name);
     characters.push(name);
   }
   return characters.slice(0, 6);
+}
+
+function hasArbitraryCharacterTail(value: string): boolean {
+  return /[。！？!?；;:：]/u.test(cleanField(value));
 }
 
 export function publicResearchIdentityKey(identity: PublicResearchIdentity): string {
@@ -99,7 +124,14 @@ export function publicResearchIdentityKey(identity: PublicResearchIdentity): str
   ]);
 }
 
-const PRIVATE_OR_ORIGINAL_SOURCE_RE = /(?:原创|未发表|草稿|私设|自设|\boc\b|同人改设|自创)/i;
+export function publicResearchSettingIdentityKey(
+  input: Pick<PublicResearchIdentityInput, 'title' | 'settingMarkdown'>,
+): string | undefined {
+  const identity = derivePublicResearchIdentity(input);
+  return identity ? publicResearchIdentityKey(identity) : undefined;
+}
+
+const PRIVATE_OR_ORIGINAL_SOURCE_RE = /(?:原创|未发表|草稿|私设|自设|\boc\b|自创)/i;
 const UNCERTAIN_SCOPE_RE = /(?:不确定|不清楚|未确定|未知|待定|可能|也许|或许|大概|随便|任一|任意)/i;
 const WORK_LABELS = ['原作', '原作名', '作品', 'IP', '出处'] as const;
 const VERSION_LABELS = ['原作版本', '作品版本', '版本', '改编', '改编版本'] as const;
@@ -121,9 +153,26 @@ function hasConflictingLabels(text: string, labels: readonly string[]): boolean 
   return new Set(labelledValues(text, labels).map((value) => value.normalize('NFKC'))).size > 1;
 }
 
-function matches(text: string, pattern: RegExp): string[] {
-  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
-  return [...text.matchAll(new RegExp(pattern.source, flags))].map((match) => cleanField(match[0]));
+function hasUnsafeMetadataMarker(value: string): boolean {
+  return PRIVATE_OR_ORIGINAL_SOURCE_RE.test(value) || UNCERTAIN_SCOPE_RE.test(value);
+}
+
+function clauseAt(text: string, index: number, length: number): string {
+  const start = Math.max(
+    text.lastIndexOf('\n', index - 1),
+    text.lastIndexOf('。', index - 1),
+    text.lastIndexOf('！', index - 1),
+    text.lastIndexOf('？', index - 1),
+    text.lastIndexOf('；', index - 1),
+    text.lastIndexOf(';', index - 1),
+    text.lastIndexOf('，', index - 1),
+    text.lastIndexOf(',', index - 1),
+  ) + 1;
+  const candidates = ['\n', '。', '！', '？', '；', ';', '，', ',']
+    .map((separator) => text.indexOf(separator, index + length))
+    .filter((position) => position >= 0);
+  const end = candidates.length > 0 ? Math.min(...candidates) : text.length;
+  return text.slice(start, end);
 }
 
 interface CandidateResult {
@@ -140,16 +189,28 @@ function candidate(
   const labelled = [...new Set(labelledValues(text, labels).map((value) => value.normalize('NFKC')))];
   if (labelled.length > 1) return { ambiguous: true };
   if (labelled.length === 1) {
-    return isConcreteToken(labelled[0])
+    return !hasUnsafeMetadataMarker(labelled[0]) && isConcreteToken(labelled[0])
       ? { value: labelled[0], ambiguous: false }
       : { ambiguous: false };
   }
   for (const pattern of patterns) {
-    const inline = [...new Set(matches(text, pattern).map((value) => value.normalize('NFKC')))];
+    const inline = [...new Set([...text.matchAll(new RegExp(pattern.source, `${pattern.flags}g`))]
+      .filter((match) => !hasUnsafeMetadataMarker(clauseAt(text, match.index ?? 0, match[0].length)))
+      .map((match) => cleanField(match[0]).normalize('NFKC')))];
     if (inline.length > 1) return { ambiguous: true };
     if (inline.length === 1) return { value: inline[0], ambiguous: false };
   }
   return { ambiguous: false };
+}
+
+function hasUncertainScopeChange(text: string): boolean {
+  const flags = CLEAR_SCOPE_CHANGE_RE.flags.includes('g')
+    ? CLEAR_SCOPE_CHANGE_RE.flags
+    : `${CLEAR_SCOPE_CHANGE_RE.flags}g`;
+  for (const match of text.matchAll(new RegExp(CLEAR_SCOPE_CHANGE_RE.source, flags))) {
+    if (hasUnsafeMetadataMarker(clauseAt(text, match.index ?? 0, match[0].length))) return true;
+  }
+  return false;
 }
 
 function publicWorkToken(raw: string): string | undefined {
@@ -205,15 +266,7 @@ export function derivePublicResearchIdentity(
   const setting = input.settingMarkdown?.trim() ?? '';
   const userInput = input.userInput?.trim() ?? '';
   if (!setting && !userInput) return null;
-
-  // Original/private markers must be checked before parenthetical character notes are removed.
-  if (
-    PRIVATE_OR_ORIGINAL_SOURCE_RE.test(setting) ||
-    PRIVATE_OR_ORIGINAL_SOURCE_RE.test(input.title ?? '') ||
-    UNCERTAIN_SCOPE_RE.test(setting)
-  ) {
-    return null;
-  }
+  if (PRIVATE_OR_ORIGINAL_SOURCE_RE.test(input.title ?? '')) return null;
 
   if (
     hasConflictingLabels(setting, VERSION_LABELS) ||
@@ -230,7 +283,8 @@ export function derivePublicResearchIdentity(
   const settingTimeline = timelineCandidate(setting);
   const userVersion = versionCandidate(userInput);
   const userTimeline = timelineCandidate(userInput);
-  const userCharactersText = labelledValue(userInput, CHARACTER_LABELS);
+  const settingCharacterValues = labelledValues(setting, CHARACTER_LABELS);
+  const userCharacterValues = labelledValues(userInput, CHARACTER_LABELS);
   const clearScopeChange = CLEAR_SCOPE_CHANGE_RE.test(userInput);
   const userHasExplicitWork = Boolean(labelledValue(userInput, WORK_LABELS) || userWorkResult.value);
   const userHasExplicitVersion = Boolean(labelledValue(userInput, VERSION_LABELS));
@@ -239,10 +293,16 @@ export function derivePublicResearchIdentity(
     userHasExplicitWork ||
     userHasExplicitVersion ||
     userHasExplicitTimeline ||
-    userCharactersText ||
+    userCharacterValues.length > 0 ||
     clearScopeChange,
   );
-  if (userChangesScope && (PRIVATE_OR_ORIGINAL_SOURCE_RE.test(userInput) || UNCERTAIN_SCOPE_RE.test(userInput))) {
+  if (
+    userChangesScope &&
+    (hasUncertainScopeChange(userInput) ||
+      [userWorkResult.value, userVersion.value, userTimeline.value, ...userCharacterValues]
+        .some((value) => Boolean(value && hasUnsafeMetadataMarker(value))) ||
+      userCharacterValues.some(hasUnsafeMetadataMarker))
+  ) {
     return null;
   }
 
@@ -271,14 +331,18 @@ export function derivePublicResearchIdentity(
     if ((changedWork || changedVersion || clearScopeChange) && (!userVersion.value || !userTimeline.value)) {
       return null;
     }
-    if (changedWork && !userCharactersText) return null;
+    if (changedWork && userCharacterValues.length === 0) return null;
   }
 
   const work = (userChangesScope ? userWorkResult.value : undefined) || settingWorkResult.value;
   const version = (userChangesScope ? userVersion.value : undefined) || settingVersion.value;
   const timeline = (userChangesScope ? userTimeline.value : undefined) || settingTimeline.value;
-  const characterText = userCharactersText || labelledValue(setting, CHARACTER_LABELS) || '';
-  if (PRIVATE_OR_ORIGINAL_SOURCE_RE.test(characterText)) return null;
+  const selectedCharacterValues = userCharacterValues.length > 0
+    ? userCharacterValues
+    : settingCharacterValues;
+  if (selectedCharacterValues.some(hasUnsafeMetadataMarker)) return null;
+  if (selectedCharacterValues.some(hasArbitraryCharacterTail)) return null;
+  const characterText = selectedCharacterValues.join('、');
   const characters = uniqueCharacters(characterText);
 
   if (
@@ -442,10 +506,16 @@ function findLatestBranchResearch(nodes: Record<string, TurnNode>, parentId: str
     visited.add(cursor);
     const node = nodes[cursor];
     if (!node) break;
-    const sourceNode = node.parentId ? nodes[node.parentId] : undefined;
-    const explicitOverride = sourceNode?.role === 'user' && hasExplicitScopeUpdate(sourceNode.content);
-    if (node.publicResearch) return { reference: node.publicResearch, explicitOverride };
-    if (node.publicResearchFailure) return { reference: null, failure: node.publicResearchFailure, explicitOverride };
+    if (node.publicResearch) {
+      return { reference: node.publicResearch, settingKey: node.publicResearchSettingKey };
+    }
+    if (node.publicResearchFailure) {
+      return {
+        reference: null,
+        failure: node.publicResearchFailure,
+        settingKey: node.publicResearchSettingKey,
+      };
+    }
     cursor = node.parentId;
   }
   return null;
@@ -486,6 +556,7 @@ export interface ResolvePublicResearchOptions {
   signal?: AbortSignalLike;
   preferred?: PublicResearchReference;
   preferredFailure?: PublicResearchFailure;
+  preferredSettingKey?: string;
 }
 
 export async function resolvePublicResearchForTurn(
@@ -498,23 +569,53 @@ export async function resolvePublicResearchForTurn(
   });
   if (!identity) return { reference: null };
   const identityKey = publicResearchIdentityKey(identity);
-  if (options.preferred?.identityKey === identityKey) return { reference: options.preferred };
-  if (options.preferredFailure?.identityKey === identityKey) {
-    return { reference: null, failure: options.preferredFailure };
+  const settingKey = publicResearchSettingIdentityKey({
+    title: options.title,
+    settingMarkdown: options.settingMarkdown,
+  });
+  const explicitScopeUpdate = hasExplicitScopeUpdate(options.userInput ?? '');
+  const preferredOwnedBySetting = Boolean(
+    settingKey && options.preferredSettingKey === settingKey && !explicitScopeUpdate,
+  );
+  if (options.preferred?.identityKey === identityKey) {
+    return { reference: options.preferred, ...(settingKey ? { settingKey } : {}) };
   }
-  if (!hasExplicitScopeUpdate(options.userInput ?? '')) {
+  if (preferredOwnedBySetting && options.preferred) {
+    return { reference: options.preferred, ...(settingKey ? { settingKey } : {}) };
+  }
+  if (options.preferredFailure?.identityKey === identityKey) {
+    return {
+      reference: null,
+      failure: options.preferredFailure,
+      ...(settingKey ? { settingKey } : {}),
+    };
+  }
+  if (preferredOwnedBySetting && options.preferredFailure) {
+    return {
+      reference: null,
+      failure: options.preferredFailure,
+      ...(settingKey ? { settingKey } : {}),
+    };
+  }
+  if (!explicitScopeUpdate) {
     const latest = findLatestBranchResearch(options.nodes, options.parentId);
     const latestIdentityKey = latest?.reference?.identityKey ?? latest?.failure?.identityKey;
-    if (latest && (latest.explicitOverride || latestIdentityKey === identityKey)) {
+    if (latest && (latestIdentityKey === identityKey || (settingKey && latest.settingKey === settingKey))) {
       return latest.reference
-        ? { reference: latest.reference }
-        : { reference: null, ...(latest.failure ? { failure: latest.failure } : {}) };
+        ? { reference: latest.reference, ...(settingKey ? { settingKey } : {}) }
+        : {
+            reference: null,
+            ...(latest.failure ? { failure: latest.failure } : {}),
+            ...(settingKey ? { settingKey } : {}),
+          };
     }
   }
   const existing = findPublicResearchReference(options.nodes, options.parentId, identityKey);
-  if (existing) return { reference: existing };
+  if (existing) return { reference: existing, ...(settingKey ? { settingKey } : {}) };
   const existingFailure = findPublicResearchFailure(options.nodes, options.parentId, identityKey);
-  if (existingFailure) return { reference: null, failure: existingFailure };
+  if (existingFailure) {
+    return { reference: null, failure: existingFailure, ...(settingKey ? { settingKey } : {}) };
+  }
   if (!options.provider || options.signal?.aborted) return { reference: null };
   try {
     const resolved = await options.provider.resolve({
@@ -523,11 +624,19 @@ export async function resolvePublicResearchForTurn(
       signal: options.signal,
     });
     return resolved?.identityKey === identityKey
-      ? { reference: resolved }
-      : { reference: null, failure: { identityKey } };
+      ? { reference: resolved, ...(settingKey ? { settingKey } : {}) }
+      : {
+          reference: null,
+          failure: { identityKey },
+          ...(settingKey ? { settingKey } : {}),
+        };
   } catch (error) {
     if (options.signal?.aborted) throw error;
-    return { reference: null, failure: { identityKey } };
+    return {
+      reference: null,
+      failure: { identityKey },
+      ...(settingKey ? { settingKey } : {}),
+    };
   }
 }
 

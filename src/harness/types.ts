@@ -108,6 +108,7 @@ export interface TurnNode {
   proposals?: TurnProposalRecord[];
   publicResearch?: PublicResearchReference;
   publicResearchFailure?: PublicResearchFailure;
+  publicResearchSettingKey?: string;
 }
 
 export interface Story {

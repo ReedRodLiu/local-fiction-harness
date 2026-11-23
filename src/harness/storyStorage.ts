@@ -326,6 +326,15 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
   const proposals = validateProposals(entry.proposals, entry.id);
   const publicResearch = validatePublicResearchReference(entry.publicResearch);
   const publicResearchFailure = validatePublicResearchFailure(entry.publicResearchFailure);
+  const publicResearchSettingKey = entry.publicResearchSettingKey;
+  if (
+    publicResearchSettingKey !== undefined &&
+    (typeof publicResearchSettingKey !== 'string' ||
+      !publicResearchSettingKey.trim() ||
+      publicResearchSettingKey.length > 4096)
+  ) {
+    throw new Error(`备份中的节点 ${expectedId ?? entry.id} 的公开资料缓存归属无效。`);
+  }
   const documents = entry.documents;
   if (documents !== undefined && (!isRecord(documents) ||
     typeof documents.local !== 'string' || typeof documents.container !== 'string')) {
@@ -354,6 +363,7 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
     ...(proposals ? { proposals } : {}),
     ...(publicResearch ? { publicResearch } : {}),
     ...(publicResearchFailure ? { publicResearchFailure } : {}),
+    ...(publicResearchSettingKey ? { publicResearchSettingKey: publicResearchSettingKey.trim() } : {}),
   };
 }
 

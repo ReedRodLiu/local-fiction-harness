@@ -14,10 +14,12 @@ import {
   newConversation,
   newDocument,
   publicResearchIdentityKey,
+  resolvePublicResearchForTurn,
   routeEntryMessage,
   type FetchLike,
   type LlmTransport,
   type ModelConfig,
+  type TurnNode,
 } from '../../src/harness/index.ts';
 
 const testConfig: ModelConfig = {
@@ -98,6 +100,67 @@ describe('public character research', () => {
     expect(derivePublicResearchIdentity(input('《Re:从零开始的异世界生活》'))).toMatchObject({
       work: 'Re:从零开始的异世界生活',
     });
+  });
+
+  it('normalizes Markdown labels and trailing Chinese periods without accepting arbitrary tails', () => {
+    const settingMarkdown = [
+      '- **原作**：《钢之炼金术师》',
+      '- **版本**：**2003 动画版**。',
+      '- **剧情时点**：第 51 集结局后。',
+      '- **角色**：**爱德华·艾尔利克**。',
+      '- **角色**：阿尔冯斯·艾尔利克。',
+    ].join('\n');
+
+    expect(derivePublicResearchIdentity({ settingMarkdown })).toEqual({
+      work: '钢之炼金术师',
+      version: '2003 动画版',
+      timeline: '第 51 集结局后',
+      characters: ['爱德华·艾尔利克', '阿尔冯斯·艾尔利克'],
+    });
+
+    for (const invalidSetting of [
+      settingMarkdown.replace('2003 动画版**。', '2003 动画版**。附带说明'),
+      settingMarkdown.replace('第 51 集结局后。', '第 51 集结局后。附带说明'),
+      settingMarkdown.replace('阿尔冯斯·艾尔利克。', '阿尔冯斯·艾尔利克。附带说明'),
+    ]) {
+      expect(derivePublicResearchIdentity({ settingMarkdown: invalidSetting })).toBeNull();
+    }
+  });
+
+  it('keeps known fan-AU lookup while scoping uncertainty and private markers to matching fields', () => {
+    const settingMarkdown = [
+      '原作：《哈利·波特》',
+      '版本：2011 电影版',
+      '剧情时点：第 8 部后',
+      '角色：哈利·波特、赫敏·格兰杰',
+      '同人改设：哈利可能没有走进禁林，后续仍未确定。',
+      '人物状态：他大概很疲惫，也可能在犹豫。',
+    ].join('\n');
+
+    expect(derivePublicResearchIdentity({
+      settingMarkdown,
+      userInput: '他可能还在犹豫，但请继续当前情节。',
+    })).toEqual({
+      work: '哈利·波特',
+      version: '2011 电影版',
+      timeline: '第 8 部后',
+      characters: ['哈利·波特', '赫敏·格兰杰'],
+    });
+    expect(derivePublicResearchIdentity({
+      settingMarkdown,
+      userInput: '版本：可能是 2009 电影版，请继续。',
+    })).toBeNull();
+    expect(derivePublicResearchIdentity({
+      settingMarkdown,
+      userInput: '切换到也许 2009 电影版，请继续。',
+    })).toBeNull();
+    expect(derivePublicResearchIdentity({
+      settingMarkdown: settingMarkdown.replace('角色：哈利·波特、赫敏·格兰杰', '角色：哈利·波特（原创OC）'),
+    })).toBeNull();
+    expect(derivePublicResearchIdentity({
+      title: '哈利·波特',
+      settingMarkdown: '版本：2011 电影版\n剧情时点：第 8 部后\n角色：哈利·波特',
+    })).toBeNull();
   });
 
   it('searches with minimal public fields, mandates fetch, and synthesizes from public evidence', async () => {
@@ -408,6 +471,9 @@ describe('public character research', () => {
     const restored = parseAndValidateFolioBackup(backup).stories[0];
 
     expect(restored.nodes[turn.assistantNode.id].publicResearch).toEqual(reference);
+    expect(restored.nodes[turn.assistantNode.id].publicResearchSettingKey).toEqual(
+      publicResearchIdentityKey(identity),
+    );
   });
 
   it('keeps two adaptations and their timeline material isolated', async () => {
@@ -603,6 +669,148 @@ describe('public character research', () => {
     expect(payloads[1]).not.toContain('2003 动画版 / 第 51 集后');
     expect(payloads[2]).toContain('2009 动画版 / 第 64 集后');
     expect(payloads[2]).not.toContain('2003 动画版 / 第 51 集后');
+  });
+
+  it('ties an in-dialogue override to its source setting and refreshes after the saved setting changes', async () => {
+    const identities: any[] = [];
+    const payloads: string[] = [];
+    const harness = createFictionHarness({
+      storage: createInMemoryStoryStorage(),
+      publicResearch: {
+        async resolve(request) {
+          identities.push(request.identity);
+          return {
+            identity: request.identity,
+            identityKey: publicResearchIdentityKey(request.identity),
+            summary: `### 爱德华\n- ${request.identity.version} / ${request.identity.timeline}。`,
+            sources: [{ title: '官方角色页', url: 'https://official.example/edward' }],
+            fetchedAt: 675,
+          };
+        },
+      },
+      transport: {
+        async *streamChat(request) {
+          payloads.push(JSON.stringify(request.messages));
+          yield { contentDelta: '继续。', finishReason: 'stop' };
+        },
+      },
+    });
+    const story = await harness.createAndSaveStory({
+      title: '炼金术师续篇',
+      rawScript: '原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集后\n角色：爱德华',
+    });
+    const first = await harness.runTurn(story, '开始。', testConfig);
+    const second = await harness.runTurn(
+      first.story,
+      '版本：2009 动画版\n剧情时点：第 64 集后\n角色：爱德华\n请从这里继续。',
+      testConfig,
+    );
+    const third = await harness.runTurn(second.story, '请继续刚才的剧情。', testConfig);
+    const sourceSettingKey = publicResearchIdentityKey({
+      work: '钢之炼金术师',
+      version: '2003 动画版',
+      timeline: '第 51 集后',
+      characters: ['爱德华'],
+    });
+    const editedSettingKey = publicResearchIdentityKey({
+      work: '钢之炼金术师',
+      version: '2010 动画版',
+      timeline: '第 51 集后',
+      characters: ['爱德华'],
+    });
+
+    expect((second.assistantNode as any).publicResearchSettingKey).toBe(sourceSettingKey);
+    expect((third.assistantNode as any).publicResearchSettingKey).toBe(sourceSettingKey);
+
+    const leafId = third.story.activeLeafNodeId!;
+    const containerId = third.story.nodes[leafId]?.documents?.container ?? third.story.documents!.container.head;
+    const currentSetting = documentVersion(third.story.documents!.container, containerId).markdown;
+    const edited = editStoryDocument(
+      third.story,
+      'container',
+      containerId,
+      currentSetting.replace('2003 动画版', '2010 动画版'),
+    );
+    const saved = await harness.saveStory(edited, third.story.updatedAt);
+    const fourth = await harness.runTurn(saved, '按更新后的设定继续。', testConfig);
+
+    expect(identities.map((identity) => [identity.version, identity.timeline])).toEqual([
+      ['2003 动画版', '第 51 集后'],
+      ['2009 动画版', '第 64 集后'],
+      ['2010 动画版', '第 51 集后'],
+    ]);
+    expect(payloads[2]).toContain('2009 动画版 / 第 64 集后');
+    expect(payloads[3]).toContain('2010 动画版 / 第 51 集后');
+    expect(payloads[3]).not.toContain('2009 动画版 / 第 64 集后');
+    expect((fourth.assistantNode as any).publicResearchSettingKey).toBe(editedSettingKey);
+  });
+
+  it('keeps ownerless legacy cache entries usable only for an exact identity match', async () => {
+    const legacyIdentity = {
+      work: '钢之炼金术师',
+      version: '2009 动画版',
+      timeline: '第 64 集后',
+      characters: ['爱德华'],
+    };
+    const legacyReference = {
+      identity: legacyIdentity,
+      identityKey: publicResearchIdentityKey(legacyIdentity),
+      summary: '### 爱德华\n- 2009 版参考。',
+      sources: [{ title: '官方角色页', url: 'https://official.example/edward' }],
+      fetchedAt: 676,
+    };
+    const snapshot = { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 };
+    const nodes: Record<string, TurnNode> = {
+      'user-2009': {
+        id: 'user-2009',
+        parentId: null,
+        role: 'user',
+        content: '版本：2009 动画版\n剧情时点：第 64 集后\n角色：爱德华',
+        createdAt: 1,
+        summarySnapshot: snapshot,
+      },
+      'assistant-2009': {
+        id: 'assistant-2009',
+        parentId: 'user-2009',
+        role: 'assistant',
+        content: '继续。',
+        createdAt: 2,
+        summarySnapshot: snapshot,
+        publicResearch: legacyReference,
+      },
+    };
+    let lookups = 0;
+    const provider = {
+      async resolve(request: any) {
+        lookups += 1;
+        return {
+          ...legacyReference,
+          identity: request.identity,
+          identityKey: publicResearchIdentityKey(request.identity),
+          summary: `### 爱德华\n- ${request.identity.version} 参考。`,
+        };
+      },
+    };
+    const exact = await resolvePublicResearchForTurn({
+      provider,
+      nodes,
+      parentId: 'assistant-2009',
+      settingMarkdown: '原作：《钢之炼金术师》\n版本：2009 动画版\n剧情时点：第 64 集后\n角色：爱德华',
+      userInput: '继续。',
+      config: testConfig,
+    });
+    const changed = await resolvePublicResearchForTurn({
+      provider,
+      nodes,
+      parentId: 'assistant-2009',
+      settingMarkdown: '原作：《钢之炼金术师》\n版本：2010 动画版\n剧情时点：第 64 集后\n角色：爱德华',
+      userInput: '继续。',
+      config: testConfig,
+    });
+
+    expect(exact.reference).toBe(legacyReference);
+    expect(lookups).toBe(1);
+    expect(changed.reference?.identity.version).toBe('2010 动画版');
   });
 
   it('never starts research for private drafts or explicitly original settings', async () => {

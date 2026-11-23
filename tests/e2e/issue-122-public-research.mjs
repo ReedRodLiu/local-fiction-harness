@@ -85,10 +85,10 @@ const scenarios = [
     body: '雨落在中央市。',
   },
   {
-    prompt: '开一个《钢之炼金术师》动画版第 51 集后的文游，角色：爱德华·艾尔利克',
+    prompt: '开一个原创角色站在雨夜车站的文游，从现在开始。',
     mode: 'story',
-    title: '雨夜重逢',
-    settingMarkdown: '原作：《钢之炼金术师》\n版本：动画版\n剧情时点：第 51 集后\n角色：爱德华·艾尔利克',
+    title: '原创雨夜',
+    settingMarkdown: '原创角色站在雨夜车站。',
     testId: 'story-timeline',
     body: '雨落在中央市。',
   },
@@ -99,6 +99,31 @@ const scenarios = [
     settingMarkdown: '原作：《钢之炼金术师》\n版本：2003/2009 动画版\n剧情时点：之后\n角色：爱德华·艾尔利克',
     testId: 'story-timeline',
     body: '雨落在中央市。',
+  },
+  {
+    prompt: [
+      '开一个《钢之炼金术师》文游。',
+      '原作：**《钢之炼金术师》**',
+      '版本：**2003 动画版**。',
+      '剧情时点：第 51 集结局后。',
+      '角色：**爱德华·艾尔利克**。',
+      '角色：阿尔冯斯·艾尔利克。',
+      '同人改设：两人可能还在寻找回家的办法，后续尚未确定。',
+      '私密备注：不要发送这段。',
+    ].join('\n'),
+    mode: 'story',
+    title: '炼金术师雨夜',
+    settingMarkdown: '原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集结局后\n角色：爱德华·艾尔利克、阿尔冯斯·艾尔利克\n同人改设：两人仍在寻找回家的办法。',
+    testId: 'story-timeline',
+    body: '阿尔冯斯说：“哥哥，雨小了。”',
+    research: {
+      summary: [
+        '### 爱德华·艾尔利克',
+        '- 称呼弟弟为「阿尔」，急躁时句子短促。',
+        '### 阿尔冯斯·艾尔利克',
+        '- 说话温和，习惯称对方为「哥哥」。',
+      ].join('\n'),
+    },
   },
 ];
 
@@ -129,14 +154,46 @@ async function runScenario(browser, scenario) {
   const searchRequests = [];
   await page.route('**/v1/tools/search', async (route) => {
     searchRequests.push(route.request().postDataJSON());
-    await route.fulfill({ status: 200, json: { results: [] } });
+    await route.fulfill({
+      status: 200,
+      json: scenario.research
+        ? {
+            results: [{
+              rerank_score: 2.8,
+              authority: 4,
+              title: '官方角色资料',
+              url: 'https://official.example/alchemy/characters',
+              snippet: '公开角色介绍',
+              summary: '公开角色介绍',
+              content: '',
+              site_name: 'Official',
+              site_icon: null,
+              date: null,
+            }],
+          }
+        : { results: [] },
+    });
+  });
+
+  const fetchRequests = [];
+  await page.route('**/v1/tools/fetch', async (route) => {
+    fetchRequests.push(route.request().postDataJSON());
+    await route.fulfill({
+      status: 200,
+      json: {
+        title: '官方角色资料',
+        content: '爱德华称呼阿尔冯斯为阿尔。阿尔冯斯说话温和。',
+      },
+    });
   });
 
   const completionRequests = [];
   await page.route('**/chat/completions', async (route) => {
     const requestBody = route.request().postDataJSON();
     completionRequests.push(requestBody);
-    const content = routeReply(scenario);
+    const content = scenario.research && JSON.stringify(requestBody.messages).includes('公开角色资料提炼器')
+      ? scenario.research.summary
+      : routeReply(scenario);
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
@@ -151,13 +208,50 @@ async function runScenario(browser, scenario) {
     await page.getByRole('button', { name: '发送行动', exact: true }).click();
     await page.getByTestId(scenario.testId).waitFor();
 
-    assert.equal(searchRequests.length, 0, `${scenario.mode} prompt must not start public research`);
-    assert.equal(completionRequests.length, 1, 'only the routed model request should be sent');
-    assert.equal(
-      JSON.stringify(completionRequests[0]).includes('公开资料参考'),
-      false,
-      'the writing/model request must not be decorated by public reference context',
-    );
+    if (!scenario.research) {
+      assert.equal(searchRequests.length, 0, `${scenario.mode} prompt must not start public research`);
+      assert.equal(fetchRequests.length, 0, 'the negative path must not fetch a public source');
+      assert.equal(completionRequests.length, 1, 'only the routed model request should be sent');
+      assert.equal(
+        JSON.stringify(completionRequests[0]).includes('公开资料参考'),
+        false,
+        'the writing/model request must not be decorated by public reference context',
+      );
+    } else {
+      assert.equal(searchRequests.length, 1, 'the known IP should start one public search');
+      assert.equal(fetchRequests.length, 1, 'the accepted public result should be fetched once');
+      assert.equal(completionRequests.length, 2, 'one synthesis call and one routed first reply should be sent');
+
+      const searchBody = searchRequests[0];
+      assert.deepEqual(Object.keys(searchBody).sort(), ['count', 'need_content', 'query']);
+      assert.equal(searchBody.need_content, false);
+      const query = String(searchBody.query);
+      for (const expected of [
+        '钢之炼金术师',
+        '2003 动画版',
+        '第 51 集结局后',
+        '爱德华·艾尔利克',
+        '阿尔冯斯·艾尔利克',
+      ]) {
+        assert.ok(query.includes(expected), `search query should include ${expected}`);
+      }
+      for (const privateText of ['同人改设', '私密备注', '不要发送', '后续尚未确定', '。']) {
+        assert.equal(query.includes(privateText), false, `search query must not include ${privateText}`);
+      }
+      assert.deepEqual(fetchRequests[0], { url: 'https://official.example/alchemy/characters' });
+
+      const synthesisRequest = completionRequests.find((request) =>
+        JSON.stringify(request.messages).includes('公开角色资料提炼器'));
+      const firstReplyRequest = completionRequests.find((request) => request !== synthesisRequest);
+      assert.ok(synthesisRequest, 'the public evidence should be synthesized before the first reply');
+      assert.ok(firstReplyRequest, 'the routed first reply request should exist');
+      const firstReplyPayload = JSON.stringify(firstReplyRequest.messages);
+      assert.ok(firstReplyPayload.includes('公开资料参考'), 'the first reply should receive the researched reference');
+      assert.ok(firstReplyPayload.includes('称呼弟弟为「阿尔」'), 'the first reply should receive role-specific voice notes');
+      assert.ok(firstReplyPayload.includes('以用户已确认内容为准'), 'confirmed local setting should remain authoritative');
+      assert.ok(firstReplyPayload.includes('同人改设'), 'the local fan-AU setting should remain in context');
+      await page.getByTestId('turn-body').getByText('哥哥，雨小了。', { exact: false }).first().waitFor();
+    }
   } finally {
     await context.close();
   }

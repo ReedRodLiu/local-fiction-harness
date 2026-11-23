@@ -254,6 +254,7 @@ export function CharacterPane(props: CharacterPaneProps) {
       label?: string;
       preferredResearch?: PublicResearchReference;
       preferredResearchFailure?: PublicResearchFailure;
+      preferredResearchSettingKey?: string;
     } = {},
   ) {
     const trimmed = contents.trim();
@@ -288,6 +289,7 @@ export function CharacterPane(props: CharacterPaneProps) {
         signal,
         preferred: options.preferredResearch,
         preferredFailure: options.preferredResearchFailure,
+        preferredSettingKey: options.preferredResearchSettingKey,
       });
       if (signal.aborted) return;
       const ctx = characterContext(
@@ -335,6 +337,7 @@ export function CharacterPane(props: CharacterPaneProps) {
               documentReads: ctx.reads,
               ...(research.reference ? { publicResearch: research.reference } : {}),
               ...(research.failure ? { publicResearchFailure: research.failure } : {}),
+              ...(research.settingKey ? { publicResearchSettingKey: research.settingKey } : {}),
               ...(proposalRecords.length > 0 ? { proposals: proposalRecords } : {}),
             };
             assistantId = assistant.id;
@@ -426,6 +429,7 @@ export function CharacterPane(props: CharacterPaneProps) {
         label: '重新生成开场',
         preferredResearch: node.publicResearch,
         preferredResearchFailure: node.publicResearchFailure,
+        preferredResearchSettingKey: node.publicResearchSettingKey,
       });
       return;
     }
@@ -456,6 +460,7 @@ export function CharacterPane(props: CharacterPaneProps) {
         signal,
         preferred: node.publicResearch,
         preferredFailure: node.publicResearchFailure,
+        preferredSettingKey: node.publicResearchSettingKey,
       });
       if (signal.aborted) return;
       const ctx = characterContext(
@@ -497,6 +502,7 @@ export function CharacterPane(props: CharacterPaneProps) {
               documentReads: ctx.reads,
               ...(research.reference ? { publicResearch: research.reference } : {}),
               ...(research.failure ? { publicResearchFailure: research.failure } : {}),
+              ...(research.settingKey ? { publicResearchSettingKey: research.settingKey } : {}),
               ...(proposalRecords.length > 0 ? { proposals: proposalRecords } : {}),
             };
             assistantId = assistant.id;

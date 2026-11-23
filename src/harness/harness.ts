@@ -397,6 +397,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     applyEdit = parentId === story.activeLeafNodeId,
     preferredResearch?: PublicResearchReference,
     preferredResearchFailure?: PublicResearchFailure,
+    preferredResearchSettingKey?: string,
   ) => {
     const globalDocument = await deps.loadPublicDocument?.();
     const publicVersion = globalDocument ? documentVersion(globalDocument) : undefined;
@@ -423,6 +424,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       signal,
       preferred: preferredResearch,
       preferredFailure: preferredResearchFailure,
+      preferredSettingKey: preferredResearchSettingKey,
     });
     const reads: DocumentRead[] = [
       ...(publicVersion ? [referenceDocument('public', '我的记忆', publicVersion)] : []),
@@ -448,6 +450,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         snapshot,
         publicResearch: publicResearch.reference ?? undefined,
         publicResearchFailure: publicResearch.failure,
+        publicResearchSettingKey: publicResearch.settingKey,
       },
     };
   };
@@ -508,6 +511,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     signal?: AbortSignalLike;
     publicResearch?: PublicResearchReference;
     publicResearchFailure?: PublicResearchFailure;
+    publicResearchSettingKey?: string;
   }): Promise<TurnExecutionResult> => {
     const assistantCreatedAt = Math.max(now(), opts.baseStory.updatedAt + 1);
     const reasoningEffort = normalizeReasoningEffort(opts.config.reasoningEffort);
@@ -526,6 +530,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       documentReads: opts.reads,
       ...(opts.publicResearch ? { publicResearch: opts.publicResearch } : {}),
       ...(opts.publicResearchFailure ? { publicResearchFailure: opts.publicResearchFailure } : {}),
+      ...(opts.publicResearchSettingKey ? { publicResearchSettingKey: opts.publicResearchSettingKey } : {}),
       ...(opts.proposals && opts.proposals.length > 0 ? { proposals: opts.proposals } : {}),
     };
 
@@ -653,6 +658,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       signal: callbacks?.signal,
       publicResearch: prepared.request.publicResearch,
       publicResearchFailure: prepared.request.publicResearchFailure,
+      publicResearchSettingKey: prepared.request.publicResearchSettingKey,
     });
   };
 
@@ -879,6 +885,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         false,
         targetNode.publicResearch,
         targetNode.publicResearchFailure,
+        targetNode.publicResearchSettingKey,
       );
       const { story: workingStory, snapshot: parentSnapshot } = prepared;
       const { messages } = assembleThreeZoneContext(
@@ -928,6 +935,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         signal: callbacks?.signal,
         publicResearch: prepared.request.publicResearch,
         publicResearchFailure: prepared.request.publicResearchFailure,
+        publicResearchSettingKey: prepared.request.publicResearchSettingKey,
       });
     },
 
