@@ -47,6 +47,7 @@ if (outputOption) {
 }
 
 console.log(JSON.stringify({
+  schemaVersion: report.schemaVersion,
   mode: report.mode,
   generatedAt: report.generatedAt,
   providerRuns: report.providerRuns,
@@ -56,6 +57,9 @@ console.log(JSON.stringify({
   groups: Object.fromEntries(Object.entries(report.groups).map(([arm, summary]) => [arm, {
     records: summary.records,
     effectiveTurns: summary.effectiveTurns,
+    completedTurns: summary.completedTurnIds.length,
+    outboundRequestCount: summary.outboundRequestCount,
+    localRetrievalCount: summary.localRetrievalCount,
     completionRate: summary.completionRate,
     firstContentLatencyMsP50: summary.firstContentLatencyMsP50,
     firstContentLatencyMsP95: summary.firstContentLatencyMsP95,

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "mode": "offline-simulated",
   "generatedAt": "2026-11-22T16:00:00.000Z",
   "providerRuns": 0,
@@ -16,21 +16,54 @@
         "outputPerMillionUsd": 0.6
       },
       "effectiveTurns": 30,
+      "completedTurnIds": [
+        "continuous:turn-291",
+        "continuous:turn-292",
+        "continuous:turn-293",
+        "continuous:turn-294",
+        "continuous:turn-295",
+        "continuous:turn-296",
+        "continuous:turn-297",
+        "continuous:turn-298",
+        "continuous:turn-299",
+        "continuous:turn-300",
+        "branching:turn-69",
+        "branching:turn-70",
+        "branching:turn-71",
+        "branching:turn-72",
+        "branching:turn-73",
+        "branching:turn-298",
+        "branching:turn-299",
+        "branching:turn-300",
+        "branching:turn-301",
+        "branching:turn-302",
+        "nested:turn-196",
+        "nested:turn-197",
+        "nested:turn-366",
+        "nested:turn-367",
+        "nested:turn-535",
+        "nested:turn-536",
+        "nested:turn-695",
+        "nested:turn-696",
+        "nested:turn-855",
+        "nested:turn-856"
+      ],
       "records": 31,
+      "outboundRequestCount": 31,
+      "localRetrievalCount": 0,
       "missingUsageRecords": 0,
       "usage": {
-        "promptCacheHitTokens": 251832,
-        "promptCacheMissTokens": 61635,
+        "promptCacheHitTokens": 234445,
+        "promptCacheMissTokens": 75918,
         "completionTokens": 1944
       },
       "costUsd": null,
       "costPer100TurnsUsd": null,
-      "cacheHitRate": 0.8033764319689154,
-      "firstContentLatencyMsP50": 854,
-      "firstContentLatencyMsP95": 1261,
-      "branchSwitchFirstContentLatencyMsP50": 768,
-      "peakInputTokens": 17879,
-      "retrievalCount": 0,
+      "cacheHitRate": 0.7553896566278842,
+      "firstContentLatencyMsP50": 928,
+      "firstContentLatencyMsP95": 1113,
+      "branchSwitchFirstContentLatencyMsP50": 965,
+      "peakInputTokens": 17907,
       "completionRate": 1
     },
     "folio": {
@@ -44,21 +77,54 @@
         "outputPerMillionUsd": 0.6
       },
       "effectiveTurns": 30,
+      "completedTurnIds": [
+        "continuous:turn-291",
+        "continuous:turn-292",
+        "continuous:turn-293",
+        "continuous:turn-294",
+        "continuous:turn-295",
+        "continuous:turn-296",
+        "continuous:turn-297",
+        "continuous:turn-298",
+        "continuous:turn-299",
+        "continuous:turn-300",
+        "branching:turn-69",
+        "branching:turn-70",
+        "branching:turn-71",
+        "branching:turn-72",
+        "branching:turn-73",
+        "branching:turn-298",
+        "branching:turn-299",
+        "branching:turn-300",
+        "branching:turn-301",
+        "branching:turn-302",
+        "nested:turn-196",
+        "nested:turn-197",
+        "nested:turn-366",
+        "nested:turn-367",
+        "nested:turn-535",
+        "nested:turn-536",
+        "nested:turn-695",
+        "nested:turn-696",
+        "nested:turn-855",
+        "nested:turn-856"
+      ],
       "records": 40,
+      "outboundRequestCount": 40,
+      "localRetrievalCount": 0,
       "missingUsageRecords": 0,
       "usage": {
-        "promptCacheHitTokens": 69578,
-        "promptCacheMissTokens": 10151,
+        "promptCacheHitTokens": 46666,
+        "promptCacheMissTokens": 35381,
         "completionTokens": 2232
       },
       "costUsd": null,
       "costPer100TurnsUsd": null,
-      "cacheHitRate": 0.8726812075907135,
-      "firstContentLatencyMsP50": 941,
-      "firstContentLatencyMsP95": 1249,
-      "branchSwitchFirstContentLatencyMsP50": 978,
-      "peakInputTokens": 17875,
-      "retrievalCount": 0,
+      "cacheHitRate": 0.5687715577656709,
+      "firstContentLatencyMsP50": 928,
+      "firstContentLatencyMsP95": 1113,
+      "branchSwitchFirstContentLatencyMsP50": 965,
+      "peakInputTokens": 17907,
       "completionRate": 1
     },
     "retrievable": {
@@ -72,21 +138,54 @@
         "outputPerMillionUsd": 0.6
       },
       "effectiveTurns": 30,
+      "completedTurnIds": [
+        "continuous:turn-291",
+        "continuous:turn-292",
+        "continuous:turn-293",
+        "continuous:turn-294",
+        "continuous:turn-295",
+        "continuous:turn-296",
+        "continuous:turn-297",
+        "continuous:turn-298",
+        "continuous:turn-299",
+        "continuous:turn-300",
+        "branching:turn-69",
+        "branching:turn-70",
+        "branching:turn-71",
+        "branching:turn-72",
+        "branching:turn-73",
+        "branching:turn-298",
+        "branching:turn-299",
+        "branching:turn-300",
+        "branching:turn-301",
+        "branching:turn-302",
+        "nested:turn-196",
+        "nested:turn-197",
+        "nested:turn-366",
+        "nested:turn-367",
+        "nested:turn-535",
+        "nested:turn-536",
+        "nested:turn-695",
+        "nested:turn-696",
+        "nested:turn-855",
+        "nested:turn-856"
+      ],
       "records": 61,
+      "outboundRequestCount": 31,
+      "localRetrievalCount": 30,
       "missingUsageRecords": 0,
       "usage": {
-        "promptCacheHitTokens": 28950,
-        "promptCacheMissTokens": 602,
+        "promptCacheHitTokens": 21974,
+        "promptCacheMissTokens": 7655,
         "completionTokens": 1944
       },
       "costUsd": null,
       "costPer100TurnsUsd": null,
-      "cacheHitRate": 0.9796291283161884,
-      "firstContentLatencyMsP50": 892,
-      "firstContentLatencyMsP95": 1299,
-      "branchSwitchFirstContentLatencyMsP50": 1114,
-      "peakInputTokens": 17875,
-      "retrievalCount": 30,
+      "cacheHitRate": 0.741638259813021,
+      "firstContentLatencyMsP50": 928,
+      "firstContentLatencyMsP95": 1113,
+      "branchSwitchFirstContentLatencyMsP50": 965,
+      "peakInputTokens": 17907,
       "completionRate": 1
     }
   },
@@ -113,7 +212,7 @@
   "officialPreflight": {
     "ok": true,
     "requestCount": 102,
-    "maxEstimatedCostUsd": 0.12888059999999982,
+    "maxEstimatedCostUsd": 0.12871694999999997,
     "violations": [],
     "budget": {
       "maxRequests": 120,
@@ -131,1079 +230,1278 @@
   },
   "requests": [
     {
-      "requestId": "anonymous-full-001",
+      "requestId": "anonymous-full-continuous-01",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 1,
+      "logicalTurnId": "continuous:turn-291",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 12658,
-        "promptCacheMissTokens": 5221,
+        "promptCacheHitTokens": 12316,
+        "promptCacheMissTokens": 5080,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 580,
+      "inputTailNodeId": "turn-290-a"
     },
     {
-      "requestId": "anonymous-full-002",
+      "requestId": "anonymous-full-continuous-02",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 2,
+      "logicalTurnId": "continuous:turn-292",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 12798,
-        "promptCacheMissTokens": 5077,
+        "promptCacheHitTokens": 12495,
+        "promptCacheMissTokens": 4957,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 582,
+      "inputTailNodeId": "turn-291-a"
     },
     {
-      "requestId": "anonymous-full-003",
+      "requestId": "anonymous-full-continuous-03",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 3,
+      "logicalTurnId": "continuous:turn-293",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 12938,
-        "promptCacheMissTokens": 4933,
+        "promptCacheHitTokens": 12672,
+        "promptCacheMissTokens": 4832,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 854,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 584,
+      "inputTailNodeId": "turn-292-a"
     },
     {
-      "requestId": "anonymous-full-004",
+      "requestId": "anonymous-full-continuous-04",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 4,
+      "logicalTurnId": "continuous:turn-294",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 13084,
-        "promptCacheMissTokens": 4791,
+        "promptCacheHitTokens": 12853,
+        "promptCacheMissTokens": 4707,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 586,
+      "inputTailNodeId": "turn-293-a"
     },
     {
-      "requestId": "anonymous-full-005",
+      "requestId": "anonymous-full-continuous-05",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 5,
+      "logicalTurnId": "continuous:turn-295",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 13228,
-        "promptCacheMissTokens": 4649,
+        "promptCacheHitTokens": 13037,
+        "promptCacheMissTokens": 4581,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 928,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 588,
+      "inputTailNodeId": "turn-294-a"
     },
     {
-      "requestId": "anonymous-full-006",
+      "requestId": "anonymous-full-continuous-06",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 6,
+      "logicalTurnId": "continuous:turn-296",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 13371,
-        "promptCacheMissTokens": 4506,
+        "promptCacheHitTokens": 13221,
+        "promptCacheMissTokens": 4455,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 965,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 590,
+      "inputTailNodeId": "turn-295-a"
     },
     {
-      "requestId": "anonymous-full-007",
+      "requestId": "anonymous-full-continuous-07",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 7,
+      "logicalTurnId": "continuous:turn-297",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 13515,
-        "promptCacheMissTokens": 4362,
+        "promptCacheHitTokens": 13406,
+        "promptCacheMissTokens": 4328,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1002,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 592,
+      "inputTailNodeId": "turn-296-a"
     },
     {
-      "requestId": "anonymous-full-008",
+      "requestId": "anonymous-full-continuous-08",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 8,
+      "logicalTurnId": "continuous:turn-298",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 13658,
-        "promptCacheMissTokens": 4219,
+        "promptCacheHitTokens": 13593,
+        "promptCacheMissTokens": 4199,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 594,
+      "inputTailNodeId": "turn-297-a"
     },
     {
-      "requestId": "anonymous-full-009",
+      "requestId": "anonymous-full-continuous-09",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 9,
+      "logicalTurnId": "continuous:turn-299",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 13801,
-        "promptCacheMissTokens": 4076,
+        "promptCacheHitTokens": 13779,
+        "promptCacheMissTokens": 4070,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1076,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 596,
+      "inputTailNodeId": "turn-298-a"
     },
     {
-      "requestId": "anonymous-full-010",
+      "requestId": "anonymous-full-continuous-10",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 10,
+      "logicalTurnId": "continuous:turn-300",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 13944,
-        "promptCacheMissTokens": 3933,
+        "promptCacheHitTokens": 13967,
+        "promptCacheMissTokens": 3940,
         "completionTokens": 64
       },
       "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 598,
+      "inputTailNodeId": "turn-299-a"
     },
     {
-      "requestId": "anonymous-full-011",
+      "requestId": "anonymous-full-branching-01",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 11,
+      "logicalTurnId": "branching:turn-69",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 3528,
-        "promptCacheMissTokens": 950,
+        "promptCacheHitTokens": 3029,
+        "promptCacheMissTokens": 1250,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1150,
+      "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 136,
+      "inputTailNodeId": "turn-68-a"
     },
     {
-      "requestId": "anonymous-full-012",
+      "requestId": "anonymous-full-branching-02",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 12,
+      "logicalTurnId": "branching:turn-70",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 3566,
-        "promptCacheMissTokens": 914,
+        "promptCacheHitTokens": 3105,
+        "promptCacheMissTokens": 1232,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1187,
+      "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 138,
+      "inputTailNodeId": "turn-69-a"
     },
     {
-      "requestId": "anonymous-full-013",
+      "requestId": "anonymous-full-branching-03",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 13,
+      "logicalTurnId": "branching:turn-71",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 3601,
-        "promptCacheMissTokens": 879,
+        "promptCacheHitTokens": 3181,
+        "promptCacheMissTokens": 1214,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1224,
+      "firstContentLatencyMs": 854,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 140,
+      "inputTailNodeId": "turn-70-a"
     },
     {
-      "requestId": "anonymous-full-014",
+      "requestId": "anonymous-full-branching-04",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 14,
+      "logicalTurnId": "branching:turn-72",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 3637,
-        "promptCacheMissTokens": 843,
+        "promptCacheHitTokens": 3259,
+        "promptCacheMissTokens": 1194,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1261,
+      "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 142,
+      "inputTailNodeId": "turn-71-a"
     },
     {
-      "requestId": "anonymous-full-015",
+      "requestId": "anonymous-full-branching-05",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 15,
+      "logicalTurnId": "branching:turn-73",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 3673,
-        "promptCacheMissTokens": 807,
+        "promptCacheHitTokens": 3338,
+        "promptCacheMissTokens": 1173,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1298,
+      "firstContentLatencyMs": 928,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 144,
+      "inputTailNodeId": "turn-72-a"
     },
     {
-      "requestId": "anonymous-full-016",
+      "requestId": "anonymous-full-branching-06",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 16,
+      "logicalTurnId": "branching:turn-298",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 3666,
-        "promptCacheMissTokens": 762,
+        "promptCacheHitTokens": 3166,
+        "promptCacheMissTokens": 1067,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 435,
+      "firstContentLatencyMs": 965,
       "branchSwitch": true,
       "arm": "full",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 134,
+      "inputTailNodeId": "turn-297-a"
     },
     {
-      "requestId": "anonymous-full-017",
+      "requestId": "anonymous-full-branching-07",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 17,
+      "logicalTurnId": "branching:turn-299",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 3701,
-        "promptCacheMissTokens": 727,
+        "promptCacheHitTokens": 3243,
+        "promptCacheMissTokens": 1048,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 472,
+      "firstContentLatencyMs": 1002,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 136,
+      "inputTailNodeId": "turn-298-a"
     },
     {
-      "requestId": "anonymous-full-018",
+      "requestId": "anonymous-full-branching-08",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 18,
+      "logicalTurnId": "branching:turn-300",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 3737,
-        "promptCacheMissTokens": 691,
+        "promptCacheHitTokens": 3322,
+        "promptCacheMissTokens": 1027,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 509,
+      "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 138,
+      "inputTailNodeId": "turn-299-a"
     },
     {
-      "requestId": "anonymous-full-019",
+      "requestId": "anonymous-full-branching-09",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 19,
+      "logicalTurnId": "branching:turn-301",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 3770,
-        "promptCacheMissTokens": 656,
+        "promptCacheHitTokens": 3400,
+        "promptCacheMissTokens": 1005,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 546,
+      "firstContentLatencyMs": 1076,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 140,
+      "inputTailNodeId": "turn-300-a"
     },
     {
-      "requestId": "anonymous-full-020",
+      "requestId": "anonymous-full-branching-10",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 20,
+      "logicalTurnId": "branching:turn-302",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 3808,
-        "promptCacheMissTokens": 620,
+        "promptCacheHitTokens": 3481,
+        "promptCacheMissTokens": 982,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 583,
+      "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 142,
+      "inputTailNodeId": "turn-301-a"
     },
     {
-      "requestId": "anonymous-full-021",
+      "requestId": "anonymous-full-nested-01",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 21,
+      "logicalTurnId": "nested:turn-196",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 6264,
-        "promptCacheMissTokens": 953,
+        "promptCacheHitTokens": 5091,
+        "promptCacheMissTokens": 2101,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 620,
+      "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-195-a"
     },
     {
-      "requestId": "anonymous-full-022",
+      "requestId": "anonymous-full-nested-02",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 22,
+      "logicalTurnId": "nested:turn-197",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 6323,
-        "promptCacheMissTokens": 896,
+        "promptCacheHitTokens": 5191,
+        "promptCacheMissTokens": 2059,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 657,
+      "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 238,
+      "inputTailNodeId": "turn-196-a"
     },
     {
-      "requestId": "anonymous-full-023",
+      "requestId": "anonymous-full-nested-03",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 23,
+      "logicalTurnId": "nested:turn-366",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 6390,
-        "promptCacheMissTokens": 839,
+        "promptCacheHitTokens": 5217,
+        "promptCacheMissTokens": 1989,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 694,
+      "firstContentLatencyMs": 854,
       "branchSwitch": true,
       "arm": "full",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-365-a"
     },
     {
-      "requestId": "anonymous-full-024",
+      "requestId": "anonymous-full-nested-04",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 24,
+      "logicalTurnId": "nested:turn-367",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 6444,
-        "promptCacheMissTokens": 781,
+        "promptCacheHitTokens": 5315,
+        "promptCacheMissTokens": 1947,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 731,
+      "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 238,
+      "inputTailNodeId": "turn-366-a"
     },
     {
-      "requestId": "anonymous-full-025",
+      "requestId": "anonymous-full-nested-05",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 25,
+      "logicalTurnId": "nested:turn-535",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 6539,
-        "promptCacheMissTokens": 727,
+        "promptCacheHitTokens": 5358,
+        "promptCacheMissTokens": 1883,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 768,
+      "firstContentLatencyMs": 928,
       "branchSwitch": true,
       "arm": "full",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 234,
+      "inputTailNodeId": "turn-534-a"
     },
     {
-      "requestId": "anonymous-full-026",
+      "requestId": "anonymous-full-nested-06",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 26,
+      "logicalTurnId": "nested:turn-536",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 6597,
-        "promptCacheMissTokens": 669,
+        "promptCacheHitTokens": 5459,
+        "promptCacheMissTokens": 1840,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 805,
+      "firstContentLatencyMs": 965,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-535-a"
     },
     {
-      "requestId": "anonymous-full-027",
+      "requestId": "anonymous-full-nested-07",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 27,
+      "logicalTurnId": "nested:turn-695",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 6610,
-        "promptCacheMissTokens": 607,
+        "promptCacheHitTokens": 5397,
+        "promptCacheMissTokens": 1743,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 842,
+      "firstContentLatencyMs": 1002,
       "branchSwitch": true,
       "arm": "full",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 234,
+      "inputTailNodeId": "turn-694-a"
     },
     {
-      "requestId": "anonymous-full-028",
+      "requestId": "anonymous-full-nested-08",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 28,
+      "logicalTurnId": "nested:turn-696",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 6670,
-        "promptCacheMissTokens": 549,
+        "promptCacheHitTokens": 5500,
+        "promptCacheMissTokens": 1700,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 879,
+      "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-695-a"
     },
     {
-      "requestId": "anonymous-full-029",
+      "requestId": "anonymous-full-nested-09",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 29,
+      "logicalTurnId": "nested:turn-855",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 6728,
-        "promptCacheMissTokens": 491,
+        "promptCacheHitTokens": 5560,
+        "promptCacheMissTokens": 1643,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 916,
+      "firstContentLatencyMs": 1076,
       "branchSwitch": true,
       "arm": "full",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 234,
+      "inputTailNodeId": "turn-854-a"
     },
     {
-      "requestId": "anonymous-full-030",
+      "requestId": "anonymous-full-nested-10",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 30,
+      "logicalTurnId": "nested:turn-856",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 6783,
-        "promptCacheMissTokens": 434,
+        "promptCacheHitTokens": 5662,
+        "promptCacheMissTokens": 1597,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 953,
+      "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "full",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-855-a"
     },
     {
       "requestId": "anonymous-full-retry-001",
       "phase": "retry",
-      "status": "failed",
-      "turnIndex": 15,
+      "status": "completed",
+      "logicalTurnId": "continuous:turn-300",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 16802,
-        "promptCacheMissTokens": 1073,
+        "promptCacheHitTokens": 16832,
+        "promptCacheMissTokens": 1075,
         "completionTokens": 24
       },
-      "firstContentLatencyMs": null,
+      "firstContentLatencyMs": 980,
       "arm": "full",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 598,
+      "inputTailNodeId": "turn-299-a"
     },
     {
-      "requestId": "anonymous-folio-031",
+      "requestId": "anonymous-folio-continuous-01",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 31,
+      "logicalTurnId": "continuous:turn-291",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1130,
-        "promptCacheMissTokens": 423,
+        "promptCacheHitTokens": 761,
+        "promptCacheMissTokens": 799,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 990,
+      "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 580,
+      "inputTailNodeId": "turn-290-a"
     },
     {
-      "requestId": "anonymous-folio-032",
+      "requestId": "anonymous-folio-continuous-02",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 32,
+      "logicalTurnId": "continuous:turn-292",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1140,
-        "promptCacheMissTokens": 409,
+        "promptCacheHitTokens": 773,
+        "promptCacheMissTokens": 786,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1027,
+      "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 582,
+      "inputTailNodeId": "turn-291-a"
     },
     {
-      "requestId": "anonymous-folio-033",
+      "requestId": "anonymous-folio-continuous-03",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 33,
+      "logicalTurnId": "continuous:turn-293",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1149,
-        "promptCacheMissTokens": 396,
+        "promptCacheHitTokens": 782,
+        "promptCacheMissTokens": 771,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1064,
+      "firstContentLatencyMs": 854,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 584,
+      "inputTailNodeId": "turn-292-a"
     },
     {
-      "requestId": "anonymous-folio-034",
+      "requestId": "anonymous-folio-continuous-04",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 34,
+      "logicalTurnId": "continuous:turn-294",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1164,
-        "promptCacheMissTokens": 385,
+        "promptCacheHitTokens": 794,
+        "promptCacheMissTokens": 757,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1101,
+      "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 586,
+      "inputTailNodeId": "turn-293-a"
     },
     {
-      "requestId": "anonymous-folio-summary-034",
+      "requestId": "anonymous-folio-summary-continuous-04",
       "phase": "summary",
       "status": "completed",
-      "turnIndex": 34,
+      "logicalTurnId": "continuous:turn-294",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1158,
-        "promptCacheMissTokens": 382,
+        "promptCacheHitTokens": 789,
+        "promptCacheMissTokens": 753,
         "completionTokens": 32
       },
-      "firstContentLatencyMs": 746,
+      "firstContentLatencyMs": 776,
       "arm": "folio",
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-folio-035",
+      "requestId": "anonymous-folio-continuous-05",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 35,
+      "logicalTurnId": "continuous:turn-295",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1178,
-        "promptCacheMissTokens": 373,
+        "promptCacheHitTokens": 806,
+        "promptCacheMissTokens": 745,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1138,
+      "firstContentLatencyMs": 928,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 588,
+      "inputTailNodeId": "turn-294-a"
     },
     {
-      "requestId": "anonymous-folio-036",
+      "requestId": "anonymous-folio-continuous-06",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 36,
+      "logicalTurnId": "continuous:turn-296",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1191,
-        "promptCacheMissTokens": 360,
+        "promptCacheHitTokens": 819,
+        "promptCacheMissTokens": 734,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1175,
+      "firstContentLatencyMs": 965,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 590,
+      "inputTailNodeId": "turn-295-a"
     },
     {
-      "requestId": "anonymous-folio-037",
+      "requestId": "anonymous-folio-continuous-07",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 37,
+      "logicalTurnId": "continuous:turn-297",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1203,
-        "promptCacheMissTokens": 348,
+        "promptCacheHitTokens": 832,
+        "promptCacheMissTokens": 721,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1212,
+      "firstContentLatencyMs": 1002,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 592,
+      "inputTailNodeId": "turn-296-a"
     },
     {
-      "requestId": "anonymous-folio-summary-037",
+      "requestId": "anonymous-folio-summary-continuous-07",
       "phase": "summary",
       "status": "completed",
-      "turnIndex": 37,
+      "logicalTurnId": "continuous:turn-297",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1195,
-        "promptCacheMissTokens": 345,
+        "promptCacheHitTokens": 826,
+        "promptCacheMissTokens": 716,
         "completionTokens": 32
       },
-      "firstContentLatencyMs": 803,
+      "firstContentLatencyMs": 833,
       "arm": "folio",
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-folio-038",
+      "requestId": "anonymous-folio-continuous-08",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 38,
+      "logicalTurnId": "continuous:turn-298",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1215,
-        "promptCacheMissTokens": 336,
+        "promptCacheHitTokens": 844,
+        "promptCacheMissTokens": 709,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1249,
+      "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 594,
+      "inputTailNodeId": "turn-297-a"
     },
     {
-      "requestId": "anonymous-folio-039",
+      "requestId": "anonymous-folio-continuous-09",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 39,
+      "logicalTurnId": "continuous:turn-299",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1228,
-        "promptCacheMissTokens": 323,
+        "promptCacheHitTokens": 857,
+        "promptCacheMissTokens": 696,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1286,
+      "firstContentLatencyMs": 1076,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 596,
+      "inputTailNodeId": "turn-298-a"
     },
     {
-      "requestId": "anonymous-folio-040",
+      "requestId": "anonymous-folio-continuous-10",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 40,
+      "logicalTurnId": "continuous:turn-300",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1240,
-        "promptCacheMissTokens": 311,
+        "promptCacheHitTokens": 869,
+        "promptCacheMissTokens": 684,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 423,
+      "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 598,
+      "inputTailNodeId": "turn-299-a"
     },
     {
-      "requestId": "anonymous-folio-summary-040",
+      "requestId": "anonymous-folio-summary-continuous-10",
       "phase": "summary",
       "status": "completed",
-      "turnIndex": 40,
+      "logicalTurnId": "continuous:turn-300",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1232,
-        "promptCacheMissTokens": 308,
+        "promptCacheHitTokens": 863,
+        "promptCacheMissTokens": 679,
         "completionTokens": 32
       },
-      "firstContentLatencyMs": 860,
+      "firstContentLatencyMs": 890,
       "arm": "folio",
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-folio-041",
+      "requestId": "anonymous-folio-branching-01",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 41,
+      "logicalTurnId": "branching:turn-69",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1300,
-        "promptCacheMissTokens": 309,
+        "promptCacheHitTokens": 828,
+        "promptCacheMissTokens": 870,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 460,
+      "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 136,
+      "inputTailNodeId": "turn-68-a"
     },
     {
-      "requestId": "anonymous-folio-042",
+      "requestId": "anonymous-folio-branching-02",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 42,
+      "logicalTurnId": "branching:turn-70",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1314,
-        "promptCacheMissTokens": 297,
+        "promptCacheHitTokens": 842,
+        "promptCacheMissTokens": 856,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 497,
+      "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 138,
+      "inputTailNodeId": "turn-69-a"
     },
     {
-      "requestId": "anonymous-folio-043",
+      "requestId": "anonymous-folio-branching-03",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 43,
+      "logicalTurnId": "branching:turn-71",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1327,
-        "promptCacheMissTokens": 284,
+        "promptCacheHitTokens": 856,
+        "promptCacheMissTokens": 844,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 534,
+      "firstContentLatencyMs": 854,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 140,
+      "inputTailNodeId": "turn-70-a"
     },
     {
-      "requestId": "anonymous-folio-044",
+      "requestId": "anonymous-folio-branching-04",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 44,
+      "logicalTurnId": "branching:turn-72",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1340,
-        "promptCacheMissTokens": 271,
+        "promptCacheHitTokens": 870,
+        "promptCacheMissTokens": 830,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 571,
+      "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 142,
+      "inputTailNodeId": "turn-71-a"
     },
     {
-      "requestId": "anonymous-folio-summary-044",
+      "requestId": "anonymous-folio-summary-branching-04",
       "phase": "summary",
       "status": "completed",
-      "turnIndex": 44,
+      "logicalTurnId": "branching:turn-72",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1332,
-        "promptCacheMissTokens": 269,
+        "promptCacheHitTokens": 864,
+        "promptCacheMissTokens": 825,
         "completionTokens": 32
       },
-      "firstContentLatencyMs": 936,
+      "firstContentLatencyMs": 776,
       "arm": "folio",
       "scenario": "branching"
     },
     {
-      "requestId": "anonymous-folio-045",
+      "requestId": "anonymous-folio-branching-05",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 45,
+      "logicalTurnId": "branching:turn-73",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1353,
-        "promptCacheMissTokens": 258,
+        "promptCacheHitTokens": 884,
+        "promptCacheMissTokens": 816,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 608,
+      "firstContentLatencyMs": 928,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 144,
+      "inputTailNodeId": "turn-72-a"
     },
     {
-      "requestId": "anonymous-folio-046",
+      "requestId": "anonymous-folio-branching-06",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 46,
+      "logicalTurnId": "branching:turn-298",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1371,
-        "promptCacheMissTokens": 246,
+        "promptCacheHitTokens": 902,
+        "promptCacheMissTokens": 807,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 645,
+      "firstContentLatencyMs": 965,
       "branchSwitch": true,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 134,
+      "inputTailNodeId": "turn-297-a"
     },
     {
-      "requestId": "anonymous-folio-047",
+      "requestId": "anonymous-folio-branching-07",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 47,
+      "logicalTurnId": "branching:turn-299",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1384,
-        "promptCacheMissTokens": 233,
+        "promptCacheHitTokens": 916,
+        "promptCacheMissTokens": 793,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 682,
+      "firstContentLatencyMs": 1002,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 136,
+      "inputTailNodeId": "turn-298-a"
     },
     {
-      "requestId": "anonymous-folio-summary-047",
+      "requestId": "anonymous-folio-summary-branching-07",
       "phase": "summary",
       "status": "completed",
-      "turnIndex": 47,
+      "logicalTurnId": "branching:turn-299",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1375,
-        "promptCacheMissTokens": 232,
+        "promptCacheHitTokens": 910,
+        "promptCacheMissTokens": 789,
         "completionTokens": 32
       },
-      "firstContentLatencyMs": 993,
+      "firstContentLatencyMs": 833,
       "arm": "folio",
       "scenario": "branching"
     },
     {
-      "requestId": "anonymous-folio-048",
+      "requestId": "anonymous-folio-branching-08",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 48,
+      "logicalTurnId": "branching:turn-300",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1397,
-        "promptCacheMissTokens": 220,
+        "promptCacheHitTokens": 929,
+        "promptCacheMissTokens": 780,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 719,
+      "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 138,
+      "inputTailNodeId": "turn-299-a"
     },
     {
-      "requestId": "anonymous-folio-049",
+      "requestId": "anonymous-folio-branching-09",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 49,
+      "logicalTurnId": "branching:turn-301",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1408,
-        "promptCacheMissTokens": 207,
+        "promptCacheHitTokens": 943,
+        "promptCacheMissTokens": 766,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 756,
+      "firstContentLatencyMs": 1076,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 140,
+      "inputTailNodeId": "turn-300-a"
     },
     {
-      "requestId": "anonymous-folio-050",
+      "requestId": "anonymous-folio-branching-10",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 50,
+      "logicalTurnId": "branching:turn-302",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1422,
-        "promptCacheMissTokens": 195,
+        "promptCacheHitTokens": 957,
+        "promptCacheMissTokens": 752,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 793,
+      "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 142,
+      "inputTailNodeId": "turn-301-a"
     },
     {
-      "requestId": "anonymous-folio-summary-050",
+      "requestId": "anonymous-folio-summary-branching-10",
       "phase": "summary",
       "status": "completed",
-      "turnIndex": 50,
+      "logicalTurnId": "branching:turn-302",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1414,
-        "promptCacheMissTokens": 193,
+        "promptCacheHitTokens": 951,
+        "promptCacheMissTokens": 748,
         "completionTokens": 32
       },
-      "firstContentLatencyMs": 1050,
+      "firstContentLatencyMs": 890,
       "arm": "folio",
       "scenario": "branching"
     },
     {
-      "requestId": "anonymous-folio-051",
+      "requestId": "anonymous-folio-nested-01",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 51,
+      "logicalTurnId": "nested:turn-196",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1379,
-        "promptCacheMissTokens": 175,
+        "promptCacheHitTokens": 803,
+        "promptCacheMissTokens": 843,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 830,
+      "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-195-a"
     },
     {
-      "requestId": "anonymous-folio-052",
+      "requestId": "anonymous-folio-nested-02",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 52,
+      "logicalTurnId": "nested:turn-197",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1394,
-        "promptCacheMissTokens": 162,
+        "promptCacheHitTokens": 816,
+        "promptCacheMissTokens": 830,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 867,
+      "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 238,
+      "inputTailNodeId": "turn-196-a"
     },
     {
-      "requestId": "anonymous-folio-053",
+      "requestId": "anonymous-folio-nested-03",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 53,
+      "logicalTurnId": "nested:turn-366",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1415,
-        "promptCacheMissTokens": 151,
+        "promptCacheHitTokens": 836,
+        "promptCacheMissTokens": 824,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 904,
+      "firstContentLatencyMs": 854,
       "branchSwitch": true,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-365-a"
     },
     {
-      "requestId": "anonymous-folio-054",
+      "requestId": "anonymous-folio-nested-04",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 54,
+      "logicalTurnId": "nested:turn-367",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1424,
-        "promptCacheMissTokens": 138,
+        "promptCacheHitTokens": 848,
+        "promptCacheMissTokens": 810,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 941,
+      "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 238,
+      "inputTailNodeId": "turn-366-a"
     },
     {
-      "requestId": "anonymous-folio-summary-054",
+      "requestId": "anonymous-folio-summary-nested-04",
       "phase": "summary",
       "status": "completed",
-      "turnIndex": 54,
+      "logicalTurnId": "nested:turn-367",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1416,
-        "promptCacheMissTokens": 137,
+        "promptCacheHitTokens": 844,
+        "promptCacheMissTokens": 806,
         "completionTokens": 32
       },
-      "firstContentLatencyMs": 1126,
+      "firstContentLatencyMs": 776,
       "arm": "folio",
       "scenario": "nested"
     },
     {
-      "requestId": "anonymous-folio-055",
+      "requestId": "anonymous-folio-nested-05",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 55,
+      "logicalTurnId": "nested:turn-535",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1529,
-        "promptCacheMissTokens": 134,
+        "promptCacheHitTokens": 911,
+        "promptCacheMissTokens": 842,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 978,
+      "firstContentLatencyMs": 928,
       "branchSwitch": true,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 234,
+      "inputTailNodeId": "turn-534-a"
     },
     {
-      "requestId": "anonymous-folio-056",
+      "requestId": "anonymous-folio-nested-06",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 56,
+      "logicalTurnId": "nested:turn-536",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1543,
-        "promptCacheMissTokens": 120,
+        "promptCacheHitTokens": 925,
+        "promptCacheMissTokens": 828,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1015,
+      "firstContentLatencyMs": 965,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-535-a"
     },
     {
-      "requestId": "anonymous-folio-057",
+      "requestId": "anonymous-folio-nested-07",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 57,
+      "logicalTurnId": "nested:turn-695",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1509,
-        "promptCacheMissTokens": 104,
+        "promptCacheHitTokens": 885,
+        "promptCacheMissTokens": 767,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1052,
+      "firstContentLatencyMs": 1002,
       "branchSwitch": true,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 234,
+      "inputTailNodeId": "turn-694-a"
     },
     {
-      "requestId": "anonymous-folio-summary-057",
+      "requestId": "anonymous-folio-summary-nested-07",
       "phase": "summary",
       "status": "completed",
-      "turnIndex": 57,
+      "logicalTurnId": "nested:turn-695",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1500,
-        "promptCacheMissTokens": 103,
+        "promptCacheHitTokens": 880,
+        "promptCacheMissTokens": 762,
         "completionTokens": 32
       },
-      "firstContentLatencyMs": 1183,
+      "firstContentLatencyMs": 833,
       "arm": "folio",
       "scenario": "nested"
     },
     {
-      "requestId": "anonymous-folio-058",
+      "requestId": "anonymous-folio-nested-08",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 58,
+      "logicalTurnId": "nested:turn-696",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1524,
-        "promptCacheMissTokens": 91,
+        "promptCacheHitTokens": 899,
+        "promptCacheMissTokens": 755,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1089,
+      "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-695-a"
     },
     {
-      "requestId": "anonymous-folio-059",
+      "requestId": "anonymous-folio-nested-09",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 59,
+      "logicalTurnId": "nested:turn-855",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1537,
-        "promptCacheMissTokens": 78,
+        "promptCacheHitTokens": 946,
+        "promptCacheMissTokens": 769,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1126,
+      "firstContentLatencyMs": 1076,
       "branchSwitch": true,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 234,
+      "inputTailNodeId": "turn-854-a"
     },
     {
-      "requestId": "anonymous-folio-060",
+      "requestId": "anonymous-folio-nested-10",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 60,
+      "logicalTurnId": "nested:turn-856",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1548,
-        "promptCacheMissTokens": 65,
+        "promptCacheHitTokens": 959,
+        "promptCacheMissTokens": 754,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1163,
+      "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-855-a"
     },
     {
-      "requestId": "anonymous-folio-summary-060",
+      "requestId": "anonymous-folio-summary-nested-10",
       "phase": "summary",
       "status": "completed",
-      "turnIndex": 60,
+      "logicalTurnId": "nested:turn-856",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 1540,
-        "promptCacheMissTokens": 65,
+        "promptCacheHitTokens": 954,
+        "promptCacheMissTokens": 751,
         "completionTokens": 32
       },
-      "firstContentLatencyMs": 1240,
+      "firstContentLatencyMs": 890,
       "arm": "folio",
       "scenario": "nested"
     },
     {
       "requestId": "anonymous-folio-retry-001",
       "phase": "retry",
-      "status": "failed",
-      "turnIndex": 15,
+      "status": "completed",
+      "logicalTurnId": "continuous:turn-300",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 17160,
-        "promptCacheMissTokens": 715,
+        "promptCacheHitTokens": 12893,
+        "promptCacheMissTokens": 5014,
         "completionTokens": 24
       },
-      "firstContentLatencyMs": null,
+      "firstContentLatencyMs": 980,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 598,
+      "inputTailNodeId": "turn-299-a"
     },
     {
-      "requestId": "anonymous-retrievable-061",
+      "requestId": "anonymous-retrievable-continuous-01",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 61,
+      "logicalTurnId": "continuous:turn-291",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 384,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 260,
+        "promptCacheMissTokens": 183,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1200,
+      "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 580,
+      "inputTailNodeId": "turn-290-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-061",
+      "requestId": "anonymous-retrievable-retrieval-continuous-01",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 61,
+      "logicalTurnId": "continuous:turn-291",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1213,25 +1511,29 @@
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-retrievable-062",
+      "requestId": "anonymous-retrievable-continuous-02",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 62,
+      "logicalTurnId": "continuous:turn-292",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 368,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 255,
+        "promptCacheMissTokens": 174,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1237,
+      "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 582,
+      "inputTailNodeId": "turn-291-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-062",
+      "requestId": "anonymous-retrievable-retrieval-continuous-02",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 62,
+      "logicalTurnId": "continuous:turn-292",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1241,25 +1543,29 @@
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-retrievable-063",
+      "requestId": "anonymous-retrievable-continuous-03",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 63,
+      "logicalTurnId": "continuous:turn-293",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 479,
-        "promptCacheMissTokens": 10,
+        "promptCacheHitTokens": 357,
+        "promptCacheMissTokens": 235,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1274,
+      "firstContentLatencyMs": 854,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 584,
+      "inputTailNodeId": "turn-292-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-063",
+      "requestId": "anonymous-retrievable-retrieval-continuous-03",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 63,
+      "logicalTurnId": "continuous:turn-293",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1269,25 +1575,29 @@
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-retrievable-064",
+      "requestId": "anonymous-retrievable-continuous-04",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 64,
+      "logicalTurnId": "continuous:turn-294",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 368,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 226,
+        "promptCacheMissTokens": 144,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1311,
+      "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 586,
+      "inputTailNodeId": "turn-293-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-064",
+      "requestId": "anonymous-retrievable-retrieval-continuous-04",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 64,
+      "logicalTurnId": "continuous:turn-294",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1297,25 +1607,29 @@
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-retrievable-065",
+      "requestId": "anonymous-retrievable-continuous-05",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 65,
+      "logicalTurnId": "continuous:turn-295",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 376,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 231,
+        "promptCacheMissTokens": 143,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 448,
+      "firstContentLatencyMs": 928,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 588,
+      "inputTailNodeId": "turn-294-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-065",
+      "requestId": "anonymous-retrievable-retrieval-continuous-05",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 65,
+      "logicalTurnId": "continuous:turn-295",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1325,25 +1639,29 @@
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-retrievable-066",
+      "requestId": "anonymous-retrievable-continuous-06",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 66,
+      "logicalTurnId": "continuous:turn-296",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 376,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 236,
+        "promptCacheMissTokens": 140,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 485,
+      "firstContentLatencyMs": 965,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 590,
+      "inputTailNodeId": "turn-295-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-066",
+      "requestId": "anonymous-retrievable-retrieval-continuous-06",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 66,
+      "logicalTurnId": "continuous:turn-296",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1353,25 +1671,29 @@
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-retrievable-067",
+      "requestId": "anonymous-retrievable-continuous-07",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 67,
+      "logicalTurnId": "continuous:turn-297",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 376,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 242,
+        "promptCacheMissTokens": 140,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 522,
+      "firstContentLatencyMs": 1002,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 592,
+      "inputTailNodeId": "turn-296-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-067",
+      "requestId": "anonymous-retrievable-retrieval-continuous-07",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 67,
+      "logicalTurnId": "continuous:turn-297",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1381,25 +1703,29 @@
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-retrievable-068",
+      "requestId": "anonymous-retrievable-continuous-08",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 68,
+      "logicalTurnId": "continuous:turn-298",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 376,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 247,
+        "promptCacheMissTokens": 137,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 559,
+      "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 594,
+      "inputTailNodeId": "turn-297-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-068",
+      "requestId": "anonymous-retrievable-retrieval-continuous-08",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 68,
+      "logicalTurnId": "continuous:turn-298",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1409,25 +1735,29 @@
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-retrievable-069",
+      "requestId": "anonymous-retrievable-continuous-09",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 69,
+      "logicalTurnId": "continuous:turn-299",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 376,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 250,
+        "promptCacheMissTokens": 134,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 596,
+      "firstContentLatencyMs": 1076,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 596,
+      "inputTailNodeId": "turn-298-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-069",
+      "requestId": "anonymous-retrievable-retrieval-continuous-09",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 69,
+      "logicalTurnId": "continuous:turn-299",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1437,25 +1767,29 @@
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-retrievable-070",
+      "requestId": "anonymous-retrievable-continuous-10",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 70,
+      "logicalTurnId": "continuous:turn-300",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 376,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 253,
+        "promptCacheMissTokens": 131,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 633,
+      "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 598,
+      "inputTailNodeId": "turn-299-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-070",
+      "requestId": "anonymous-retrievable-retrieval-continuous-10",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 70,
+      "logicalTurnId": "continuous:turn-300",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1465,81 +1799,29 @@
       "scenario": "continuous"
     },
     {
-      "requestId": "anonymous-retrievable-071",
+      "requestId": "anonymous-retrievable-branching-01",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 71,
+      "logicalTurnId": "branching:turn-69",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 366,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 216,
+        "promptCacheMissTokens": 152,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 670,
+      "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 136,
+      "inputTailNodeId": "turn-68-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-071",
+      "requestId": "anonymous-retrievable-retrieval-branching-01",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 71,
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
-      "arm": "retrievable",
-      "scenario": "branching"
-    },
-    {
-      "requestId": "anonymous-retrievable-072",
-      "phase": "generation",
-      "status": "completed",
-      "turnIndex": 72,
-      "usage": {
-        "promptCacheHitTokens": 374,
-        "promptCacheMissTokens": 8,
-        "completionTokens": 64
-      },
-      "firstContentLatencyMs": 707,
-      "branchSwitch": false,
-      "arm": "retrievable",
-      "scenario": "branching"
-    },
-    {
-      "requestId": "anonymous-retrievable-retrieval-072",
-      "phase": "retrieval",
-      "status": "completed",
-      "turnIndex": 72,
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
-      "arm": "retrievable",
-      "scenario": "branching"
-    },
-    {
-      "requestId": "anonymous-retrievable-073",
-      "phase": "generation",
-      "status": "completed",
-      "turnIndex": 73,
-      "usage": {
-        "promptCacheHitTokens": 374,
-        "promptCacheMissTokens": 8,
-        "completionTokens": 64
-      },
-      "firstContentLatencyMs": 744,
-      "branchSwitch": false,
-      "arm": "retrievable",
-      "scenario": "branching"
-    },
-    {
-      "requestId": "anonymous-retrievable-retrieval-073",
-      "phase": "retrieval",
-      "status": "completed",
-      "turnIndex": 73,
+      "logicalTurnId": "branching:turn-69",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1549,25 +1831,29 @@
       "scenario": "branching"
     },
     {
-      "requestId": "anonymous-retrievable-074",
+      "requestId": "anonymous-retrievable-branching-02",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 74,
+      "logicalTurnId": "branching:turn-70",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 374,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 221,
+        "promptCacheMissTokens": 151,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 781,
+      "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 138,
+      "inputTailNodeId": "turn-69-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-074",
+      "requestId": "anonymous-retrievable-retrieval-branching-02",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 74,
+      "logicalTurnId": "branching:turn-70",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1577,25 +1863,29 @@
       "scenario": "branching"
     },
     {
-      "requestId": "anonymous-retrievable-075",
+      "requestId": "anonymous-retrievable-branching-03",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 75,
+      "logicalTurnId": "branching:turn-71",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 374,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 225,
+        "promptCacheMissTokens": 149,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 818,
+      "firstContentLatencyMs": 854,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 140,
+      "inputTailNodeId": "turn-70-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-075",
+      "requestId": "anonymous-retrievable-retrieval-branching-03",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 75,
+      "logicalTurnId": "branching:turn-71",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1605,25 +1895,93 @@
       "scenario": "branching"
     },
     {
-      "requestId": "anonymous-retrievable-076",
+      "requestId": "anonymous-retrievable-branching-04",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 76,
+      "logicalTurnId": "branching:turn-72",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 373,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 232,
+        "promptCacheMissTokens": 148,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 855,
+      "firstContentLatencyMs": 891,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "branching",
+      "inputNodeCount": 142,
+      "inputTailNodeId": "turn-71-a"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-branching-04",
+      "phase": "retrieval",
+      "status": "completed",
+      "logicalTurnId": "branching:turn-72",
+      "transport": "local",
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-branching-05",
+      "phase": "generation",
+      "status": "completed",
+      "logicalTurnId": "branching:turn-73",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 236,
+        "promptCacheMissTokens": 146,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 928,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "branching",
+      "inputNodeCount": 144,
+      "inputTailNodeId": "turn-72-a"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-branching-05",
+      "phase": "retrieval",
+      "status": "completed",
+      "logicalTurnId": "branching:turn-73",
+      "transport": "local",
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-branching-06",
+      "phase": "generation",
+      "status": "completed",
+      "logicalTurnId": "branching:turn-298",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 240,
+        "promptCacheMissTokens": 143,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 965,
       "branchSwitch": true,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 134,
+      "inputTailNodeId": "turn-297-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-076",
+      "requestId": "anonymous-retrievable-retrieval-branching-06",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 76,
+      "logicalTurnId": "branching:turn-298",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1633,25 +1991,29 @@
       "scenario": "branching"
     },
     {
-      "requestId": "anonymous-retrievable-077",
+      "requestId": "anonymous-retrievable-branching-07",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 77,
+      "logicalTurnId": "branching:turn-299",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 373,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 243,
+        "promptCacheMissTokens": 140,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 892,
+      "firstContentLatencyMs": 1002,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 136,
+      "inputTailNodeId": "turn-298-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-077",
+      "requestId": "anonymous-retrievable-retrieval-branching-07",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 77,
+      "logicalTurnId": "branching:turn-299",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1661,25 +2023,29 @@
       "scenario": "branching"
     },
     {
-      "requestId": "anonymous-retrievable-078",
+      "requestId": "anonymous-retrievable-branching-08",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 78,
+      "logicalTurnId": "branching:turn-300",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 373,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 246,
+        "promptCacheMissTokens": 137,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 929,
+      "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 138,
+      "inputTailNodeId": "turn-299-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-078",
+      "requestId": "anonymous-retrievable-retrieval-branching-08",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 78,
+      "logicalTurnId": "branching:turn-300",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1689,25 +2055,29 @@
       "scenario": "branching"
     },
     {
-      "requestId": "anonymous-retrievable-079",
+      "requestId": "anonymous-retrievable-branching-09",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 79,
+      "logicalTurnId": "branching:turn-301",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 366,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 244,
+        "promptCacheMissTokens": 131,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 966,
+      "firstContentLatencyMs": 1076,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 140,
+      "inputTailNodeId": "turn-300-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-079",
+      "requestId": "anonymous-retrievable-retrieval-branching-09",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 79,
+      "logicalTurnId": "branching:turn-301",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1717,25 +2087,29 @@
       "scenario": "branching"
     },
     {
-      "requestId": "anonymous-retrievable-080",
+      "requestId": "anonymous-retrievable-branching-10",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 80,
+      "logicalTurnId": "branching:turn-302",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 373,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 251,
+        "promptCacheMissTokens": 130,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1003,
+      "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputNodeCount": 142,
+      "inputTailNodeId": "turn-301-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-080",
+      "requestId": "anonymous-retrievable-retrieval-branching-10",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 80,
+      "logicalTurnId": "branching:turn-302",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1745,53 +2119,29 @@
       "scenario": "branching"
     },
     {
-      "requestId": "anonymous-retrievable-081",
+      "requestId": "anonymous-retrievable-nested-01",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 81,
+      "logicalTurnId": "nested:turn-196",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 368,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 221,
+        "promptCacheMissTokens": 156,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1040,
+      "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-195-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-081",
+      "requestId": "anonymous-retrievable-retrieval-nested-01",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 81,
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
-      "arm": "retrievable",
-      "scenario": "nested"
-    },
-    {
-      "requestId": "anonymous-retrievable-082",
-      "phase": "generation",
-      "status": "completed",
-      "turnIndex": 82,
-      "usage": {
-        "promptCacheHitTokens": 375,
-        "promptCacheMissTokens": 8,
-        "completionTokens": 64
-      },
-      "firstContentLatencyMs": 1077,
-      "branchSwitch": false,
-      "arm": "retrievable",
-      "scenario": "nested"
-    },
-    {
-      "requestId": "anonymous-retrievable-retrieval-082",
-      "phase": "retrieval",
-      "status": "completed",
-      "turnIndex": 82,
+      "logicalTurnId": "nested:turn-196",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1801,25 +2151,61 @@
       "scenario": "nested"
     },
     {
-      "requestId": "anonymous-retrievable-083",
+      "requestId": "anonymous-retrievable-nested-02",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 83,
+      "logicalTurnId": "nested:turn-197",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 386,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 228,
+        "promptCacheMissTokens": 155,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1114,
+      "firstContentLatencyMs": 817,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "nested",
+      "inputNodeCount": 238,
+      "inputTailNodeId": "turn-196-a"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-nested-02",
+      "phase": "retrieval",
+      "status": "completed",
+      "logicalTurnId": "nested:turn-197",
+      "transport": "local",
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-nested-03",
+      "phase": "generation",
+      "status": "completed",
+      "logicalTurnId": "nested:turn-366",
+      "transport": "outbound-http",
+      "usage": {
+        "promptCacheHitTokens": 237,
+        "promptCacheMissTokens": 157,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 854,
       "branchSwitch": true,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-365-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-083",
+      "requestId": "anonymous-retrievable-retrieval-nested-03",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 83,
+      "logicalTurnId": "nested:turn-366",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1829,25 +2215,29 @@
       "scenario": "nested"
     },
     {
-      "requestId": "anonymous-retrievable-084",
+      "requestId": "anonymous-retrievable-nested-04",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 84,
+      "logicalTurnId": "nested:turn-367",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 369,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 231,
+        "promptCacheMissTokens": 148,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1151,
+      "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 238,
+      "inputTailNodeId": "turn-366-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-084",
+      "requestId": "anonymous-retrievable-retrieval-nested-04",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 84,
+      "logicalTurnId": "nested:turn-367",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1857,25 +2247,29 @@
       "scenario": "nested"
     },
     {
-      "requestId": "anonymous-retrievable-085",
+      "requestId": "anonymous-retrievable-nested-05",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 85,
+      "logicalTurnId": "nested:turn-535",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 375,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 232,
+        "promptCacheMissTokens": 143,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1188,
+      "firstContentLatencyMs": 928,
       "branchSwitch": true,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 234,
+      "inputTailNodeId": "turn-534-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-085",
+      "requestId": "anonymous-retrievable-retrieval-nested-05",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 85,
+      "logicalTurnId": "nested:turn-535",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1885,25 +2279,29 @@
       "scenario": "nested"
     },
     {
-      "requestId": "anonymous-retrievable-086",
+      "requestId": "anonymous-retrievable-nested-06",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 86,
+      "logicalTurnId": "nested:turn-536",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 376,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 236,
+        "promptCacheMissTokens": 141,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1225,
+      "firstContentLatencyMs": 965,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-535-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-086",
+      "requestId": "anonymous-retrievable-retrieval-nested-06",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 86,
+      "logicalTurnId": "nested:turn-536",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1913,25 +2311,29 @@
       "scenario": "nested"
     },
     {
-      "requestId": "anonymous-retrievable-087",
+      "requestId": "anonymous-retrievable-nested-07",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 87,
+      "logicalTurnId": "nested:turn-695",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 429,
-        "promptCacheMissTokens": 9,
+        "promptCacheHitTokens": 244,
+        "promptCacheMissTokens": 140,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1262,
+      "firstContentLatencyMs": 1002,
       "branchSwitch": true,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 234,
+      "inputTailNodeId": "turn-694-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-087",
+      "requestId": "anonymous-retrievable-retrieval-nested-07",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 87,
+      "logicalTurnId": "nested:turn-695",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1941,25 +2343,29 @@
       "scenario": "nested"
     },
     {
-      "requestId": "anonymous-retrievable-088",
+      "requestId": "anonymous-retrievable-nested-08",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 88,
+      "logicalTurnId": "nested:turn-696",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 437,
-        "promptCacheMissTokens": 9,
+        "promptCacheHitTokens": 252,
+        "promptCacheMissTokens": 140,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 1299,
+      "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-695-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-088",
+      "requestId": "anonymous-retrievable-retrieval-nested-08",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 88,
+      "logicalTurnId": "nested:turn-696",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1969,25 +2375,29 @@
       "scenario": "nested"
     },
     {
-      "requestId": "anonymous-retrievable-089",
+      "requestId": "anonymous-retrievable-nested-09",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 89,
+      "logicalTurnId": "nested:turn-855",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 375,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 251,
+        "promptCacheMissTokens": 134,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 436,
+      "firstContentLatencyMs": 1076,
       "branchSwitch": true,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 234,
+      "inputTailNodeId": "turn-854-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-089",
+      "requestId": "anonymous-retrievable-retrieval-nested-09",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 89,
+      "logicalTurnId": "nested:turn-855",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -1997,25 +2407,29 @@
       "scenario": "nested"
     },
     {
-      "requestId": "anonymous-retrievable-090",
+      "requestId": "anonymous-retrievable-nested-10",
       "phase": "generation",
       "status": "completed",
-      "turnIndex": 90,
+      "logicalTurnId": "nested:turn-856",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 368,
-        "promptCacheMissTokens": 8,
+        "promptCacheHitTokens": 248,
+        "promptCacheMissTokens": 129,
         "completionTokens": 64
       },
-      "firstContentLatencyMs": 473,
+      "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputNodeCount": 236,
+      "inputTailNodeId": "turn-855-a"
     },
     {
-      "requestId": "anonymous-retrievable-retrieval-090",
+      "requestId": "anonymous-retrievable-retrieval-nested-10",
       "phase": "retrieval",
       "status": "completed",
-      "turnIndex": 90,
+      "logicalTurnId": "nested:turn-856",
+      "transport": "local",
       "usage": {
         "promptCacheHitTokens": 0,
         "promptCacheMissTokens": 0,
@@ -2027,16 +2441,19 @@
     {
       "requestId": "anonymous-retrievable-retry-001",
       "phase": "retry",
-      "status": "failed",
-      "turnIndex": 15,
+      "status": "completed",
+      "logicalTurnId": "continuous:turn-300",
+      "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 17517,
-        "promptCacheMissTokens": 358,
+        "promptCacheHitTokens": 14683,
+        "promptCacheMissTokens": 3224,
         "completionTokens": 24
       },
-      "firstContentLatencyMs": null,
+      "firstContentLatencyMs": 980,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputNodeCount": 598,
+      "inputTailNodeId": "turn-299-a"
     }
   ],
   "limitations": [

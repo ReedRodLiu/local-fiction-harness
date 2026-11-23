@@ -35,6 +35,7 @@ export interface ExperimentRoute {
   actionIndexes: number[];
   depth: number;
   uniqueFact: string;
+  characterState: string;
 }
 
 export interface ExperimentProbe {
@@ -100,6 +101,34 @@ const SHORT_ACTIONS = [
   '在窗边等',
 ] as const;
 
+const PROBE_CUES = [
+  '沈砚 衣物',
+  '沈砚 左手',
+  '沈砚 随身物',
+  '沈砚 痕迹',
+] as const;
+
+const SHEN_YAN_CLOTHING = [
+  '靛蓝布衫，袖口缝着两道白线',
+  '灰呢长衫，领口别着一截黑羽',
+  '旧蓝外套，肩头沾着湿煤灰',
+  '墨色短褂，腰间系着红绳',
+] as const;
+
+const SHEN_YAN_HANDS = [
+  '左手虎口有浅疤',
+  '右手食指缠着纱布',
+  '左手腕戴着断开的铜扣',
+  '右手掌留着一道新划痕',
+] as const;
+
+const SHEN_YAN_ITEMS = [
+  '随身的铜钥匙缺了一角',
+  '随身怀表停在三点一刻',
+  '随身火柴盒里只剩一根火柴',
+  '随身纸包里藏着半张车票',
+] as const;
+
 interface MutableScenario {
   spec: ExperimentScenarioSpec;
   seed: number;
@@ -107,6 +136,7 @@ interface MutableScenario {
   actions: string[];
   nodes: Record<string, TurnNode>;
   routeUniqueFacts: Map<string, string>;
+  routeCharacterStates: Map<string, string>;
   routeLeaves: Map<string, string>;
   routeDepth: Map<string, number>;
 }
@@ -115,6 +145,7 @@ function appendTurn(
   scenario: MutableScenario,
   parentId: string | null,
   routeFact?: string,
+  characterState?: string,
 ): string {
   const turnIndex = scenario.actions.length + 1;
   const action = SHORT_ACTIONS[(turnIndex - 1 + scenario.seed) % SHORT_ACTIONS.length];
@@ -125,7 +156,8 @@ function appendTurn(
     ...(turnIndex === 1 || turnIndex % 29 === 0
       ? [`共同伏笔仍有效：旧址暗记是${scenario.sharedFact}，所有路线都记得。`]
       : []),
-    ...(routeFact ? [`当前路线独有：${routeFact}。同名角色沈砚只按本路线的状态行动。`] : []),
+    ...(routeFact ? [`当前路线独有银印：${routeFact}。`] : []),
+    ...(characterState ? [`当前路线沈砚状态：${characterState}。`] : []),
   ];
   scenario.actions.push(action);
   scenario.nodes[userId] = {
@@ -151,6 +183,10 @@ function routeFact(index: number): string {
   return `路线${String(index + 1).padStart(2, '0')}银印`;
 }
 
+function routeCharacterState(index: number): string {
+  return `沈砚的衣物特征：${SHEN_YAN_CLOTHING[index % SHEN_YAN_CLOTHING.length]}；左手伤痕：${SHEN_YAN_HANDS[Math.floor(index / SHEN_YAN_CLOTHING.length) % SHEN_YAN_HANDS.length]}；随身物：${SHEN_YAN_ITEMS[Math.floor(index / (SHEN_YAN_CLOTHING.length * SHEN_YAN_HANDS.length)) % SHEN_YAN_ITEMS.length]}。`;
+}
+
 function initializeScenario(spec: ExperimentScenarioSpec, seed: number): MutableScenario {
   return {
     spec,
@@ -159,6 +195,7 @@ function initializeScenario(spec: ExperimentScenarioSpec, seed: number): Mutable
     actions: [],
     nodes: {},
     routeUniqueFacts: new Map(),
+    routeCharacterStates: new Map(),
     routeLeaves: new Map(),
     routeDepth: new Map(),
   };
@@ -168,10 +205,16 @@ function generateContinuous(spec: ExperimentScenarioSpec, seed: number): Mutable
   const scenario = initializeScenario(spec, seed);
   const routeId = 'route-01';
   scenario.routeUniqueFacts.set(routeId, routeFact(0));
+  scenario.routeCharacterStates.set(routeId, routeCharacterState(0));
   scenario.routeDepth.set(routeId, 1);
   let leafId: string | null = null;
   for (let turn = 1; turn <= spec.turns; turn += 1) {
-    leafId = appendTurn(scenario, leafId, turn === 1 ? routeFact(0) : undefined);
+    leafId = appendTurn(
+      scenario,
+      leafId,
+      turn === 1 ? routeFact(0) : undefined,
+      turn === 1 ? routeCharacterState(0) : undefined,
+    );
   }
   scenario.routeLeaves.set(routeId, leafId!);
   return scenario;
@@ -192,12 +235,19 @@ function generateBranching(spec: ExperimentScenarioSpec, seed: number): MutableS
   const remainder = remaining % spec.routes;
   routeIds.forEach((routeId, index) => {
     const uniqueFact = routeFact(index);
+    const characterState = routeCharacterState(index);
     scenario.routeUniqueFacts.set(routeId, uniqueFact);
+    scenario.routeCharacterStates.set(routeId, characterState);
     scenario.routeDepth.set(routeId, 2);
     let leafId = trunkLeaf;
     const routeTurns = base + (index < remainder ? 1 : 0);
     for (let turn = 0; turn < routeTurns; turn += 1) {
-      leafId = appendTurn(scenario, leafId, turn === 0 ? uniqueFact : undefined);
+      leafId = appendTurn(
+        scenario,
+        leafId,
+        turn === 0 ? uniqueFact : undefined,
+        turn === 0 ? characterState : undefined,
+      );
     }
     scenario.routeLeaves.set(routeId, leafId!);
   });
@@ -227,11 +277,13 @@ function generateNested(spec: ExperimentScenarioSpec, seed: number): MutableScen
     const routeIndex = midIndex * 2 + subIndex;
     const routeId = routeIds[routeIndex];
     const uniqueFact = routeFact(routeIndex);
+    const characterState = routeCharacterState(routeIndex);
     scenario.routeUniqueFacts.set(routeId, uniqueFact);
+    scenario.routeCharacterStates.set(routeId, characterState);
     scenario.routeDepth.set(routeId, 3);
     return {
       routeId,
-      leafId: appendTurn(scenario, mid.leafId, uniqueFact),
+      leafId: appendTurn(scenario, mid.leafId, uniqueFact, characterState),
       uniqueFact,
     };
   }));
@@ -256,18 +308,18 @@ function buildProbes(scenario: MutableScenario): ExperimentProbe[] {
   return Array.from({ length: probeCount }, (_, index) => {
     const routeIndex = Math.floor(index * routeIds.length / probeCount);
     const routeId = routeIds[routeIndex];
-    const uniqueFact = scenario.routeUniqueFacts.get(routeId)!;
+    const characterState = scenario.routeCharacterStates.get(routeId)!;
     const forbiddenFacts = routeIds
       .filter((candidate) => candidate !== routeId)
       .slice(routeIndex + 1)
       .concat(routeIds.filter((candidate) => candidate !== routeId).slice(0, routeIndex + 1))
       .slice(0, 3)
-      .map((candidate) => scenario.routeUniqueFacts.get(candidate)!);
+      .map((candidate) => scenario.routeCharacterStates.get(candidate)!);
     return {
       routeId,
       leafId: scenario.routeLeaves.get(routeId)!,
-      query: `${scenario.sharedFact} ${uniqueFact}`,
-      expectedFacts: [scenario.sharedFact, uniqueFact],
+      query: PROBE_CUES[index % PROBE_CUES.length],
+      expectedFacts: [characterState],
       forbiddenFacts,
     };
   });
@@ -295,6 +347,7 @@ export function generateExperimentScenario(
       .map((node) => Number(node.id.match(/^turn-(\d+)-u$/)?.[1]) - 1),
     depth: mutable.routeDepth.get(id)!,
     uniqueFact: mutable.routeUniqueFacts.get(id)!,
+    characterState: mutable.routeCharacterStates.get(id)!,
   }));
   return {
     spec,
@@ -326,7 +379,7 @@ export interface OfflineSmokeOptions {
 }
 
 export interface OfflineSmokeReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   mode: 'offline-simulated';
   generatedAt: string;
   providerRuns: 0;
@@ -350,14 +403,17 @@ export interface OfflineSmokeReport {
   requests: Array<ContextExperimentRequestRecord & {
     arm: ContextExperimentArm;
     scenario: ExperimentScenarioName;
+    inputNodeCount?: number;
+    inputTailNodeId?: string | null;
   }>;
   limitations: string[];
 }
 
 interface RoutedAction {
   action: string;
-  leafId: string;
+  parentLeafId: string | null;
   routeId: string;
+  logicalTurnId: string;
   branchSwitch: boolean;
 }
 
@@ -375,8 +431,9 @@ function shortSmokeActions(
     for (let index = 0; index < indexes.length && result.length < count; index += 1) {
       result.push({
         action: scenario.actions[indexes[index]],
-        leafId: route.leafId,
+        parentLeafId: indexes[index] === 0 ? null : `turn-${indexes[index]}-a`,
         routeId: route.id,
+        logicalTurnId: `${scenario.spec.name}:turn-${indexes[index] + 1}`,
         branchSwitch: routeOffset > 0 && index === 0,
       });
     }
@@ -386,10 +443,12 @@ function shortSmokeActions(
 
 function pathMessages(
   scenario: GeneratedExperimentScenario,
-  leafId: string,
+  parentLeafId: string | null,
   action: string,
 ): LlmMessage[] {
-  const path = getActiveBranchNodes({ nodes: scenario.nodes, activeLeafNodeId: leafId }, leafId);
+  const path = parentLeafId
+    ? getActiveBranchNodes({ nodes: scenario.nodes, activeLeafNodeId: parentLeafId }, parentLeafId)
+    : [];
   return [
     { role: 'system', content: `${scenario.setting}\n故事：${scenario.title}` },
     ...path.map((node) => ({ role: node.role, content: node.content } as LlmMessage)),
@@ -399,10 +458,13 @@ function pathMessages(
 
 function folioMessages(
   scenario: GeneratedExperimentScenario,
-  leafId: string,
+  parentLeafId: string | null,
   action: string,
 ): LlmMessage[] {
-  const path = getActiveBranchNodes({ nodes: scenario.nodes, activeLeafNodeId: leafId }, leafId);
+  const path = getActiveBranchNodes(
+    { nodes: scenario.nodes, activeLeafNodeId: parentLeafId },
+    parentLeafId,
+  );
   const target = path[path.length - 1];
   const older = path.slice(0, Math.max(0, path.length - 8));
   const summaryContent = older.slice(-40).map((node) => node.content).join(' ').slice(-2_000);
@@ -422,7 +484,7 @@ function folioMessages(
   return assembleCreativeThreeZoneContext({
     systemPrompt: `${scenario.setting}\n故事：${scenario.title}`,
     nodes,
-    targetParentId: leafId,
+    targetParentId: parentLeafId,
     userInput: action,
     budgetOverrides: { recentMaxNodes: 8, recentMaxChars: 6_000 },
   }).messages;
@@ -430,11 +492,16 @@ function folioMessages(
 
 function retrievableMessages(
   scenario: GeneratedExperimentScenario,
-  leafId: string,
+  parentLeafId: string | null,
   action: string,
 ): { messages: LlmMessage[]; retrievalCount: number } {
-  const path = getActiveBranchNodes({ nodes: scenario.nodes, activeLeafNodeId: leafId }, leafId);
-  const retrieval = retrieveFromActiveBranch(scenario.nodes, leafId, action, 3);
+  const path = getActiveBranchNodes(
+    { nodes: scenario.nodes, activeLeafNodeId: parentLeafId },
+    parentLeafId,
+  );
+  const retrieval = parentLeafId
+    ? retrieveFromActiveBranch(scenario.nodes, parentLeafId, action, 3)
+    : { pathNodeIds: [], selected: [] };
   return {
     messages: [
       { role: 'system', content: `${scenario.setting}\n故事：${scenario.title}` },
@@ -511,9 +578,13 @@ function verifyBranchLifecycle(seed: number): OfflineSmokeReport['branchLifecycl
   const reopenedAfterRestart =
     reopenedA.includes('A线继续写') &&
     reopenedA.includes(routeA.uniqueFact) &&
+    reopenedA.includes(routeA.characterState) &&
+    !reopenedA.includes(routeB.characterState) &&
     !reopenedA.includes('B线继续写') &&
     reopenedB.includes('B线继续写') &&
     reopenedB.includes(routeB.uniqueFact) &&
+    reopenedB.includes(routeB.characterState) &&
+    !reopenedB.includes(routeA.characterState) &&
     !reopenedB.includes('A线继续写');
 
   const editParent = getActiveBranchNodes(
@@ -554,30 +625,30 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
   const allRequests: OfflineSmokeReport['requests'] = [];
   let leakedRequests = 0;
   let checkedRequests = 0;
-  let turnIndex = 0;
 
   for (const arm of ['full', 'folio', 'retrievable'] as const) {
     for (const scenario of scenarios) {
       const routedActions = shortSmokeActions(scenario, 10);
       for (let sceneTurn = 0; sceneTurn < routedActions.length; sceneTurn += 1) {
-        turnIndex += 1;
         const routed = routedActions[sceneTurn];
-        const path = getActiveBranchNodes(
-          { nodes: scenario.nodes, activeLeafNodeId: routed.leafId },
-          routed.leafId,
-        );
+        const path = routed.parentLeafId
+          ? getActiveBranchNodes(
+              { nodes: scenario.nodes, activeLeafNodeId: routed.parentLeafId },
+              routed.parentLeafId,
+            )
+          : [];
         const allowedIds = new Set(path.map((node) => node.id));
         const forbiddenFacts = scenario.routes
           .filter((route) => route.id !== routed.routeId)
-          .map((route) => route.uniqueFact);
+          .flatMap((route) => [route.uniqueFact, route.characterState]);
         let messages: LlmMessage[];
         let retrievalCount = 0;
         if (arm === 'full') {
-          messages = pathMessages(scenario, routed.leafId, routed.action);
+          messages = pathMessages(scenario, routed.parentLeafId, routed.action);
         } else if (arm === 'folio') {
-          messages = folioMessages(scenario, routed.leafId, routed.action);
+          messages = folioMessages(scenario, routed.parentLeafId, routed.action);
         } else {
-          const candidate = retrievableMessages(scenario, routed.leafId, routed.action);
+          const candidate = retrievableMessages(scenario, routed.parentLeafId, routed.action);
           messages = candidate.messages;
           retrievalCount = candidate.retrievalCount;
         }
@@ -589,18 +660,26 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
             return Boolean(match && !allowedIds.has(match[1]));
           });
         if (leaked) leakedRequests += 1;
-        const usage = simulatedUsage(arm, messages, turnIndex);
+        const sampleNumber = sceneTurn + 1;
+        const usage = simulatedUsage(arm, messages, sampleNumber);
         const record: ContextExperimentRequestRecord = {
-          requestId: `anonymous-${arm}-${String(turnIndex).padStart(3, '0')}`,
+          requestId: `anonymous-${arm}-${scenario.spec.name}-${String(sampleNumber).padStart(2, '0')}`,
           phase: 'generation',
           status: 'completed',
-          turnIndex,
+          logicalTurnId: routed.logicalTurnId,
+          transport: 'outbound-http',
           usage,
-          firstContentLatencyMs: 420 + (turnIndex * 37 + seed) % 900,
+          firstContentLatencyMs: 420 + (sampleNumber * 37 + seed) % 900,
           branchSwitch: routed.branchSwitch,
         };
         recordsByArm[arm].push(record);
-        allRequests.push({ ...record, arm, scenario: scenario.spec.name });
+        allRequests.push({
+          ...record,
+          arm,
+          scenario: scenario.spec.name,
+          inputNodeCount: path.length,
+          inputTailNodeId: path.at(-1)?.id ?? null,
+        });
         plans.push({
           operationId: `${arm}-${scenario.spec.name}-${sceneTurn}`,
           attempt: 0,
@@ -610,10 +689,11 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
 
         if (retrievalCount > 0) {
           const retrievalRecord: ContextExperimentRequestRecord = {
-            requestId: `anonymous-${arm}-retrieval-${String(turnIndex).padStart(3, '0')}`,
+            requestId: `anonymous-${arm}-retrieval-${scenario.spec.name}-${String(sampleNumber).padStart(2, '0')}`,
             phase: 'retrieval',
             status: 'completed',
-            turnIndex,
+            logicalTurnId: routed.logicalTurnId,
+            transport: 'local',
             usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 0, completionTokens: 0 },
           };
           recordsByArm[arm].push(retrievalRecord);
@@ -621,14 +701,15 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
         }
 
         if (arm === 'folio' && sceneTurn > 0 && sceneTurn % 3 === 0) {
-          const summaryUsage = simulatedUsage(arm, messages.slice(0, -1), turnIndex, 32);
+          const summaryUsage = simulatedUsage(arm, messages.slice(0, -1), sampleNumber, 32);
           const summaryRecord: ContextExperimentRequestRecord = {
-            requestId: `anonymous-${arm}-summary-${String(turnIndex).padStart(3, '0')}`,
+            requestId: `anonymous-${arm}-summary-${scenario.spec.name}-${String(sampleNumber).padStart(2, '0')}`,
             phase: 'summary',
             status: 'completed',
-            turnIndex,
+            logicalTurnId: routed.logicalTurnId,
+            transport: 'outbound-http',
             usage: summaryUsage,
-            firstContentLatencyMs: 700 + (turnIndex * 19) % 600,
+            firstContentLatencyMs: 700 + (sampleNumber * 19) % 600,
           };
           recordsByArm[arm].push(summaryRecord);
           allRequests.push({ ...summaryRecord, arm, scenario: scenario.spec.name });
@@ -642,24 +723,33 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
       }
     }
 
-    const retryUsage = simulatedUsage(arm, pathMessages(scenarios[0], scenarios[0].routes[0].leafId, '再试一次'), turnIndex, 24);
+    const retryTurnIndex = scenarios[0].actions.length - 1;
+    const retryParentId = `turn-${retryTurnIndex}-a`;
+    const retryAction = scenarios[0].actions[retryTurnIndex];
+    const retryMessages = pathMessages(scenarios[0], retryParentId, retryAction);
+    const retryUsage = simulatedUsage(arm, retryMessages, 30, 24);
     const retryRecord: ContextExperimentRequestRecord = {
       requestId: `anonymous-${arm}-retry-001`,
       phase: 'retry',
-      status: 'failed',
-      turnIndex: 15,
+      status: 'completed',
+      logicalTurnId: `continuous:turn-${retryTurnIndex + 1}`,
+      transport: 'outbound-http',
       usage: retryUsage,
-      firstContentLatencyMs: null,
+      firstContentLatencyMs: 980,
     };
     recordsByArm[arm].push(retryRecord);
-    allRequests.push({ ...retryRecord, arm, scenario: 'continuous' });
+    allRequests.push({
+      ...retryRecord,
+      arm,
+      scenario: 'continuous',
+      inputNodeCount: retryTurnIndex * 2,
+      inputTailNodeId: retryParentId,
+    });
     plans.push({
       operationId: `${arm}-retry`,
       attempt: 1,
       maxInputTokens: new TextEncoder().encode(
-        pathMessages(scenarios[0], scenarios[0].routes[0].leafId, '再试一次')
-          .map((message) => message.content)
-          .join('\n'),
+        retryMessages.map((message) => message.content).join('\n'),
       ).length,
       maxOutputTokens: 512,
     });
@@ -686,7 +776,7 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
   ) as Record<ContextExperimentArm, ContextExperimentSummary>;
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode: 'offline-simulated',
     generatedAt: new Date(now()).toISOString(),
     providerRuns: 0,

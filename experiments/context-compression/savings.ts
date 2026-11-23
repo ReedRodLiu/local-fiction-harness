@@ -20,7 +20,8 @@ export interface ContextExperimentRequestRecord {
   requestId: string;
   phase: ContextExperimentPhase;
   status: ContextExperimentRequestStatus;
-  turnIndex?: number;
+  logicalTurnId?: string;
+  transport: 'outbound-http' | 'local';
   usage: ContextExperimentUsage | null;
   firstContentLatencyMs?: number | null;
   branchSwitch?: boolean;
@@ -43,7 +44,10 @@ export interface ContextExperimentSummary {
   pricingSchedule: ContextExperimentPricingSchedule;
   rates: ContextExperimentRates;
   effectiveTurns: number;
+  completedTurnIds: string[];
   records: number;
+  outboundRequestCount: number;
+  localRetrievalCount: number;
   missingUsageRecords: number;
   usage: ContextExperimentUsage;
   costUsd: number | null;
@@ -53,7 +57,6 @@ export interface ContextExperimentSummary {
   firstContentLatencyMsP95: number | null;
   branchSwitchFirstContentLatencyMsP50: number | null;
   peakInputTokens: number;
-  retrievalCount: number;
   completionRate: number;
 }
 
@@ -63,6 +66,8 @@ export type ContextSavingsUnavailableReason =
   | 'model-mismatch'
   | 'pricing-mismatch'
   | 'turn-count-mismatch'
+  | 'incomplete-turns'
+  | 'turn-id-mismatch'
   | 'insufficient-turns';
 
 export type ContextSavingsEstimate =
@@ -153,7 +158,7 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
   let peakInputTokens = 0;
   const latencyValues: number[] = [];
   const branchSwitchLatencies: number[] = [];
-  const completedPrimaryTurns = new Set<number>();
+  const completedTurnIds = new Set<string>();
 
   for (const record of group.records) {
     if (!record.usage) {
@@ -176,11 +181,12 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
       if (record.branchSwitch) branchSwitchLatencies.push(record.firstContentLatencyMs);
     }
     if (
-      record.phase === 'generation' &&
+      (record.phase === 'generation' || record.phase === 'retry') &&
       record.status === 'completed' &&
-      typeof record.turnIndex === 'number'
+      typeof record.logicalTurnId === 'string' &&
+      record.logicalTurnId.length > 0
     ) {
-      completedPrimaryTurns.add(record.turnIndex);
+      completedTurnIds.add(record.logicalTurnId);
     }
   }
 
@@ -199,7 +205,12 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
     pricingSchedule: group.pricingSchedule,
     rates: group.rates,
     effectiveTurns: group.effectiveTurns,
+    completedTurnIds: [...completedTurnIds],
     records: group.records.length,
+    outboundRequestCount: group.records.filter((record) => record.transport === 'outbound-http').length,
+    localRetrievalCount: group.records.filter(
+      (record) => record.transport === 'local' && record.phase === 'retrieval',
+    ).length,
     missingUsageRecords,
     usage,
     costUsd,
@@ -209,10 +220,9 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
     firstContentLatencyMsP95: percentile(latencyValues, 0.95),
     branchSwitchFirstContentLatencyMsP50: percentile(branchSwitchLatencies, 0.5),
     peakInputTokens,
-    retrievalCount: group.records.filter((record) => record.phase === 'retrieval').length,
     completionRate:
       group.effectiveTurns > 0
-        ? Math.min(1, completedPrimaryTurns.size / group.effectiveTurns)
+        ? Math.min(1, completedTurnIds.size / group.effectiveTurns)
         : 0,
   };
 }
@@ -246,9 +256,24 @@ export function estimateContextSavings(
   if (baseline.effectiveTurns !== candidate.effectiveTurns) {
     return { status: 'unavailable', reason: 'turn-count-mismatch' };
   }
+  const baselineTurnIds = new Set(baseline.completedTurnIds);
+  const candidateTurnIds = new Set(candidate.completedTurnIds);
+  if (baselineTurnIds.size === 0 || candidateTurnIds.size === 0) {
+    return { status: 'unavailable', reason: 'insufficient-turns' };
+  }
   if (
-    baseline.effectiveTurns <= 0 ||
-    candidate.effectiveTurns <= 0 ||
+    baselineTurnIds.size !== baseline.effectiveTurns ||
+    candidateTurnIds.size !== candidate.effectiveTurns
+  ) {
+    return { status: 'unavailable', reason: 'incomplete-turns' };
+  }
+  if (
+    baselineTurnIds.size !== candidateTurnIds.size ||
+    [...baselineTurnIds].some((turnId) => !candidateTurnIds.has(turnId))
+  ) {
+    return { status: 'unavailable', reason: 'turn-id-mismatch' };
+  }
+  if (
     baseline.costPer100TurnsUsd === null ||
     candidate.costPer100TurnsUsd === null
   ) {

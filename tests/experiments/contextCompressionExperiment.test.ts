@@ -56,6 +56,7 @@ describe('branch-safe context retrieval', () => {
       expect(scenario.turns).toBe(expected.turns);
       expect(scenario.routes).toHaveLength(expected.routes);
       expect(scenario.maxRouteDepth).toBeGreaterThanOrEqual(expected.minDepth);
+      expect(new Set(scenario.routes.map((route) => route.characterState)).size).toBe(expected.routes);
       for (const route of scenario.routes) {
         const pathActionIndexes = getActiveBranchNodes(
           { nodes: scenario.nodes, activeLeafNodeId: route.leafId },
@@ -78,8 +79,14 @@ describe('branch-safe context retrieval', () => {
       for (const probe of scenario.probes) {
         const retrieval = retrieveFromActiveBranch(scenario.nodes, probe.leafId, probe.query, 4);
         const retrieved = retrieval.selected.map((entry) => entry.content).join('\n');
-        for (const fact of probe.expectedFacts) expect(retrieved).toContain(fact);
-        for (const fact of probe.forbiddenFacts) expect(retrieved).not.toContain(fact);
+        for (const fact of probe.expectedFacts) {
+          expect(probe.query).not.toContain(fact);
+          expect(retrieved).toContain(fact);
+        }
+        for (const fact of probe.forbiddenFacts) {
+          expect(probe.query).not.toContain(fact);
+          expect(retrieved).not.toContain(fact);
+        }
       }
     }
 
@@ -91,12 +98,15 @@ describe('branch-safe context retrieval', () => {
   it('runs the 30-turn three-arm smoke offline with anonymous usage, counted background calls, and no cost claim', async () => {
     const report = await runOfflineSmoke({ seed: 20261123, now: () => 1_765_000_000_000 });
 
+    expect(report.schemaVersion).toBe(2);
     expect(report.mode).toBe('offline-simulated');
     for (const arm of ['full', 'folio', 'retrievable'] as const) {
       expect(report.groups[arm].effectiveTurns).toBe(30);
       expect(report.groups[arm].provider).toBe('offline-simulated');
       expect(report.groups[arm].records).toBeGreaterThanOrEqual(30);
+      expect(report.groups[arm].completedTurnIds).toHaveLength(30);
     }
+    expect(report.groups.full.completedTurnIds).toEqual(report.groups.retrievable.completedTurnIds);
     expect(report.groups.folio.records).toBeGreaterThan(report.groups.folio.effectiveTurns);
     expect(report.comparisons.fullToRetrievable).toMatchObject({
       status: 'unavailable',
@@ -125,6 +135,29 @@ describe('branch-safe context retrieval', () => {
       },
     });
     expect(report.officialPreflight.maxEstimatedCostUsd).toBeGreaterThan(0);
+    expect(report.officialPreflight.requestCount).toBe(102);
+    const outboundRecords = report.requests.filter((record) => record.transport === 'outbound-http');
+    const localRetrievalRecords = report.requests.filter((record) => record.transport === 'local');
+    expect(report.officialPreflight.requestCount).toBe(outboundRecords.length);
+    expect(localRetrievalRecords).toHaveLength(30);
+    expect(localRetrievalRecords.every((record) => record.phase === 'retrieval')).toBe(true);
     expect(report.requests.every((record) => !Object.hasOwn(record, 'content'))).toBe(true);
+
+    const continuousReplay = report.requests.filter(
+      (record) =>
+        record.arm === 'full' &&
+        record.scenario === 'continuous' &&
+        record.phase === 'generation',
+    );
+    expect(continuousReplay.map((record) => record.logicalTurnId)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `continuous:turn-${291 + index}`),
+    );
+    expect(continuousReplay.map((record) => record.inputNodeCount)).toEqual(
+      Array.from({ length: 10 }, (_, index) => 580 + index * 2),
+    );
+    for (const record of continuousReplay) {
+      const targetTurn = Number(record.logicalTurnId?.match(/:turn-(\d+)$/)?.[1]);
+      expect(record.inputTailNodeId).toBe(`turn-${targetTurn - 1}-a`);
+    }
   });
 });

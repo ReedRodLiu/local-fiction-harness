@@ -21,7 +21,8 @@ describe('context compression cost evidence', () => {
           requestId: 'generation-1',
           phase: 'generation',
           status: 'completed',
-          turnIndex: 1,
+          logicalTurnId: 'turn-1',
+          transport: 'outbound-http',
           usage: { promptCacheHitTokens: 500_000, promptCacheMissTokens: 500_000, completionTokens: 50_000 },
           firstContentLatencyMs: 900,
         },
@@ -29,6 +30,8 @@ describe('context compression cost evidence', () => {
           requestId: 'summary-1',
           phase: 'summary',
           status: 'completed',
+          logicalTurnId: 'turn-1',
+          transport: 'outbound-http',
           usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 100_000, completionTokens: 10_000 },
           firstContentLatencyMs: 2_000,
         },
@@ -36,6 +39,8 @@ describe('context compression cost evidence', () => {
           requestId: 'retry-1',
           phase: 'retry',
           status: 'failed',
+          logicalTurnId: 'turn-1',
+          transport: 'outbound-http',
           usage: { promptCacheHitTokens: 25_000, promptCacheMissTokens: 25_000, completionTokens: 5_000 },
           firstContentLatencyMs: 1_500,
         },
@@ -45,6 +50,9 @@ describe('context compression cost evidence', () => {
     const summary = summarizeContextExperiment(group);
 
     expect(summary.records).toBe(3);
+    expect(summary.completedTurnIds).toEqual(['turn-1']);
+    expect(summary.outboundRequestCount).toBe(3);
+    expect(summary.localRetrievalCount).toBe(0);
     expect(summary.missingUsageRecords).toBe(0);
     expect(summary.usage).toEqual({
       promptCacheHitTokens: 525_000,
@@ -74,18 +82,21 @@ describe('context compression cost evidence', () => {
       rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
       effectiveTurns: 100,
       records: [
-        {
-          requestId: `${arm}-generation`,
-          phase: 'generation',
-          status: 'completed',
-          turnIndex: 1,
-          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000_000, completionTokens },
-        },
+        ...Array.from({ length: 100 }, (_, index) => ({
+          requestId: `${arm}-generation-${index + 1}`,
+          phase: 'generation' as const,
+          status: 'completed' as const,
+          logicalTurnId: `turn-${index + 1}`,
+          transport: 'outbound-http' as const,
+          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 10_000, completionTokens: completionTokens / 100 },
+        })),
         ...(missingUsage
           ? [{
               requestId: `${arm}-summary-missing`,
               phase: 'summary' as const,
               status: 'completed' as const,
+              logicalTurnId: 'turn-1',
+              transport: 'outbound-http' as const,
               usage: null,
             }]
           : []),
@@ -125,6 +136,85 @@ describe('context compression cost evidence', () => {
     expect(estimateContextSavings(baseline, shorterCandidate)).toMatchObject({
       status: 'unavailable',
       reason: 'turn-count-mismatch',
+    });
+  });
+
+  it('counts a successful generation retry once for completion, while still charging every request', () => {
+    const summary = summarizeContextExperiment({
+      arm: 'retrievable',
+      provider: 'deepseek-official',
+      model: 'deepseek-flash',
+      pricingSchedule: 'off-peak',
+      rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
+      effectiveTurns: 1,
+      records: [
+        {
+          requestId: 'generation-failed',
+          phase: 'generation',
+          status: 'failed',
+          logicalTurnId: 'turn-1',
+          transport: 'outbound-http',
+          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 10 },
+        },
+        {
+          requestId: 'generation-retry',
+          phase: 'retry',
+          status: 'completed',
+          logicalTurnId: 'turn-1',
+          transport: 'outbound-http',
+          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 20 },
+          firstContentLatencyMs: 900,
+        },
+      ],
+    });
+
+    expect(summary.completedTurnIds).toEqual(['turn-1']);
+    expect(summary.completionRate).toBe(1);
+    expect(summary.records).toBe(2);
+    expect(summary.usage.completionTokens).toBe(30);
+  });
+
+  it('never estimates savings from empty, truncated, or same-size misaligned turn ranges', () => {
+    const summaryFor = (
+      arm: 'full' | 'retrievable',
+      effectiveTurns: number,
+      turnIds: string[],
+    ) => summarizeContextExperiment({
+      arm,
+      provider: 'deepseek-official',
+      model: 'deepseek-flash',
+      pricingSchedule: 'off-peak',
+      rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
+      effectiveTurns,
+      records: turnIds.map((logicalTurnId, index) => ({
+        requestId: `${arm}-${index}`,
+        phase: 'generation' as const,
+        status: 'completed' as const,
+        logicalTurnId,
+        transport: 'outbound-http' as const,
+        usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 100 },
+      })),
+    });
+
+    const empty = summaryFor('full', 1, []);
+    const oneTurn = summaryFor('retrievable', 1, ['turn-1']);
+    expect(estimateContextSavings(empty, oneTurn)).toMatchObject({
+      status: 'unavailable',
+      reason: 'insufficient-turns',
+    });
+
+    const partialBaseline = summaryFor('full', 2, ['turn-1']);
+    const partialCandidate = summaryFor('retrievable', 2, ['turn-1']);
+    expect(estimateContextSavings(partialBaseline, partialCandidate)).toMatchObject({
+      status: 'unavailable',
+      reason: 'incomplete-turns',
+    });
+
+    const misalignedBaseline = summaryFor('full', 2, ['turn-1', 'turn-2']);
+    const misalignedCandidate = summaryFor('retrievable', 2, ['turn-2', 'turn-3']);
+    expect(estimateContextSavings(misalignedBaseline, misalignedCandidate)).toMatchObject({
+      status: 'unavailable',
+      reason: 'turn-id-mismatch',
     });
   });
 
