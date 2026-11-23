@@ -16,12 +16,18 @@ import {
 } from './markdownDocuments.ts';
 import { migrateStoryToV02, migrateWorkspaceToV02 } from './migration.ts';
 import {
+  BUILTIN_NARRATIVE_PROMPT_PACK,
+  validatePromptPackLibrary,
+  type PromptPack,
+  type PromptPackLibrary,
+} from './promptPack.ts';
+import {
   validateGenerationPreference,
   validateNodes,
   validateStoryPayload,
   validateTurnNodeEntry,
 } from './storyStorage.ts';
-import type { Story, TurnNode } from './types.ts';
+import type { GenerationPreference, Story, TurnNode } from './types.ts';
 
 export interface FolioBackupDisplayPreferences {
   themePreference?: string;
@@ -35,6 +41,7 @@ export interface FolioBackupEnvelopeV3 {
   stories: Story[];
   workspace: CreativeWorkspaceState;
   displayPreferences?: FolioBackupDisplayPreferences;
+  promptPacks?: PromptPackLibrary;
 }
 
 export interface ExportFolioBackupV3Options {
@@ -42,6 +49,7 @@ export interface ExportFolioBackupV3Options {
   workspace: CreativeWorkspaceState;
   appVersion?: string;
   displayPreferences?: FolioBackupDisplayPreferences;
+  promptPacks?: PromptPackLibrary;
   now?: () => number;
 }
 
@@ -49,6 +57,7 @@ export interface FolioWorkspaceSnapshot {
   stories: Story[];
   workspace: CreativeWorkspaceState;
   displayPreferences?: FolioBackupDisplayPreferences;
+  promptPacks?: PromptPackLibrary;
 }
 
 export interface MergeRestoredBackupOptions {
@@ -60,6 +69,7 @@ export interface MergedBackupResult {
   stories: Story[];
   workspace: CreativeWorkspaceState;
   displayPreferences?: FolioBackupDisplayPreferences;
+  promptPacks?: PromptPackLibrary;
   report: {
     addedStories: number;
     renamedStories: number;
@@ -177,6 +187,9 @@ function sanitizeStoryForExport(story: Story): Story {
 export function exportFolioBackupV3(options: ExportFolioBackupV3Options): string {
   const now = options.now ?? (() => Date.now());
   const displayPreferences = sanitizeDisplayPreferences(options.displayPreferences);
+  const promptPacks = options.promptPacks
+    ? validatePromptPackLibrary(options.promptPacks)
+    : undefined;
   const envelope: FolioBackupEnvelopeV3 = {
     schemaVersion: 3,
     exportedAt: now(),
@@ -184,6 +197,7 @@ export function exportFolioBackupV3(options: ExportFolioBackupV3Options): string
     stories: options.stories.map(sanitizeStoryForExport),
     workspace: sanitizeWorkspaceForExport(options.workspace),
     ...(displayPreferences ? { displayPreferences } : {}),
+    ...(promptPacks ? { promptPacks } : {}),
   };
   return JSON.stringify(envelope, null, 2);
 }
@@ -494,6 +508,9 @@ export function parseAndValidateFolioBackup(rawJson: string): FolioBackupEnvelop
     );
     const workspace = validateWorkspacePayload(parsed.workspace);
     const displayPreferences = validateDisplayPreferences(parsed.displayPreferences);
+    const promptPacks = parsed.promptPacks === undefined
+      ? undefined
+      : validatePromptPackLibrary(parsed.promptPacks);
     return {
       schemaVersion: 3,
       exportedAt: parsed.exportedAt,
@@ -501,10 +518,69 @@ export function parseAndValidateFolioBackup(rawJson: string): FolioBackupEnvelop
       stories,
       workspace,
       ...(displayPreferences ? { displayPreferences } : {}),
+      ...(promptPacks ? { promptPacks } : {}),
     };
   }
 
   throw new Error('不支持的备份文件版本。');
+}
+
+interface PromptPackMergeResult {
+  library?: PromptPackLibrary;
+  idRemap: Map<string, string>;
+}
+
+function mergePromptPackLibraries(
+  existing: PromptPackLibrary | undefined,
+  incoming: PromptPackLibrary | undefined,
+  createId: () => string,
+): PromptPackMergeResult {
+  if (!existing && !incoming) return { idRemap: new Map() };
+  if (!existing) return { library: validatePromptPackLibrary(incoming), idRemap: new Map() };
+  if (!incoming) return { library: validatePromptPackLibrary(existing), idRemap: new Map() };
+
+  const current = validatePromptPackLibrary(existing);
+  const restored = validatePromptPackLibrary(incoming);
+  const usedIds = new Set(current.packs.map((pack) => pack.id));
+  const idRemap = new Map<string, string>();
+  const packs: PromptPack[] = current.packs.map((pack) => cloneJson(pack));
+
+  for (const incomingPack of restored.packs) {
+    if (incomingPack.id === BUILTIN_NARRATIVE_PROMPT_PACK.id) continue;
+    let nextPack = cloneJson(incomingPack);
+    if (usedIds.has(nextPack.id)) {
+      const nextId = createId();
+      idRemap.set(nextPack.id, nextId);
+      nextPack = {
+        ...nextPack,
+        id: nextId,
+        title: `${nextPack.title} (备份导入)`,
+      };
+    }
+    usedIds.add(nextPack.id);
+    packs.push(nextPack);
+  }
+
+  return {
+    library: validatePromptPackLibrary({ packs, activePackId: current.activePackId }),
+    idRemap,
+  };
+}
+
+function remapPromptPackReference<T extends { generationPreference?: GenerationPreference }>(
+  value: T,
+  idRemap: ReadonlyMap<string, string>,
+): T {
+  const mode = value.generationPreference?.promptPackMode;
+  const nextMode = mode && mode !== 'inherit' && mode !== 'off' ? idRemap.get(mode) : undefined;
+  if (!nextMode) return value;
+  return {
+    ...value,
+    generationPreference: {
+      ...value.generationPreference,
+      promptPackMode: nextMode,
+    },
+  };
 }
 
 /**
@@ -525,6 +601,7 @@ export function mergeRestoredBackup(
   const usedStoryIds = new Set(existingStories.map((s) => s.id));
   const storyIdRemap = new Map<string, string>();
   const mergedStories: Story[] = [...existingStories];
+  const importedStories = new Set<Story>();
   let addedStories = 0;
   let renamedStories = 0;
 
@@ -534,22 +611,27 @@ export function mergeRestoredBackup(
       const nextId = createId();
       storyIdRemap.set(story.id, nextId);
       usedStoryIds.add(nextId);
-      mergedStories.push({
+      const mergedStory = {
         ...cloneJson(story),
         id: nextId,
         title: `${story.title} (备份导入)`,
         updatedAt: now(),
-      });
+      };
+      mergedStories.push(mergedStory);
+      importedStories.add(mergedStory);
       renamedStories += 1;
     } else {
       usedStoryIds.add(story.id);
-      mergedStories.push(cloneJson(story));
+      const mergedStory = cloneJson(story);
+      mergedStories.push(mergedStory);
+      importedStories.add(mergedStory);
       addedStories += 1;
     }
   }
 
   const usedWorkIds = new Set(existingWorkspace.works.map((w) => w.id));
   const mergedWorks: DraftWork[] = [...existingWorkspace.works];
+  const importedWorks = new Set<DraftWork>();
   let addedWorks = 0;
   let renamedWorks = 0;
 
@@ -564,21 +646,25 @@ export function mergeRestoredBackup(
     if (usedWorkIds.has(clonedWork.id)) {
       const nextId = createId();
       usedWorkIds.add(nextId);
-      mergedWorks.push({
+      const mergedWork = {
         ...clonedWork,
         id: nextId,
         title: `${clonedWork.title} (备份导入)`,
-      });
+      };
+      mergedWorks.push(mergedWork);
+      importedWorks.add(mergedWork);
       renamedWorks += 1;
     } else {
       usedWorkIds.add(clonedWork.id);
       mergedWorks.push(clonedWork);
+      importedWorks.add(clonedWork);
       addedWorks += 1;
     }
   }
 
   const usedCharIds = new Set(existingWorkspace.characters.map((c) => c.id));
   const mergedCharacters: LocalCharacter[] = [...existingWorkspace.characters];
+  const importedCharacters = new Set<LocalCharacter>();
   let addedCharacters = 0;
   let renamedCharacters = 0;
 
@@ -596,17 +682,20 @@ export function mergeRestoredBackup(
       const nextActiveConvId = clonedChar.activeConversationId
         ? convIdMap.get(clonedChar.activeConversationId) ?? null
         : null;
-      mergedCharacters.push({
+      const mergedCharacter = {
         ...clonedChar,
         id: nextCharId,
         name: `${clonedChar.name} (备份导入)`,
         conversations: clonedConversations,
         activeConversationId: nextActiveConvId,
-      });
+      };
+      mergedCharacters.push(mergedCharacter);
+      importedCharacters.add(mergedCharacter);
       renamedCharacters += 1;
     } else {
       usedCharIds.add(clonedChar.id);
       mergedCharacters.push(clonedChar);
+      importedCharacters.add(clonedChar);
       addedCharacters += 1;
     }
   }
@@ -639,14 +728,31 @@ export function mergeRestoredBackup(
     }
   }
 
-  const activeWorkId = existingWorkspace.activeWorkId ?? mergedWorks[0]?.id;
-  const activeCharacterId = existingWorkspace.activeCharacterId ?? mergedCharacters[0]?.id;
+  const promptPackMerge = mergePromptPackLibraries(
+    existing.promptPacks,
+    incoming.promptPacks,
+    createId,
+  );
+  const remappedStories = mergedStories.map((story) =>
+    importedStories.has(story) ? remapPromptPackReference(story, promptPackMerge.idRemap) : story,
+  );
+  const remappedWorks = mergedWorks.map((work) =>
+    importedWorks.has(work) ? remapPromptPackReference(work, promptPackMerge.idRemap) : work,
+  );
+  const remappedCharacters = mergedCharacters.map((character) =>
+    importedCharacters.has(character)
+      ? remapPromptPackReference(character, promptPackMerge.idRemap)
+      : character,
+  );
+
+  const activeWorkId = existingWorkspace.activeWorkId ?? remappedWorks[0]?.id;
+  const activeCharacterId = existingWorkspace.activeCharacterId ?? remappedCharacters[0]?.id;
 
   const mergedWorkspace = migrateWorkspaceToV02({
     revision: existingWorkspace.revision + 1,
     publicDocument: mergedPublicDoc,
-    works: mergedWorks,
-    characters: mergedCharacters,
+    works: remappedWorks,
+    characters: remappedCharacters,
     ...(activeWorkId !== undefined ? { activeWorkId } : {}),
     ...(activeCharacterId !== undefined ? { activeCharacterId } : {}),
     v2Migrated: true,
@@ -659,11 +765,13 @@ export function mergeRestoredBackup(
           ...existing.displayPreferences,
         })
       : undefined;
+  const promptPacks = promptPackMerge.library;
 
   return {
-    stories: mergedStories,
+    stories: remappedStories,
     workspace: mergedWorkspace,
     ...(displayPreferences ? { displayPreferences } : {}),
+    ...(promptPacks ? { promptPacks } : {}),
     report: {
       addedStories,
       renamedStories,

@@ -149,8 +149,8 @@ describe('Spec #25 Slice 1: Pre-turn catch-up & chunked rolling Plot Summary', (
     const mainRequest = captured.find(
       (request) => !(request.messages[0]?.content ?? '').includes('剧情摘要压缩'),
     );
-    expect(mainRequest?.messages[1]?.content).toContain('当前进度');
-    expect(mainRequest?.messages[1]?.content).toContain('滚动摘要片段2');
+    const mainSummary = mainRequest?.messages.find((message) => message.role === 'system' && message.content.includes('当前进度'));
+    expect(mainSummary?.content).toContain('滚动摘要片段2');
   });
 
   it('bounds complete compression messages after oversized prior and model summaries', async () => {
@@ -299,12 +299,11 @@ describe('Spec #25 Slice 1: Pre-turn catch-up & chunked rolling Plot Summary', (
 
     // Main reply request must already contain Zone 2 summary before sending
     const mainReq = captured[mainReqIndex];
-    expect(mainReq.messages[1]?.role).toBe('system');
-    expect(mainReq.messages[1]?.content).toContain('当前进度');
-    expect(mainReq.messages[1]?.content).toContain(`滚动摘要第${preTurnSummaryReqs.length}批`);
+    const mainSummary = mainReq.messages.find((message) => message.role === 'system' && message.content.includes('当前进度'));
+    expect(mainSummary?.content).toContain(`滚动摘要第${preTurnSummaryReqs.length}批`);
 
     // Recent window in main reply must NOT exceed recentMaxNodes
-    const zone3 = mainReq.messages.slice(2);
+    const zone3 = mainReq.messages.filter((message) => message.role !== 'system');
     expect(zone3.length).toBeLessThanOrEqual(7); // <= 6 recent nodes + 1 pending user input
     expect(result.assistantNode.summarySnapshot.summarizedTurnCount).toBeGreaterThanOrEqual(56);
   });
@@ -323,7 +322,7 @@ describe('Spec #25 Slice 1: Pre-turn catch-up & chunked rolling Plot Summary', (
       (r) => !(r.messages[0]?.content ?? '').includes('剧情摘要压缩'),
     );
     expect(editMainIdx).toBeGreaterThan(1);
-    expect(capturedEdit[editMainIdx].messages[1]?.content).toContain('回溯前置压缩摘要');
+    expect(capturedEdit[editMainIdx].messages.some((message) => message.content.includes('回溯前置压缩摘要'))).toBe(true);
     expect(editRes.assistantNode.summarySnapshot.coveredUpToNodeId).toBeTruthy();
 
     const capturedRegen: LlmStreamRequest[] = [];
@@ -336,7 +335,7 @@ describe('Spec #25 Slice 1: Pre-turn catch-up & chunked rolling Plot Summary', (
       (r) => !(r.messages[0]?.content ?? '').includes('剧情摘要压缩'),
     );
     expect(regenMainIdx).toBeGreaterThan(1);
-    expect(capturedRegen[regenMainIdx].messages[1]?.content).toContain('重生成前置压缩摘要');
+    expect(capturedRegen[regenMainIdx].messages.some((message) => message.content.includes('重生成前置压缩摘要'))).toBe(true);
     expect(regenRes.assistantNode.summarySnapshot.coveredUpToNodeId).toBeTruthy();
   });
 
@@ -458,8 +457,8 @@ describe('Spec #25 Slice 2: Setup Node annotation, deduplication & backup compat
 
     // Three-zone context includes uniqueScriptMarker ONLY ONCE (in Zone 1 system anchor, NOT in Zone 3)
     const ctx = assembleThreeZoneContext(story, story.activeLeafNodeId, '继续探索');
-    const systemText = ctx.messages[0].content;
-    const nonSystemText = ctx.messages.slice(1).map((m) => m.content).join('\n');
+    const systemText = ctx.messages.filter((message) => message.role === 'system').map((m) => m.content).join('\n');
+    const nonSystemText = ctx.messages.filter((message) => message.role !== 'system').map((m) => m.content).join('\n');
     expect(systemText).toContain(uniqueScriptMarker);
     expect(nonSystemText).not.toContain(uniqueScriptMarker);
 

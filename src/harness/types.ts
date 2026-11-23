@@ -76,9 +76,13 @@ export type OfficialDeepSeekModel = 'deepseek-flash' | 'deepseek-v4-pro';
 
 export type ReasoningEffort = 'none' | 'low' | 'high' | 'max';
 
+export type PrefixCompletionMode = 'off' | 'on_retry' | 'always';
+
 export interface GenerationPreference {
   model?: OfficialDeepSeekModel;
   reasoningEffort?: ReasoningEffort;
+  promptPackMode?: 'inherit' | 'off' | string;
+  prefixCompletion?: PrefixCompletionMode;
 }
 
 export interface DeepSeekThinkingParam {

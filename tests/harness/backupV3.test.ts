@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BUILTIN_NARRATIVE_PROMPT_PACK,
   EMPTY_SUMMARY_SNAPSHOT,
   createDefaultBlueprint,
   detectBackupSchemaVersion,
@@ -253,6 +254,59 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
       { createId, now: () => 100000 },
     );
     expect(mergedAgain.report.mergedPublicMemory).toBe(false);
+  });
+
+  it('preserves an explicit null prompt-pack activation and remaps imported preference references', () => {
+    let seq = 0;
+    const createId = () => `fresh-${++seq}`;
+    const localPack = {
+      id: 'same-pack',
+      title: '本地包',
+      slots: { head: '本地规则', mid: '', tail: '' },
+    };
+    const incomingPack = {
+      id: 'same-pack',
+      title: '备份包',
+      slots: { head: '备份规则', mid: '', tail: '' },
+    };
+    const incomingStory = makeSampleStory('story-with-pack', '带提示词包的故事');
+    incomingStory.generationPreference = { promptPackMode: 'same-pack' };
+    const incomingWork = { ...newWork('带提示词包的作品'), id: 'work-with-pack' };
+    incomingWork.generationPreference = { promptPackMode: 'same-pack' };
+    const incomingCharacter = { ...newCharacter('带提示词包的角色', '角色设定'), id: 'character-with-pack' };
+    incomingCharacter.generationPreference = { promptPackMode: 'same-pack' };
+
+    const merged = mergeRestoredBackup(
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        promptPacks: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK, localPack],
+          activePackId: null,
+        },
+      },
+      {
+        stories: [incomingStory],
+        workspace: {
+          ...emptyWorkspace(),
+          works: [incomingWork],
+          characters: [incomingCharacter],
+        },
+        promptPacks: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK, incomingPack],
+          activePackId: 'same-pack',
+        },
+      },
+      { createId },
+    );
+
+    const importedPack = merged.promptPacks?.packs.find((pack) => pack.title.includes('(备份导入)'));
+    expect(importedPack).toBeDefined();
+    expect(importedPack!.id).not.toBe('same-pack');
+    expect(merged.promptPacks?.activePackId).toBeNull();
+    expect(merged.stories[0].generationPreference?.promptPackMode).toBe(importedPack!.id);
+    expect(merged.workspace.works[0].generationPreference?.promptPackMode).toBe(importedPack!.id);
+    expect(merged.workspace.characters[0].generationPreference?.promptPackMode).toBe(importedPack!.id);
   });
 
   it('detects schema versions and rejects invalid TurnProposalRecord entries in backups', () => {

@@ -95,14 +95,38 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
   it('merges partial generationPreference patches without dropping sibling overrides or mutating global config', () => {
     const globalSnapshot: ModelConfig = { ...DEFAULT_MODEL_CONFIG };
 
-    const afterModel = mergeGenerationPreference(undefined, { model: 'deepseek-v4-pro' });
-    expect(afterModel).toEqual({ model: 'deepseek-v4-pro' });
+    const afterModel = mergeGenerationPreference(
+      { promptPackMode: 'pack-a', prefixCompletion: 'always' },
+      { model: 'deepseek-v4-pro' },
+    );
+    expect(afterModel).toEqual({
+      model: 'deepseek-v4-pro',
+      promptPackMode: 'pack-a',
+      prefixCompletion: 'always',
+    });
 
     const afterEffort = mergeGenerationPreference(afterModel, { reasoningEffort: 'max' });
-    expect(afterEffort).toEqual({ model: 'deepseek-v4-pro', reasoningEffort: 'max' });
+    expect(afterEffort).toEqual({
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'max',
+      promptPackMode: 'pack-a',
+      prefixCompletion: 'always',
+    });
 
     const afterSwitchBack = mergeGenerationPreference(afterEffort, { model: 'deepseek-flash' });
-    expect(afterSwitchBack).toEqual({ model: 'deepseek-flash', reasoningEffort: 'max' });
+    expect(afterSwitchBack).toEqual({
+      model: 'deepseek-flash',
+      reasoningEffort: 'max',
+      promptPackMode: 'pack-a',
+      prefixCompletion: 'always',
+    });
+
+    const afterInvalidPatch = mergeGenerationPreference(afterSwitchBack, {
+      model: 'invalid-model' as never,
+      promptPackMode: '   ',
+      prefixCompletion: 'invalid-mode' as never,
+    });
+    expect(afterInvalidPatch).toEqual({ reasoningEffort: 'max' });
 
     expect(mergeGenerationPreference(undefined, {})).toBeUndefined();
     expect(globalSnapshot).toEqual(DEFAULT_MODEL_CONFIG);
