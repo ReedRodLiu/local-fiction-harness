@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  compareContextExperimentRangeSubset,
+  contextExperimentUsageFromSse,
   DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
   estimateContextSavings,
   preflightContextExperiment,
@@ -8,6 +10,84 @@ import {
 } from '../../experiments/context-compression/savings.ts';
 
 describe('context compression cost evidence', () => {
+  it('accepts only complete nonnegative safe-integer billed buckets from generic SSE usage', () => {
+    expect(contextExperimentUsageFromSse({
+      promptTokens: 3,
+      promptCacheHitTokens: 2,
+      promptCacheMissTokens: 1,
+      completionTokens: 4,
+      completionTokensDetails: { reasoningTokens: 3 },
+    })).toEqual({
+      promptCacheHitTokens: 2,
+      promptCacheMissTokens: 1,
+      completionTokens: 4,
+      completionTokensDetails: { reasoningTokens: 3 },
+    });
+
+    for (const raw of [
+      undefined,
+      { promptCacheHitTokens: 2, completionTokens: 4 },
+      { promptCacheHitTokens: -1, promptCacheMissTokens: 1, completionTokens: 4 },
+      { promptCacheHitTokens: 0.5, promptCacheMissTokens: 1, completionTokens: 4 },
+      { promptCacheHitTokens: 0, promptCacheMissTokens: Number.NaN, completionTokens: 4 },
+      { promptCacheHitTokens: 0, promptCacheMissTokens: 1, completionTokens: Number.MAX_SAFE_INTEGER + 1 },
+    ]) {
+      expect(contextExperimentUsageFromSse(raw)).toBeNull();
+    }
+  });
+
+  it('marks incomplete or invalid outbound usage as unknown instead of zero-cost evidence', () => {
+    const summary = summarizeContextExperiment({
+      arm: 'full',
+      provider: 'deepseek-official',
+      model: 'deepseek-flash',
+      pricingSchedule: 'off-peak',
+      rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
+      effectiveTurns: 1,
+      records: [{
+        requestId: 'partial-usage',
+        phase: 'generation',
+        status: 'completed',
+        logicalTurnId: 'turn-1',
+        transport: 'outbound-http',
+        usage: {
+          promptCacheHitTokens: 2,
+          completionTokens: 4,
+        } as unknown as ContextExperimentGroup['records'][number]['usage'],
+        visibleOutputCharCount: 12,
+      }],
+    });
+
+    expect(summary.missingUsageRecords).toBe(1);
+    expect(summary.usage).toBeNull();
+    expect(summary.costUsd).toBeNull();
+    expect(summary.cacheHitRate).toBeNull();
+
+    const overflowed = summarizeContextExperiment({
+      arm: 'full',
+      provider: 'deepseek-official',
+      model: 'deepseek-flash',
+      pricingSchedule: 'off-peak',
+      rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
+      effectiveTurns: 2,
+      records: ['turn-1', 'turn-2'].map((logicalTurnId, index) => ({
+        requestId: `overflow-${index}`,
+        phase: 'generation' as const,
+        status: 'completed' as const,
+        logicalTurnId,
+        transport: 'outbound-http' as const,
+        usage: {
+          promptCacheHitTokens: Number.MAX_SAFE_INTEGER,
+          promptCacheMissTokens: 0,
+          completionTokens: 0,
+        },
+        visibleOutputCharCount: 12,
+      })),
+    });
+    expect(overflowed.usage).toBeNull();
+    expect(overflowed.costUsd).toBeNull();
+  });
+
   it('charges every provider request from authoritative cache and output usage', () => {
     const group: ContextExperimentGroup = {
       arm: 'full',
@@ -161,6 +241,83 @@ describe('context compression cost evidence', () => {
     });
   });
 
+  it('reports an ordered-prefix cost subset for unequal ranges without relaxing strict savings', () => {
+    const makeGroup = (
+      arm: 'full' | 'retrievable',
+      turnIds: string[],
+      missTokens: number,
+    ): ContextExperimentGroup => ({
+      arm,
+      provider: 'deepseek-official',
+      model: 'deepseek-flash',
+      pricingSchedule: 'off-peak',
+      rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
+      effectiveTurns: turnIds.length,
+      records: turnIds.map((logicalTurnId, index) => ({
+        requestId: `${arm}-${index}`,
+        phase: 'generation',
+        status: 'completed',
+        logicalTurnId,
+        transport: 'outbound-http',
+        usage: {
+          promptCacheHitTokens: 0,
+          promptCacheMissTokens: missTokens,
+          completionTokens: 50,
+        },
+        visibleOutputCharCount: 20,
+      })),
+    });
+    const baselineGroup = makeGroup(
+      'full',
+      ['turn-1', 'turn-2', 'turn-3'],
+      10_000,
+    );
+    const candidateGroup = makeGroup(
+      'retrievable',
+      ['turn-1', 'turn-2'],
+      5_000,
+    );
+    const baseline = summarizeContextExperiment(baselineGroup);
+    const candidate = summarizeContextExperiment(candidateGroup);
+
+    expect(estimateContextSavings(baseline, candidate)).toEqual({
+      status: 'unavailable',
+      reason: 'turn-count-mismatch',
+    });
+    const subset = compareContextExperimentRangeSubset(
+      baselineGroup,
+      candidateGroup,
+      baseline,
+      candidate,
+    );
+    expect(subset).toMatchObject({
+      status: 'available',
+      baselineRange: {
+        firstTurnId: 'turn-1',
+        lastTurnId: 'turn-3',
+        completedTurnCount: 3,
+      },
+      candidateRange: {
+        firstTurnId: 'turn-1',
+        lastTurnId: 'turn-2',
+        completedTurnCount: 2,
+      },
+      subsetRange: {
+        firstTurnId: 'turn-1',
+        lastTurnId: 'turn-2',
+        completedTurnCount: 2,
+        turnIds: ['turn-1', 'turn-2'],
+      },
+    });
+    expect(subset.status).toBe('available');
+    if (subset.status === 'available') {
+      expect(subset.baselineCostUsd).toBeCloseTo(0.00306, 12);
+      expect(subset.candidateCostUsd).toBeCloseTo(0.00156, 12);
+      expect(subset.savingsUsd).toBeCloseTo(0.0015, 12);
+      expect(subset.savingsPercent).toBeCloseTo(49.01960784313725, 12);
+    }
+  });
+
   it('counts a successful generation retry once for completion, while still charging every request', () => {
     const summary = summarizeContextExperiment({
       arm: 'retrievable',
@@ -195,7 +352,7 @@ describe('context compression cost evidence', () => {
     expect(summary.completedTurnIds).toEqual(['turn-1']);
     expect(summary.completionRate).toBe(1);
     expect(summary.records).toBe(2);
-    expect(summary.usage.completionTokens).toBe(30);
+    expect(summary.usage?.completionTokens).toBe(30);
   });
 
   it('treats local retrieval as having no provider-usage requirement', () => {
@@ -327,7 +484,7 @@ describe('context compression cost evidence', () => {
     const oneTurn = summaryFor('retrievable', 1, ['turn-1']);
     expect(estimateContextSavings(empty, oneTurn)).toMatchObject({
       status: 'unavailable',
-      reason: 'insufficient-turns',
+      reason: 'incomplete-usage',
     });
 
     const partialBaseline = summaryFor('full', 2, ['turn-1']);

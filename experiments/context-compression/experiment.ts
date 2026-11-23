@@ -8,7 +8,9 @@ import {
   selectNodesToSummarize,
 } from '../../src/harness/context.ts';
 import { createFictionHarness } from '../../src/harness/harness.ts';
+import { createInMemoryStoryStorage } from '../../src/harness/storyStorage.ts';
 import {
+  compareContextExperimentRangeSubset,
   DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
   estimateContextSavings,
   preflightContextExperiment,
@@ -17,12 +19,19 @@ import {
   type ContextExperimentBudget,
   type ContextExperimentGroup,
   type ContextExperimentPreflight,
+  type ContextExperimentRangeSubsetComparison,
   type ContextExperimentRequestPlan,
   type ContextExperimentRequestRecord,
   type ContextExperimentSummary,
   type ContextSavingsEstimate,
 } from './savings.ts';
-import type { LlmMessage, PlotSummarySnapshot, Story, TurnNode } from '../../src/harness/types.ts';
+import type {
+  LlmMessage,
+  ModelConfig,
+  PlotSummarySnapshot,
+  Story,
+  TurnNode,
+} from '../../src/harness/types.ts';
 
 export type ExperimentScenarioName = 'continuous' | 'branching' | 'nested';
 
@@ -110,7 +119,7 @@ const PROBE_CUES = [
   '沈砚 衣物',
   '沈砚 左手',
   '沈砚 随身物',
-  '沈砚 痕迹',
+  '沈砚 伤痕',
 ] as const;
 
 const SHEN_YAN_CLOTHING = [
@@ -431,17 +440,32 @@ export interface OfflineRouteReturn {
 
 export interface OfflineOldTurnEditResult {
   entry: 'FictionHarness.editAndBranch';
+  fixture: 'nested';
   execution: 'offline-pure-harness';
   transport: 'in-process-fake';
   modelCalls: number;
   providerCalls: 0;
+  reloadedAfterEdit: boolean;
   originalBranchPreserved: boolean;
   siblingIsolated: boolean;
   passed: boolean;
 }
 
+export interface OfflineRetryResult {
+  entry: 'FictionHarness.regenerateNode';
+  fixture: 'branching';
+  execution: 'offline-pure-harness';
+  transport: 'in-process-fake';
+  modelCalls: number;
+  providerCalls: 0;
+  reloadedAfterRetry: boolean;
+  originalReplyPreserved: boolean;
+  siblingIsolated: boolean;
+  passed: boolean;
+}
+
 export interface OfflineSmokeReport {
-  schemaVersion: 4;
+  schemaVersion: 5;
   mode: 'offline-simulated';
   generatedAt: string;
   providerRuns: 0;
@@ -450,6 +474,10 @@ export interface OfflineSmokeReport {
   comparisons: {
     fullToRetrievable: ContextSavingsEstimate;
     folioToRetrievable: ContextSavingsEstimate;
+  };
+  rangeSubsets: {
+    fullToRetrievable: ContextExperimentRangeSubsetComparison;
+    folioToRetrievable: ContextExperimentRangeSubsetComparison;
   };
   branchIsolation: {
     checkedRequests: number;
@@ -460,10 +488,15 @@ export interface OfflineSmokeReport {
     passed: boolean;
   };
   branchLifecycle: {
+    fixture: 'nested';
+    continuationEntry: 'FictionHarness.runTurn';
+    continuationModelCalls: number;
     continuedTurns: number;
+    providerCalls: 0;
     reopenedAfterRestart: boolean;
     editedSiblingIsolated: boolean;
     oldTurnEdit: OfflineOldTurnEditResult;
+    retry: OfflineRetryResult;
   };
   routeReturns: {
     aToBToA: OfflineRouteReturn;
@@ -480,6 +513,9 @@ export interface OfflineSmokeReport {
     messageCount?: number;
     contextPolicy?: ContextExperimentContextPolicy;
     contextFingerprint?: string;
+    retrievalNodeIds?: string[];
+    retrievalScores?: number[];
+    recentNodeIds?: string[];
     summaryCoverage?: OfflineSummaryCoverage;
   }>;
   limitations: string[];
@@ -547,10 +583,13 @@ const OFFLINE_VISIBLE_OUTPUT = {
   retry: '离线模拟重试。',
 } as const;
 
-interface OfflineArmContext {
+export interface OfflineExperimentContext {
   messages: LlmMessage[];
   policy: ContextExperimentContextPolicy;
   retrievalCount: number;
+  retrievalNodeIds: string[];
+  retrievalScores: number[];
+  recentNodeIds: string[];
   summaryRequests: LlmMessage[][];
   summaryCoverage?: OfflineSummaryCoverage;
 }
@@ -580,7 +619,7 @@ function folioMessages(
   scenario: GeneratedExperimentScenario,
   parentLeafId: string | null,
   action: string,
-): OfflineArmContext {
+): OfflineExperimentContext {
   const path = getActiveBranchNodes(
     { nodes: scenario.nodes, activeLeafNodeId: parentLeafId },
     parentLeafId,
@@ -637,6 +676,9 @@ function folioMessages(
     messages,
     policy: 'rolling-summary',
     retrievalCount: 0,
+    retrievalNodeIds: [],
+    retrievalScores: [],
+    recentNodeIds: [],
     summaryRequests,
     summaryCoverage: {
       coveredUpToNodeId: snapshot.coveredUpToNodeId,
@@ -651,18 +693,26 @@ function folioMessages(
   };
 }
 
-function retrievableMessages(
+export function buildRetrievableExperimentContext(
   scenario: GeneratedExperimentScenario,
   parentLeafId: string | null,
   action: string,
-): OfflineArmContext {
+): OfflineExperimentContext {
   const path = getActiveBranchNodes(
     { nodes: scenario.nodes, activeLeafNodeId: parentLeafId },
     parentLeafId,
   );
+  const recentNodes = path.slice(-6);
+  const recentNodeIds = recentNodes.map((node) => node.id);
   const retrieval = parentLeafId
-    ? retrieveFromActiveBranch(scenario.nodes, parentLeafId, action, 3)
-    : { pathNodeIds: [], selected: [] };
+    ? retrieveFromActiveBranch(
+        scenario.nodes,
+        parentLeafId,
+        action,
+        3,
+        new Set(recentNodeIds),
+      )
+    : { pathNodeIds: [], selected: [], scores: [] };
   return {
     messages: [
       { role: 'system', content: `${scenario.setting}\n故事：${scenario.title}` },
@@ -670,11 +720,14 @@ function retrievableMessages(
         role: 'system' as const,
         content: `按需回取（当前路线 ${node.id}）：${node.content}`,
       })),
-      ...path.slice(-6).map((node) => ({ role: node.role, content: node.content } as LlmMessage)),
+      ...recentNodes.map((node) => ({ role: node.role, content: node.content } as LlmMessage)),
       { role: 'user', content: action },
     ],
     policy: 'branch-retrieval',
     retrievalCount: retrieval.selected.length,
+    retrievalNodeIds: retrieval.selected.map((node) => node.id),
+    retrievalScores: retrieval.scores,
+    recentNodeIds,
     summaryRequests: [],
   };
 }
@@ -684,18 +737,21 @@ function contextForArm(
   scenario: GeneratedExperimentScenario,
   parentLeafId: string | null,
   action: string,
-): OfflineArmContext {
+): OfflineExperimentContext {
   if (arm === 'full') {
     return {
       messages: pathMessages(scenario, parentLeafId, action),
       policy: 'full-history',
       retrievalCount: 0,
+      retrievalNodeIds: [],
+      retrievalScores: [],
+      recentNodeIds: [],
       summaryRequests: [],
     };
   }
   return arm === 'folio'
     ? folioMessages(scenario, parentLeafId, action)
-    : retrievableMessages(scenario, parentLeafId, action);
+    : buildRetrievableExperimentContext(scenario, parentLeafId, action);
 }
 
 function contextFingerprint(messages: readonly LlmMessage[]): string {
@@ -837,129 +893,268 @@ async function verifyRouteReturns(seed: number): Promise<OfflineSmokeReport['rou
   };
 }
 
+const OFFLINE_HARNESS_CONFIG: ModelConfig = {
+  baseUrl: 'https://api.deepseek.com',
+  apiKey: 'offline-placeholder',
+  model: 'deepseek-flash',
+  reasoningEffort: 'none',
+  memoryOnly: true,
+};
+
+function nodeValuesEqual(left: TurnNode, right: TurnNode): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 async function verifyBranchLifecycle(seed: number): Promise<OfflineSmokeReport['branchLifecycle']> {
-  const scenario = generateExperimentScenario('branching', seed);
-  const [routeA, routeB] = scenario.routes;
-  const nodes = structuredClone(scenario.nodes);
-  const append = (parentId: string, id: string, content: string): string => {
-    const userId = `${id}-u`;
-    const assistantId = `${id}-a`;
-    const parent = nodes[parentId];
-    nodes[userId] = {
-      id: userId,
-      parentId,
-      role: 'user',
-      content,
-      createdAt: parent.createdAt + 2,
-      summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
-    };
-    nodes[assistantId] = {
-      id: assistantId,
-      parentId: userId,
-      role: 'assistant',
-      content: `确认${content}`,
-      createdAt: parent.createdAt + 3,
-      summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
-    };
-    return assistantId;
+  const nestedScenario = generateExperimentScenario('nested', seed);
+  const nestedRouteA = nestedScenario.routes[0];
+  const historicalUserNodeId = nestedScenario.nodes[nestedRouteA.leafId].parentId!;
+  nestedScenario.nodes[historicalUserNodeId] = {
+    ...nestedScenario.nodes[historicalUserNodeId],
+    content: '原始嵌套旧轮行动（须隔离）',
+  };
+  nestedScenario.nodes[nestedRouteA.leafId] = {
+    ...nestedScenario.nodes[nestedRouteA.leafId],
+    content: '原始嵌套旧轮回复（须隔离）',
   };
 
-  const continuedA = append(routeA.leafId, 'lifecycle-a', 'A线继续写');
-  const continuedB = append(routeB.leafId, 'lifecycle-b', 'B线继续写');
-  const reopenedNodes = JSON.parse(JSON.stringify(nodes)) as Record<string, TurnNode>;
-  const reopenedA = getActiveBranchNodes(
-    { nodes: reopenedNodes, activeLeafNodeId: continuedA },
-    continuedA,
-  ).map((node) => node.content).join('\n');
-  const reopenedB = getActiveBranchNodes(
-    { nodes: reopenedNodes, activeLeafNodeId: continuedB },
-    continuedB,
-  ).map((node) => node.content).join('\n');
-  const reopenedAfterRestart =
-    reopenedA.includes('A线继续写') &&
-    reopenedA.includes(routeA.uniqueFact) &&
-    reopenedA.includes(routeA.characterState) &&
-    !reopenedA.includes(routeB.characterState) &&
-    !reopenedA.includes('B线继续写') &&
-    reopenedB.includes('B线继续写') &&
-    reopenedB.includes(routeB.uniqueFact) &&
-    reopenedB.includes(routeB.characterState) &&
-    !reopenedB.includes(routeA.characterState) &&
-    !reopenedB.includes('A线继续写');
-
-  let modelCalls = 0;
-  const harness = createFictionHarness({
+  const nestedStorage = createInMemoryStoryStorage();
+  let nestedNow = 1_765_000_000_000;
+  let nestedSequence = 0;
+  let nestedModelCalls = 0;
+  const makeNestedHarness = () => createFictionHarness({
     transport: {
-      async *streamChat() {
-        modelCalls += 1;
-        yield { contentDelta: '纯 Harness 旧轮改写回复。', finishReason: 'stop' };
+      async *streamChat(request) {
+        nestedModelCalls += 1;
+        const input = request.messages.at(-1)?.content ?? '';
+        const content = input.includes('嵌套续写一')
+          ? '嵌套续写回复一。'
+          : input.includes('嵌套续写二')
+            ? '嵌套续写回复二。'
+            : input.includes('嵌套历史改写')
+              ? '嵌套历史改写回复。'
+              : '嵌套夹具离线回复。';
+        yield { contentDelta: content, finishReason: 'stop' };
       },
     },
-    contextBudget: { recentMaxNodes: 8, recentMaxChars: 6_000 },
-  });
-  const storyBase = harness.createStory({ title: '离线旧轮编辑', rawScript: scenario.setting });
-  const story: Story = {
-    ...storyBase,
-    nodes: {
-      'edit-u1': {
-        id: 'edit-u1', parentId: null, role: 'user', content: '旧轮根行动。', createdAt: 1,
-        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
-      },
-      'edit-a1': {
-        id: 'edit-a1', parentId: 'edit-u1', role: 'assistant', content: '旧轮根回复。', createdAt: 2,
-        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
-      },
-      'edit-u2': {
-        id: 'edit-u2', parentId: 'edit-a1', role: 'user', content: '原始旧轮行动。', createdAt: 3,
-        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
-      },
-      'edit-a2': {
-        id: 'edit-a2', parentId: 'edit-u2', role: 'assistant', content: '原始旧轮回复。', createdAt: 4,
-        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
-      },
+    storage: nestedStorage,
+    contextBudget: { recentMaxNodes: 10_000, recentMaxChars: 10_000_000 },
+    now: () => {
+      nestedNow += 1_000;
+      return nestedNow;
     },
-    rootNodeIds: ['edit-u1'],
-    activeLeafNodeId: 'edit-a2',
-  };
-  const originalUserNode = { ...story.nodes['edit-u2'] };
-  const originalAssistantNode = { ...story.nodes['edit-a2'] };
-  const edited = await harness.editAndBranch(story, 'edit-u2', '纯 Harness 旧轮改写', {
-    baseUrl: 'https://api.deepseek.com',
-    apiKey: 'offline-fake',
-    model: 'deepseek-flash',
-    reasoningEffort: 'none',
-    memoryOnly: true,
+    createId: () => `real-nested-${++nestedSequence}`,
   });
-  const editedPath = getActiveBranchNodes(
-    { nodes: edited.story.nodes, activeLeafNodeId: edited.story.activeLeafNodeId },
-    edited.story.activeLeafNodeId,
-  ).map((node) => node.content).join('\n');
+  const nestedHarness = makeNestedHarness();
+  const nestedSaved = await nestedHarness.saveStory(storyFromScenario(nestedHarness, nestedScenario));
+  const nestedActive = await nestedHarness.setActiveStory(nestedSaved.id);
+  if (!nestedActive) throw new Error('Nested lifecycle fixture was not activated.');
+  const continuationOne = await nestedHarness.runTurn(
+    nestedActive,
+    '嵌套续写一',
+    OFFLINE_HARNESS_CONFIG,
+  );
+  const continuationTwo = await nestedHarness.runTurn(
+    continuationOne.story,
+    '嵌套续写二',
+    OFFLINE_HARNESS_CONFIG,
+  );
+  const continuedLeafId = continuationTwo.assistantNode.id;
+  const continuedPath = getActiveBranchNodes(continuationTwo.story, continuedLeafId);
+  const continuedText = continuedPath.map((node) => node.content).join('\n');
+  const nestedForbiddenFacts = nestedScenario.routes
+    .filter((route) => route.id !== nestedRouteA.id)
+    .flatMap((route) => [route.uniqueFact, route.characterState]);
+  const nestedReloadHarness = makeNestedHarness();
+  const nestedReloaded = await nestedReloadHarness.loadActiveStory();
+  const reopenedText = nestedReloaded?.activeLeafNodeId
+    ? getActiveBranchNodes(nestedReloaded, nestedReloaded.activeLeafNodeId)
+        .map((node) => node.content)
+        .join('\n')
+    : '';
+  const reopenedAfterRestart = Boolean(
+    nestedReloaded &&
+    nestedReloaded.activeLeafNodeId === continuedLeafId &&
+    reopenedText.includes('嵌套续写一') &&
+    reopenedText.includes('嵌套续写回复一。') &&
+    reopenedText.includes('嵌套续写二') &&
+    reopenedText.includes('嵌套续写回复二。') &&
+    reopenedText.includes(nestedRouteA.uniqueFact) &&
+    reopenedText.includes(nestedRouteA.characterState) &&
+    nestedForbiddenFacts.every((fact) => !reopenedText.includes(fact)),
+  );
+
+  const preEditNodes = Object.fromEntries(
+    Object.entries(nestedReloaded!.nodes).map(([id, value]) => [id, structuredClone(value)]),
+  );
+  const modelCallsBeforeEdit = nestedModelCalls;
+  const edited = await nestedReloadHarness.editAndBranch(
+    nestedReloaded!,
+    historicalUserNodeId,
+    '嵌套历史改写',
+    OFFLINE_HARNESS_CONFIG,
+  );
+  const editedLeafId = edited.assistantNode.id;
+  const editedReloadHarness = makeNestedHarness();
+  const editedReloaded = await editedReloadHarness.loadActiveStory();
+  const editedText = editedReloaded?.activeLeafNodeId
+    ? getActiveBranchNodes(editedReloaded, editedReloaded.activeLeafNodeId)
+        .map((node) => node.content)
+        .join('\n')
+    : '';
+  const switchedOriginal = await editedReloadHarness.switchBranch(
+    editedReloaded!,
+    continuedLeafId,
+  );
+  const originalReloadHarness = makeNestedHarness();
+  const originalReloaded = await originalReloadHarness.loadActiveStory();
+  const originalText = originalReloaded?.activeLeafNodeId
+    ? getActiveBranchNodes(originalReloaded, originalReloaded.activeLeafNodeId)
+        .map((node) => node.content)
+        .join('\n')
+    : '';
+  const switchedEdited = await originalReloadHarness.switchBranch(
+    originalReloaded!,
+    editedLeafId,
+  );
+  const finalReloadHarness = makeNestedHarness();
+  const finalReloaded = await finalReloadHarness.loadActiveStory();
   const originalBranchPreserved =
-    edited.story.nodes['edit-u2']?.content === originalUserNode.content &&
-    edited.story.nodes['edit-u2']?.parentId === originalUserNode.parentId &&
-    edited.story.nodes['edit-a2']?.content === originalAssistantNode.content &&
-    edited.story.nodes['edit-a2']?.parentId === originalAssistantNode.parentId;
+    Object.entries(preEditNodes).every(([id, value]) => {
+      const current = switchedEdited.nodes[id];
+      return Boolean(current) && nodeValuesEqual(current, value);
+    }) &&
+    originalText.includes('原始嵌套旧轮行动（须隔离）') &&
+    originalText.includes('原始嵌套旧轮回复（须隔离）') &&
+    originalText.includes('嵌套续写回复二。') &&
+    originalText === continuedText;
   const siblingIsolated =
-    editedPath.includes('纯 Harness 旧轮改写') &&
-    editedPath.includes('纯 Harness 旧轮改写回复。') &&
-    !editedPath.includes('原始旧轮行动。') &&
-    !editedPath.includes('原始旧轮回复。');
+    editedText.includes('嵌套历史改写') &&
+    editedText.includes('嵌套历史改写回复。') &&
+    !editedText.includes('原始嵌套旧轮行动（须隔离）') &&
+    !editedText.includes('原始嵌套旧轮回复（须隔离）') &&
+    !editedText.includes('嵌套续写回复二。') &&
+    originalText.includes('原始嵌套旧轮行动（须隔离）') &&
+    originalText.includes('原始嵌套旧轮回复（须隔离）') &&
+    !originalText.includes('嵌套历史改写') &&
+    !originalText.includes('嵌套历史改写回复。') &&
+    finalReloaded?.activeLeafNodeId === editedLeafId &&
+    nestedForbiddenFacts.every((fact) => !editedText.includes(fact) && !originalText.includes(fact));
+  const editCalls = nestedModelCalls - modelCallsBeforeEdit;
   const oldTurnEdit: OfflineOldTurnEditResult = {
     entry: 'FictionHarness.editAndBranch',
+    fixture: 'nested',
     execution: 'offline-pure-harness',
     transport: 'in-process-fake',
-    modelCalls,
+    modelCalls: editCalls,
     providerCalls: 0,
+    reloadedAfterEdit: editedReloaded?.activeLeafNodeId === editedLeafId &&
+      switchedOriginal.activeLeafNodeId === continuedLeafId,
     originalBranchPreserved,
     siblingIsolated,
-    passed: modelCalls === 1 && originalBranchPreserved && siblingIsolated,
+    passed: editCalls === 1 && originalBranchPreserved && siblingIsolated,
+  };
+
+  const branchingScenario = generateExperimentScenario('branching', seed);
+  const branchingRouteA = branchingScenario.routes[0];
+  branchingScenario.nodes[branchingRouteA.leafId] = {
+    ...branchingScenario.nodes[branchingRouteA.leafId],
+    content: '原始分支重试回复（须隔离）。',
+  };
+  const branchingForbiddenFacts = branchingScenario.routes
+    .filter((route) => route.id !== branchingRouteA.id)
+    .flatMap((route) => [route.uniqueFact, route.characterState]);
+  const retryStorage = createInMemoryStoryStorage();
+  let retryNow = 1_766_000_000_000;
+  let retrySequence = 0;
+  let retryModelCalls = 0;
+  const makeRetryHarness = () => createFictionHarness({
+    transport: {
+      async *streamChat() {
+        retryModelCalls += 1;
+        yield { contentDelta: '分支夹具重试回复。', finishReason: 'stop' };
+      },
+    },
+    storage: retryStorage,
+    contextBudget: { recentMaxNodes: 10_000, recentMaxChars: 10_000_000 },
+    now: () => {
+      retryNow += 1_000;
+      return retryNow;
+    },
+    createId: () => `real-retry-${++retrySequence}`,
+  });
+  const retryHarness = makeRetryHarness();
+  const branchingSaved = await retryHarness.saveStory(storyFromScenario(retryHarness, branchingScenario));
+  const branchingActive = await retryHarness.setActiveStory(branchingSaved.id);
+  if (!branchingActive) throw new Error('Branching retry fixture was not activated.');
+  const originalReply = structuredClone(branchingActive.nodes[branchingRouteA.leafId]);
+  const regenerated = await retryHarness.regenerateNode(
+    branchingActive,
+    branchingRouteA.leafId,
+    OFFLINE_HARNESS_CONFIG,
+  );
+  const retryLeafId = regenerated.assistantNode.id;
+  const retryReloadHarness = makeRetryHarness();
+  const retryReloaded = await retryReloadHarness.loadActiveStory();
+  const retryText = retryReloaded?.activeLeafNodeId
+    ? getActiveBranchNodes(retryReloaded, retryReloaded.activeLeafNodeId)
+        .map((node) => node.content)
+        .join('\n')
+    : '';
+  const switchedOriginalReply = await retryReloadHarness.switchBranch(
+    retryReloaded!,
+    branchingRouteA.leafId,
+  );
+  const originalReplyReloadHarness = makeRetryHarness();
+  const originalReplyReloaded = await originalReplyReloadHarness.loadActiveStory();
+  const originalReplyText = originalReplyReloaded?.activeLeafNodeId
+    ? getActiveBranchNodes(originalReplyReloaded, originalReplyReloaded.activeLeafNodeId)
+        .map((node) => node.content)
+        .join('\n')
+    : '';
+  const switchedRetry = await originalReplyReloadHarness.switchBranch(
+    originalReplyReloaded!,
+    retryLeafId,
+  );
+  const retryFinalReloadHarness = makeRetryHarness();
+  const retryFinalReloaded = await retryFinalReloadHarness.loadActiveStory();
+  const preservedRetryOriginal = switchedRetry.nodes[branchingRouteA.leafId];
+  const originalReplyPreserved = Boolean(
+    preservedRetryOriginal && nodeValuesEqual(preservedRetryOriginal, originalReply),
+  );
+  const retrySiblingIsolated =
+    retryReloaded?.nodes[retryLeafId]?.parentId === originalReply.parentId &&
+    retryText.includes('分支夹具重试回复。') &&
+    !retryText.includes(originalReply.content) &&
+    originalReplyText.includes(originalReply.content) &&
+    !originalReplyText.includes('分支夹具重试回复。') &&
+    switchedRetry.activeLeafNodeId === retryLeafId &&
+    retryFinalReloaded?.activeLeafNodeId === retryLeafId &&
+    branchingForbiddenFacts.every((fact) => !retryText.includes(fact) && !originalReplyText.includes(fact));
+  const retry: OfflineRetryResult = {
+    entry: 'FictionHarness.regenerateNode',
+    fixture: 'branching',
+    execution: 'offline-pure-harness',
+    transport: 'in-process-fake',
+    modelCalls: retryModelCalls,
+    providerCalls: 0,
+    reloadedAfterRetry: retryReloaded?.activeLeafNodeId === retryLeafId &&
+      switchedOriginalReply.activeLeafNodeId === branchingRouteA.leafId,
+    originalReplyPreserved,
+    siblingIsolated: retrySiblingIsolated,
+    passed: retryModelCalls === 1 && originalReplyPreserved && retrySiblingIsolated,
   };
 
   return {
+    fixture: 'nested',
+    continuationEntry: 'FictionHarness.runTurn',
+    continuationModelCalls: modelCallsBeforeEdit,
     continuedTurns: 2,
+    providerCalls: 0,
     reopenedAfterRestart,
     editedSiblingIsolated: oldTurnEdit.passed,
     oldTurnEdit,
+    retry,
   };
 }
 
@@ -1034,6 +1229,13 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
           messageCount: messages.length,
           contextPolicy: context.policy,
           contextFingerprint: contextFingerprint(messages),
+          ...(context.policy === 'branch-retrieval'
+            ? {
+                retrievalNodeIds: context.retrievalNodeIds,
+                retrievalScores: context.retrievalScores,
+                recentNodeIds: context.recentNodeIds,
+              }
+            : {}),
           ...(context.summaryCoverage ? { summaryCoverage: context.summaryCoverage } : {}),
         });
         plans.push({
@@ -1054,7 +1256,15 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
             visibleOutputCharCount: null,
           };
           recordsByArm[arm].push(retrievalRecord);
-          allRequests.push({ ...retrievalRecord, arm, scenario: scenario.spec.name });
+          allRequests.push({
+            ...retrievalRecord,
+            arm,
+            scenario: scenario.spec.name,
+            contextPolicy: 'branch-retrieval',
+            retrievalNodeIds: context.retrievalNodeIds,
+            retrievalScores: context.retrievalScores,
+            recentNodeIds: context.recentNodeIds,
+          });
         }
 
         for (let summaryIndex = 0; summaryIndex < context.summaryRequests.length; summaryIndex += 1) {
@@ -1138,6 +1348,13 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
       messageCount: retryMessages.length,
       contextPolicy: retryContext.policy,
       contextFingerprint: contextFingerprint(retryMessages),
+      ...(retryContext.policy === 'branch-retrieval'
+        ? {
+            retrievalNodeIds: retryContext.retrievalNodeIds,
+            retrievalScores: retryContext.retrievalScores,
+            recentNodeIds: retryContext.recentNodeIds,
+          }
+        : {}),
       ...(retryContext.summaryCoverage ? { summaryCoverage: retryContext.summaryCoverage } : {}),
     });
     plans.push({
@@ -1155,7 +1372,7 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
     throw new Error(`Offline smoke budget preflight failed: ${preflight.violations.join(', ')}`);
   }
 
-  const groups = Object.fromEntries(
+  const groupInputs = Object.fromEntries(
     (['full', 'folio', 'retrievable'] as const).map((arm) => {
       const group: ContextExperimentGroup = {
         arm,
@@ -1166,12 +1383,18 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
         effectiveTurns: 30,
         records: recordsByArm[arm],
       };
-      return [arm, summarizeContextExperiment(group)];
+      return [arm, group];
     }),
+  ) as Record<ContextExperimentArm, ContextExperimentGroup>;
+  const groups = Object.fromEntries(
+    (['full', 'folio', 'retrievable'] as const).map((arm) => [
+      arm,
+      summarizeContextExperiment(groupInputs[arm]),
+    ]),
   ) as Record<ContextExperimentArm, ContextExperimentSummary>;
 
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     mode: 'offline-simulated',
     generatedAt: new Date(now()).toISOString(),
     providerRuns: 0,
@@ -1180,6 +1403,20 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
     comparisons: {
       fullToRetrievable: estimateContextSavings(groups.full, groups.retrievable),
       folioToRetrievable: estimateContextSavings(groups.folio, groups.retrievable),
+    },
+    rangeSubsets: {
+      fullToRetrievable: compareContextExperimentRangeSubset(
+        groupInputs.full,
+        groupInputs.retrievable,
+        groups.full,
+        groups.retrievable,
+      ),
+      folioToRetrievable: compareContextExperimentRangeSubset(
+        groupInputs.folio,
+        groupInputs.retrievable,
+        groups.folio,
+        groups.retrievable,
+      ),
     },
     branchIsolation: {
       checkedRequests,
@@ -1220,6 +1457,7 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
 export interface BranchRetrievalResult {
   pathNodeIds: string[];
   selected: TurnNode[];
+  scores: number[];
 }
 
 function normalizedTerms(query: string): string[] {
@@ -1253,12 +1491,14 @@ export function retrieveFromActiveBranch(
   targetLeafId: string,
   query: string,
   limit: number,
+  excludeNodeIds: ReadonlySet<string> = new Set(),
 ): BranchRetrievalResult {
   const branchNodes = getActiveBranchNodes({ nodes, activeLeafNodeId: targetLeafId }, targetLeafId);
   const terms = normalizedTerms(query);
   const pathIndex = new Map(branchNodes.map((node, index) => [node.id, index]));
   const selected = branchNodes
     .map((node) => ({ node, score: scoreNode(node, terms) }))
+    .filter((entry) => entry.score > 0 && !excludeNodeIds.has(entry.node.id))
     .sort((left, right) => right.score - left.score || right.node.createdAt - left.node.createdAt)
     .slice(0, Math.max(0, Math.floor(limit)))
     .sort((left, right) => (pathIndex.get(left.node.id) ?? 0) - (pathIndex.get(right.node.id) ?? 0))
@@ -1267,5 +1507,6 @@ export function retrieveFromActiveBranch(
   return {
     pathNodeIds: branchNodes.map((node) => node.id),
     selected,
+    scores: selected.map((node) => scoreNode(node, terms)),
   };
 }

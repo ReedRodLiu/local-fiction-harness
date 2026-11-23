@@ -114,6 +114,28 @@ describe('Slice 1: OpenAI SSE streaming & reasoning separation', () => {
     ]);
   });
 
+  it('preserves partial generic SSE usage metadata so experiment accounting can reject it', async () => {
+    async function* chunks(): AsyncIterable<string> {
+      yield 'data: {"choices":[],"usage":{"prompt_cache_hit_tokens":8,"completion_tokens":3}}\n\n';
+    }
+
+    const deltas = [];
+    for await (const delta of parseOpenAiSseStream(chunks())) deltas.push(delta);
+
+    expect(deltas).toEqual([{
+      contentDelta: undefined,
+      reasoningDelta: undefined,
+      finishReason: undefined,
+      usage: {
+        promptTokens: undefined,
+        completionTokens: 3,
+        totalTokens: undefined,
+        promptCacheHitTokens: 8,
+        promptCacheMissTokens: undefined,
+      },
+    }]);
+  });
+
   it('throws descriptive error when OpenAI transport receives non-2xx HTTP response', async () => {
     const transport = createOpenAiTransport(async () => ({
       ok: false,

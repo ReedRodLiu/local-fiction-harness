@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "mode": "offline-simulated",
   "generatedAt": "2026-11-22T16:00:00.000Z",
   "providerRuns": 0,
@@ -179,19 +179,19 @@
       "localRetrievalCount": 30,
       "missingUsageRecords": 0,
       "usage": {
-        "promptCacheHitTokens": 7605,
-        "promptCacheMissTokens": 4501,
+        "promptCacheHitTokens": 7574,
+        "promptCacheMissTokens": 4481,
         "completionTokens": 1944
       },
       "visibleOutputCharCount": 217,
       "costUsd": null,
       "costPer100TurnsUsd": null,
-      "cacheHitRate": 0.6282008921196102,
+      "cacheHitRate": 0.6282870178349232,
       "firstContentLatencyMsP50": 928,
       "firstContentLatencyMsP95": 1113,
       "branchSwitchFirstContentLatencyMsP50": 965,
       "latencySampleCount": 30,
-      "peakInputTokens": 592,
+      "peakInputTokens": 541,
       "completionRate": 1
     }
   },
@@ -205,6 +205,110 @@
       "reason": "non-official-provider"
     }
   },
+  "rangeSubsets": {
+    "fullToRetrievable": {
+      "status": "unavailable",
+      "reason": "non-official-provider",
+      "baselineRange": {
+        "firstTurnId": "continuous:turn-291",
+        "lastTurnId": "nested:turn-856",
+        "completedTurnCount": 30
+      },
+      "candidateRange": {
+        "firstTurnId": "continuous:turn-291",
+        "lastTurnId": "nested:turn-856",
+        "completedTurnCount": 30
+      },
+      "subsetRange": {
+        "firstTurnId": "continuous:turn-291",
+        "lastTurnId": "nested:turn-856",
+        "completedTurnCount": 30,
+        "turnIds": [
+          "continuous:turn-291",
+          "continuous:turn-292",
+          "continuous:turn-293",
+          "continuous:turn-294",
+          "continuous:turn-295",
+          "continuous:turn-296",
+          "continuous:turn-297",
+          "continuous:turn-298",
+          "continuous:turn-299",
+          "continuous:turn-300",
+          "branching:turn-69",
+          "branching:turn-70",
+          "branching:turn-71",
+          "branching:turn-72",
+          "branching:turn-73",
+          "branching:turn-298",
+          "branching:turn-299",
+          "branching:turn-300",
+          "branching:turn-301",
+          "branching:turn-302",
+          "nested:turn-196",
+          "nested:turn-197",
+          "nested:turn-366",
+          "nested:turn-367",
+          "nested:turn-535",
+          "nested:turn-536",
+          "nested:turn-695",
+          "nested:turn-696",
+          "nested:turn-855",
+          "nested:turn-856"
+        ]
+      }
+    },
+    "folioToRetrievable": {
+      "status": "unavailable",
+      "reason": "non-official-provider",
+      "baselineRange": {
+        "firstTurnId": "continuous:turn-291",
+        "lastTurnId": "nested:turn-856",
+        "completedTurnCount": 30
+      },
+      "candidateRange": {
+        "firstTurnId": "continuous:turn-291",
+        "lastTurnId": "nested:turn-856",
+        "completedTurnCount": 30
+      },
+      "subsetRange": {
+        "firstTurnId": "continuous:turn-291",
+        "lastTurnId": "nested:turn-856",
+        "completedTurnCount": 30,
+        "turnIds": [
+          "continuous:turn-291",
+          "continuous:turn-292",
+          "continuous:turn-293",
+          "continuous:turn-294",
+          "continuous:turn-295",
+          "continuous:turn-296",
+          "continuous:turn-297",
+          "continuous:turn-298",
+          "continuous:turn-299",
+          "continuous:turn-300",
+          "branching:turn-69",
+          "branching:turn-70",
+          "branching:turn-71",
+          "branching:turn-72",
+          "branching:turn-73",
+          "branching:turn-298",
+          "branching:turn-299",
+          "branching:turn-300",
+          "branching:turn-301",
+          "branching:turn-302",
+          "nested:turn-196",
+          "nested:turn-197",
+          "nested:turn-366",
+          "nested:turn-367",
+          "nested:turn-535",
+          "nested:turn-536",
+          "nested:turn-695",
+          "nested:turn-696",
+          "nested:turn-855",
+          "nested:turn-856"
+        ]
+      }
+    }
+  },
   "branchIsolation": {
     "checkedRequests": 123,
     "checkedGenerationRequests": 90,
@@ -214,16 +318,34 @@
     "passed": true
   },
   "branchLifecycle": {
+    "fixture": "nested",
+    "continuationEntry": "FictionHarness.runTurn",
+    "continuationModelCalls": 2,
     "continuedTurns": 2,
+    "providerCalls": 0,
     "reopenedAfterRestart": true,
     "editedSiblingIsolated": true,
     "oldTurnEdit": {
       "entry": "FictionHarness.editAndBranch",
+      "fixture": "nested",
       "execution": "offline-pure-harness",
       "transport": "in-process-fake",
       "modelCalls": 1,
       "providerCalls": 0,
+      "reloadedAfterEdit": true,
       "originalBranchPreserved": true,
+      "siblingIsolated": true,
+      "passed": true
+    },
+    "retry": {
+      "entry": "FictionHarness.regenerateNode",
+      "fixture": "branching",
+      "execution": "offline-pure-harness",
+      "transport": "in-process-fake",
+      "modelCalls": 1,
+      "providerCalls": 0,
+      "reloadedAfterRetry": true,
+      "originalReplyPreserved": true,
       "siblingIsolated": true,
       "passed": true
     }
@@ -333,7 +455,7 @@
   "officialPreflight": {
     "ok": true,
     "requestCount": 123,
-    "maxEstimatedCostUsd": 0.17205944999999995,
+    "maxEstimatedCostUsd": 0.17204759999999997,
     "violations": [],
     "budget": {
       "maxRequests": 128,
@@ -2612,7 +2734,25 @@
       "inputCharCount": 247,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "47fbe59c"
+      "contextFingerprint": "47fbe59c",
+      "retrievalNodeIds": [
+        "turn-246-u",
+        "turn-261-u",
+        "turn-276-u"
+      ],
+      "retrievalScores": [
+        135,
+        135,
+        135
+      ],
+      "recentNodeIds": [
+        "turn-288-u",
+        "turn-288-a",
+        "turn-289-u",
+        "turn-289-a",
+        "turn-290-u",
+        "turn-290-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-01",
@@ -2623,7 +2763,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-246-u",
+        "turn-261-u",
+        "turn-276-u"
+      ],
+      "retrievalScores": [
+        135,
+        135,
+        135
+      ],
+      "recentNodeIds": [
+        "turn-288-u",
+        "turn-288-a",
+        "turn-289-u",
+        "turn-289-a",
+        "turn-290-u",
+        "turn-290-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-continuous-02",
@@ -2646,7 +2805,25 @@
       "inputCharCount": 240,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "b1165a19"
+      "contextFingerprint": "b1165a19",
+      "retrievalNodeIds": [
+        "turn-247-u",
+        "turn-262-u",
+        "turn-277-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-289-u",
+        "turn-289-a",
+        "turn-290-u",
+        "turn-290-a",
+        "turn-291-u",
+        "turn-291-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-02",
@@ -2657,7 +2834,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-247-u",
+        "turn-262-u",
+        "turn-277-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-289-u",
+        "turn-289-a",
+        "turn-290-u",
+        "turn-290-a",
+        "turn-291-u",
+        "turn-291-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-continuous-03",
@@ -2666,8 +2862,8 @@
       "logicalTurnId": "continuous:turn-293",
       "transport": "outbound-http",
       "usage": {
-        "promptCacheHitTokens": 357,
-        "promptCacheMissTokens": 235,
+        "promptCacheHitTokens": 326,
+        "promptCacheMissTokens": 215,
         "completionTokens": 64
       },
       "visibleOutputCharCount": 7,
@@ -2677,10 +2873,28 @@
       "scenario": "continuous",
       "inputNodeCount": 584,
       "inputTailNodeId": "turn-292-a",
-      "inputCharCount": 324,
+      "inputCharCount": 297,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "2365ed82"
+      "contextFingerprint": "03d2af0a",
+      "retrievalNodeIds": [
+        "turn-287-a",
+        "turn-288-a",
+        "turn-289-a"
+      ],
+      "retrievalScores": [
+        43,
+        43,
+        43
+      ],
+      "recentNodeIds": [
+        "turn-290-u",
+        "turn-290-a",
+        "turn-291-u",
+        "turn-291-a",
+        "turn-292-u",
+        "turn-292-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-03",
@@ -2691,7 +2905,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-287-a",
+        "turn-288-a",
+        "turn-289-a"
+      ],
+      "retrievalScores": [
+        43,
+        43,
+        43
+      ],
+      "recentNodeIds": [
+        "turn-290-u",
+        "turn-290-a",
+        "turn-291-u",
+        "turn-291-a",
+        "turn-292-u",
+        "turn-292-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-continuous-04",
@@ -2714,7 +2947,25 @@
       "inputCharCount": 209,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "09e786ac"
+      "contextFingerprint": "09e786ac",
+      "retrievalNodeIds": [
+        "turn-249-u",
+        "turn-264-u",
+        "turn-279-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-291-u",
+        "turn-291-a",
+        "turn-292-u",
+        "turn-292-a",
+        "turn-293-u",
+        "turn-293-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-04",
@@ -2725,7 +2976,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-249-u",
+        "turn-264-u",
+        "turn-279-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-291-u",
+        "turn-291-a",
+        "turn-292-u",
+        "turn-292-a",
+        "turn-293-u",
+        "turn-293-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-continuous-05",
@@ -2748,7 +3018,25 @@
       "inputCharCount": 211,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "4678b14b"
+      "contextFingerprint": "4678b14b",
+      "retrievalNodeIds": [
+        "turn-250-u",
+        "turn-265-u",
+        "turn-280-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-292-u",
+        "turn-292-a",
+        "turn-293-u",
+        "turn-293-a",
+        "turn-294-u",
+        "turn-294-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-05",
@@ -2759,7 +3047,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-250-u",
+        "turn-265-u",
+        "turn-280-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-292-u",
+        "turn-292-a",
+        "turn-293-u",
+        "turn-293-a",
+        "turn-294-u",
+        "turn-294-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-continuous-06",
@@ -2782,7 +3089,25 @@
       "inputCharCount": 212,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "0e00bfb4"
+      "contextFingerprint": "0e00bfb4",
+      "retrievalNodeIds": [
+        "turn-251-u",
+        "turn-266-u",
+        "turn-281-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-293-u",
+        "turn-293-a",
+        "turn-294-u",
+        "turn-294-a",
+        "turn-295-u",
+        "turn-295-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-06",
@@ -2793,7 +3118,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-251-u",
+        "turn-266-u",
+        "turn-281-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-293-u",
+        "turn-293-a",
+        "turn-294-u",
+        "turn-294-a",
+        "turn-295-u",
+        "turn-295-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-continuous-07",
@@ -2816,7 +3160,25 @@
       "inputCharCount": 215,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "a93746d0"
+      "contextFingerprint": "a93746d0",
+      "retrievalNodeIds": [
+        "turn-252-u",
+        "turn-267-u",
+        "turn-282-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-294-u",
+        "turn-294-a",
+        "turn-295-u",
+        "turn-295-a",
+        "turn-296-u",
+        "turn-296-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-07",
@@ -2827,7 +3189,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-252-u",
+        "turn-267-u",
+        "turn-282-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-294-u",
+        "turn-294-a",
+        "turn-295-u",
+        "turn-295-a",
+        "turn-296-u",
+        "turn-296-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-continuous-08",
@@ -2850,7 +3231,25 @@
       "inputCharCount": 216,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "68a4d4f9"
+      "contextFingerprint": "68a4d4f9",
+      "retrievalNodeIds": [
+        "turn-253-u",
+        "turn-268-u",
+        "turn-283-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-295-u",
+        "turn-295-a",
+        "turn-296-u",
+        "turn-296-a",
+        "turn-297-u",
+        "turn-297-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-08",
@@ -2861,7 +3260,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-253-u",
+        "turn-268-u",
+        "turn-283-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-295-u",
+        "turn-295-a",
+        "turn-296-u",
+        "turn-296-a",
+        "turn-297-u",
+        "turn-297-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-continuous-09",
@@ -2884,7 +3302,25 @@
       "inputCharCount": 216,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "bd617c7b"
+      "contextFingerprint": "bd617c7b",
+      "retrievalNodeIds": [
+        "turn-254-u",
+        "turn-269-u",
+        "turn-284-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-296-u",
+        "turn-296-a",
+        "turn-297-u",
+        "turn-297-a",
+        "turn-298-u",
+        "turn-298-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-09",
@@ -2895,7 +3331,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-254-u",
+        "turn-269-u",
+        "turn-284-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-296-u",
+        "turn-296-a",
+        "turn-297-u",
+        "turn-297-a",
+        "turn-298-u",
+        "turn-298-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-continuous-10",
@@ -2918,7 +3373,25 @@
       "inputCharCount": 216,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "8be3a00f"
+      "contextFingerprint": "8be3a00f",
+      "retrievalNodeIds": [
+        "turn-255-u",
+        "turn-270-u",
+        "turn-285-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-297-u",
+        "turn-297-a",
+        "turn-298-u",
+        "turn-298-a",
+        "turn-299-u",
+        "turn-299-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-continuous-10",
@@ -2929,7 +3402,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-255-u",
+        "turn-270-u",
+        "turn-285-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-297-u",
+        "turn-297-a",
+        "turn-298-u",
+        "turn-298-a",
+        "turn-299-u",
+        "turn-299-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-branching-01",
@@ -2952,7 +3444,25 @@
       "inputCharCount": 206,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "259e4d7b"
+      "contextFingerprint": "259e4d7b",
+      "retrievalNodeIds": [
+        "turn-24-u",
+        "turn-39-u",
+        "turn-54-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-66-u",
+        "turn-66-a",
+        "turn-67-u",
+        "turn-67-a",
+        "turn-68-u",
+        "turn-68-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-01",
@@ -2963,7 +3473,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-24-u",
+        "turn-39-u",
+        "turn-54-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-66-u",
+        "turn-66-a",
+        "turn-67-u",
+        "turn-67-a",
+        "turn-68-u",
+        "turn-68-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-branching-02",
@@ -2986,7 +3515,25 @@
       "inputCharCount": 208,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "120894c9"
+      "contextFingerprint": "120894c9",
+      "retrievalNodeIds": [
+        "turn-25-u",
+        "turn-40-u",
+        "turn-55-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-67-u",
+        "turn-67-a",
+        "turn-68-u",
+        "turn-68-a",
+        "turn-69-u",
+        "turn-69-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-02",
@@ -2997,7 +3544,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-25-u",
+        "turn-40-u",
+        "turn-55-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-67-u",
+        "turn-67-a",
+        "turn-68-u",
+        "turn-68-a",
+        "turn-69-u",
+        "turn-69-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-branching-03",
@@ -3020,7 +3586,25 @@
       "inputCharCount": 209,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "74434102"
+      "contextFingerprint": "74434102",
+      "retrievalNodeIds": [
+        "turn-26-u",
+        "turn-41-u",
+        "turn-56-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-68-u",
+        "turn-68-a",
+        "turn-69-u",
+        "turn-69-a",
+        "turn-70-u",
+        "turn-70-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-03",
@@ -3031,7 +3615,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-26-u",
+        "turn-41-u",
+        "turn-56-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-68-u",
+        "turn-68-a",
+        "turn-69-u",
+        "turn-69-a",
+        "turn-70-u",
+        "turn-70-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-branching-04",
@@ -3054,7 +3657,25 @@
       "inputCharCount": 212,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "1ce9101c"
+      "contextFingerprint": "1ce9101c",
+      "retrievalNodeIds": [
+        "turn-27-u",
+        "turn-42-u",
+        "turn-57-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-69-u",
+        "turn-69-a",
+        "turn-70-u",
+        "turn-70-a",
+        "turn-71-u",
+        "turn-71-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-04",
@@ -3065,7 +3686,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-27-u",
+        "turn-42-u",
+        "turn-57-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-69-u",
+        "turn-69-a",
+        "turn-70-u",
+        "turn-70-a",
+        "turn-71-u",
+        "turn-71-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-branching-05",
@@ -3088,7 +3728,25 @@
       "inputCharCount": 213,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "07dcbced"
+      "contextFingerprint": "07dcbced",
+      "retrievalNodeIds": [
+        "turn-28-u",
+        "turn-43-u",
+        "turn-58-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-70-u",
+        "turn-70-a",
+        "turn-71-u",
+        "turn-71-a",
+        "turn-72-u",
+        "turn-72-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-05",
@@ -3099,7 +3757,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-28-u",
+        "turn-43-u",
+        "turn-58-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-70-u",
+        "turn-70-a",
+        "turn-71-u",
+        "turn-71-a",
+        "turn-72-u",
+        "turn-72-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-branching-06",
@@ -3122,7 +3799,25 @@
       "inputCharCount": 214,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "877bcb27"
+      "contextFingerprint": "877bcb27",
+      "retrievalNodeIds": [
+        "turn-28-u",
+        "turn-43-u",
+        "turn-283-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-295-u",
+        "turn-295-a",
+        "turn-296-u",
+        "turn-296-a",
+        "turn-297-u",
+        "turn-297-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-06",
@@ -3133,7 +3828,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-28-u",
+        "turn-43-u",
+        "turn-283-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-295-u",
+        "turn-295-a",
+        "turn-296-u",
+        "turn-296-a",
+        "turn-297-u",
+        "turn-297-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-branching-07",
@@ -3156,7 +3870,25 @@
       "inputCharCount": 214,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "c6601ded"
+      "contextFingerprint": "c6601ded",
+      "retrievalNodeIds": [
+        "turn-29-u",
+        "turn-44-u",
+        "turn-284-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-296-u",
+        "turn-296-a",
+        "turn-297-u",
+        "turn-297-a",
+        "turn-298-u",
+        "turn-298-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-07",
@@ -3167,7 +3899,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-29-u",
+        "turn-44-u",
+        "turn-284-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-296-u",
+        "turn-296-a",
+        "turn-297-u",
+        "turn-297-a",
+        "turn-298-u",
+        "turn-298-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-branching-08",
@@ -3190,7 +3941,25 @@
       "inputCharCount": 214,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "bce782b1"
+      "contextFingerprint": "bce782b1",
+      "retrievalNodeIds": [
+        "turn-30-u",
+        "turn-45-u",
+        "turn-285-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-297-u",
+        "turn-297-a",
+        "turn-298-u",
+        "turn-298-a",
+        "turn-299-u",
+        "turn-299-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-08",
@@ -3201,7 +3970,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-30-u",
+        "turn-45-u",
+        "turn-285-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-297-u",
+        "turn-297-a",
+        "turn-298-u",
+        "turn-298-a",
+        "turn-299-u",
+        "turn-299-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-branching-09",
@@ -3224,7 +4012,25 @@
       "inputCharCount": 210,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "c616ebea"
+      "contextFingerprint": "c616ebea",
+      "retrievalNodeIds": [
+        "turn-31-u",
+        "turn-46-u",
+        "turn-286-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-298-u",
+        "turn-298-a",
+        "turn-299-u",
+        "turn-299-a",
+        "turn-300-u",
+        "turn-300-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-09",
@@ -3235,7 +4041,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-31-u",
+        "turn-46-u",
+        "turn-286-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-298-u",
+        "turn-298-a",
+        "turn-299-u",
+        "turn-299-a",
+        "turn-300-u",
+        "turn-300-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-branching-10",
@@ -3258,7 +4083,25 @@
       "inputCharCount": 213,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "9a9d11ac"
+      "contextFingerprint": "9a9d11ac",
+      "retrievalNodeIds": [
+        "turn-32-u",
+        "turn-47-u",
+        "turn-287-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-299-u",
+        "turn-299-a",
+        "turn-300-u",
+        "turn-300-a",
+        "turn-301-u",
+        "turn-301-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-branching-10",
@@ -3269,7 +4112,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "branching"
+      "scenario": "branching",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-32-u",
+        "turn-47-u",
+        "turn-287-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-299-u",
+        "turn-299-a",
+        "turn-300-u",
+        "turn-300-a",
+        "turn-301-u",
+        "turn-301-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-nested-01",
@@ -3292,7 +4154,25 @@
       "inputCharCount": 212,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "a185d415"
+      "contextFingerprint": "a185d415",
+      "retrievalNodeIds": [
+        "turn-91-u",
+        "turn-106-u",
+        "turn-181-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-193-u",
+        "turn-193-a",
+        "turn-194-u",
+        "turn-194-a",
+        "turn-195-u",
+        "turn-195-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-01",
@@ -3303,7 +4183,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-91-u",
+        "turn-106-u",
+        "turn-181-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-193-u",
+        "turn-193-a",
+        "turn-194-u",
+        "turn-194-a",
+        "turn-195-u",
+        "turn-195-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-nested-02",
@@ -3326,7 +4225,25 @@
       "inputCharCount": 214,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "8a469f7f"
+      "contextFingerprint": "8a469f7f",
+      "retrievalNodeIds": [
+        "turn-77-u",
+        "turn-92-u",
+        "turn-182-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-194-u",
+        "turn-194-a",
+        "turn-195-u",
+        "turn-195-a",
+        "turn-196-u",
+        "turn-196-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-02",
@@ -3337,7 +4254,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-77-u",
+        "turn-92-u",
+        "turn-182-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-194-u",
+        "turn-194-a",
+        "turn-195-u",
+        "turn-195-a",
+        "turn-196-u",
+        "turn-196-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-nested-03",
@@ -3360,7 +4296,25 @@
       "inputCharCount": 221,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "827e5b8b"
+      "contextFingerprint": "827e5b8b",
+      "retrievalNodeIds": [
+        "turn-111-u",
+        "turn-141-u",
+        "turn-351-u"
+      ],
+      "retrievalScores": [
+        135,
+        135,
+        135
+      ],
+      "recentNodeIds": [
+        "turn-363-u",
+        "turn-363-a",
+        "turn-364-u",
+        "turn-364-a",
+        "turn-365-u",
+        "turn-365-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-03",
@@ -3371,7 +4325,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-111-u",
+        "turn-141-u",
+        "turn-351-u"
+      ],
+      "retrievalScores": [
+        135,
+        135,
+        135
+      ],
+      "recentNodeIds": [
+        "turn-363-u",
+        "turn-363-a",
+        "turn-364-u",
+        "turn-364-a",
+        "turn-365-u",
+        "turn-365-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-nested-04",
@@ -3394,7 +4367,25 @@
       "inputCharCount": 212,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "59a262cf"
+      "contextFingerprint": "59a262cf",
+      "retrievalNodeIds": [
+        "turn-82-u",
+        "turn-97-u",
+        "turn-352-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-364-u",
+        "turn-364-a",
+        "turn-365-u",
+        "turn-365-a",
+        "turn-366-u",
+        "turn-366-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-04",
@@ -3405,7 +4396,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-82-u",
+        "turn-97-u",
+        "turn-352-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-364-u",
+        "turn-364-a",
+        "turn-365-u",
+        "turn-365-a",
+        "turn-366-u",
+        "turn-366-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-nested-05",
@@ -3428,7 +4438,25 @@
       "inputCharCount": 210,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "813b20f1"
+      "contextFingerprint": "813b20f1",
+      "retrievalNodeIds": [
+        "turn-70-u",
+        "turn-85-u",
+        "turn-100-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-532-u",
+        "turn-532-a",
+        "turn-533-u",
+        "turn-533-a",
+        "turn-534-u",
+        "turn-534-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-05",
@@ -3439,7 +4467,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-70-u",
+        "turn-85-u",
+        "turn-100-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-532-u",
+        "turn-532-a",
+        "turn-533-u",
+        "turn-533-a",
+        "turn-534-u",
+        "turn-534-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-nested-06",
@@ -3462,7 +4509,25 @@
       "inputCharCount": 212,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "f4551fc0"
+      "contextFingerprint": "f4551fc0",
+      "retrievalNodeIds": [
+        "turn-86-u",
+        "turn-116-u",
+        "turn-521-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-533-u",
+        "turn-533-a",
+        "turn-534-u",
+        "turn-534-a",
+        "turn-535-u",
+        "turn-535-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-06",
@@ -3473,7 +4538,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-86-u",
+        "turn-116-u",
+        "turn-521-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-533-u",
+        "turn-533-a",
+        "turn-534-u",
+        "turn-534-a",
+        "turn-535-u",
+        "turn-535-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-nested-07",
@@ -3496,7 +4580,25 @@
       "inputCharCount": 214,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "c1c98382"
+      "contextFingerprint": "c1c98382",
+      "retrievalNodeIds": [
+        "turn-65-u",
+        "turn-80-u",
+        "turn-95-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-692-u",
+        "turn-692-a",
+        "turn-693-u",
+        "turn-693-a",
+        "turn-694-u",
+        "turn-694-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-07",
@@ -3507,7 +4609,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-65-u",
+        "turn-80-u",
+        "turn-95-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-692-u",
+        "turn-692-a",
+        "turn-693-u",
+        "turn-693-a",
+        "turn-694-u",
+        "turn-694-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-nested-08",
@@ -3530,7 +4651,25 @@
       "inputCharCount": 219,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "3060789a"
+      "contextFingerprint": "3060789a",
+      "retrievalNodeIds": [
+        "turn-81-u",
+        "turn-96-u",
+        "turn-681-u"
+      ],
+      "retrievalScores": [
+        135,
+        135,
+        135
+      ],
+      "recentNodeIds": [
+        "turn-693-u",
+        "turn-693-a",
+        "turn-694-u",
+        "turn-694-a",
+        "turn-695-u",
+        "turn-695-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-08",
@@ -3541,7 +4680,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-81-u",
+        "turn-96-u",
+        "turn-681-u"
+      ],
+      "retrievalScores": [
+        135,
+        135,
+        135
+      ],
+      "recentNodeIds": [
+        "turn-693-u",
+        "turn-693-a",
+        "turn-694-u",
+        "turn-694-a",
+        "turn-695-u",
+        "turn-695-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-nested-09",
@@ -3564,7 +4722,25 @@
       "inputCharCount": 215,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "681e4d69"
+      "contextFingerprint": "681e4d69",
+      "retrievalNodeIds": [
+        "turn-75-u",
+        "turn-90-u",
+        "turn-105-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-852-u",
+        "turn-852-a",
+        "turn-853-u",
+        "turn-853-a",
+        "turn-854-u",
+        "turn-854-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-09",
@@ -3575,7 +4751,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-75-u",
+        "turn-90-u",
+        "turn-105-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-852-u",
+        "turn-852-a",
+        "turn-853-u",
+        "turn-853-a",
+        "turn-854-u",
+        "turn-854-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-nested-10",
@@ -3598,7 +4793,25 @@
       "inputCharCount": 211,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "0c5548a4"
+      "contextFingerprint": "0c5548a4",
+      "retrievalNodeIds": [
+        "turn-76-u",
+        "turn-91-u",
+        "turn-841-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-853-u",
+        "turn-853-a",
+        "turn-854-u",
+        "turn-854-a",
+        "turn-855-u",
+        "turn-855-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retrieval-nested-10",
@@ -3609,7 +4822,26 @@
       "usage": null,
       "visibleOutputCharCount": null,
       "arm": "retrievable",
-      "scenario": "nested"
+      "scenario": "nested",
+      "contextPolicy": "branch-retrieval",
+      "retrievalNodeIds": [
+        "turn-76-u",
+        "turn-91-u",
+        "turn-841-u"
+      ],
+      "retrievalScores": [
+        89,
+        89,
+        89
+      ],
+      "recentNodeIds": [
+        "turn-853-u",
+        "turn-853-a",
+        "turn-854-u",
+        "turn-854-a",
+        "turn-855-u",
+        "turn-855-a"
+      ]
     },
     {
       "requestId": "anonymous-retrievable-retry-001",
@@ -3631,7 +4863,25 @@
       "inputCharCount": 216,
       "messageCount": 11,
       "contextPolicy": "branch-retrieval",
-      "contextFingerprint": "8be3a00f"
+      "contextFingerprint": "8be3a00f",
+      "retrievalNodeIds": [
+        "turn-255-u",
+        "turn-270-u",
+        "turn-285-u"
+      ],
+      "retrievalScores": [
+        112,
+        112,
+        112
+      ],
+      "recentNodeIds": [
+        "turn-297-u",
+        "turn-297-a",
+        "turn-298-u",
+        "turn-298-a",
+        "turn-299-u",
+        "turn-299-a"
+      ]
     }
   ],
   "limitations": [

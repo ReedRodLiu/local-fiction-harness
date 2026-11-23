@@ -18,16 +18,16 @@ node --experimental-strip-types experiments/context-compression/run.mjs \
   --output experiments/context-compression/evidence/offline-smoke.json
 ```
 
-输出（`schemaVersion: 4`）包含：
+输出（`schemaVersion: 5`）包含：
 
 - 每组匿名逐请求 token 用量、可见正文 UTF-16 字符数、首段正文等待、分支切换首轮等待、完成率、完成回合 ID 和请求阶段。
-- 生成、剧情摘要、回取、重试的独立记录；每条记录标明 `outbound-http` 或 `local`。只有出站请求把缺失 provider usage 计为未知，本地回取的 `usage` 明确为 `null`，不计作零，也不要求 provider usage。
+- 生成、剧情摘要、回取、重试的独立记录；每条记录标明 `outbound-http` 或 `local`。只有出站请求把缺失或无效 provider usage 计为未知，本地回取的 `usage` 明确为 `null`，不计作零，也不要求 provider usage。实验边界只接受同时具有非负安全整数缓存命中、缓存未命中和 completion 三个计费桶的 usage；通用 SSE 仍可原样保留部分字段，但映射到实验费用时为 `null`。
 - 固定历史连续回放逐轮使用当前行动的前一回复作为父节点；离线证据记录输入历史长度与末尾节点，不重复发送最终历史或行动本身。
 - B 组使用生产代码的 `selectNodesToSummarize` 与滚动批次口径；每条上下文记录摘要覆盖到哪个节点、已覆盖/未覆盖节点数以及覆盖是否连续。摘要正文和 30 次摘要请求均由固定算法离线模拟，报告明确标记 `deterministic-offline`，不能当作真实摘要质量。
-- 固定历史的分支身份、同名角色在不同路线的互斥状态、共享祖先回取、`A → B → A` 与 `A → B → C` 路线切换、重启重开、续写，以及真实 `FictionHarness.editAndBranch` 入口的旧轮分叉隔离。旧轮测试只使用进程内假 transport，记录 `modelCalls: 1` 和 `providerCalls: 0`。
+- 固定历史的分支身份、同名角色在不同路线的互斥状态、共享祖先回取、`A → B → A` 与 `A → B → C` 路线切换。C 组只回取分数大于零且不在当前最近六节点内的路线节点；13 组短线索探针验证本路线事实可见、兄弟路线事实不可见。嵌套夹具通过真实 `FictionHarness.runTurn` 连续续写两轮，重载后仍回到原路线；随后通过真实 `FictionHarness.editAndBranch` 从旧轮建立兄弟分支，再重载和双向切换验证原分支不变、兄弟事实隔离。另一个 branched 夹具通过真实 `FictionHarness.regenerateNode` 重试回复，并验证原回复保留、重试兄弟隔离和重载状态。所有模型回复来自进程内假 transport，`providerCalls` 为 0。
 - 90 个生成、30 个滚动摘要和 3 个 retry 出站输入都检查兄弟路线禁止事实；背景摘要与 retry 同样保存输入字符数、消息数、策略名称和内容指纹，不保存请求正文。本地回取不计入这些出站输入。
 - 官方 SSE usage 若提供 `completion_tokens_details.reasoning_tokens`，实验契约会作为独立元数据保留。`completion_tokens` 已包含该思考 token，费用与总 completion token 只按 `completion_tokens` 计算一次，不会再次相加。
-- 明确标记 `mode: offline-simulated`、`providerRuns: 0` 和 `credentialStatus: not-read`。本次会话另由主代理确认父进程没有 `DEEPSEEK_API_KEY`。
+- 明确标记 `mode: offline-simulated`、`providerRuns: 0` 和 `credentialStatus: not-read`。复跑没有读取任何凭据来源。
 
 离线记录中的 token 数和延迟均为固定算法模拟值，`costUsd` 固定为 `null`，不能用于判断真实缓存命中、延迟或费用。延迟 p50/p95 采用 nearest-rank，只覆盖已完成的逻辑生成；逻辑生成包括成功生成或成功 retry，同一 `logicalTurnId` 以最后成功尝试的首段可见正文等待为一个样本。失败尝试、摘要请求和本地回取不计入该分位数。
 
@@ -58,7 +58,7 @@ node --experimental-strip-types experiments/context-compression/run.mjs \
 
 当前固定夹具的离线预检计划为 90 次生成、30 次模拟摘要和 3 次重试，共 123 次出站 HTTP 请求，另有 30 条本地回取记录。本地回取没有上游 usage，不计入 128 次出站上限或费用。最坏出站费用上限 US$0.17205945 仍在 US$0.25 总上限内。这个数字按字节数上界和全部缓存未命中计算，是中断用的保守上限，不是预计账单。
 
-省费比较会先核对双方完成的逻辑回合 ID。两组 ID 必须完全相同、数量与声明回合数一致，且都非空；任一侧为空、少回合、截断或范围错位时都返回 `unavailable`。当前没有实现共同前缀重算，因此不会把部分重叠范围自动当作可比样本。成功的生成重试只计为同一逻辑回合一次，但每次请求的 usage 仍全部计费。
+用户省费结论使用严格比较：两组完成逻辑回合 ID 必须完全相同、数量与声明回合数一致，且都非空；任一侧为空、少回合、截断或范围错位时都返回 `unavailable`。报告另设 `rangeSubsets`，在不放宽上述展示结论的前提下，记录双方各自范围、共同有序前缀及该前缀内费用；它只用于实验证据，臂长不同也不会被当作严格省费结论。成功的生成重试只计为同一逻辑回合一次，但每次请求的 usage 仍全部计费。
 
 ## 会话级省费展示设计
 

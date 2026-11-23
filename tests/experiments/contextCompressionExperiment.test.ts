@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { EMPTY_SUMMARY_SNAPSHOT, getActiveBranchNodes, type TurnNode } from '../../src/harness/index.ts';
 import {
+  buildRetrievableExperimentContext,
   generateExperimentScenario,
   retrieveFromActiveBranch,
   runOfflineSmoke,
@@ -44,12 +45,25 @@ describe('branch-safe context retrieval', () => {
     const branchBText = branchB.selected.map((entry) => entry.content).join('\n');
 
     expect(branchA.pathNodeIds).toEqual(['root', 'a', 'aReply']);
+    expect(branchA.scores).toHaveLength(3);
+    expect(branchA.scores.every((score) => score > 0)).toBe(true);
     expect(branchAText).toContain('青铜钥匙');
     expect(branchAText).toContain('甲线林舟');
     expect(branchAText).not.toContain('乙线');
     expect(branchBText).toContain('青铜钥匙');
     expect(branchBText).toContain('乙线林舟');
     expect(branchBText).not.toContain('甲线');
+
+    expect(retrieveFromActiveBranch(nodes, 'aReply', '不存在的线索', 3).selected).toEqual([]);
+    const excludingRecent = retrieveFromActiveBranch(
+      nodes,
+      'aReply',
+      '钥匙 林舟',
+      3,
+      new Set(['root', 'a', 'aReply']),
+    );
+    expect(excludingRecent.selected).toEqual([]);
+    expect(excludingRecent.scores.every((score) => score > 0)).toBe(true);
   });
 
   it('generates the required deterministic short-action branch matrix with isolated probe facts', () => {
@@ -89,8 +103,21 @@ describe('branch-safe context retrieval', () => {
       expect(shortActions.length / scenario.actions.length).toBeGreaterThanOrEqual(0.8);
 
       for (const probe of scenario.probes) {
-        const retrieval = retrieveFromActiveBranch(scenario.nodes, probe.leafId, probe.query, 4);
-        const retrieved = retrieval.selected.map((entry) => entry.content).join('\n');
+        const context = buildRetrievableExperimentContext(
+          scenario,
+          probe.leafId,
+          probe.query,
+        );
+        const retrieved = context.messages
+          .filter((message) => message.content.startsWith('按需回取'))
+          .map((message) => message.content)
+          .join('\n');
+        expect(context.retrievalNodeIds.length).toBeGreaterThan(0);
+        expect(context.retrievalScores).toHaveLength(context.retrievalNodeIds.length);
+        expect(context.retrievalScores.every((score) => score > 0)).toBe(true);
+        expect(context.retrievalNodeIds.every(
+          (nodeId) => !context.recentNodeIds.includes(nodeId),
+        )).toBe(true);
         for (const fact of probe.expectedFacts) {
           expect(probe.query).not.toContain(fact);
           expect(retrieved).toContain(fact);
@@ -110,7 +137,7 @@ describe('branch-safe context retrieval', () => {
   it('runs the 30-turn three-arm smoke offline with anonymous usage, counted background calls, and no cost claim', async () => {
     const report = await runOfflineSmoke({ seed: 20261123, now: () => 1_765_000_000_000 });
 
-    expect(report.schemaVersion).toBe(4);
+    expect(report.schemaVersion).toBe(5);
     expect(report.mode).toBe('offline-simulated');
     for (const arm of ['full', 'folio', 'retrievable'] as const) {
       expect(report.groups[arm].effectiveTurns).toBe(30);
@@ -127,6 +154,20 @@ describe('branch-safe context retrieval', () => {
     expect(report.comparisons.folioToRetrievable).toMatchObject({
       status: 'unavailable',
       reason: 'non-official-provider',
+    });
+    expect(report.rangeSubsets.fullToRetrievable).toMatchObject({
+      status: 'unavailable',
+      reason: 'non-official-provider',
+      baselineRange: { completedTurnCount: 30 },
+      candidateRange: { completedTurnCount: 30 },
+      subsetRange: { completedTurnCount: 30 },
+    });
+    expect(report.rangeSubsets.folioToRetrievable).toMatchObject({
+      status: 'unavailable',
+      reason: 'non-official-provider',
+      baselineRange: { completedTurnCount: 30 },
+      candidateRange: { completedTurnCount: 30 },
+      subsetRange: { completedTurnCount: 30 },
     });
     expect(report.branchIsolation).toMatchObject({
       checkedRequests: 123,
@@ -161,6 +202,14 @@ describe('branch-safe context retrieval', () => {
     expect(localRetrievalRecords).toHaveLength(30);
     expect(localRetrievalRecords.every((record) => record.phase === 'retrieval')).toBe(true);
     expect(localRetrievalRecords.every((record) => record.usage === null)).toBe(true);
+    for (const record of localRetrievalRecords) {
+      expect(record.retrievalNodeIds?.length).toBeGreaterThan(0);
+      expect(record.retrievalScores).toHaveLength(record.retrievalNodeIds!.length);
+      expect(record.retrievalScores?.every((score) => score > 0)).toBe(true);
+      expect(record.retrievalNodeIds?.every(
+        (nodeId) => !record.recentNodeIds?.includes(nodeId),
+      )).toBe(true);
+    }
     expect(report.groups.retrievable.missingUsageRecords).toBe(0);
     expect(outboundRecords.every((record) => (record.visibleOutputCharCount ?? 0) > 0)).toBe(true);
     expect(report.requests.every((record) => !Object.hasOwn(record, 'content'))).toBe(true);
@@ -188,7 +237,7 @@ describe('branch-safe context retrieval', () => {
     const probes = (['continuous', 'branching', 'nested'] as const)
       .flatMap((scenario) => generateExperimentScenario(scenario, 20261123).probes);
 
-    expect(report.schemaVersion).toBe(4);
+    expect(report.schemaVersion).toBe(5);
     expect(report.folioSummaryPolicy).toMatchObject({
       simulation: 'deterministic-offline',
       policy: 'production-selectNodesToSummarize-with-rolling-batches',
@@ -300,16 +349,39 @@ describe('branch-safe context retrieval', () => {
     }
   });
 
-  it('uses the pure Harness editAndBranch entry for old-turn sibling isolation', async () => {
+  it('uses real Harness lifecycle methods with reload and sibling-isolation checks', async () => {
     const report = await runOfflineSmoke({ seed: 20261123, now: () => 1_765_000_000_000 });
 
+    expect(report.branchLifecycle).toMatchObject({
+      fixture: 'nested',
+      continuationEntry: 'FictionHarness.runTurn',
+      continuationModelCalls: 2,
+      continuedTurns: 2,
+      providerCalls: 0,
+      reopenedAfterRestart: true,
+      editedSiblingIsolated: true,
+    });
     expect(report.branchLifecycle.oldTurnEdit).toEqual({
       entry: 'FictionHarness.editAndBranch',
+      fixture: 'nested',
       execution: 'offline-pure-harness',
       transport: 'in-process-fake',
       modelCalls: 1,
       providerCalls: 0,
+      reloadedAfterEdit: true,
       originalBranchPreserved: true,
+      siblingIsolated: true,
+      passed: true,
+    });
+    expect(report.branchLifecycle.retry).toEqual({
+      entry: 'FictionHarness.regenerateNode',
+      fixture: 'branching',
+      execution: 'offline-pure-harness',
+      transport: 'in-process-fake',
+      modelCalls: 1,
+      providerCalls: 0,
+      reloadedAfterRetry: true,
+      originalReplyPreserved: true,
       siblingIsolated: true,
       passed: true,
     });

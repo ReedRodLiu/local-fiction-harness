@@ -33,7 +33,11 @@ const report = await runOfflineSmoke({ seed, now: () => nowMs });
 if (
   !report.branchIsolation.passed ||
   !report.branchLifecycle.reopenedAfterRestart ||
+  report.branchLifecycle.continuationModelCalls !== 2 ||
+  report.branchLifecycle.providerCalls !== 0 ||
   !report.branchLifecycle.editedSiblingIsolated ||
+  !report.branchLifecycle.oldTurnEdit.passed ||
+  !report.branchLifecycle.retry.passed ||
   !report.routeReturns.aToBToA.passed ||
   !report.routeReturns.aToBToC.passed ||
   !report.folioSummaryPolicy.passed
@@ -78,4 +82,5 @@ console.log(JSON.stringify({
     latencySampleCount: summary.latencySampleCount,
   }])),
   comparisons: report.comparisons,
+  rangeSubsets: report.rangeSubsets,
 }, null, 2));

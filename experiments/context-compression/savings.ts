@@ -1,3 +1,5 @@
+import type { LlmUsage } from '../../src/harness/types.ts';
+
 export type ContextExperimentArm = 'full' | 'folio' | 'retrievable';
 export type ContextExperimentProvider = 'deepseek-official' | 'offline-simulated';
 export type ContextExperimentPricingSchedule = 'off-peak' | 'peak';
@@ -53,7 +55,7 @@ export interface ContextExperimentSummary {
   outboundRequestCount: number;
   localRetrievalCount: number;
   missingUsageRecords: number;
-  usage: ContextExperimentUsage;
+  usage: ContextExperimentUsage | null;
   visibleOutputCharCount: number;
   costUsd: number | null;
   costPer100TurnsUsd: number | null;
@@ -89,6 +91,35 @@ export type ContextSavingsEstimate =
   | {
       status: 'unavailable';
       reason: ContextSavingsUnavailableReason;
+    };
+
+export interface ContextExperimentTurnRange {
+  firstTurnId: string | null;
+  lastTurnId: string | null;
+  completedTurnCount: number;
+}
+
+export interface ContextExperimentTurnSubsetRange extends ContextExperimentTurnRange {
+  turnIds: string[];
+}
+
+export type ContextExperimentRangeSubsetComparison =
+  | {
+      status: 'available';
+      baselineRange: ContextExperimentTurnRange;
+      candidateRange: ContextExperimentTurnRange;
+      subsetRange: ContextExperimentTurnSubsetRange;
+      baselineCostUsd: number;
+      candidateCostUsd: number;
+      savingsUsd: number;
+      savingsPercent: number | null;
+    }
+  | {
+      status: 'unavailable';
+      reason: ContextSavingsUnavailableReason;
+      baselineRange: ContextExperimentTurnRange;
+      candidateRange: ContextExperimentTurnRange;
+      subsetRange: ContextExperimentTurnSubsetRange;
     };
 
 export interface ContextExperimentBudget {
@@ -136,6 +167,38 @@ export const DEEPSEEK_V41_FLASH_PEAK_RATES: Readonly<ContextExperimentRates> = {
   outputPerMillionUsd: 1.2,
 };
 
+function isNonnegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function addSafeCount(total: number, value: number): number | null {
+  const next = total + value;
+  return Number.isSafeInteger(next) ? next : null;
+}
+
+export function contextExperimentUsageFromSse(
+  raw: LlmUsage | undefined,
+): ContextExperimentUsage | null {
+  if (
+    !raw ||
+    !isNonnegativeSafeInteger(raw.promptCacheHitTokens) ||
+    !isNonnegativeSafeInteger(raw.promptCacheMissTokens) ||
+    !isNonnegativeSafeInteger(raw.completionTokens)
+  ) {
+    return null;
+  }
+
+  const reasoningTokens = raw.completionTokensDetails?.reasoningTokens;
+  return {
+    promptCacheHitTokens: raw.promptCacheHitTokens,
+    promptCacheMissTokens: raw.promptCacheMissTokens,
+    completionTokens: raw.completionTokens,
+    ...(isNonnegativeSafeInteger(reasoningTokens)
+      ? { completionTokensDetails: { reasoningTokens } }
+      : {}),
+  };
+}
+
 function percentile(values: readonly number[], fraction: number): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -162,6 +225,7 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
   };
   let reasoningTokens = 0;
   let hasReasoningTokens = false;
+  let usageComplete = true;
   let visibleOutputCharCount = 0;
   let missingUsageRecords = 0;
   let peakInputTokens = 0;
@@ -170,21 +234,48 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
 
   for (const record of group.records) {
     if (record.transport === 'outbound-http') {
-      if (!record.usage) {
+      const recordUsage = contextExperimentUsageFromSse(record.usage ?? undefined);
+      if (!recordUsage) {
         missingUsageRecords += 1;
+        usageComplete = false;
       } else {
-        usage.promptCacheHitTokens += record.usage.promptCacheHitTokens;
-        usage.promptCacheMissTokens += record.usage.promptCacheMissTokens;
-        usage.completionTokens += record.usage.completionTokens;
-        const recordReasoningTokens = record.usage.completionTokensDetails?.reasoningTokens;
-        if (recordReasoningTokens !== undefined) {
-          reasoningTokens += recordReasoningTokens;
-          hasReasoningTokens = true;
-        }
-        peakInputTokens = Math.max(
-          peakInputTokens,
-          record.usage.promptCacheHitTokens + record.usage.promptCacheMissTokens,
+        const nextCacheHitTokens = addSafeCount(
+          usage.promptCacheHitTokens,
+          recordUsage.promptCacheHitTokens,
         );
+        const nextCacheMissTokens = addSafeCount(
+          usage.promptCacheMissTokens,
+          recordUsage.promptCacheMissTokens,
+        );
+        const nextCompletionTokens = addSafeCount(
+          usage.completionTokens,
+          recordUsage.completionTokens,
+        );
+        if (
+          nextCacheHitTokens === null ||
+          nextCacheMissTokens === null ||
+          nextCompletionTokens === null
+        ) {
+          usageComplete = false;
+        } else {
+          usage.promptCacheHitTokens = nextCacheHitTokens;
+          usage.promptCacheMissTokens = nextCacheMissTokens;
+          usage.completionTokens = nextCompletionTokens;
+          const recordReasoningTokens = recordUsage.completionTokensDetails?.reasoningTokens;
+          if (recordReasoningTokens !== undefined) {
+            const nextReasoningTokens = addSafeCount(reasoningTokens, recordReasoningTokens);
+            if (nextReasoningTokens !== null) {
+              reasoningTokens = nextReasoningTokens;
+              hasReasoningTokens = true;
+            }
+          }
+          const recordInputTokens = addSafeCount(
+            recordUsage.promptCacheHitTokens,
+            recordUsage.promptCacheMissTokens,
+          );
+          if (recordInputTokens === null) usageComplete = false;
+          else peakInputTokens = Math.max(peakInputTokens, recordInputTokens);
+        }
       }
     }
     if (
@@ -222,10 +313,18 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
     .filter((sample) => sample.branchSwitch)
     .map((sample) => sample.latencyMs);
 
-  const totalInputTokens = usage.promptCacheHitTokens + usage.promptCacheMissTokens;
-  const complete = missingUsageRecords === 0;
-  const costUsd = complete && group.provider === 'deepseek-official'
+  const outboundRequestCount = group.records.filter(
+    (record) => record.transport === 'outbound-http',
+  ).length;
+  const complete = outboundRequestCount > 0 && missingUsageRecords === 0 && usageComplete;
+  const totalInputTokens = complete
+    ? usage.promptCacheHitTokens + usage.promptCacheMissTokens
+    : 0;
+  const calculatedCostUsd = complete && group.provider === 'deepseek-official'
     ? contextExperimentUsageCostUsd(usage, group.rates)
+    : null;
+  const costUsd = calculatedCostUsd !== null && Number.isFinite(calculatedCostUsd)
+    ? calculatedCostUsd
     : null;
   const costPer100TurnsUsd =
     costUsd !== null && group.effectiveTurns > 0 ? costUsd * 100 / group.effectiveTurns : null;
@@ -239,16 +338,18 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
     effectiveTurns: group.effectiveTurns,
     completedTurnIds: [...completedTurnIds],
     records: group.records.length,
-    outboundRequestCount: group.records.filter((record) => record.transport === 'outbound-http').length,
+    outboundRequestCount,
     localRetrievalCount: group.records.filter(
       (record) => record.transport === 'local' && record.phase === 'retrieval',
     ).length,
     missingUsageRecords,
-    usage,
+    usage: complete ? usage : null,
     visibleOutputCharCount,
     costUsd,
     costPer100TurnsUsd,
-    cacheHitRate: totalInputTokens > 0 ? usage.promptCacheHitTokens / totalInputTokens : null,
+    cacheHitRate: complete && totalInputTokens > 0
+      ? usage.promptCacheHitTokens / totalInputTokens
+      : null,
     firstContentLatencyMsP50: percentile(latencyValues, 0.5),
     firstContentLatencyMsP95: percentile(latencyValues, 0.95),
     branchSwitchFirstContentLatencyMsP50: percentile(branchSwitchLatencies, 0.5),
@@ -271,6 +372,8 @@ export function estimateContextSavings(
   if (
     baseline.missingUsageRecords > 0 ||
     candidate.missingUsageRecords > 0 ||
+    baseline.usage === null ||
+    candidate.usage === null ||
     baseline.costUsd === null ||
     candidate.costUsd === null
   ) {
@@ -323,6 +426,106 @@ export function estimateContextSavings(
     savingsPercent: baseline.costUsd > 0 ? savingsUsd / baseline.costUsd * 100 : null,
     baselineCostPer100TurnsUsd: baseline.costPer100TurnsUsd,
     candidateCostPer100TurnsUsd: candidate.costPer100TurnsUsd,
+  };
+}
+
+function turnRange(turnIds: readonly string[]): ContextExperimentTurnRange {
+  return {
+    firstTurnId: turnIds[0] ?? null,
+    lastTurnId: turnIds.at(-1) ?? null,
+    completedTurnCount: turnIds.length,
+  };
+}
+
+function costsByLogicalTurn(group: ContextExperimentGroup): Map<string, number> | null {
+  const result = new Map<string, number>();
+  for (const record of group.records) {
+    if (record.transport === 'local') continue;
+    const turnId = record.logicalTurnId;
+    const usage = contextExperimentUsageFromSse(record.usage ?? undefined);
+    if (!turnId || !usage) return null;
+    result.set(
+      turnId,
+      (result.get(turnId) ?? 0) + contextExperimentUsageCostUsd(usage, group.rates),
+    );
+  }
+  return result;
+}
+
+/**
+ * Reports an evidence-only cost comparison over the ordered turn prefix shared
+ * by unequal runs. It does not relax estimateContextSavings, which remains the
+ * strict basis for user-facing savings claims.
+ */
+export function compareContextExperimentRangeSubset(
+  baselineGroup: ContextExperimentGroup,
+  candidateGroup: ContextExperimentGroup,
+  baseline: ContextExperimentSummary,
+  candidate: ContextExperimentSummary,
+): ContextExperimentRangeSubsetComparison {
+  const baselineTurnIds = [...new Set(baseline.completedTurnIds)];
+  const candidateTurnIds = [...new Set(candidate.completedTurnIds)];
+  const subsetTurnIds: string[] = [];
+  for (let index = 0; index < Math.min(baselineTurnIds.length, candidateTurnIds.length); index += 1) {
+    if (baselineTurnIds[index] !== candidateTurnIds[index]) break;
+    subsetTurnIds.push(baselineTurnIds[index]);
+  }
+  const ranges = {
+    baselineRange: turnRange(baselineTurnIds),
+    candidateRange: turnRange(candidateTurnIds),
+    subsetRange: {
+      ...turnRange(subsetTurnIds),
+      turnIds: subsetTurnIds,
+    },
+  };
+
+  if (baseline.provider !== 'deepseek-official' || candidate.provider !== 'deepseek-official') {
+    return { status: 'unavailable', reason: 'non-official-provider', ...ranges };
+  }
+  if (
+    baseline.usage === null ||
+    candidate.usage === null ||
+    baseline.missingUsageRecords > 0 ||
+    candidate.missingUsageRecords > 0
+  ) {
+    return { status: 'unavailable', reason: 'incomplete-usage', ...ranges };
+  }
+  if (baseline.model !== candidate.model) {
+    return { status: 'unavailable', reason: 'model-mismatch', ...ranges };
+  }
+  if (
+    baseline.pricingSchedule !== candidate.pricingSchedule ||
+    baseline.rates.cacheHitInputPerMillionUsd !== candidate.rates.cacheHitInputPerMillionUsd ||
+    baseline.rates.cacheMissInputPerMillionUsd !== candidate.rates.cacheMissInputPerMillionUsd ||
+    baseline.rates.outputPerMillionUsd !== candidate.rates.outputPerMillionUsd
+  ) {
+    return { status: 'unavailable', reason: 'pricing-mismatch', ...ranges };
+  }
+  if (subsetTurnIds.length === 0) {
+    return { status: 'unavailable', reason: 'insufficient-turns', ...ranges };
+  }
+
+  const baselineCosts = costsByLogicalTurn(baselineGroup);
+  const candidateCosts = costsByLogicalTurn(candidateGroup);
+  if (!baselineCosts || !candidateCosts) {
+    return { status: 'unavailable', reason: 'incomplete-usage', ...ranges };
+  }
+  const baselineCostUsd = subsetTurnIds.reduce(
+    (total, turnId) => total + (baselineCosts.get(turnId) ?? 0),
+    0,
+  );
+  const candidateCostUsd = subsetTurnIds.reduce(
+    (total, turnId) => total + (candidateCosts.get(turnId) ?? 0),
+    0,
+  );
+  const savingsUsd = baselineCostUsd - candidateCostUsd;
+  return {
+    status: 'available',
+    ...ranges,
+    baselineCostUsd,
+    candidateCostUsd,
+    savingsUsd,
+    savingsPercent: baselineCostUsd > 0 ? savingsUsd / baselineCostUsd * 100 : null,
   };
 }
 
