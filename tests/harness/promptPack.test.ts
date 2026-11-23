@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BUILTIN_NARRATIVE_PROMPT_PACK,
   PROMPT_PACK_LIMITS,
+  createDefaultPromptPackLibrary,
   createPromptPack,
   createPromptPackStore,
   emptyPromptPackSlots,
@@ -81,6 +82,24 @@ describe('Prompt Pack storage and exchange formats', () => {
     expect(store.add(longPack).warning).toMatch(/12001/);
   });
 
+  it('persists global prefix and tail defaults and applies the prefix default at request resolution', () => {
+    const storage = createMemoryStorage();
+    const store = createPromptPackStore(storage);
+    const saved = store.save({
+      ...createDefaultPromptPackLibrary(),
+      defaultPrefixCompletion: 'always',
+      includeTail: true,
+    });
+    expect(saved.defaultPrefixCompletion).toBe('always');
+    expect(saved.includeTail).toBe(true);
+
+    const reloaded = store.load();
+    expect(reloaded.defaultPrefixCompletion).toBe('always');
+    expect(reloaded.includeTail).toBe(true);
+    expect(resolveEffectivePromptPack(reloaded, { promptPackMode: 'inherit' }).prefixCompletion).toBe('always');
+    expect(resolveEffectivePromptPack(reloaded, { promptPackMode: 'inherit', prefixCompletion: 'off' }).prefixCompletion).toBe('off');
+  });
+
   it('imports unmarked Markdown into head and round-trips marked slots', () => {
     const unmarked = parsePromptPackMarkdown('纯 Markdown 提示词', '纯文本');
     expect(unmarked.slots).toEqual({ head: '纯 Markdown 提示词', mid: '', tail: '' });
@@ -157,6 +176,8 @@ describe('Prompt Pack storage and exchange formats', () => {
     const library = {
       packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
       activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+      defaultPrefixCompletion: 'always',
+      includeTail: true,
     } satisfies PromptPackLibrary;
     const json = exportFolioBackupV3({
       stories: [],
@@ -170,6 +191,8 @@ describe('Prompt Pack storage and exchange formats', () => {
     });
     const parsed = parseAndValidateFolioBackup(json);
     expect(parsed.promptPacks?.activePackId).toBe(BUILTIN_NARRATIVE_PROMPT_PACK.id);
+    expect(parsed.promptPacks?.defaultPrefixCompletion).toBe('always');
+    expect(parsed.promptPacks?.includeTail).toBe(true);
     expect(parsed.promptPacks?.packs[0].slots.head).toContain('虚构');
   });
 });

@@ -11,6 +11,7 @@ import {
   type MarkdownProposal,
   type ModelConfig,
   type PlatformRuntime,
+  type RefusalStreamIntegrationOptions,
   type TurnNode,
 } from '../harness/index.ts';
 import { toErrorMessage } from './textHelpers.ts';
@@ -101,6 +102,7 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
   const [busy, setBusy] = useState(false);
   const [output, setOutput] = useState('');
   const [reasoning, setReasoning] = useState('');
+  const [refusalRetrying, setRefusalRetrying] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -116,7 +118,11 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
     run: (
       request: (
         messages: LlmMessage[],
-        options?: { onVisibleDelta?: (delta: string) => void; config?: ModelConfig },
+        options?: {
+          onVisibleDelta?: (delta: string) => void;
+          config?: ModelConfig;
+          refusalOptions?: RefusalStreamIntegrationOptions;
+        },
       ) => ReturnType<typeof streamCreativeReply>,
       signal: AbortSignal,
       config: ModelConfig,
@@ -132,9 +138,11 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
       setError('');
       setOutput('');
       setReasoning('');
+      setRefusalRetrying(false);
       void run(
         (messages, options) =>
           streamCreativeReply(runtime.transport, options?.config ?? config, messages, {
+            ...options?.refusalOptions,
             signal: controller.signal,
             onReasoningDelta: (delta) => {
               if (!controller.signal.aborted) setReasoning((text) => text + delta);
@@ -143,6 +151,13 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
               if (!controller.signal.aborted) {
                 if (options?.onVisibleDelta) options.onVisibleDelta(delta);
                 else setOutput((text) => text + delta);
+              }
+            },
+            onRefusalRetry: () => {
+              if (!controller.signal.aborted) {
+                setRefusalRetrying(true);
+                setOutput('');
+                setReasoning('');
               }
             },
           }),
@@ -164,11 +179,21 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
           if (!mounted.current) return;
           setOutput('');
           setReasoning('');
+          setRefusalRetrying(false);
           setBusy(false);
         });
     });
   }
 
   const fail = (err: unknown) => setError(toErrorMessage(err, '本地操作失败。'));
-  return { start, busy, output, reasoning, error, fail, stop: () => active.current?.abort() };
+  return {
+    start,
+    busy,
+    output,
+    reasoning,
+    refusalRetrying,
+    error,
+    fail,
+    stop: () => active.current?.abort(),
+  };
 }

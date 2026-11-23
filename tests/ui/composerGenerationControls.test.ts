@@ -121,6 +121,15 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
       prefixCompletion: 'always',
     });
 
+    const afterClearingOverrides = mergeGenerationPreference(afterSwitchBack, {
+      promptPackMode: null,
+      prefixCompletion: null,
+    });
+    expect(afterClearingOverrides).toEqual({
+      model: 'deepseek-flash',
+      reasoningEffort: 'max',
+    });
+
     const afterInvalidPatch = mergeGenerationPreference(afterSwitchBack, {
       model: 'invalid-model' as never,
       promptPackMode: '   ',

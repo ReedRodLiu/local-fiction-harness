@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { ArrowUp, ChevronRight, Download, Edit3, Plus, Sparkles, Square } from 'lucide-react';
 import {
+  buildPromptPackContextOptions,
   buildTurnProposalRecords,
   characterContext,
   conversationExport,
@@ -16,6 +17,7 @@ import {
   newConversation,
   normalizeProposalTarget,
   resolveEffectiveModelConfig,
+  restoreRefusalOriginalContent,
   summarizeCharacterConversation,
   writeDocument,
   DEFAULT_MODEL_CONFIG,
@@ -25,7 +27,9 @@ import {
   type LocalCharacter,
   type ModelConfig,
   type PlatformRuntime,
+  type PromptPackLibrary,
   type StageAssetMode,
+  type TurnNode,
   type TurnProposalRecord,
 } from '../harness/index.ts';
 import type { DocumentEdit } from './DocumentDialog.tsx';
@@ -44,6 +48,7 @@ import {
   revertDocumentToVersion,
   updateTurnNodeProposal,
 } from './proposalActions.ts';
+import { streamPrefixContinuation } from './refusalContinuation.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
 import type { SaveWorkspace } from './useCreativeWorkspace.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
@@ -64,6 +69,7 @@ interface CharacterPaneProps {
   character: LocalCharacter;
   workspace: CreativeWorkspaceState;
   defaultConfig?: ModelConfig;
+  promptPackLibrary?: PromptPackLibrary;
   save: SaveWorkspace;
   read: () => Promise<CreativeWorkspaceState>;
   runtime: PlatformRuntime;
@@ -112,6 +118,9 @@ export function CharacterPane(props: CharacterPaneProps) {
     active: reply.busy && !reply.output.trim(),
     characterName: character.name,
   });
+  const activeCharacterWaitingPhrase = reply.refusalRetrying
+    ? '正在重新构思落笔…'
+    : characterWaitingPhrase;
   const [createdAssetNotice, setCreatedAssetNotice] = useState<{
     kind: 'character' | 'work';
     id: string;
@@ -267,9 +276,27 @@ export function CharacterPane(props: CharacterPaneProps) {
 
       const targetConv: CharacterConversation =
         options.parentId !== undefined ? { ...target, activeLeafNodeId: options.parentId } : target;
-      const ctx = characterContext(state.publicDocument, current, targetConv, trimmed);
+      const promptPackOptions = buildPromptPackContextOptions(
+        props.promptPackLibrary,
+        current.generationPreference,
+      );
+      const ctx = characterContext(
+        state.publicDocument,
+        current,
+        targetConv,
+        trimmed,
+        undefined,
+        promptPackOptions,
+      );
       const effectiveConfig = resolveEffectiveModelConfig(config, current.generationPreference);
-      const result = await request(ctx.messages, { config: effectiveConfig });
+      const result = await request(ctx.messages, {
+        config: effectiveConfig,
+        refusalOptions: {
+          mode: 'character',
+          promptPackOptions,
+          characterName: current.name,
+        },
+      });
       if (signal.aborted) return;
 
       const publicDoc = documentVersion(state.publicDocument);
@@ -407,9 +434,27 @@ export function CharacterPane(props: CharacterPaneProps) {
         ...target,
         activeLeafNodeId: userNode.parentId,
       };
-      const ctx = characterContext(state.publicDocument, current, convAtUserParent, userNode.content);
+      const promptPackOptions = buildPromptPackContextOptions(
+        props.promptPackLibrary,
+        current.generationPreference,
+      );
+      const ctx = characterContext(
+        state.publicDocument,
+        current,
+        convAtUserParent,
+        userNode.content,
+        undefined,
+        promptPackOptions,
+      );
       const effectiveConfig = resolveEffectiveModelConfig(config, current.generationPreference);
-      const result = await request(ctx.messages, { config: effectiveConfig });
+      const result = await request(ctx.messages, {
+        config: effectiveConfig,
+        refusalOptions: {
+          mode: 'character',
+          promptPackOptions,
+          characterName: current.name,
+        },
+      });
       if (signal.aborted) return;
 
       const publicDoc = documentVersion(state.publicDocument);
@@ -461,12 +506,88 @@ export function CharacterPane(props: CharacterPaneProps) {
     });
   };
 
+  const restoreCharacterRefusalOriginal = async (nodeId: string) => {
+    if (!conversation) return;
+    try {
+      await save((state) =>
+        updateCharacter(state, character.id, (live) =>
+          updateConversation(live, conversation.id, (current) => {
+            const node = current.nodes[nodeId];
+            if (!node || node.role !== 'assistant') return current;
+            const restored = restoreRefusalOriginalContent(node);
+            if (restored === node) return current;
+            return { ...current, nodes: { ...current.nodes, [nodeId]: restored } };
+          }),
+        ),
+      );
+    } catch (err) {
+      reply.fail(err);
+    }
+  };
+
+  const continuePartialCharacter = (nodeId: string) => {
+    if (!conversation) return;
+    reply.start('继续追要半拒绝内容', async (_request, signal, config, setStreamText, appendReasoning) => {
+      const state = await read();
+      const current = state.characters.find((item) => item.id === character.id);
+      const target = current?.conversations.find((item) => item.id === conversation.id);
+      const node = target?.nodes[nodeId];
+      if (!current || !target || !node || node.role !== 'assistant' || !node.parentId || signal.aborted) {
+        return;
+      }
+      const promptPackOptions = buildPromptPackContextOptions(
+        props.promptPackLibrary,
+        current.generationPreference,
+      );
+      const ctx = characterContext(
+        state.publicDocument,
+        current,
+        { ...target, activeLeafNodeId: node.parentId },
+        ' ',
+        undefined,
+        promptPackOptions,
+      );
+      const effectiveConfig = resolveEffectiveModelConfig(config, current.generationPreference);
+      let appended = '';
+      const continued = await streamPrefixContinuation({
+        transport: runtime.transport,
+        config: effectiveConfig,
+        messages: ctx.messages,
+        prefixContent: node.content,
+        signal,
+        onReasoningDelta: appendReasoning,
+        onContentDelta: (delta) => {
+          appended += delta;
+          setStreamText(`${node.content}${appended}`);
+        },
+      });
+      if (continued.finishReason !== 'stop') throw new Error('追要回复未完成，请重试。');
+      if (continued.content.trim() === node.content.trim()) throw new Error('模型没有返回可追加的正文。');
+      const nextNode: TurnNode = {
+        ...node,
+        content: continued.content,
+        ...(continued.reasoningContent ? { reasoningContent: continued.reasoningContent } : {}),
+        diagnostics: { ...node.diagnostics, refusalRoute: 'pass' },
+      };
+      await save((workspaceState) =>
+        updateCharacter(workspaceState, current.id, (latest) =>
+          updateConversation(latest, target.id, (live) => ({
+            ...live,
+            nodes: { ...live.nodes, [nodeId]: nextNode },
+          })),
+        ),
+      );
+    });
+  };
+
   const effectiveGenerationConfig = resolveEffectiveModelConfig(
     props.defaultConfig ?? DEFAULT_MODEL_CONFIG,
     character.generationPreference,
   );
 
-  const handleGenerationPreferenceChange = (patch: Partial<GenerationPreference>) => {
+  const handleGenerationPreferenceChange = (
+    patch: Parameters<typeof mergeGenerationPreference>[1],
+  ) => {
     void save((state) =>
       updateCharacter(state, character.id, (live) => {
         const nextPref = mergeGenerationPreference(live.generationPreference, patch);
@@ -791,6 +912,8 @@ export function CharacterPane(props: CharacterPaneProps) {
                     `我刚刚更新了设定，请结合最新设定重新整理这条建议：${p.summary}`,
                   )
                 }
+                onRestoreRefusalOriginal={(id) => void restoreCharacterRefusalOriginal(id)}
+                onContinuePartialRefusal={continuePartialCharacter}
               />
             );
           })}
@@ -805,7 +928,7 @@ export function CharacterPane(props: CharacterPaneProps) {
               <details className="reasoning-details" data-testid="reasoning-details" open>
                 <summary data-testid="reasoning-toggle">
                   <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
-                  <span>{characterWaitingPhrase}</span>
+                  <span>{activeCharacterWaitingPhrase}</span>
                 </summary>
                 <div className="reasoning-content">{reply.reasoning}</div>
               </details>
@@ -813,7 +936,7 @@ export function CharacterPane(props: CharacterPaneProps) {
             {reply.output ? (
               <MessageContent content={reply.output} mode="character" />
             ) : (
-              <div className="turn-body">{characterWaitingPhrase}</div>
+              <div className="turn-body">{activeCharacterWaitingPhrase}</div>
             )}
           </article>
         )}
@@ -882,6 +1005,13 @@ export function CharacterPane(props: CharacterPaneProps) {
           disabled={reply.busy}
           onModelChange={(model) => handleGenerationPreferenceChange({ model })}
           onReasoningEffortChange={(reasoningEffort) => handleGenerationPreferenceChange({ reasoningEffort })}
+          promptPackLibrary={props.promptPackLibrary}
+          promptPackMode={character.generationPreference?.promptPackMode ?? 'inherit'}
+          prefixCompletion={character.generationPreference?.prefixCompletion ?? 'inherit'}
+          onPromptPackModeChange={(mode) =>
+            handleGenerationPreferenceChange({ promptPackMode: mode === 'inherit' ? null : mode })}
+          onPrefixCompletionChange={(mode) =>
+            handleGenerationPreferenceChange({ prefixCompletion: mode === 'inherit' ? null : mode })}
           trailingSlot={
             <div className="composer-actions">
               {reply.busy ? (

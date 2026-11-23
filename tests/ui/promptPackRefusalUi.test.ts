@@ -1,0 +1,224 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  BUILTIN_NARRATIVE_PROMPT_PACK,
+  createDefaultPromptPackLibrary,
+  createPromptPack,
+  createDefaultBlueprint,
+  type Story,
+  type TurnNode,
+} from '../../src/harness/index.ts';
+import { GenerationControls } from '../../src/ui/GenerationControls.tsx';
+import { PromptPackSheet } from '../../src/ui/PromptPackSheet.tsx';
+import { streamPrefixContinuation } from '../../src/ui/refusalContinuation.ts';
+import { StoryTree } from '../../src/ui/StoryTree.tsx';
+import { TurnCard } from '../../src/ui/TurnCard.tsx';
+
+function makeNode(overrides: Partial<TurnNode> = {}): TurnNode {
+  return {
+    id: 'assistant-refusal',
+    parentId: 'user-1',
+    role: 'assistant',
+    content: '已经写出的正文。',
+    createdAt: 2,
+    summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+    ...overrides,
+  };
+}
+
+function makeStory(node: TurnNode): Story {
+  return {
+    id: 'story-refusal',
+    title: '拒答测试',
+    rawScript: '',
+    blueprint: createDefaultBlueprint('拒答测试'),
+    nodes: {
+      'user-1': {
+        id: 'user-1',
+        parentId: null,
+        role: 'user',
+        content: '继续。',
+        createdAt: 1,
+        summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+      },
+      [node.id]: node,
+    },
+    rootNodeIds: ['user-1'],
+    activeLeafNodeId: node.id,
+    createdAt: 1,
+    updatedAt: 2,
+  };
+}
+
+const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+
+describe('Issue #133 prompt pack and refusal UI contracts', () => {
+  it('renders the prompt pack first-class settings sheet with exact copy and all controls', () => {
+    const library = createDefaultPromptPackLibrary();
+    const custom = createPromptPack('custom-pack', {
+      head: '开头规则',
+      mid: '中段规则',
+      tail: '尾段规则',
+    }, { title: '自定义叙事包' });
+    library.packs.push(custom);
+    library.activePackId = custom.id;
+
+    const markup = renderToStaticMarkup(createElement(PromptPackSheet, {
+      library,
+      onChange: vi.fn(),
+      onExport: vi.fn(),
+    }));
+
+    expect(markup).toContain('data-testid="settings-prompt-pack-section"');
+    expect(markup).toContain('叙事提示词包与拒答治理');
+    expect(markup).toContain('自定义前置叙事框架、前缀续写与拒答自动重拟');
+    expect(markup).toContain('data-testid="prompt-pack-enable-toggle"');
+    expect(markup).toContain('data-testid="prompt-pack-import-input"');
+    expect(markup).toContain('data-testid="prompt-pack-slot-head"');
+    expect(markup).toContain('data-testid="prompt-pack-slot-mid"');
+    expect(markup).toContain('data-testid="prompt-pack-slot-tail"');
+    expect(markup).toContain('data-testid="prompt-pack-tail-always"');
+    expect(markup).toContain('data-testid="prompt-pack-global-prefix"');
+    expect(markup).toContain('data-testid="prompt-pack-disclaimer"');
+    expect(markup).toContain('24000');
+    expect(markup).toContain('6000');
+    expect(markup).toContain('2000');
+    expect(markup).toContain('Folio 基础叙事骨架');
+    expect(markup).toContain('提示词包在技术上作为系统提示词（System Prompt）');
+  });
+
+  it('renders story-level prompt-pack and prefix selectors next to the existing generation controls', () => {
+    const markup = renderToStaticMarkup(createElement(GenerationControls, {
+      model: 'deepseek-flash',
+      reasoningEffort: 'high',
+      onModelChange: vi.fn(),
+      onReasoningEffortChange: vi.fn(),
+      promptPackLibrary: createDefaultPromptPackLibrary(),
+      promptPackMode: 'inherit',
+      prefixCompletion: 'inherit',
+      onPromptPackModeChange: vi.fn(),
+      onPrefixCompletionChange: vi.fn(),
+    }));
+
+    expect(markup).toContain('data-testid="generation-pref-prompt-pack"');
+    expect(markup).toContain('data-testid="generation-pref-prefix-mode"');
+    expect(markup).toContain('跟随全局');
+    expect(markup).toContain('在此条目停用');
+    expect(markup).toContain(BUILTIN_NARRATIVE_PROMPT_PACK.title);
+    expect(markup).toContain('仅重试时开启');
+    expect(markup).toContain('每轮开启');
+  });
+
+  it('renders recovered restore and partial-refusal continue actions on assistant turns', () => {
+    const recovered = makeNode({
+      diagnostics: {
+        refusalRoute: 'retry',
+        recoveredFromText: '抱歉，我不能帮你写这段内容。',
+        retriedWithPrefix: true,
+      },
+    });
+    const recoveredMarkup = renderToStaticMarkup(createElement(TurnCard, {
+      node: recovered,
+      isActiveLeaf: true,
+      isLatestTurn: true,
+      isSetupNode: false,
+      turnNumber: 1,
+      isBusy: false,
+      isStreaming: false,
+      siblings: { siblings: [recovered], prevSiblingId: null, nextSiblingId: null, currentIndex: 0, total: 1 },
+      onSwitchBranch: vi.fn(),
+      onRewindToNode: vi.fn(),
+      onRestoreRefusalOriginal: vi.fn(),
+      onContinuePartialRefusal: vi.fn(),
+    }));
+    expect(recoveredMarkup).toContain('data-testid="turn-refusal-recovered-badge"');
+    expect(recoveredMarkup).toContain('data-testid="turn-refusal-restore-original"');
+    expect(recoveredMarkup).toContain('已自动重拟（消耗双倍 Token）');
+
+    const partial = makeNode({
+      content: '雨声落下。抱歉，我不能继续写更具体的内容。',
+      diagnostics: {
+        refusalRoute: 'partial_refused',
+        recoveredFromText: '抱歉，我不能继续写更具体的内容。',
+      },
+    });
+    const partialMarkup = renderToStaticMarkup(createElement(TurnCard, {
+      node: partial,
+      isActiveLeaf: true,
+      isLatestTurn: true,
+      isSetupNode: false,
+      turnNumber: 1,
+      isBusy: false,
+      isStreaming: false,
+      siblings: { siblings: [partial], prevSiblingId: null, nextSiblingId: null, currentIndex: 0, total: 1 },
+      onSwitchBranch: vi.fn(),
+      onRewindToNode: vi.fn(),
+      onRestoreRefusalOriginal: vi.fn(),
+      onContinuePartialRefusal: vi.fn(),
+    }));
+    expect(partialMarkup).toContain('data-testid="turn-partial-refusal-banner"');
+    expect(partialMarkup).toContain('data-testid="turn-partial-refusal-continue"');
+    expect(partialMarkup).toContain('模型似乎略过了部分具体描写');
+    expect(partialMarkup).toContain('将消耗一次新请求');
+  });
+
+  it('streams a manual prefix continuation while exposing only newly appended text', async () => {
+    const requests: Array<{ prefixCompletion?: { content: string } }> = [];
+    const visible: string[] = [];
+    const result = await streamPrefixContinuation({
+      transport: {
+        async *streamChat(request) {
+          requests.push(request);
+          yield { contentDelta: '原有正文' };
+          yield { contentDelta: '，新增段落。', finishReason: 'stop' };
+        },
+      },
+      config: {
+        baseUrl: 'https://api.deepseek.com',
+        apiKey: 'sk-test',
+        model: 'deepseek-flash',
+        reasoningEffort: 'high',
+        memoryOnly: false,
+      },
+      messages: [{ role: 'user', content: '继续。' }],
+      prefixContent: '原有正文',
+      onContentDelta: (delta) => visible.push(delta),
+    });
+
+    expect(requests[0]?.prefixCompletion?.content).toBe('原有正文');
+    expect(visible.join('')).toBe('，新增段落。');
+    expect(result.content).toBe('原有正文，新增段落。');
+    expect(result.finishReason).toBe('stop');
+  });
+
+  it('wires prompt-pack backup export, restore persistence, and summary text through App', () => {
+    const appSource = readFileSync(join(repoRoot, 'src/ui/App.tsx'), 'utf8');
+    expect(appSource).toContain('promptPacks: promptPackLibrary');
+    expect(appSource).toContain('setPromptPackLibrary(merged.promptPacks)');
+    expect(appSource).toContain('个提示词包与我的记忆');
+    expect(appSource).toContain('onPromptPackLibraryChange={setPromptPackLibrary}');
+    const draftSource = readFileSync(join(repoRoot, 'src/ui/DraftPane.tsx'), 'utf8');
+    const characterSource = readFileSync(join(repoRoot, 'src/ui/CharacterPane.tsx'), 'utf8');
+    for (const source of [draftSource, characterSource]) {
+      expect(source).toContain('promptPackLibrary={props.promptPackLibrary}');
+      expect(source).toContain('buildPromptPackContextOptions');
+      expect(source).toContain('streamPrefixContinuation');
+      expect(source).toContain('onRestoreRefusalOriginal');
+      expect(source).toContain('onContinuePartialRefusal');
+    }
+  });
+
+  it('keeps CONTENT_FILTER copy separate and exposes a stable REFUSAL tree diagnostic', () => {
+    const refusal = makeNode({ diagnostics: { sourceStatus: 'REFUSAL', refusalRoute: 'refused_exhausted' } });
+    const story = makeStory(refusal);
+    const markup = renderToStaticMarkup(createElement(StoryTree, { story }));
+
+    expect(markup).toContain('本轮触发拒答，已从上下文隔离');
+    expect(markup).toContain('data-testid="story-tree-diag-refusal"');
+    expect(markup).not.toContain('这条历史消息在原平台未完整生成');
+  });
+});

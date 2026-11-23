@@ -141,6 +141,15 @@ export function StoryTree({
                   const expandedNodes = expandedSpanNodes[item.id];
                   const isExpanded = expandedNodes !== undefined;
                   const previewId = `${spanIdPrefix}-span-${index}`;
+                  const activePath = getActiveBranchNodes(story, spine.activeLeafNodeId);
+                  const startIndex = activePath.findIndex((node) => node.id === item.startNodeId);
+                  const endIndex = activePath.findIndex((node) => node.id === item.endNodeId);
+                  const spanHasRefusal =
+                    startIndex >= 0 &&
+                    endIndex >= startIndex &&
+                    activePath.slice(startIndex, endIndex + 1).some(
+                      (node) => node.diagnostics?.sourceStatus === 'REFUSAL',
+                    );
                   return (
                     <li
                       key={item.id}
@@ -166,6 +175,11 @@ export function StoryTree({
                         {item.diagnosticsCount > 0 && (
                           <span className="badge badge-warn">
                             含 {item.diagnosticsCount} 条来源提示
+                          </span>
+                        )}
+                        {spanHasRefusal && (
+                          <span className="story-tree-refusal-note" data-testid="story-tree-diag-refusal">
+                            本轮触发拒答，已从上下文隔离
                           </span>
                         )}
                         <span className="story-tree-preview-inline">{item.preview}</span>
@@ -200,7 +214,11 @@ export function StoryTree({
                                   {formatTurnPreview(node)}
                                 </p>
                                 {diagnostics.length > 0 && (
-                                  <span className="story-tree-span-node-diagnostics" role="note">
+                                  <span
+                                    className="story-tree-span-node-diagnostics"
+                                    role="note"
+                                    data-testid={node.diagnostics?.sourceStatus === 'REFUSAL' ? 'story-tree-diag-refusal' : undefined}
+                                  >
                                     来源提示：{diagnostics.join(' · ')}
                                   </span>
                                 )}
@@ -282,7 +300,11 @@ export function StoryTree({
                               </div>
 
                               {diagTags.length > 0 && (
-                                <div className="story-tree-diagnostics" role="note">
+                                <div
+                                  className="story-tree-diagnostics"
+                                  role="note"
+                                  data-testid={branch.diagnostics.includes('REFUSAL') ? 'story-tree-diag-refusal' : undefined}
+                                >
                                   来源提示：{diagTags.join(' · ')}
                                 </div>
                               )}

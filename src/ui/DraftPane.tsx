@@ -3,6 +3,7 @@ import { ArrowUp, ChevronRight, Download, Edit3, RotateCcw, Sparkles, Square, X 
 import {
   adoptSuggestion,
   appendWorkDiscussionTurn,
+  buildPromptPackContextOptions,
   buildTurnProposalRecords,
   createDefaultId,
   detectNaturalModeSwitchIntent,
@@ -22,6 +23,8 @@ import {
   parseProposalReply,
   referenceDocument,
   resolveEffectiveModelConfig,
+  restoreRefusalOriginalContent,
+  streamWithRefusalHandling,
   summarizeWorkDiscussion,
   visibleManuscriptReplyPrefix,
   visibleReplyPrefix,
@@ -33,6 +36,7 @@ import {
   type GenerationPreference,
   type ModelConfig,
   type PlatformRuntime,
+  type PromptPackLibrary,
   type StageAssetMode,
   type TurnNode,
   type TurnProposalRecord,
@@ -54,6 +58,7 @@ import {
   revertDocumentToVersion,
   updateTurnNodeProposal,
 } from './proposalActions.ts';
+import { streamPrefixContinuation } from './refusalContinuation.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
 import type { SaveWorkspace } from './useCreativeWorkspace.ts';
 import { formatManuscriptStatusText, useManuscriptAutosave } from './useManuscriptAutosave.ts';
@@ -74,6 +79,7 @@ interface DraftPaneProps {
   work: DraftWork;
   workspace: CreativeWorkspaceState;
   defaultConfig?: ModelConfig;
+  promptPackLibrary?: PromptPackLibrary;
   save: SaveWorkspace;
   read: () => Promise<CreativeWorkspaceState>;
   runtime: PlatformRuntime;
@@ -132,6 +138,9 @@ export function DraftPane(props: DraftPaneProps) {
     scene: 'writing',
     active: reply.busy && !reply.output.trim(),
   });
+  const activeWritingWaitingPhrase = reply.refusalRetrying
+    ? '正在重新构思落笔…'
+    : writingWaitingPhrase;
 
   const textarea = useRef<HTMLTextAreaElement>(null);
   const suggestionCardRef = useRef<HTMLElement>(null);
@@ -322,11 +331,19 @@ export function DraftPane(props: DraftPaneProps) {
           : undefined;
       const contextParentId = pendingLast ? pendingLast.parentId : targetParentId;
 
+      const promptPackOptions = buildPromptPackContextOptions(
+        props.promptPackLibrary,
+        live.generationPreference,
+      );
       const ctx = workContext(state.publicDocument, live, input, {
         targetParentId: contextParentId,
+        promptPackOptions,
       });
       const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
-      const result = await request(ctx.messages, { config: effectiveConfig });
+      const result = await request(ctx.messages, {
+        config: effectiveConfig,
+        refusalOptions: { mode: 'writing', promptPackOptions },
+      });
       if (signal.aborted) return;
 
       const publicDoc = documentVersion(state.publicDocument);
@@ -412,43 +429,44 @@ export function DraftPane(props: DraftPaneProps) {
         .filter(Boolean)
         .join('\n\n');
 
+      const promptPackOptions = buildPromptPackContextOptions(
+        props.promptPackLibrary,
+        live.generationPreference,
+      );
       const ctx = workContext(state.publicDocument, live, composedInput, {
         systemPrompt: getManuscriptIntentSystemPrompt(),
         cursorPos: start,
+        promptPackOptions,
       });
       const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
       const reasoningEffort = normalizeReasoningEffort(effectiveConfig.reasoningEffort);
-
-      let raw = '';
-      let reasoningContent = '';
-      let finishReason: string | null | undefined;
-      let shown = '';
-      for await (const delta of runtime.transport.streamChat({
-        baseUrl: effectiveConfig.baseUrl,
-        apiKey: effectiveConfig.apiKey,
-        model: effectiveConfig.model,
-        reasoningEffort,
+      let visibleStream = '';
+      const result = await streamWithRefusalHandling({
+        transport: runtime.transport,
+        config: effectiveConfig,
         messages: ctx.messages,
-        signal,
-      })) {
-        if (signal.aborted) return;
-        if (delta.finishReason != null) finishReason = delta.finishReason;
-        if (delta.reasoningDelta && reasoningEffort !== 'none') {
-          reasoningContent += delta.reasoningDelta;
-          appendReasoning(delta.reasoningDelta);
-        }
-        if (!delta.contentDelta) continue;
-        raw += delta.contentDelta;
-        const visible = visibleReplyPrefix(visibleManuscriptReplyPrefix(raw));
-        if (visible.length > shown.length) {
-          shown = visible;
-          setStreamText(visible);
-        }
-      }
+        mode: 'writing',
+        promptPackOptions,
+        callbacks: {
+          signal,
+          onReasoningDelta: appendReasoning,
+          onContentDelta: (delta) => {
+            visibleStream += delta;
+            setStreamText(visibleStream);
+          },
+          onRefusalRetry: () => {
+            visibleStream = '';
+            setStreamText('');
+          },
+        },
+        toVisibleContent: (value) => visibleReplyPrefix(visibleManuscriptReplyPrefix(value)),
+      });
       if (signal.aborted) return;
-      if (finishReason !== 'stop') {
+      if (result.finishReason !== 'stop') {
         throw new Error('回复未完成，请重试。');
       }
+      const raw = result.content;
+      const reasoningContent = result.reasoningContent;
 
       const routed = parseManuscriptAssistantReply(raw, input, reasoningContent);
       const publicDoc = documentVersion(state.publicDocument);
@@ -683,11 +701,19 @@ export function DraftPane(props: DraftPaneProps) {
     reply.start('重新生成回复', async (request, signal, config) => {
       const { state, live } = await currentWork();
       if (signal.aborted) return;
+      const promptPackOptions = buildPromptPackContextOptions(
+        props.promptPackLibrary,
+        live.generationPreference,
+      );
       const ctx = workContext(state.publicDocument, live, userNode.content, {
         targetParentId: userNode.parentId,
+        promptPackOptions,
       });
       const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
-      const result = await request(ctx.messages, { config: effectiveConfig });
+      const result = await request(ctx.messages, {
+        config: effectiveConfig,
+        refusalOptions: { mode: 'writing', promptPackOptions },
+      });
       if (signal.aborted) return;
       const publicDoc = documentVersion(state.publicDocument);
       const workDoc = documentVersion(live.document);
@@ -725,6 +751,87 @@ export function DraftPane(props: DraftPaneProps) {
     });
   };
 
+  const restoreDiscussionRefusalOriginal = async (nodeId: string) => {
+    try {
+      await save((state) =>
+        updateWork(state, work.id, (live) => {
+          const tree = getWorkDiscussionTree(live);
+          const node = tree.nodes[nodeId];
+          if (!node || node.role !== 'assistant') return live;
+          const restored = restoreRefusalOriginalContent(node);
+          if (restored === node) return live;
+          const nodes = { ...tree.nodes, [nodeId]: restored };
+          return {
+            ...live,
+            discussionNodes: nodes,
+            discussion: getActiveBranchNodes(
+              { nodes, activeLeafNodeId: tree.activeLeafNodeId },
+              tree.activeLeafNodeId,
+            ),
+          };
+        }),
+      );
+    } catch (err) {
+      reply.fail(err);
+    }
+  };
+
+  const continuePartialDiscussion = (nodeId: string) => {
+    reply.start('继续追要半拒绝内容', async (_request, signal, config, setStreamText, appendReasoning) => {
+      const { state, live } = await currentWork();
+      if (signal.aborted) return;
+      const tree = getWorkDiscussionTree(live);
+      const node = tree.nodes[nodeId];
+      if (!node || node.role !== 'assistant' || !node.parentId) {
+        throw new Error('半拒绝节点不存在或缺少关联玩家输入。');
+      }
+      const promptPackOptions = buildPromptPackContextOptions(
+        props.promptPackLibrary,
+        live.generationPreference,
+      );
+      const ctx = workContext(state.publicDocument, live, ' ', {
+        targetParentId: node.parentId,
+        promptPackOptions,
+      });
+      const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
+      let appended = '';
+      const continued = await streamPrefixContinuation({
+        transport: runtime.transport,
+        config: effectiveConfig,
+        messages: ctx.messages,
+        prefixContent: node.content,
+        signal,
+        onReasoningDelta: appendReasoning,
+        onContentDelta: (delta) => {
+          appended += delta;
+          setStreamText(`${node.content}${appended}`);
+        },
+      });
+      if (continued.finishReason !== 'stop') throw new Error('追要回复未完成，请重试。');
+      if (continued.content.trim() === node.content.trim()) throw new Error('模型没有返回可追加的正文。');
+      const nextNode: TurnNode = {
+        ...node,
+        content: continued.content,
+        ...(continued.reasoningContent ? { reasoningContent: continued.reasoningContent } : {}),
+        diagnostics: { ...node.diagnostics, refusalRoute: 'pass' },
+      };
+      await save((nowState) =>
+        updateWork(nowState, work.id, (latest) => {
+          const latestTree = getWorkDiscussionTree(latest);
+          const nodes = { ...latestTree.nodes, [nodeId]: nextNode };
+          return {
+            ...latest,
+            discussionNodes: nodes,
+            discussion: getActiveBranchNodes(
+              { nodes, activeLeafNodeId: latestTree.activeLeafNodeId },
+              latestTree.activeLeafNodeId,
+            ),
+          };
+        }),
+      );
+    });
+  };
+
   const editAndBranchDiscussion = (targetUserNodeId: string, newContent: string) => {
     const targetUserNode = discussionTree.nodes[targetUserNodeId];
     if (!targetUserNode || targetUserNode.role !== 'user') return;
@@ -739,7 +846,9 @@ export function DraftPane(props: DraftPaneProps) {
     work.generationPreference,
   );
 
-  const handleGenerationPreferenceChange = (patch: Partial<GenerationPreference>) => {
+  const handleGenerationPreferenceChange = (
+    patch: Parameters<typeof mergeGenerationPreference>[1],
+  ) => {
     void save((state) =>
       updateWork(state, work.id, (live) => {
         const nextPref = mergeGenerationPreference(live.generationPreference, patch);
@@ -1129,6 +1238,8 @@ export function DraftPane(props: DraftPaneProps) {
                       `我刚刚修改了「${resolveProposalTarget(p).targetLabel ?? '作品设定'}」，请结合最新内容重新整理这条建议：${p.summary}`,
                     )
                   }
+                  onRestoreRefusalOriginal={(id) => void restoreDiscussionRefusalOriginal(id)}
+                  onContinuePartialRefusal={continuePartialDiscussion}
                 />
               );
             })}
@@ -1143,7 +1254,7 @@ export function DraftPane(props: DraftPaneProps) {
                   <details className="reasoning-details" data-testid="reasoning-details" open>
                     <summary data-testid="reasoning-toggle">
                       <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
-                      <span>{writingWaitingPhrase}</span>
+                      <span>{activeWritingWaitingPhrase}</span>
                     </summary>
                     <div className="reasoning-content">{reply.reasoning}</div>
                   </details>
@@ -1187,6 +1298,13 @@ export function DraftPane(props: DraftPaneProps) {
               disabled={reply.busy}
               onModelChange={(model) => handleGenerationPreferenceChange({ model })}
               onReasoningEffortChange={(reasoningEffort) => handleGenerationPreferenceChange({ reasoningEffort })}
+              promptPackLibrary={props.promptPackLibrary}
+              promptPackMode={work.generationPreference?.promptPackMode ?? 'inherit'}
+              prefixCompletion={work.generationPreference?.prefixCompletion ?? 'inherit'}
+              onPromptPackModeChange={(mode) =>
+                handleGenerationPreferenceChange({ promptPackMode: mode === 'inherit' ? null : mode })}
+              onPrefixCompletionChange={(mode) =>
+                handleGenerationPreferenceChange({ prefixCompletion: mode === 'inherit' ? null : mode })}
               trailingSlot={
                 <div className="composer-actions">
                   {reply.busy ? (
@@ -1388,7 +1506,7 @@ export function DraftPane(props: DraftPaneProps) {
 
                 {reply.busy ? (
                   <p className="writing-suggestion-body" aria-live="polite">
-                    {reply.output || writingWaitingPhrase}
+                    {reply.output || activeWritingWaitingPhrase}
                   </p>
                 ) : selectedSuggestion ? (
                   <div className="writing-suggestion-confirm">
@@ -1485,6 +1603,13 @@ export function DraftPane(props: DraftPaneProps) {
                 disabled={reply.busy}
                 onModelChange={(model) => handleGenerationPreferenceChange({ model })}
                 onReasoningEffortChange={(reasoningEffort) => handleGenerationPreferenceChange({ reasoningEffort })}
+                promptPackLibrary={props.promptPackLibrary}
+                promptPackMode={work.generationPreference?.promptPackMode ?? 'inherit'}
+                prefixCompletion={work.generationPreference?.prefixCompletion ?? 'inherit'}
+                onPromptPackModeChange={(mode) =>
+                  handleGenerationPreferenceChange({ promptPackMode: mode === 'inherit' ? null : mode })}
+                onPrefixCompletionChange={(mode) =>
+                  handleGenerationPreferenceChange({ prefixCompletion: mode === 'inherit' ? null : mode })}
                 trailingSlot={
                   <div className="composer-actions">
                     {reply.busy ? (

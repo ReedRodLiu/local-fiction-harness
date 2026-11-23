@@ -35,7 +35,7 @@ import {
   type SetupNodeFilter,
   type ThreeZoneContextResult,
 } from './context.ts';
-import type { PromptPackLibrary } from './promptPack.ts';
+import { buildPromptPackContextOptions, type PromptPackLibrary } from './promptPack.ts';
 import {
   streamWithRefusalHandling,
   type RefusalStreamIntegrationOptions,
@@ -606,16 +606,14 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       true,
       {
         ...prepared.request,
-        ...(deps.promptPackLibrary ? { promptPackLibrary: deps.promptPackLibrary } : {}),
-        generationPreference: workingStory.generationPreference,
+        ...buildPromptPackContextOptions(deps.promptPackLibrary, workingStory.generationPreference),
       },
     );
 
     const result = await streamText(config, messages, callbacks, true, {
       mode: 'story',
       promptPackOptions: {
-        ...(deps.promptPackLibrary ? { promptPackLibrary: deps.promptPackLibrary } : {}),
-        generationPreference: workingStory.generationPreference,
+        ...buildPromptPackContextOptions(deps.promptPackLibrary, workingStory.generationPreference),
       },
     });
     const parsed = parseProposalReply(result.content, { finishReason: result.finishReason });
@@ -823,10 +821,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         deps.contextBudget,
         false,
         undefined,
-        {
-          ...(deps.promptPackLibrary ? { promptPackLibrary: deps.promptPackLibrary } : {}),
-          generationPreference: story.generationPreference,
-        },
+        buildPromptPackContextOptions(deps.promptPackLibrary, story.generationPreference),
       );
     },
 
@@ -911,15 +906,13 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         true,
         {
           ...prepared.request,
-          ...(deps.promptPackLibrary ? { promptPackLibrary: deps.promptPackLibrary } : {}),
-          generationPreference: workingStory.generationPreference,
+          ...buildPromptPackContextOptions(deps.promptPackLibrary, workingStory.generationPreference),
         },
       );
       const result = await streamText(config, messages, callbacks, true, {
         mode: 'story',
         promptPackOptions: {
-          ...(deps.promptPackLibrary ? { promptPackLibrary: deps.promptPackLibrary } : {}),
-          generationPreference: workingStory.generationPreference,
+          ...buildPromptPackContextOptions(deps.promptPackLibrary, workingStory.generationPreference),
         },
       });
       const parsed = parseProposalReply(result.content, { finishReason: result.finishReason });

@@ -562,7 +562,12 @@ function mergePromptPackLibraries(
   }
 
   return {
-    library: validatePromptPackLibrary({ packs, activePackId: current.activePackId }),
+    library: validatePromptPackLibrary({
+      packs,
+      activePackId: current.activePackId,
+      defaultPrefixCompletion: current.defaultPrefixCompletion,
+      includeTail: current.includeTail,
+    }),
     idRemap,
   };
 }

@@ -6,6 +6,8 @@ import {
   normalizeReasoningEffort,
   type GenerationPreference,
   type OfficialDeepSeekModel,
+  type PrefixCompletionMode,
+  type PromptPackLibrary,
   type ReasoningEffort,
 } from '../harness/index.ts';
 
@@ -15,6 +17,11 @@ export interface GenerationControlsProps {
   disabled?: boolean;
   onModelChange: (model: OfficialDeepSeekModel) => void;
   onReasoningEffortChange: (effort: ReasoningEffort) => void;
+  promptPackLibrary?: PromptPackLibrary;
+  promptPackMode?: GenerationPreference['promptPackMode'] | 'inherit';
+  prefixCompletion?: PrefixCompletionMode | 'inherit';
+  onPromptPackModeChange?: (mode: GenerationPreference['promptPackMode'] | 'inherit') => void;
+  onPrefixCompletionChange?: (mode: PrefixCompletionMode | 'inherit') => void;
   leadingSlot?: ReactNode;
   trailingSlot?: ReactNode;
 }
@@ -50,18 +57,33 @@ const REASONING_LABELS: Record<ReasoningEffort, string> = {
  * Merges a partial generation preference patch into an existing override without
  * mutating global defaults or dropping unrelated fields.
  */
+type GenerationPreferencePatch = Omit<Partial<GenerationPreference>, 'promptPackMode' | 'prefixCompletion'> & {
+  promptPackMode?: GenerationPreference['promptPackMode'] | null;
+  prefixCompletion?: PrefixCompletionMode | null;
+};
+
 export function mergeGenerationPreference(
   current: GenerationPreference | undefined,
-  patch: Partial<GenerationPreference>,
+  patch: GenerationPreferencePatch,
 ): GenerationPreference | undefined {
+  const promptPackMode =
+    patch.promptPackMode === null
+      ? undefined
+      : patch.promptPackMode !== undefined
+        ? patch.promptPackMode
+        : current?.promptPackMode;
+  const prefixCompletion =
+    patch.prefixCompletion === null
+      ? undefined
+      : patch.prefixCompletion !== undefined
+        ? patch.prefixCompletion
+        : current?.prefixCompletion;
   return normalizeGenerationPreference({
     model: patch.model !== undefined ? patch.model : current?.model,
     reasoningEffort:
       patch.reasoningEffort !== undefined ? patch.reasoningEffort : current?.reasoningEffort,
-    promptPackMode:
-      patch.promptPackMode !== undefined ? patch.promptPackMode : current?.promptPackMode,
-    prefixCompletion:
-      patch.prefixCompletion !== undefined ? patch.prefixCompletion : current?.prefixCompletion,
+    promptPackMode,
+    prefixCompletion,
   });
 }
 
@@ -76,6 +98,11 @@ export function GenerationControls({
   disabled = false,
   onModelChange,
   onReasoningEffortChange,
+  promptPackLibrary,
+  promptPackMode = 'inherit',
+  prefixCompletion = 'inherit',
+  onPromptPackModeChange,
+  onPrefixCompletionChange,
   leadingSlot,
   trailingSlot,
 }: GenerationControlsProps) {
@@ -153,6 +180,48 @@ export function GenerationControls({
               ))}
             </div>
           </div>
+
+          {onPromptPackModeChange && onPrefixCompletionChange && (
+            <div className="composer-preference-row" role="group" aria-label="提示词包与续写偏好">
+              <label className="composer-preference-field">
+                <span>提示词包</span>
+                <select
+                  data-testid="generation-pref-prompt-pack"
+                  value={promptPackMode || 'inherit'}
+                  disabled={disabled}
+                  onChange={(event) => onPromptPackModeChange(event.currentTarget.value)}
+                >
+                  <option value="inherit">跟随全局</option>
+                  <option value="off">在此条目停用</option>
+                  {(promptPackLibrary?.packs ?? []).map((pack) => (
+                    <option key={pack.id} value={pack.id}>
+                      {pack.title}
+                    </option>
+                  ))}
+                  {promptPackMode &&
+                    promptPackMode !== 'inherit' &&
+                    promptPackMode !== 'off' &&
+                    !(promptPackLibrary?.packs ?? []).some((pack) => pack.id === promptPackMode) && (
+                      <option value={promptPackMode}>缺失的提示词包</option>
+                    )}
+                </select>
+              </label>
+              <label className="composer-preference-field">
+                <span>前缀续写</span>
+                <select
+                  data-testid="generation-pref-prefix-mode"
+                  value={prefixCompletion || 'inherit'}
+                  disabled={disabled}
+                  onChange={(event) => onPrefixCompletionChange(event.currentTarget.value as PrefixCompletionMode | 'inherit')}
+                >
+                  <option value="inherit">跟随全局</option>
+                  <option value="off">关闭</option>
+                  <option value="on_retry">仅重试时开启</option>
+                  <option value="always">每轮开启</option>
+                </select>
+              </label>
+            </div>
+          )}
         </div>
         {trailingSlot}
       </div>
