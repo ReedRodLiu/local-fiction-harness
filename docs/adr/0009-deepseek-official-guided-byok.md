@@ -5,6 +5,8 @@ status: accepted
 # 首版锁定 DeepSeek 官方渠道与引导式 BYOK 接入
 
 > 部分修订：本决议中“隐藏模型名称并锁定单模型”的约束已由 [ADR 0014](0014-deepseek-model-selection-and-reasoning-effort.md) 调整为开放官方双模型选择与四档思考强度控制；官方地址锁定与引导式 BYOK 原则继续生效。
+>
+> 部分修订：叙事提示词包、官方 `/beta` 请求派生与拒答治理的边界见 [ADR 0016](0016-prompt-pack-and-refusal-governance.md)。
 
 ## Decision
 

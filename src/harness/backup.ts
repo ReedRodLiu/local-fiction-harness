@@ -16,6 +16,12 @@ import {
 } from './markdownDocuments.ts';
 import { migrateStoryToV02, migrateWorkspaceToV02 } from './migration.ts';
 import {
+  BUILTIN_NARRATIVE_PROMPT_PACK,
+  validatePromptPackLibrary,
+  type PromptPack,
+  type PromptPackLibrary,
+} from './promptPack.ts';
+import {
   validateGenerationPreference,
   validateNodes,
   validateStoryPayload,
@@ -35,6 +41,7 @@ export interface FolioBackupEnvelopeV3 {
   stories: Story[];
   workspace: CreativeWorkspaceState;
   displayPreferences?: FolioBackupDisplayPreferences;
+  promptPacks?: PromptPackLibrary;
 }
 
 export interface ExportFolioBackupV3Options {
@@ -42,6 +49,7 @@ export interface ExportFolioBackupV3Options {
   workspace: CreativeWorkspaceState;
   appVersion?: string;
   displayPreferences?: FolioBackupDisplayPreferences;
+  promptPacks?: PromptPackLibrary;
   now?: () => number;
 }
 
@@ -49,6 +57,7 @@ export interface FolioWorkspaceSnapshot {
   stories: Story[];
   workspace: CreativeWorkspaceState;
   displayPreferences?: FolioBackupDisplayPreferences;
+  promptPacks?: PromptPackLibrary;
 }
 
 export interface MergeRestoredBackupOptions {
@@ -60,6 +69,7 @@ export interface MergedBackupResult {
   stories: Story[];
   workspace: CreativeWorkspaceState;
   displayPreferences?: FolioBackupDisplayPreferences;
+  promptPacks?: PromptPackLibrary;
   report: {
     addedStories: number;
     renamedStories: number;
@@ -177,6 +187,9 @@ function sanitizeStoryForExport(story: Story): Story {
 export function exportFolioBackupV3(options: ExportFolioBackupV3Options): string {
   const now = options.now ?? (() => Date.now());
   const displayPreferences = sanitizeDisplayPreferences(options.displayPreferences);
+  const promptPacks = options.promptPacks
+    ? validatePromptPackLibrary(options.promptPacks)
+    : undefined;
   const envelope: FolioBackupEnvelopeV3 = {
     schemaVersion: 3,
     exportedAt: now(),
@@ -184,6 +197,7 @@ export function exportFolioBackupV3(options: ExportFolioBackupV3Options): string
     stories: options.stories.map(sanitizeStoryForExport),
     workspace: sanitizeWorkspaceForExport(options.workspace),
     ...(displayPreferences ? { displayPreferences } : {}),
+    ...(promptPacks ? { promptPacks } : {}),
   };
   return JSON.stringify(envelope, null, 2);
 }
@@ -494,6 +508,9 @@ export function parseAndValidateFolioBackup(rawJson: string): FolioBackupEnvelop
     );
     const workspace = validateWorkspacePayload(parsed.workspace);
     const displayPreferences = validateDisplayPreferences(parsed.displayPreferences);
+    const promptPacks = parsed.promptPacks === undefined
+      ? undefined
+      : validatePromptPackLibrary(parsed.promptPacks);
     return {
       schemaVersion: 3,
       exportedAt: parsed.exportedAt,
@@ -501,10 +518,47 @@ export function parseAndValidateFolioBackup(rawJson: string): FolioBackupEnvelop
       stories,
       workspace,
       ...(displayPreferences ? { displayPreferences } : {}),
+      ...(promptPacks ? { promptPacks } : {}),
     };
   }
 
   throw new Error('不支持的备份文件版本。');
+}
+
+function mergePromptPackLibraries(
+  existing: PromptPackLibrary | undefined,
+  incoming: PromptPackLibrary | undefined,
+  createId: () => string,
+): PromptPackLibrary | undefined {
+  if (!existing && !incoming) return undefined;
+  if (!existing) return validatePromptPackLibrary(incoming);
+  if (!incoming) return validatePromptPackLibrary(existing);
+
+  const current = validatePromptPackLibrary(existing);
+  const restored = validatePromptPackLibrary(incoming);
+  const usedIds = new Set(current.packs.map((pack) => pack.id));
+  const idRemap = new Map<string, string>();
+  const packs: PromptPack[] = current.packs.map((pack) => cloneJson(pack));
+
+  for (const incomingPack of restored.packs) {
+    if (incomingPack.id === BUILTIN_NARRATIVE_PROMPT_PACK.id) continue;
+    let nextPack = cloneJson(incomingPack);
+    if (usedIds.has(nextPack.id)) {
+      const nextId = createId();
+      idRemap.set(nextPack.id, nextId);
+      nextPack = {
+        ...nextPack,
+        id: nextId,
+        title: `${nextPack.title} (备份导入)`,
+      };
+    }
+    usedIds.add(nextPack.id);
+    packs.push(nextPack);
+  }
+
+  const activePackId = current.activePackId ??
+    (restored.activePackId ? idRemap.get(restored.activePackId) ?? restored.activePackId : null);
+  return validatePromptPackLibrary({ packs, activePackId });
 }
 
 /**
@@ -659,11 +713,17 @@ export function mergeRestoredBackup(
           ...existing.displayPreferences,
         })
       : undefined;
+  const promptPacks = mergePromptPackLibraries(
+    existing.promptPacks,
+    incoming.promptPacks,
+    createId,
+  );
 
   return {
     stories: mergedStories,
     workspace: mergedWorkspace,
     ...(displayPreferences ? { displayPreferences } : {}),
+    ...(promptPacks ? { promptPacks } : {}),
     report: {
       addedStories,
       renamedStories,

@@ -4,6 +4,7 @@ import type {
   ModelConfig,
   ModelConfigMeta,
   OfficialDeepSeekModel,
+  PrefixCompletionMode,
   ReasoningEffort,
   SecretStore,
 } from './types.ts';
@@ -98,6 +99,30 @@ export function normalizeReasoningEffort(
   return isReasoningEffort(value) ? value : fallback;
 }
 
+export function isPrefixCompletionMode(value: unknown): value is PrefixCompletionMode {
+  return value === 'off' || value === 'on_retry' || value === 'always';
+}
+
+/**
+ * Normalizes the optional per-asset generation controls without inventing a
+ * pack id or changing the existing model/reasoning preference semantics.
+ */
+export function normalizeGenerationPreference(
+  pref?: GenerationPreference | null,
+): GenerationPreference | undefined {
+  if (!pref || typeof pref !== 'object') return undefined;
+  const out: GenerationPreference = {};
+  if (isOfficialDeepSeekModel(pref.model)) out.model = pref.model;
+  if (isReasoningEffort(pref.reasoningEffort)) out.reasoningEffort = pref.reasoningEffort;
+  if (typeof pref.promptPackMode === 'string' && pref.promptPackMode.trim()) {
+    out.promptPackMode = pref.promptPackMode.trim();
+  }
+  if (isPrefixCompletionMode(pref.prefixCompletion)) {
+    out.prefixCompletion = pref.prefixCompletion;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /**
  * Forces non-dev-proxy model configurations to the official DeepSeek endpoint and
  * whitelisted official models (preserving deepseek-v4-pro, migrating legacy values
@@ -106,7 +131,7 @@ export function normalizeReasoningEffort(
 export function normalizeOfficialModelConfig(config: ModelConfig): ModelConfig {
   return {
     ...config,
-    apiKey: /^https:\/\/api\.deepseek\.com(?:\/v1)?\/?$/i.test(config.baseUrl.trim()) ? config.apiKey : '',
+    apiKey: /^https:\/\/api\.deepseek\.com(?:\/v1|\/beta)?\/?$/i.test(config.baseUrl.trim()) ? config.apiKey : '',
     baseUrl: DEFAULT_MODEL_CONFIG.baseUrl,
     model: normalizeOfficialDeepSeekModel(config.model),
     reasoningEffort: normalizeReasoningEffort(config.reasoningEffort, DEFAULT_REASONING_EFFORT),

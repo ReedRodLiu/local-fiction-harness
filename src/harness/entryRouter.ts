@@ -11,10 +11,15 @@ import {
 } from './creative.ts';
 import { createDefaultId } from './id.ts';
 import {
-  isOfficialDeepSeekModel,
-  isReasoningEffort,
+  normalizeGenerationPreference,
   normalizeReasoningEffort,
 } from './keyConfig.ts';
+import {
+  buildPromptPackAnchorMessages,
+  promptPackTailMessage,
+  resolvePromptPackContext,
+  type PromptPackContextOptions,
+} from './promptPack.ts';
 import {
   CHANGE_PROMPT,
   documentVersion,
@@ -344,8 +349,13 @@ export function buildEntryRouteMessages(
   userInput: string,
   neutralHistory: readonly TurnNode[] = [],
   publicMemoryMarkdown = '',
+  promptPackOptions?: PromptPackContextOptions,
 ): LlmMessage[] {
-  const messages: LlmMessage[] = [{ role: 'system', content: ENTRY_ROUTE_SYSTEM_PROMPT }];
+  const effectivePromptPack = resolvePromptPackContext(promptPackOptions);
+  const baseSystemPrompt = effectivePromptPack.enabled
+    ? `${ENTRY_ROUTE_SYSTEM_PROMPT}\n${CHANGE_PROMPT}`
+    : ENTRY_ROUTE_SYSTEM_PROMPT;
+  const messages: LlmMessage[] = buildPromptPackAnchorMessages(baseSystemPrompt, effectivePromptPack);
   if (publicMemoryMarkdown.trim()) {
     messages.push({
       role: 'system',
@@ -355,6 +365,11 @@ export function buildEntryRouteMessages(
   for (const node of neutralHistory) {
     messages.push({ role: node.role, content: node.content });
   }
+  const tail = promptPackTailMessage(
+    effectivePromptPack,
+    promptPackOptions?.includePromptPackTail ?? promptPackOptions?.includeTail ?? false,
+  );
+  if (tail) messages.push(tail);
   messages.push({ role: 'user', content: userInput });
   return messages;
 }
@@ -366,8 +381,9 @@ export async function routeEntryMessage(
   config: ModelConfig,
   callbacks: TurnCallbacks = {},
   publicMemoryMarkdown = '',
+  promptPackOptions?: PromptPackContextOptions,
 ): Promise<EntryRouteResult> {
-  const messages = buildEntryRouteMessages(userInput, neutralHistory, publicMemoryMarkdown);
+  const messages = buildEntryRouteMessages(userInput, neutralHistory, publicMemoryMarkdown, promptPackOptions);
   let raw = '';
   let reasoningContent = '';
   let finishReason: string | null | undefined;
@@ -416,19 +432,7 @@ export async function routeEntryMessage(
   };
 }
 
-function normalizeGenerationPreference(
-  pref?: GenerationPreference,
-): GenerationPreference | undefined {
-  if (!pref) return undefined;
-  const out: GenerationPreference = {};
-  if (isOfficialDeepSeekModel(pref.model)) {
-    out.model = pref.model;
-  }
-  if (isReasoningEffort(pref.reasoningEffort)) {
-    out.reasoningEffort = pref.reasoningEffort;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
+export { normalizeGenerationPreference } from './keyConfig.ts';
 
 /**
  * Materializes neutral (unpersisted) or existing turns + setting Markdown into a persisted target mode asset.
