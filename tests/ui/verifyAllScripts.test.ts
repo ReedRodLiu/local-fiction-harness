@@ -18,10 +18,14 @@ describe('default verification gate', () => {
     expect(packageJson.scripts['test:ui-impl-05:production']).toBe(
       'LFH_E2E_PRODUCTION=1 LFH_UI_IMPL_05_PRODUCTION_ONLY=1 node tests/e2e/run-e2e.mjs',
     );
+    expect(packageJson.scripts['test:e2e:markdown']).toBe(
+      'node tests/e2e/markdown-message-rendering.mjs',
+    );
 
     const steps = packageJson.scripts['verify:all'].split(/\s*&&\s*/);
     expect(steps).toContain('npm run test:ui-impl-05:dev');
     expect(steps).toContain('npm run test:ui-impl-05:production');
+    expect(steps).toContain('npm run test:e2e:markdown');
     expect(steps.indexOf('npm run build')).toBeLessThan(
       steps.indexOf('npm run test:ui-impl-05:production'),
     );
