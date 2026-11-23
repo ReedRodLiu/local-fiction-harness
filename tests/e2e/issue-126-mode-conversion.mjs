@@ -324,8 +324,9 @@ export async function verifyIssue126ModeConversion(browser, port, helpers) {
     await characterSheet.getByTestId('branch-note-details').getByText('分支笔记', { exact: true }).click();
     await characterSheet.getByText('第二版分支笔记', { exact: false }).waitFor();
     await characterSheet.getByRole('button', { name: '编辑分支笔记' }).click();
-    await documentDialog.getByRole('textbox').waitFor();
-    assert.match(await documentDialog.getByRole('textbox').inputValue(), /第二版分支笔记/);
+    await page.waitForFunction(() =>
+      document.querySelector('[data-testid="markdown-document"] textarea')?.value.includes('第二版分支笔记'),
+    );
     await documentDialog.getByText('历史版本', { exact: true }).click();
     assert.ok(await documentDialog.getByRole('button', { name: '查看并恢复此版' }).count() > 0);
     await documentDialog.getByRole('button', { name: '取消' }).click();
