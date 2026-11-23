@@ -18,13 +18,24 @@ export interface PlotSummarySnapshot {
   summarizedTurnCount: number;
 }
 
-export type NodeDiagnosticStatus = 'CONTENT_FILTER' | 'TIMEOUT' | 'INCOMPLETE';
+export type NodeDiagnosticStatus = 'CONTENT_FILTER' | 'TIMEOUT' | 'INCOMPLETE' | 'REFUSAL';
 
 export type StorySourceKind = 'manual_script' | 'deepseek_import';
+
+export type RefusalRouteDiagnostic =
+  | 'pass'
+  | 'retry'
+  | 'retry-skeleton'
+  | 'partial_refused'
+  | 'refused_exhausted';
 
 export interface NodeDiagnostics {
   readonly sourceStatus?: NodeDiagnosticStatus;
   readonly contentRisk?: boolean;
+  readonly refusalRoute?: RefusalRouteDiagnostic;
+  readonly recoveredFromText?: string;
+  readonly retriedWithPrefix?: boolean;
+  readonly matchedRuleId?: string;
 }
 
 export interface DocumentRead {
@@ -243,6 +254,7 @@ export interface PlatformRuntime {
 export interface TurnCallbacks {
   onReasoningDelta?: (delta: string) => void;
   onContentDelta?: (delta: string) => void;
+  onRefusalRetry?: () => void;
   signal?: AbortSignalLike;
 }
 

@@ -4,6 +4,7 @@ import { normalizeReasoningEffort } from './keyConfig.ts';
 import {
   EMPTY_SUMMARY_SNAPSHOT,
   assembleCreativeThreeZoneContext,
+  excludeRefusedTurns,
   getActiveBranchNodes,
   getActiveSummarySnapshot,
   summarizeCreativeTurnNodes,
@@ -34,6 +35,10 @@ import {
   type PromptPackContextOptions,
   type PromptPackLibrary,
 } from './promptPack.ts';
+import {
+  streamWithRefusalHandling,
+  type RefusalStreamIntegrationOptions,
+} from './refusalWrapper.ts';
 import type {
   AbortSignalLike,
   DocumentRead,
@@ -260,7 +265,7 @@ export function conversationLocalVersion(conversation: CharacterConversation): s
 }
 
 export function turnMessages(nodes: TurnNode[]): LlmMessage[] {
-  return nodes.map(({ role, content }) => ({ role, content }));
+  return excludeRefusedTurns(nodes).map(({ role, content }) => ({ role, content }));
 }
 
 const DEFAULT_CHARACTER_SYSTEM_PROMPT = [
@@ -573,37 +578,30 @@ export async function streamCreativeReply(
   config: ModelConfig,
   messages: LlmMessage[],
   callbacks: TurnCallbacks = {},
+  refusalOptions?: RefusalStreamIntegrationOptions,
 ) {
-  let raw = '';
-  let reasoningContent = '';
-  let finishReason: string | null | undefined;
-  let visible = '';
   const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
-  for await (const delta of transport.streamChat({
-    baseUrl: config.baseUrl,
-    apiKey: config.apiKey,
-    model: config.model,
-    reasoningEffort,
+  const result = await streamWithRefusalHandling({
+    transport,
+    config,
     messages,
-    signal: callbacks.signal,
-  })) {
-    if (delta.finishReason != null) finishReason = delta.finishReason;
-    if (delta.reasoningDelta && reasoningEffort !== 'none') {
-      reasoningContent += delta.reasoningDelta;
-      callbacks.onReasoningDelta?.(delta.reasoningDelta);
-    }
-    if (!delta.contentDelta) continue;
-    raw += delta.contentDelta;
-    const next = visibleReplyPrefix(raw);
-    if (next.length > visible.length) callbacks.onContentDelta?.(next.slice(visible.length));
-    visible = next;
-  }
+    callbacks,
+    mode: refusalOptions?.mode ?? 'writing',
+    ...(refusalOptions?.promptPackOptions ? { promptPackOptions: refusalOptions.promptPackOptions } : {}),
+    ...(refusalOptions?.prefixContent ? { prefixContent: refusalOptions.prefixContent } : {}),
+    ...(refusalOptions?.characterName ? { characterName: refusalOptions.characterName } : {}),
+    ...(refusalOptions?.onDiagnostic ? { onDiagnostic: refusalOptions.onDiagnostic } : {}),
+    toVisibleContent: visibleReplyPrefix,
+  });
   if (callbacks.signal?.aborted) throw new Error('生成已取消。');
-  if (finishReason !== 'stop') {
+  const isRefusalResult =
+    result.diagnostics?.sourceStatus === 'REFUSAL' ||
+    result.diagnostics?.refusalRoute === 'partial_refused';
+  if (result.finishReason !== 'stop' && !isRefusalResult) {
     transport.recordMarkdownProposal?.('incomplete');
     throw new Error('回复未完成，请重试。');
   }
-  const parsed = parseProposalReply(raw, { finishReason });
+  const parsed = parseProposalReply(result.content, { finishReason: result.finishReason });
   const legacyProposalStatus: MarkdownProposalStatus = parsed.proposals.length > 0
     ? 'recognized'
     : parsed.proposalStatus === 'needs_review'
@@ -621,7 +619,9 @@ export async function streamCreativeReply(
     proposal: parsed.proposal,
     proposals: parsed.proposals,
     unparsedBlocks: parsed.unparsedBlocks,
-    reasoningContent,
+    reasoningContent: result.reasoningContent,
+    ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+    ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
     model: config.model,
     reasoningEffort,
   };
