@@ -534,10 +534,13 @@ function appendSlot(slots: PromptPackSlots, slot: keyof PromptPackSlots, raw: st
   slots[slot] = slots[slot] ? `${slots[slot]}\n\n${content}` : content;
 }
 
+const PROMPT_PACK_SLOT_MARKER_SOURCE =
+  String.raw`^[ \t]*<!--\s*folio-slot\s*:\s*(head|mid|tail)\s*-->[ \t]*\r?$`;
+
 export function parsePromptPackMarkdown(raw: string, title?: string): PromptPack {
   if (typeof raw !== 'string') throw new Error('提示词包 Markdown 必须为字符串。');
   const text = raw.replace(/^\uFEFF/, '');
-  const marker = /<!--\s*folio-slot\s*:\s*(head|mid|tail)\s*-->/gi;
+  const marker = new RegExp(PROMPT_PACK_SLOT_MARKER_SOURCE, 'gim');
   const matches = Array.from(text.matchAll(marker));
   const slots = emptyPromptPackSlots();
   if (matches.length === 0) {
@@ -600,6 +603,12 @@ export function importSillyTavernPresetJson(raw: string, title?: string): Prompt
 
 export function exportPromptPackMarkdown(pack: PromptPack): string {
   assertValidPromptPack(pack);
+  for (const slot of ['head', 'mid', 'tail'] as const) {
+    const marker = new RegExp(PROMPT_PACK_SLOT_MARKER_SOURCE, 'im');
+    if (marker.test(pack.slots[slot])) {
+      throw new Error(`提示词包 ${slot} 槽位包含独占一行的 folio-slot 标记，导出后无法无损恢复。`);
+    }
+  }
   const parts = (['head', 'mid', 'tail'] as const).map((slot) =>
     `<!-- folio-slot: ${slot} -->\n${pack.slots[slot].trim()}`,
   );

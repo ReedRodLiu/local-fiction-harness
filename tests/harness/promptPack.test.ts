@@ -93,6 +93,26 @@ describe('Prompt Pack storage and exchange formats', () => {
     expect(parsePromptPackMarkdown(exported).slots).toEqual(marked.slots);
   });
 
+  it('round-trips inline folio-slot marker literals without splitting slots', () => {
+    const pack = createPromptPack('inline-marker', {
+      head: '开头\n正文 <!-- folio-slot: mid --> 字面量\n结尾',
+      mid: '中段\n正文 <!-- folio-slot: tail --> 字面量',
+      tail: '尾段',
+    });
+
+    expect(parsePromptPackMarkdown(exportPromptPackMarkdown(pack)).slots).toEqual(pack.slots);
+  });
+
+  it('rejects exporting a slot containing a standalone folio-slot marker', () => {
+    const pack = createPromptPack('ambiguous-marker', {
+      head: '前文\n<!-- folio-slot: mid -->\n后文',
+      mid: '',
+      tail: '',
+    });
+
+    expect(() => exportPromptPackMarkdown(pack)).toThrow(/head.*folio-slot/);
+  });
+
   it('extracts static SillyTavern prompts into head, mid, and tail', () => {
     const pack = importSillyTavernPresetJson(
       JSON.stringify({
@@ -133,7 +153,7 @@ describe('Prompt Pack storage and exchange formats', () => {
     });
   });
 
-  it('keeps prompt packs in the optional v3 backup field without exposing proposal targets', () => {
+  it('keeps prompt packs in the optional v3 backup field', () => {
     const library = {
       packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
       activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
