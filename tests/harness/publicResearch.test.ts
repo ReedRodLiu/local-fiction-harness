@@ -802,6 +802,63 @@ describe('public character research', () => {
     expect(result.publicResearch).toBeUndefined();
   });
 
+  it('treats a latest standalone writing correction as authoritative over older character mode', async () => {
+    const provider = {
+      resolve: vi.fn(async () => ({
+        identity: {
+          work: '钢之炼金术师',
+          version: '2003 动画版',
+          timeline: '第 51 集后',
+          characters: ['爱德华·艾尔利克'],
+        },
+        identityKey: '钢之炼金术师|2003 动画版|第 51 集后|爱德华·艾尔利克',
+        summary: '### 爱德华·艾尔利克\n- 称呼弟弟为阿尔。',
+        sources: [{ title: '官方角色页', url: 'https://official.example/edward' }],
+        fetchedAt: 250,
+      })),
+    };
+    const neutralHistory: TurnNode[] = [{
+      id: 'user-1',
+      parentId: null,
+      role: 'user',
+      content: [
+        '想开角色互动。',
+        '原作：《钢之炼金术师》',
+        '版本：2003 动画版',
+        '剧情时点：第 51 集后',
+        '角色：爱德华·艾尔利克',
+      ].join('\n'),
+      createdAt: 1,
+      summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+    }];
+    const latest = '不用角色互动，帮我写一篇正文。';
+    const routedTransport: LlmTransport = {
+      async *streamChat() {
+        yield { contentDelta: '```lfh-route\nmode: writing\ntitle: 钢之炼金术师同人\n---\n原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集后\n角色：爱德华·艾尔利克\n```\n\n雨落在中央市。' };
+        yield { finishReason: 'stop' };
+      },
+    };
+    const fallbackTransport: LlmTransport = {
+      async *streamChat() {
+        yield { contentDelta: '雨落在中央市。' };
+        yield { finishReason: 'stop' };
+      },
+    };
+
+    const routed = await routeEntryMessage(latest, neutralHistory, routedTransport, testConfig, {}, '', {
+      publicResearch: provider as any,
+    });
+    expect(routed.mode).toBe('writing');
+    expect(provider.resolve).not.toHaveBeenCalled();
+
+    const fallback = await routeEntryMessage(latest, neutralHistory, fallbackTransport, testConfig, {}, '', {
+      publicResearch: provider as any,
+    });
+    expect(fallback.mode).toBe('writing');
+    expect(fallback.usedFallback).toBe(true);
+    expect(provider.resolve).not.toHaveBeenCalled();
+  });
+
   it('adds character-specific voice references as low-priority context', () => {
     const character = newCharacter('爱德华·艾尔利克', '原作：《钢之炼金术师》\n改编：2003 动画版\n剧情时点：第 51 集结局后\n角色：爱德华·艾尔利克');
     const conversation = newConversation(character, 'roleplay');

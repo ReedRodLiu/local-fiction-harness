@@ -193,6 +193,8 @@ function hasAffirmedIntent(text: string, pattern: RegExp): boolean {
   return false;
 }
 
+const WRITING_INTENT_PATTERN = /(?:写故事|写小说|同人|大纲|写正文|开书|小说草稿|稿纸|写一篇|(?:按|以|用).{0,4}小说(?:来|写|创作))/u;
+
 /**
  * Heuristic fallback classifier when LLM output does not include an `lfh-route` metadata block.
  */
@@ -206,13 +208,13 @@ export function classifyEntryHeuristic(
   const combined = [...history.map((n) => n.content), userInput].join('\n').trim();
   if (!combined) return 'ambiguous';
 
+  if (hasAffirmedIntent(userInput, WRITING_INTENT_PATTERN) && !hasExplicitStageIntent(userInput)) {
+    return 'writing';
+  }
   if (hasAffirmedIntent(combined, /(?:角色人设|角色设定|角色互动|角色聊天|扮演对戏|(?:创建|建|找|来)一个?.{0,16}角色|和.{1,16}聊天|^名称[：:]|^姓名[：:])/mu)) {
     return 'character';
   }
-  if (hasAffirmedIntent(
-    combined,
-    /(?:写故事|写小说|同人|大纲|写正文|开书|小说草稿|稿纸|写一篇|(?:按|以|用).{0,4}小说(?:来|写|创作))/u,
-  )) {
+  if (hasAffirmedIntent(combined, WRITING_INTENT_PATTERN)) {
     return 'writing';
   }
   if (hasAffirmedIntent(combined, /(?:文游|跑团|第一幕|状态栏|规则|世界观|主角|开局|剧情推进|冒险|攻略)/u)) {
