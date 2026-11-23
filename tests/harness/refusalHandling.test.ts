@@ -249,6 +249,10 @@ describe('Spec #132 120-character refusal wrapper', () => {
       name: 'three deltas with a whitespace-only middle chunk',
       deltas: ['抱歉，我不能帮你写这段内容。', '\n', '（她放下杯子，抬眼看你。）'],
     },
+    {
+      name: 'three deltas with a punctuation-only middle chunk',
+      deltas: ['抱歉，我不能帮你写这段内容。', '……', '（她放下杯子，抬眼看你。）'],
+    },
   ])('keeps a short L1 scene delivery split across $name', async ({ deltas }) => {
     const raw = deltas.join('');
     const visible: string[] = [];
@@ -270,6 +274,80 @@ describe('Spec #132 120-character refusal wrapper', () => {
       refusalRoute: 'partial_refused',
       matchedRuleId: 'L1-02',
     });
+  });
+
+  it('keeps a short L1 scene when the opening parenthesis arrives before the action', async () => {
+    const raw = '抱歉，我不能帮你写这段内容。\n（她放下杯子，抬眼看你。）';
+    const visible: string[] = [];
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: '抱歉，我不能帮你写这段内容。' },
+        { contentDelta: '\n（' },
+        { contentDelta: '她放下杯子，抬眼看你。）' },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onContentDelta: (delta) => visible.push(delta) },
+    }));
+
+    expect(transport.requests).toHaveLength(1);
+    expect(visible.join('')).toBe(raw);
+    expect(result.content).toBe(raw);
+    expect(result.finishReason).toBe('stop');
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'partial_refused',
+      matchedRuleId: 'L1-02',
+    });
+  });
+
+  it('keeps a short L1 scene when the second-person experience verb arrives later', async () => {
+    const raw = '抱歉，我不能帮你写这段内容。\n你听见门外传来脚步声。';
+    const visible: string[] = [];
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: '抱歉，我不能帮你写这段内容。' },
+        { contentDelta: '\n你' },
+        { contentDelta: '听见门外传来脚步声。' },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onContentDelta: (delta) => visible.push(delta) },
+    }));
+
+    expect(transport.requests).toHaveLength(1);
+    expect(visible.join('')).toBe(raw);
+    expect(result.content).toBe(raw);
+    expect(result.finishReason).toBe('stop');
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'partial_refused',
+      matchedRuleId: 'L1-02',
+    });
+  });
+
+  it('keeps a short L1 scene when an ASCII quote opens before its dialogue', async () => {
+    const raw = '抱歉，我不能帮你写这段内容。\n"你终于来了。"';
+    const visible: string[] = [];
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: '抱歉，我不能帮你写这段内容。' },
+        { contentDelta: '\n"' },
+        { contentDelta: '你终于来了。"' },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onContentDelta: (delta) => visible.push(delta) },
+    }));
+
+    expect(transport.requests).toHaveLength(1);
+    expect(visible.join('')).toBe(raw);
+    expect(result.content).toBe(raw);
+    expect(result.diagnostics).toMatchObject({ refusalRoute: 'partial_refused' });
   });
 
   it('keeps a short L1 refusal when the same delta contains protocol artifacts', async () => {
@@ -841,6 +919,43 @@ describe('Spec #132 120-character refusal wrapper', () => {
       retriedWithPrefix: true,
       matchedRuleId: 'L1-02',
     });
+  });
+
+  it('delivers a retry stream when its short L1 scene starts with an incomplete anchor', async () => {
+    const firstRaw = '抱歉，我不能帮你写这段内容。';
+    const retryRaw = '抱歉，我不能帮你写这段内容。\n（她放下杯子，抬眼看你。）';
+    const visible: string[] = [];
+    const actions: string[] = [];
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: firstRaw },
+        { finishReason: 'stop' },
+      ]),
+      () => stream([
+        { contentDelta: '抱歉，我不能帮你写这段内容。' },
+        { contentDelta: '\n（' },
+        { contentDelta: '她放下杯子，抬眼看你。）' },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onContentDelta: (delta) => visible.push(delta) },
+      onDiagnostic: (event) => actions.push(event.action),
+    }));
+
+    expect(transport.requests).toHaveLength(2);
+    expect(visible.join('')).toBe(retryRaw);
+    expect(result.content).toBe(retryRaw);
+    expect(result.content).not.toBe(REFUSAL_EXHAUSTED_MESSAGE);
+    expect(result.finishReason).toBe('stop');
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'partial_refused',
+      recoveredFromText: firstRaw,
+      retriedWithPrefix: true,
+      matchedRuleId: 'L1-02',
+    });
+    expect(actions).toEqual(['refusal_detected', 'refusal_partial_delivered']);
   });
 
   it.each(['throw', 'yield'] as const)(

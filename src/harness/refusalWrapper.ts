@@ -220,6 +220,36 @@ function hasPotentialProtocolFenceStart(text: string): boolean {
   return /^[ \t]{0,3}`+[ \t]*(?:l(?:f(?:h(?:-[a-z-]*)?)?)?)?$/i.test(lastLine);
 }
 
+const SCENE_DELIMITER_PAIRS: readonly (readonly [string, string])[] = [
+  ['（', '）'],
+  ['(', ')'],
+  ['「', '」'],
+  ['『', '』'],
+  ['“', '”'],
+  ['"', '"'],
+];
+
+const POTENTIAL_SCENE_ANCHOR_START_RE =
+  /^(?:你(?:听|看|觉|感|闻|发(?:现)?|注(?:意)?|想|记|抬|回|伸|转|走|站|坐|握|接|推|拉)?|他|她)$/;
+const PUNCTUATION_ONLY_RE = /^[\s。！？…~～.．!?,，、;；:：\-—–]*$/;
+
+/**
+ * Holds a pending L1 refusal when the text after it may still become a scene
+ * anchor. Streaming can split `（` from its action, or `你` from an experience
+ * verb; aborting on those partial chunks would discard real narrative content.
+ */
+function hasPotentialSceneAnchorStart(textSincePending: string): boolean {
+  const text = String(textSincePending ?? '').trim();
+  if (!text || PUNCTUATION_ONLY_RE.test(text)) return true;
+  if (POTENTIAL_SCENE_ANCHOR_START_RE.test(text)) return true;
+  return SCENE_DELIMITER_PAIRS.some(([open, close]) => {
+    const openCount = text.split(open).length - 1;
+    const closeCount = text.split(close).length - 1;
+    if (open === close) return openCount % 2 === 1;
+    return openCount > closeCount;
+  });
+}
+
 function withRetryTail(messages: LlmMessage[], tail: string): LlmMessage[] {
   const normalizedTail = tail.trim();
   if (
@@ -352,6 +382,7 @@ async function runAttempt(
   let shown = '';
   let gateOpen = false;
   let pendingL1 = false;
+  let pendingDetectedChars = 0;
 
   const emitVisible = (): void => {
     const visible = toVisible(raw);
@@ -432,10 +463,12 @@ async function runAttempt(
             gateOpen = true;
             emitVisible();
           } else if (wasPendingL1) {
+            const textSincePending = evaluated.detectedContent.slice(pendingDetectedChars);
             const deltaHasContent = delta.contentDelta.trim().length > 0;
             if (
               deltaHasContent &&
               !hasPotentialProtocolFenceStart(evaluated.detectedContent) &&
+              !hasPotentialSceneAnchorStart(textSincePending) &&
               (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton')
             ) {
               internalAbort.abort();
@@ -449,6 +482,7 @@ async function runAttempt(
             }
           } else if (evaluated.layer === 'L1') {
             pendingL1 = true;
+            pendingDetectedChars = evaluated.detectedContent.length;
           }
         }
       }
