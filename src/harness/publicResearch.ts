@@ -1,4 +1,5 @@
 import type { AbortSignalLike, FetchLike, LlmMessage, LlmTransport, ModelConfig, TurnNode } from './types.ts';
+import { createBackgroundModelConfig } from './keyConfig.ts';
 
 export interface PublicResearchIdentity {
   work: string;
@@ -146,6 +147,7 @@ const TIMELINE_PATTERN = new RegExp(`(?:第\\s*${ORDINAL}\\s*[季部](?:\\s*第\
 const ENDING_TIMELINE_PATTERN = /(?:结局|终局|结尾)(?:之前|之后|前|后)/;
 const TIMELINE_TOKEN_RE = new RegExp(`^(?:(?:第\\s*${ORDINAL}\\s*[季部](?:\\s*第\\s*${ORDINAL}\\s*[集章卷话](?:\\s*(?:结局|终局|结尾))?)?|第\\s*${ORDINAL}\\s*[集章卷话](?:\\s*(?:结局|终局|结尾))?)(?:\\s*(?:之前|之后|前|后|时|末))?|(?:结局|终局|结尾)(?:之前|之后|前|后))$`);
 const CLEAR_SCOPE_CHANGE_RE = /(?:切换|改用|改为|改成|换成|换到|转为|转成)(?:到|为|成)?[^。！？\n]{0,32}(?:版|季|集|章|卷|时间线|剧情时点)/;
+const EXPLICIT_INTERACTION_TARGET_RE = /(?:(?:切换|换|改|只|单独|专门).{0,16}(?:角色|人物)\s*[:：]|(?:和|与|跟).{0,4}(?:角色|人物)\s*[:：].{0,24}(?:互动|对话|聊天|对戏)|(?:互动对象|目标角色|对话对象)\s*[:：])/iu;
 const BRACKETED_WORK_PATTERN = /《([^》\n]{1,80})》/g;
 const WORK_LABEL_TAIL_RE = /[，,。；;！？!?（）()《》「」『』]/u;
 
@@ -155,6 +157,17 @@ function hasConflictingLabels(text: string, labels: readonly string[]): boolean 
 
 function hasUnsafeMetadataMarker(value: string): boolean {
   return PRIVATE_OR_ORIGINAL_SOURCE_RE.test(value) || UNCERTAIN_SCOPE_RE.test(value);
+}
+
+function hasExplicitCharacterScopeUpdate(text: string): boolean {
+  return Boolean(
+    labelledValue(text, CHARACTER_LABELS) &&
+    (labelledValue(text, WORK_LABELS) ||
+      labelledValue(text, VERSION_LABELS) ||
+      labelledValue(text, TIMELINE_LABELS) ||
+      CLEAR_SCOPE_CHANGE_RE.test(text) ||
+      EXPLICIT_INTERACTION_TARGET_RE.test(text)),
+  );
 }
 
 function clauseAt(text: string, index: number, length: number): string {
@@ -293,7 +306,7 @@ export function derivePublicResearchIdentity(
     userHasExplicitWork ||
     userHasExplicitVersion ||
     userHasExplicitTimeline ||
-    userCharacterValues.length > 0 ||
+    hasExplicitCharacterScopeUpdate(userInput) ||
     clearScopeChange,
   );
   if (
@@ -334,7 +347,7 @@ export function derivePublicResearchIdentity(
   const work = (userChangesScope ? userWorkResult.value : undefined) || settingWorkResult.value;
   const version = (userChangesScope ? userVersion.value : undefined) || settingVersion.value;
   const timeline = (userChangesScope ? userTimeline.value : undefined) || settingTimeline.value;
-  const selectedCharacterValues = userCharacterValues.length > 0
+  const selectedCharacterValues = userChangesScope && userCharacterValues.length > 0
     ? userCharacterValues
     : settingCharacterValues;
   if (selectedCharacterValues.some(hasUnsafeMetadataMarker)) return null;
@@ -531,7 +544,7 @@ function hasExplicitScopeUpdate(userInput: string): boolean {
     labelledValue(userInput, WORK_LABELS) ||
     labelledValue(userInput, VERSION_LABELS) ||
     labelledValue(userInput, TIMELINE_LABELS) ||
-    labelledValue(userInput, CHARACTER_LABELS) ||
+    hasExplicitCharacterScopeUpdate(userInput) ||
     CLEAR_SCOPE_CHANGE_RE.test(userInput),
   );
 }
@@ -831,13 +844,14 @@ export function createDeepSeekPublicResearchProvider(
           const characters = verifiedCharacters(request.identity, fetched);
           if (characters.length === 0) return null;
 
+          const synthesisConfig = createBackgroundModelConfig(request.config);
           let summary = '';
           let finished = false;
           for await (const delta of options.transport.streamChat({
-            baseUrl: request.config.baseUrl,
+            baseUrl: synthesisConfig.baseUrl,
             apiKey,
-            model: request.config.model,
-            reasoningEffort: 'none',
+            model: synthesisConfig.model,
+            reasoningEffort: synthesisConfig.reasoningEffort,
             messages: researchSynthesisMessages({ ...request.identity, characters }, fetched),
             signal,
           })) {

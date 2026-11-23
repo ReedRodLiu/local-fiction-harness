@@ -17,6 +17,7 @@ import {
   resolvePublicResearchForTurn,
   routeEntryMessage,
   type FetchLike,
+  type LlmStreamRequest,
   type LlmTransport,
   type ModelConfig,
   type TurnNode,
@@ -263,6 +264,70 @@ describe('public character research', () => {
     expect(JSON.stringify(synthesisMessages)).not.toContain('sk-test');
   });
 
+  it('pins public-research synthesis to background Flash/none while keeping the foreground request on Pro/max', async () => {
+    const fetcher: FetchLike = async (url) => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      body: null,
+      async text() {
+        return url.endsWith('/v1/tools/search')
+          ? JSON.stringify({
+              results: [{
+                rerank_score: 2.6,
+                authority: 4,
+                title: '官方角色介绍',
+                url: 'https://official.example/edward',
+              }],
+            })
+          : JSON.stringify({ title: '官方角色介绍', content: '爱德华·艾尔利克说话短促。' });
+      },
+    });
+    const requests: LlmStreamRequest[] = [];
+    const transport: LlmTransport = {
+      async *streamChat(request) {
+        requests.push(request);
+        const synthesis = JSON.stringify(request.messages).includes('公开角色资料提炼器');
+        yield {
+          contentDelta: synthesis
+            ? '### 爱德华·艾尔利克\n- 说话短促。'
+            : '```lfh-route\nmode: story\ntitle: 钢之炼金术师\n---\n原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集后\n角色：爱德华·艾尔利克\n```\n\n雨落在中央市。',
+        };
+        yield { finishReason: 'stop' };
+      },
+    };
+    const foregroundConfig: ModelConfig = {
+      ...testConfig,
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'max',
+    };
+    const provider = createDeepSeekPublicResearchProvider({ fetcher, transport });
+
+    await routeEntryMessage(
+      '开一个《钢之炼金术师》2003 动画版第 51 集后的文游，角色：爱德华·艾尔利克',
+      [],
+      transport,
+      foregroundConfig,
+      {},
+      '',
+      { publicResearch: provider },
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({
+      model: 'deepseek-flash',
+      reasoningEffort: 'none',
+    });
+    expect(requests[1]).toMatchObject({
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'max',
+    });
+    expect(foregroundConfig).toMatchObject({
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'max',
+    });
+  });
+
   it('verifies character candidates against fetched public text before synthesis', async () => {
     for (const privateTail of ['私密关系设定', '阿信']) {
       const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -436,6 +501,90 @@ describe('public character research', () => {
     expect(first.assistantNode.publicResearch?.identityKey).toBe(second.assistantNode.publicResearch?.identityKey);
   });
 
+  it.each([
+    '角色：阿尔冯斯说：“哥哥，走吧。”',
+    '角色：阿尔冯斯',
+  ])('keeps the cached two-character scene for ordinary speaker input: %s', async (speakerInput) => {
+    const identities: unknown[] = [];
+    const payloads: unknown[] = [];
+    const harness = createFictionHarness({
+      storage: createInMemoryStoryStorage(),
+      publicResearch: {
+        async resolve(request) {
+          identities.push(request.identity);
+          return {
+            identity: request.identity,
+            identityKey: publicResearchIdentityKey(request.identity),
+            summary: [
+              '### 爱德华·艾尔利克',
+              '- 称呼弟弟为阿尔。',
+              '### 阿尔冯斯·艾尔利克',
+              '- 习惯称哥哥为哥哥。',
+            ].join('\n'),
+            sources: [{ title: '官方角色页', url: 'https://official.example/characters' }],
+            fetchedAt: 125,
+          };
+        },
+      },
+      transport: {
+        async *streamChat(request) {
+          payloads.push(request.messages);
+          yield { contentDelta: '继续。', finishReason: 'stop' };
+        },
+      },
+    });
+    const story = await harness.createAndSaveStory({
+      title: '炼金术师雨夜',
+      rawScript: '原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集结局后\n角色：爱德华·艾尔利克、阿尔冯斯·艾尔利克',
+    });
+
+    const first = await harness.runTurn(story, '开始。', testConfig);
+    const second = await harness.runTurn(first.story, speakerInput, testConfig);
+
+    expect(identities).toHaveLength(1);
+    expect(JSON.stringify(payloads[1])).toContain('公开资料参考');
+    expect(JSON.stringify(payloads[1])).toContain('称呼弟弟为阿尔');
+    expect(JSON.stringify(payloads[1])).toContain('习惯称哥哥为哥哥');
+    expect(second.assistantNode.publicResearch?.identityKey).toBe(first.assistantNode.publicResearch?.identityKey);
+  });
+
+  it('refreshes when the user explicitly switches to a new interaction target', async () => {
+    const identities: any[] = [];
+    const harness = createFictionHarness({
+      storage: createInMemoryStoryStorage(),
+      publicResearch: {
+        async resolve(request) {
+          identities.push(request.identity);
+          return {
+            identity: request.identity,
+            identityKey: publicResearchIdentityKey(request.identity),
+            summary: request.identity.characters.map((name) => `### ${name}\n- 参考语气。`).join('\n'),
+            sources: [{ title: '官方角色页', url: 'https://official.example/characters' }],
+            fetchedAt: 150,
+          };
+        },
+      },
+      transport: {
+        async *streamChat() {
+          yield { contentDelta: '继续。', finishReason: 'stop' };
+        },
+      },
+    });
+    const story = await harness.createAndSaveStory({
+      title: '炼金术师雨夜',
+      rawScript: '原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集结局后\n角色：爱德华·艾尔利克、阿尔冯斯·艾尔利克',
+    });
+    const first = await harness.runTurn(story, '开始。', testConfig);
+
+    const second = await harness.runTurn(first.story, '切换到角色：阿尔冯斯', testConfig);
+
+    expect(identities.map((identity) => identity.characters)).toEqual([
+      ['爱德华·艾尔利克', '阿尔冯斯·艾尔利克'],
+      ['阿尔冯斯'],
+    ]);
+    expect(second.assistantNode.publicResearch?.identity.characters).toEqual(['阿尔冯斯']);
+  });
+
   it('returns no research when the bounded public lookup times out', async () => {
     const fetcher: FetchLike = async () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -514,6 +663,143 @@ describe('public character research', () => {
     expect(JSON.stringify(welcomeMessages)).toContain('公开资料参考');
     expect(JSON.stringify(welcomeMessages)).toContain('称呼弟弟为阿尔');
     expect(result.publicResearch?.summary).toContain('称呼弟弟为阿尔');
+  });
+
+  it('derives research from bounded recent user welcome history when the current input only says start', async () => {
+    let providerCall: any = null;
+    const provider = {
+      async resolve(request: any) {
+        providerCall = request;
+        return {
+          identity: request.identity,
+          identityKey: publicResearchIdentityKey(request.identity),
+          summary: '### 爱德华·艾尔利克\n- 称呼弟弟为阿尔。',
+          sources: [{ title: '官方角色页', url: 'https://official.example/edward' }],
+          fetchedAt: 225,
+        };
+      },
+    };
+    let welcomeMessages: unknown;
+    const transport: LlmTransport = {
+      async *streamChat(request) {
+        welcomeMessages = request.messages;
+        yield { contentDelta: '```lfh-route\nmode: story\ntitle: 炼金术师续篇\n---\n原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集结局后\n角色：爱德华·艾尔利克、阿尔冯斯·艾尔利克\n```\n\n门口响起脚步声。' };
+        yield { finishReason: 'stop' };
+      },
+    };
+    const makeNode = (id: string, role: TurnNode['role'], content: string): TurnNode => ({
+      id,
+      parentId: null,
+      role,
+      content,
+      createdAt: Number(id.replace(/\D/g, '')) || 1,
+      summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+    });
+    const neutralHistory: TurnNode[] = [
+      makeNode('u0', 'user', '原作：《哈利·波特》\n版本：2011 电影版\n剧情时点：第 8 部后\n角色：哈利·波特'),
+      ...Array.from({ length: 12 }, (_, index) => makeNode(`u${index + 1}`, 'user', `继续聊聊${index + 1}`)),
+      makeNode(
+        'u13',
+        'user',
+        '开一个《钢之炼金术师》文游。\n原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集结局后\n角色：爱德华·艾尔利克、阿尔冯斯·艾尔利克\n私密备注：CANARY-NOT-FOR-LOOKUP',
+      ),
+      makeNode(
+        'a14',
+        'assistant',
+        '可以用《进击的巨人》作为原作，版本：2013 动画版，剧情时点：第 1 集后，角色：艾伦。',
+      ),
+    ];
+
+    const result = await routeEntryMessage(
+      '开始吧。',
+      neutralHistory,
+      transport,
+      testConfig,
+      {},
+      '',
+      { publicResearch: provider as any },
+    );
+
+    expect(providerCall?.identity).toEqual({
+      work: '钢之炼金术师',
+      version: '2003 动画版',
+      timeline: '第 51 集结局后',
+      characters: ['爱德华·艾尔利克', '阿尔冯斯·艾尔利克'],
+    });
+    expect(JSON.stringify(providerCall?.identity)).not.toContain('CANARY-NOT-FOR-LOOKUP');
+    expect(JSON.stringify(welcomeMessages)).toContain('公开资料参考');
+    expect(JSON.stringify(welcomeMessages)).toContain('称呼弟弟为阿尔');
+    expect(result.publicResearch?.summary).toContain('称呼弟弟为阿尔');
+  });
+
+  it('does not treat assistant welcome history as public lookup authority', async () => {
+    const provider = { resolve: vi.fn() };
+    const transport: LlmTransport = {
+      async *streamChat() {
+        yield { contentDelta: '我们可以从这个方向继续。' };
+        yield { finishReason: 'stop' };
+      },
+    };
+    const assistantHistory: TurnNode[] = [{
+      id: 'assistant-1',
+      parentId: null,
+      role: 'assistant',
+      content: '开一个《钢之炼金术师》文游。\n原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集结局后\n角色：爱德华·艾尔利克',
+      createdAt: 1,
+      summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+    }];
+
+    const result = await routeEntryMessage(
+      '开始吧。',
+      assistantHistory,
+      transport,
+      testConfig,
+      {},
+      '',
+      { publicResearch: provider as any },
+    );
+
+    expect(provider.resolve).not.toHaveBeenCalled();
+    expect(result.publicResearch).toBeUndefined();
+  });
+
+  it('honors the newest explicit writing correction over older story intent in welcome history', async () => {
+    const provider = { resolve: vi.fn() };
+    const transport: LlmTransport = {
+      async *streamChat() {
+        yield { contentDelta: '```lfh-route\nmode: writing\ntitle: 钢之炼金术师同人\n---\n原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集结局后\n角色：爱德华·艾尔利克\n```\n\n雨落在中央市。' };
+        yield { finishReason: 'stop' };
+      },
+    };
+    const neutralHistory: TurnNode[] = [{
+      id: 'user-1',
+      parentId: null,
+      role: 'user',
+      content: '开一个《钢之炼金术师》文游。\n原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集结局后\n角色：爱德华·艾尔利克',
+      createdAt: 1,
+      summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+    }, {
+      id: 'user-2',
+      parentId: 'user-1',
+      role: 'user',
+      content: '不要写成文游，按小说来。',
+      createdAt: 2,
+      summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+    }];
+
+    const result = await routeEntryMessage(
+      '开始吧。',
+      neutralHistory,
+      transport,
+      testConfig,
+      {},
+      '',
+      { publicResearch: provider as any },
+    );
+
+    expect(result.mode).toBe('writing');
+    expect(provider.resolve).not.toHaveBeenCalled();
+    expect(result.publicResearch).toBeUndefined();
   });
 
   it('adds character-specific voice references as low-priority context', () => {

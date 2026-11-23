@@ -138,6 +138,8 @@ const scenarios = [
     followUps: [
       { input: '版本：2009 动画版', body: '2009 年版的雨落在中央市。', research: true },
       { input: '请继续。', body: '普通推进。', research: false },
+      { input: '角色：阿尔冯斯说：“哥哥，走吧。”', body: '阿尔冯斯在雨里等了一会儿。', research: false },
+      { input: '角色：阿尔冯斯', body: '阿尔冯斯抬起头。', research: false },
       { input: '切换到 2010 动画版', body: '2010 年版的雨落在中央市。', research: true },
       { input: '继续推进。', body: '继续普通推进。', research: false },
     ],
@@ -214,10 +216,14 @@ async function runScenario(browser, scenario) {
   await page.route('**/chat/completions', async (route) => {
     const requestBody = route.request().postDataJSON();
     completionRequests.push(requestBody);
-    const isSynthesis = scenario.research && JSON.stringify(requestBody.messages).includes('公开角色资料提炼器');
+    const requestPayload = JSON.stringify(requestBody.messages);
+    const isSynthesis = scenario.research && requestPayload.includes('公开角色资料提炼器');
+    const isBackgroundSummary = requestPayload.includes('需要压缩并合入的历史轮次');
     let content;
     if (isSynthesis) {
       content = scenario.research.summary;
+    } else if (isBackgroundSummary) {
+      content = '当前旅程继续推进，角色保持既有关系与语气。';
     } else if (!scenario.followUps?.length || mainReplyCount++ === 0) {
       content = routeReply(scenario);
     } else {

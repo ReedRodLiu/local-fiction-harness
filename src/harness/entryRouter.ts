@@ -209,7 +209,10 @@ export function classifyEntryHeuristic(
   if (hasAffirmedIntent(combined, /(?:角色人设|角色设定|角色互动|角色聊天|扮演对戏|(?:创建|建|找|来)一个?.{0,16}角色|和.{1,16}聊天|^名称[：:]|^姓名[：:])/mu)) {
     return 'character';
   }
-  if (hasAffirmedIntent(combined, /(?:写故事|写小说|同人|大纲|写正文|开书|小说草稿|稿纸|写一篇)/u)) {
+  if (hasAffirmedIntent(
+    combined,
+    /(?:写故事|写小说|同人|大纲|写正文|开书|小说草稿|稿纸|写一篇|(?:按|以|用).{0,4}小说(?:来|写|创作))/u,
+  )) {
     return 'writing';
   }
   if (hasAffirmedIntent(combined, /(?:文游|跑团|第一幕|状态栏|规则|世界观|主角|开局|剧情推进|冒险|攻略)/u)) {
@@ -422,6 +425,25 @@ export interface EntryRouteOptions {
   publicResearch?: PublicResearchProvider;
 }
 
+const ENTRY_RESEARCH_HISTORY_MAX_USER_TURNS = 12;
+const ENTRY_RESEARCH_HISTORY_MAX_CHARS = 6000;
+
+function recentUserEntryHistory(history: readonly TurnNode[]): TurnNode[] {
+  const recent: TurnNode[] = [];
+  let remainingChars = ENTRY_RESEARCH_HISTORY_MAX_CHARS;
+  const userTurns = history
+    .filter((item) => item.role === 'user')
+    .slice(-ENTRY_RESEARCH_HISTORY_MAX_USER_TURNS);
+  for (const node of userTurns.reverse()) {
+    if (remainingChars <= 0) break;
+    const content = node.content.slice(-remainingChars);
+    if (!content.trim()) continue;
+    recent.unshift({ ...node, content });
+    remainingChars -= content.length;
+  }
+  return recent;
+}
+
 function hasExplicitStageIntent(userInput: string): boolean {
   return hasAffirmedIntent(
     userInput,
@@ -438,16 +460,19 @@ export async function routeEntryMessage(
   publicMemoryMarkdown = '',
   options: EntryRouteOptions = {},
 ): Promise<EntryRouteResult> {
-  const heuristicMode = classifyEntryHeuristic(userInput, neutralHistory);
+  const recentUserHistory = recentUserEntryHistory(neutralHistory);
+  const heuristicMode = classifyEntryHeuristic(userInput, recentUserHistory);
   const canResolveResearch = heuristicMode !== 'ambiguous' &&
     (heuristicMode !== 'writing' || hasExplicitStageIntent(userInput));
   const publicResearch = !canResolveResearch
     ? { reference: null }
     : await resolvePublicResearchForTurn({
         provider: options.publicResearch,
-        nodes: Object.fromEntries(neutralHistory.map((node) => [node.id, node])),
-        parentId: neutralHistory.at(-1)?.id ?? null,
-        settingMarkdown: userInput,
+        nodes: Object.fromEntries(recentUserHistory.map((node) => [node.id, node])),
+        parentId: recentUserHistory.at(-1)?.id ?? null,
+        settingMarkdown: [...recentUserHistory.map((node) => node.content), userInput]
+          .filter(Boolean)
+          .join('\n\n'),
         userInput,
         config,
         signal: callbacks.signal,
