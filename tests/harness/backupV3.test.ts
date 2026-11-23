@@ -323,4 +323,22 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     corrupted.stories[0].nodes.n2.proposals[0].status = 'invalid_status';
     expect(() => parseAndValidateFolioBackup(JSON.stringify(corrupted))).toThrow(/proposals/);
   });
+
+  it('round-trips TurnNode.prefillContent through .folio.json v3 and rejects non-string values', () => {
+    const story = makeSampleStory('story-prefill');
+    story.nodes.n2!.prefillContent = '船夫递来';
+    const json = exportFolioBackupV3({
+      stories: [story],
+      workspace: emptyWorkspace(),
+    });
+
+    const parsed = parseAndValidateFolioBackup(json);
+    expect(parsed.stories[0]?.nodes.n2?.prefillContent).toBe('船夫递来');
+
+    const corrupted = JSON.parse(json) as {
+      stories: Array<{ nodes: Record<string, Record<string, unknown>> }>;
+    };
+    corrupted.stories[0]!.nodes.n2!.prefillContent = 42;
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(corrupted))).toThrow(/prefillContent/);
+  });
 });
