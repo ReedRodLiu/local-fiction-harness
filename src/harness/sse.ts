@@ -7,6 +7,7 @@ import type {
   LlmStreamDelta,
   LlmStreamRequest,
   LlmTransport,
+  LlmUsage,
   ReasoningEffort,
 } from './types.ts';
 
@@ -70,6 +71,13 @@ function parseSseEventData(dataText: string): { done: boolean; delta?: LlmStream
       };
       finish_reason?: string | null;
     }>;
+    usage?: {
+      prompt_tokens?: unknown;
+      completion_tokens?: unknown;
+      total_tokens?: unknown;
+      prompt_cache_hit_tokens?: unknown;
+      prompt_cache_miss_tokens?: unknown;
+    };
   };
   try {
     parsed = JSON.parse(trimmed);
@@ -81,9 +89,11 @@ function parseSseEventData(dataText: string): { done: boolean; delta?: LlmStream
     throw new Error(parsed.error.message || 'Model provider returned an SSE error payload.');
   }
 
+  const usage = parseUsage(parsed.usage);
+
   const choice = parsed.choices?.[0];
   if (!choice) {
-    return { done: false };
+    return usage ? { done: false, delta: { usage } } : { done: false };
   }
 
   const deltaObj = choice.delta ?? {};
@@ -98,7 +108,8 @@ function parseSseEventData(dataText: string): { done: boolean; delta?: LlmStream
   if (
     contentDelta === undefined &&
     reasoningRaw === undefined &&
-    choice.finish_reason === undefined
+    choice.finish_reason === undefined &&
+    !usage
   ) {
     return { done: false };
   }
@@ -109,8 +120,31 @@ function parseSseEventData(dataText: string): { done: boolean; delta?: LlmStream
       contentDelta,
       reasoningDelta: reasoningRaw,
       finishReason: choice.finish_reason,
+      ...(usage ? { usage } : {}),
     },
   };
+}
+
+function optionalTokenCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function parseUsage(raw: {
+  prompt_tokens?: unknown;
+  completion_tokens?: unknown;
+  total_tokens?: unknown;
+  prompt_cache_hit_tokens?: unknown;
+  prompt_cache_miss_tokens?: unknown;
+} | undefined): LlmUsage | undefined {
+  if (!raw) return undefined;
+  const usage: LlmUsage = {
+    promptTokens: optionalTokenCount(raw.prompt_tokens),
+    completionTokens: optionalTokenCount(raw.completion_tokens),
+    totalTokens: optionalTokenCount(raw.total_tokens),
+    promptCacheHitTokens: optionalTokenCount(raw.prompt_cache_hit_tokens),
+    promptCacheMissTokens: optionalTokenCount(raw.prompt_cache_miss_tokens),
+  };
+  return Object.values(usage).some((value) => value !== undefined) ? usage : undefined;
 }
 
 /**
@@ -233,6 +267,10 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
       stream: true,
       thinking,
       reasoning_effort,
+      ...(req.includeUsage ? { stream_options: { include_usage: true } } : {}),
+      ...(req.maxOutputTokens && req.maxOutputTokens > 0
+        ? { max_tokens: Math.max(1, Math.floor(req.maxOutputTokens)) }
+        : {}),
     }),
   };
 }

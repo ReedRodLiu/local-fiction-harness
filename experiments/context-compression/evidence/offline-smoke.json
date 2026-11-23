@@ -1,0 +1,2047 @@
+{
+  "schemaVersion": 1,
+  "mode": "offline-simulated",
+  "generatedAt": "2026-11-22T16:00:00.000Z",
+  "providerRuns": 0,
+  "credentialStatus": "not-read",
+  "groups": {
+    "full": {
+      "arm": "full",
+      "provider": "offline-simulated",
+      "model": "deepseek-flash",
+      "pricingSchedule": "off-peak",
+      "rates": {
+        "cacheHitInputPerMillionUsd": 0.003,
+        "cacheMissInputPerMillionUsd": 0.15,
+        "outputPerMillionUsd": 0.6
+      },
+      "effectiveTurns": 30,
+      "records": 31,
+      "missingUsageRecords": 0,
+      "usage": {
+        "promptCacheHitTokens": 251832,
+        "promptCacheMissTokens": 61635,
+        "completionTokens": 1944
+      },
+      "costUsd": null,
+      "costPer100TurnsUsd": null,
+      "cacheHitRate": 0.8033764319689154,
+      "firstContentLatencyMsP50": 854,
+      "firstContentLatencyMsP95": 1261,
+      "branchSwitchFirstContentLatencyMsP50": 768,
+      "peakInputTokens": 17879,
+      "retrievalCount": 0,
+      "completionRate": 1
+    },
+    "folio": {
+      "arm": "folio",
+      "provider": "offline-simulated",
+      "model": "deepseek-flash",
+      "pricingSchedule": "off-peak",
+      "rates": {
+        "cacheHitInputPerMillionUsd": 0.003,
+        "cacheMissInputPerMillionUsd": 0.15,
+        "outputPerMillionUsd": 0.6
+      },
+      "effectiveTurns": 30,
+      "records": 40,
+      "missingUsageRecords": 0,
+      "usage": {
+        "promptCacheHitTokens": 69578,
+        "promptCacheMissTokens": 10151,
+        "completionTokens": 2232
+      },
+      "costUsd": null,
+      "costPer100TurnsUsd": null,
+      "cacheHitRate": 0.8726812075907135,
+      "firstContentLatencyMsP50": 941,
+      "firstContentLatencyMsP95": 1249,
+      "branchSwitchFirstContentLatencyMsP50": 978,
+      "peakInputTokens": 17875,
+      "retrievalCount": 0,
+      "completionRate": 1
+    },
+    "retrievable": {
+      "arm": "retrievable",
+      "provider": "offline-simulated",
+      "model": "deepseek-flash",
+      "pricingSchedule": "off-peak",
+      "rates": {
+        "cacheHitInputPerMillionUsd": 0.003,
+        "cacheMissInputPerMillionUsd": 0.15,
+        "outputPerMillionUsd": 0.6
+      },
+      "effectiveTurns": 30,
+      "records": 61,
+      "missingUsageRecords": 0,
+      "usage": {
+        "promptCacheHitTokens": 28950,
+        "promptCacheMissTokens": 602,
+        "completionTokens": 1944
+      },
+      "costUsd": null,
+      "costPer100TurnsUsd": null,
+      "cacheHitRate": 0.9796291283161884,
+      "firstContentLatencyMsP50": 892,
+      "firstContentLatencyMsP95": 1299,
+      "branchSwitchFirstContentLatencyMsP50": 1114,
+      "peakInputTokens": 17875,
+      "retrievalCount": 30,
+      "completionRate": 1
+    }
+  },
+  "comparisons": {
+    "fullToRetrievable": {
+      "status": "unavailable",
+      "reason": "non-official-provider"
+    },
+    "folioToRetrievable": {
+      "status": "unavailable",
+      "reason": "non-official-provider"
+    }
+  },
+  "branchIsolation": {
+    "checkedRequests": 90,
+    "leakedRequests": 0,
+    "passed": true
+  },
+  "branchLifecycle": {
+    "continuedTurns": 2,
+    "reopenedAfterRestart": true,
+    "editedSiblingIsolated": true
+  },
+  "officialPreflight": {
+    "ok": true,
+    "requestCount": 102,
+    "maxEstimatedCostUsd": 0.12888059999999982,
+    "violations": [],
+    "budget": {
+      "maxRequests": 120,
+      "maxRetriesPerOperation": 1,
+      "maxInputTokensPerRequest": 256000,
+      "maxOutputTokensPerRequest": 512,
+      "maxTotalCostUsd": 0.25,
+      "concurrency": 1,
+      "rates": {
+        "cacheHitInputPerMillionUsd": 0.003,
+        "cacheMissInputPerMillionUsd": 0.15,
+        "outputPerMillionUsd": 0.6
+      }
+    }
+  },
+  "requests": [
+    {
+      "requestId": "anonymous-full-001",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 1,
+      "usage": {
+        "promptCacheHitTokens": 12658,
+        "promptCacheMissTokens": 5221,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 780,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-full-002",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 2,
+      "usage": {
+        "promptCacheHitTokens": 12798,
+        "promptCacheMissTokens": 5077,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 817,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-full-003",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 3,
+      "usage": {
+        "promptCacheHitTokens": 12938,
+        "promptCacheMissTokens": 4933,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 854,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-full-004",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 4,
+      "usage": {
+        "promptCacheHitTokens": 13084,
+        "promptCacheMissTokens": 4791,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 891,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-full-005",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 5,
+      "usage": {
+        "promptCacheHitTokens": 13228,
+        "promptCacheMissTokens": 4649,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 928,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-full-006",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 6,
+      "usage": {
+        "promptCacheHitTokens": 13371,
+        "promptCacheMissTokens": 4506,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 965,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-full-007",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 7,
+      "usage": {
+        "promptCacheHitTokens": 13515,
+        "promptCacheMissTokens": 4362,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1002,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-full-008",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 8,
+      "usage": {
+        "promptCacheHitTokens": 13658,
+        "promptCacheMissTokens": 4219,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1039,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-full-009",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 9,
+      "usage": {
+        "promptCacheHitTokens": 13801,
+        "promptCacheMissTokens": 4076,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1076,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-full-010",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 10,
+      "usage": {
+        "promptCacheHitTokens": 13944,
+        "promptCacheMissTokens": 3933,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1113,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-full-011",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 11,
+      "usage": {
+        "promptCacheHitTokens": 3528,
+        "promptCacheMissTokens": 950,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1150,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-full-012",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 12,
+      "usage": {
+        "promptCacheHitTokens": 3566,
+        "promptCacheMissTokens": 914,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1187,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-full-013",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 13,
+      "usage": {
+        "promptCacheHitTokens": 3601,
+        "promptCacheMissTokens": 879,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1224,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-full-014",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 14,
+      "usage": {
+        "promptCacheHitTokens": 3637,
+        "promptCacheMissTokens": 843,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1261,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-full-015",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 15,
+      "usage": {
+        "promptCacheHitTokens": 3673,
+        "promptCacheMissTokens": 807,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1298,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-full-016",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 16,
+      "usage": {
+        "promptCacheHitTokens": 3666,
+        "promptCacheMissTokens": 762,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 435,
+      "branchSwitch": true,
+      "arm": "full",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-full-017",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 17,
+      "usage": {
+        "promptCacheHitTokens": 3701,
+        "promptCacheMissTokens": 727,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 472,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-full-018",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 18,
+      "usage": {
+        "promptCacheHitTokens": 3737,
+        "promptCacheMissTokens": 691,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 509,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-full-019",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 19,
+      "usage": {
+        "promptCacheHitTokens": 3770,
+        "promptCacheMissTokens": 656,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 546,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-full-020",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 20,
+      "usage": {
+        "promptCacheHitTokens": 3808,
+        "promptCacheMissTokens": 620,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 583,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-full-021",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 21,
+      "usage": {
+        "promptCacheHitTokens": 6264,
+        "promptCacheMissTokens": 953,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 620,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-full-022",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 22,
+      "usage": {
+        "promptCacheHitTokens": 6323,
+        "promptCacheMissTokens": 896,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 657,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-full-023",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 23,
+      "usage": {
+        "promptCacheHitTokens": 6390,
+        "promptCacheMissTokens": 839,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 694,
+      "branchSwitch": true,
+      "arm": "full",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-full-024",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 24,
+      "usage": {
+        "promptCacheHitTokens": 6444,
+        "promptCacheMissTokens": 781,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 731,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-full-025",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 25,
+      "usage": {
+        "promptCacheHitTokens": 6539,
+        "promptCacheMissTokens": 727,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 768,
+      "branchSwitch": true,
+      "arm": "full",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-full-026",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 26,
+      "usage": {
+        "promptCacheHitTokens": 6597,
+        "promptCacheMissTokens": 669,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 805,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-full-027",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 27,
+      "usage": {
+        "promptCacheHitTokens": 6610,
+        "promptCacheMissTokens": 607,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 842,
+      "branchSwitch": true,
+      "arm": "full",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-full-028",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 28,
+      "usage": {
+        "promptCacheHitTokens": 6670,
+        "promptCacheMissTokens": 549,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 879,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-full-029",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 29,
+      "usage": {
+        "promptCacheHitTokens": 6728,
+        "promptCacheMissTokens": 491,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 916,
+      "branchSwitch": true,
+      "arm": "full",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-full-030",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 30,
+      "usage": {
+        "promptCacheHitTokens": 6783,
+        "promptCacheMissTokens": 434,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 953,
+      "branchSwitch": false,
+      "arm": "full",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-full-retry-001",
+      "phase": "retry",
+      "status": "failed",
+      "turnIndex": 15,
+      "usage": {
+        "promptCacheHitTokens": 16802,
+        "promptCacheMissTokens": 1073,
+        "completionTokens": 24
+      },
+      "firstContentLatencyMs": null,
+      "arm": "full",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-031",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 31,
+      "usage": {
+        "promptCacheHitTokens": 1130,
+        "promptCacheMissTokens": 423,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 990,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-032",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 32,
+      "usage": {
+        "promptCacheHitTokens": 1140,
+        "promptCacheMissTokens": 409,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1027,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-033",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 33,
+      "usage": {
+        "promptCacheHitTokens": 1149,
+        "promptCacheMissTokens": 396,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1064,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-034",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 34,
+      "usage": {
+        "promptCacheHitTokens": 1164,
+        "promptCacheMissTokens": 385,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1101,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-summary-034",
+      "phase": "summary",
+      "status": "completed",
+      "turnIndex": 34,
+      "usage": {
+        "promptCacheHitTokens": 1158,
+        "promptCacheMissTokens": 382,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 746,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-035",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 35,
+      "usage": {
+        "promptCacheHitTokens": 1178,
+        "promptCacheMissTokens": 373,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1138,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-036",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 36,
+      "usage": {
+        "promptCacheHitTokens": 1191,
+        "promptCacheMissTokens": 360,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1175,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-037",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 37,
+      "usage": {
+        "promptCacheHitTokens": 1203,
+        "promptCacheMissTokens": 348,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1212,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-summary-037",
+      "phase": "summary",
+      "status": "completed",
+      "turnIndex": 37,
+      "usage": {
+        "promptCacheHitTokens": 1195,
+        "promptCacheMissTokens": 345,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 803,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-038",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 38,
+      "usage": {
+        "promptCacheHitTokens": 1215,
+        "promptCacheMissTokens": 336,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1249,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-039",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 39,
+      "usage": {
+        "promptCacheHitTokens": 1228,
+        "promptCacheMissTokens": 323,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1286,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-040",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 40,
+      "usage": {
+        "promptCacheHitTokens": 1240,
+        "promptCacheMissTokens": 311,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 423,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-summary-040",
+      "phase": "summary",
+      "status": "completed",
+      "turnIndex": 40,
+      "usage": {
+        "promptCacheHitTokens": 1232,
+        "promptCacheMissTokens": 308,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 860,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-folio-041",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 41,
+      "usage": {
+        "promptCacheHitTokens": 1300,
+        "promptCacheMissTokens": 309,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 460,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-042",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 42,
+      "usage": {
+        "promptCacheHitTokens": 1314,
+        "promptCacheMissTokens": 297,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 497,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-043",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 43,
+      "usage": {
+        "promptCacheHitTokens": 1327,
+        "promptCacheMissTokens": 284,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 534,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-044",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 44,
+      "usage": {
+        "promptCacheHitTokens": 1340,
+        "promptCacheMissTokens": 271,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 571,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-summary-044",
+      "phase": "summary",
+      "status": "completed",
+      "turnIndex": 44,
+      "usage": {
+        "promptCacheHitTokens": 1332,
+        "promptCacheMissTokens": 269,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 936,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-045",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 45,
+      "usage": {
+        "promptCacheHitTokens": 1353,
+        "promptCacheMissTokens": 258,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 608,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-046",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 46,
+      "usage": {
+        "promptCacheHitTokens": 1371,
+        "promptCacheMissTokens": 246,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 645,
+      "branchSwitch": true,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-047",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 47,
+      "usage": {
+        "promptCacheHitTokens": 1384,
+        "promptCacheMissTokens": 233,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 682,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-summary-047",
+      "phase": "summary",
+      "status": "completed",
+      "turnIndex": 47,
+      "usage": {
+        "promptCacheHitTokens": 1375,
+        "promptCacheMissTokens": 232,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 993,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-048",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 48,
+      "usage": {
+        "promptCacheHitTokens": 1397,
+        "promptCacheMissTokens": 220,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 719,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-049",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 49,
+      "usage": {
+        "promptCacheHitTokens": 1408,
+        "promptCacheMissTokens": 207,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 756,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-050",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 50,
+      "usage": {
+        "promptCacheHitTokens": 1422,
+        "promptCacheMissTokens": 195,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 793,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-summary-050",
+      "phase": "summary",
+      "status": "completed",
+      "turnIndex": 50,
+      "usage": {
+        "promptCacheHitTokens": 1414,
+        "promptCacheMissTokens": 193,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 1050,
+      "arm": "folio",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-folio-051",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 51,
+      "usage": {
+        "promptCacheHitTokens": 1379,
+        "promptCacheMissTokens": 175,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 830,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-052",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 52,
+      "usage": {
+        "promptCacheHitTokens": 1394,
+        "promptCacheMissTokens": 162,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 867,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-053",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 53,
+      "usage": {
+        "promptCacheHitTokens": 1415,
+        "promptCacheMissTokens": 151,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 904,
+      "branchSwitch": true,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-054",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 54,
+      "usage": {
+        "promptCacheHitTokens": 1424,
+        "promptCacheMissTokens": 138,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 941,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-summary-054",
+      "phase": "summary",
+      "status": "completed",
+      "turnIndex": 54,
+      "usage": {
+        "promptCacheHitTokens": 1416,
+        "promptCacheMissTokens": 137,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 1126,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-055",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 55,
+      "usage": {
+        "promptCacheHitTokens": 1529,
+        "promptCacheMissTokens": 134,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 978,
+      "branchSwitch": true,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-056",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 56,
+      "usage": {
+        "promptCacheHitTokens": 1543,
+        "promptCacheMissTokens": 120,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1015,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-057",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 57,
+      "usage": {
+        "promptCacheHitTokens": 1509,
+        "promptCacheMissTokens": 104,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1052,
+      "branchSwitch": true,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-summary-057",
+      "phase": "summary",
+      "status": "completed",
+      "turnIndex": 57,
+      "usage": {
+        "promptCacheHitTokens": 1500,
+        "promptCacheMissTokens": 103,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 1183,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-058",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 58,
+      "usage": {
+        "promptCacheHitTokens": 1524,
+        "promptCacheMissTokens": 91,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1089,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-059",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 59,
+      "usage": {
+        "promptCacheHitTokens": 1537,
+        "promptCacheMissTokens": 78,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1126,
+      "branchSwitch": true,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-060",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 60,
+      "usage": {
+        "promptCacheHitTokens": 1548,
+        "promptCacheMissTokens": 65,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1163,
+      "branchSwitch": false,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-summary-060",
+      "phase": "summary",
+      "status": "completed",
+      "turnIndex": 60,
+      "usage": {
+        "promptCacheHitTokens": 1540,
+        "promptCacheMissTokens": 65,
+        "completionTokens": 32
+      },
+      "firstContentLatencyMs": 1240,
+      "arm": "folio",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-folio-retry-001",
+      "phase": "retry",
+      "status": "failed",
+      "turnIndex": 15,
+      "usage": {
+        "promptCacheHitTokens": 17160,
+        "promptCacheMissTokens": 715,
+        "completionTokens": 24
+      },
+      "firstContentLatencyMs": null,
+      "arm": "folio",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-061",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 61,
+      "usage": {
+        "promptCacheHitTokens": 384,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1200,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-061",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 61,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-062",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 62,
+      "usage": {
+        "promptCacheHitTokens": 368,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1237,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-062",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 62,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-063",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 63,
+      "usage": {
+        "promptCacheHitTokens": 479,
+        "promptCacheMissTokens": 10,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1274,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-063",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 63,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-064",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 64,
+      "usage": {
+        "promptCacheHitTokens": 368,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1311,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-064",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 64,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-065",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 65,
+      "usage": {
+        "promptCacheHitTokens": 376,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 448,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-065",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 65,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-066",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 66,
+      "usage": {
+        "promptCacheHitTokens": 376,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 485,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-066",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 66,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-067",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 67,
+      "usage": {
+        "promptCacheHitTokens": 376,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 522,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-067",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 67,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-068",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 68,
+      "usage": {
+        "promptCacheHitTokens": 376,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 559,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-068",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 68,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-069",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 69,
+      "usage": {
+        "promptCacheHitTokens": 376,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 596,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-069",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 69,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-070",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 70,
+      "usage": {
+        "promptCacheHitTokens": 376,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 633,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-070",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 70,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "continuous"
+    },
+    {
+      "requestId": "anonymous-retrievable-071",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 71,
+      "usage": {
+        "promptCacheHitTokens": 366,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 670,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-071",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 71,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-072",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 72,
+      "usage": {
+        "promptCacheHitTokens": 374,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 707,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-072",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 72,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-073",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 73,
+      "usage": {
+        "promptCacheHitTokens": 374,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 744,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-073",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 73,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-074",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 74,
+      "usage": {
+        "promptCacheHitTokens": 374,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 781,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-074",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 74,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-075",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 75,
+      "usage": {
+        "promptCacheHitTokens": 374,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 818,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-075",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 75,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-076",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 76,
+      "usage": {
+        "promptCacheHitTokens": 373,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 855,
+      "branchSwitch": true,
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-076",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 76,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-077",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 77,
+      "usage": {
+        "promptCacheHitTokens": 373,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 892,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-077",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 77,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-078",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 78,
+      "usage": {
+        "promptCacheHitTokens": 373,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 929,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-078",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 78,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-079",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 79,
+      "usage": {
+        "promptCacheHitTokens": 366,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 966,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-079",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 79,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-080",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 80,
+      "usage": {
+        "promptCacheHitTokens": 373,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1003,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-080",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 80,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "branching"
+    },
+    {
+      "requestId": "anonymous-retrievable-081",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 81,
+      "usage": {
+        "promptCacheHitTokens": 368,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1040,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-081",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 81,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-082",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 82,
+      "usage": {
+        "promptCacheHitTokens": 375,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1077,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-082",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 82,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-083",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 83,
+      "usage": {
+        "promptCacheHitTokens": 386,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1114,
+      "branchSwitch": true,
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-083",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 83,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-084",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 84,
+      "usage": {
+        "promptCacheHitTokens": 369,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1151,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-084",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 84,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-085",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 85,
+      "usage": {
+        "promptCacheHitTokens": 375,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1188,
+      "branchSwitch": true,
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-085",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 85,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-086",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 86,
+      "usage": {
+        "promptCacheHitTokens": 376,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1225,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-086",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 86,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-087",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 87,
+      "usage": {
+        "promptCacheHitTokens": 429,
+        "promptCacheMissTokens": 9,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1262,
+      "branchSwitch": true,
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-087",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 87,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-088",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 88,
+      "usage": {
+        "promptCacheHitTokens": 437,
+        "promptCacheMissTokens": 9,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 1299,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-088",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 88,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-089",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 89,
+      "usage": {
+        "promptCacheHitTokens": 375,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 436,
+      "branchSwitch": true,
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-089",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 89,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-090",
+      "phase": "generation",
+      "status": "completed",
+      "turnIndex": 90,
+      "usage": {
+        "promptCacheHitTokens": 368,
+        "promptCacheMissTokens": 8,
+        "completionTokens": 64
+      },
+      "firstContentLatencyMs": 473,
+      "branchSwitch": false,
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-retrieval-090",
+      "phase": "retrieval",
+      "status": "completed",
+      "turnIndex": 90,
+      "usage": {
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "completionTokens": 0
+      },
+      "arm": "retrievable",
+      "scenario": "nested"
+    },
+    {
+      "requestId": "anonymous-retrievable-retry-001",
+      "phase": "retry",
+      "status": "failed",
+      "turnIndex": 15,
+      "usage": {
+        "promptCacheHitTokens": 17517,
+        "promptCacheMissTokens": 358,
+        "completionTokens": 24
+      },
+      "firstContentLatencyMs": null,
+      "arm": "retrievable",
+      "scenario": "continuous"
+    }
+  ],
+  "limitations": [
+    "Offline simulated usage validates branch identity and measurement plumbing only.",
+    "It cannot establish quality, real prefix-cache behavior, latency, or API savings.",
+    "No DeepSeek credential was read and no funded request was sent."
+  ]
+}

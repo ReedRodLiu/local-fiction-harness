@@ -55,6 +55,64 @@ describe('Slice 1: OpenAI SSE streaming & reasoning separation', () => {
     expect(finishReason).toBe('stop');
   });
 
+  it('surfaces DeepSeek cache usage from the final stream chunk and requests usage with a bounded output length', async () => {
+    const transport = createOpenAiTransport(async (_url, init) => {
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      expect(body.stream_options).toEqual({ include_usage: true });
+      expect(body.max_tokens).toBe(512);
+      const payload = new TextEncoder().encode([
+        'data: {"choices":[{"delta":{"content":"铜钥匙还在。"},"finish_reason":"stop"}]}\n\n',
+        'data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":18,"total_tokens":138,"prompt_cache_hit_tokens":100,"prompt_cache_miss_tokens":20}}\n\n',
+        'data: [DONE]\n\n',
+      ].join(''));
+      let read = false;
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+        body: {
+          getReader: () => ({
+            async read() {
+              if (read) return { done: true };
+              read = true;
+              return { done: false, value: payload };
+            },
+            releaseLock() {},
+          }),
+        },
+      };
+    });
+
+    const deltas = [];
+    for await (const delta of transport.streamChat({
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'test-key',
+      model: 'deepseek-flash',
+      messages: [{ role: 'user', content: '钥匙呢' }],
+      includeUsage: true,
+      maxOutputTokens: 512,
+    })) {
+      deltas.push(delta);
+    }
+
+    expect(deltas).toEqual([
+      { contentDelta: '铜钥匙还在。', reasoningDelta: undefined, finishReason: 'stop' },
+      {
+        contentDelta: undefined,
+        reasoningDelta: undefined,
+        finishReason: undefined,
+        usage: {
+          promptTokens: 120,
+          completionTokens: 18,
+          totalTokens: 138,
+          promptCacheHitTokens: 100,
+          promptCacheMissTokens: 20,
+        },
+      },
+    ]);
+  });
+
   it('throws descriptive error when OpenAI transport receives non-2xx HTTP response', async () => {
     const transport = createOpenAiTransport(async () => ({
       ok: false,

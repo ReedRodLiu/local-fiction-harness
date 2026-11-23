@@ -134,6 +134,15 @@ export interface LlmStreamDelta {
   contentDelta?: string;
   reasoningDelta?: string;
   finishReason?: string | null;
+  usage?: LlmUsage;
+}
+
+export interface LlmUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  promptCacheHitTokens?: number;
+  promptCacheMissTokens?: number;
 }
 
 export interface AbortSignalLike {
@@ -148,6 +157,8 @@ export interface LlmStreamRequest {
   reasoningEffort?: ReasoningEffort;
   thinking?: DeepSeekThinkingParam;
   reasoning_effort?: ReasoningEffort;
+  includeUsage?: boolean;
+  maxOutputTokens?: number;
   signal?: AbortSignalLike;
 }
 

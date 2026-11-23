@@ -1,0 +1,45 @@
+{
+  "checkedAt": "2026-11-23",
+  "method": "git ls-remote, GitHub raw files, and codeload archives read without copying upstream code",
+  "components": [
+    {
+      "name": "billion-context",
+      "repository": "https://github.com/ranxianglei/billion-context",
+      "tag": "v0.1.216",
+      "commit": "6a641f378537e06e7430ec90c9abf035ffa12377",
+      "license": {
+        "path": "LICENSE",
+        "sha256": "f27574cd3f4b0b4877da2869953945d66d76a665e7ebb9320a5e87aa76f7ab58",
+        "terms": "MIT plus visible product-surface attribution and repository-link additional term"
+      },
+      "packageJson": {
+        "version": "0.1.216",
+        "sha256": "fb4324321a4ec2d641d364493e172011025d1a50d87bc3cc1e4ef3494f8e2a52",
+        "nodeEngine": ">=20",
+        "runtimeDependencies": ["mysql2", "zod"],
+        "optionalDependencies": ["jimp"]
+      },
+      "use": "conceptual reference only; no code or package copied"
+    },
+    {
+      "name": "acp-kernel",
+      "repository": "https://github.com/ranxianglei/acp-kernel",
+      "tag": "v0.0.101",
+      "commit": "4d38906e004e7fd9fe4b0c06cbd8c661694f506f",
+      "license": {
+        "path": "LICENSE",
+        "sha256": "5f82d3c8724c30a0ece8819b23babc4587a50eddf350273c6c8f0c936bad2a74",
+        "terms": "MIT plus visible product-surface attribution and repository-link additional term"
+      },
+      "packageJson": {
+        "version": "0.0.101",
+        "sha256": "bb55f056fe31f7dc6cf80a9566bd3b0ad67a3834ac8a1e8cb6f3f062a8e64847",
+        "nodeEngine": ">=20",
+        "runtimeDependencies": []
+      },
+      "use": "compatibility assessment only; no package dependency added",
+      "webAndroidAssessment": "not adoptable without adaptation because tokenizer and wire source import node:module or node:crypto"
+    }
+  ],
+  "attributionStatus": "No upstream code or package is included, so no product attribution is required by the inspected licenses for this change. A later adoption must add the full license and visible attribution."
+}
