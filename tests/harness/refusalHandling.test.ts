@@ -9,6 +9,7 @@ import {
   deliverySkeletonLooksLikeRefusal,
   routeRefusal,
 } from '../../src/harness/thinDelivery.ts';
+import { DELIVERY_CASES, SKELETON_CASES } from './refusalCalibrationCases.ts';
 import {
   streamWithRefusalHandling,
   type RefusalHandlingOptions,
@@ -40,6 +41,16 @@ import {
   appendWorkDiscussionTurn,
   validateTurnNodeEntry,
 } from '../../src/harness/index.ts';
+
+describe('Spec #132 refusal calibration fixtures', () => {
+  it.each(DELIVERY_CASES)('matches calibrated delivery case: $name', ({ text, thin, options }) => {
+    expect(deliveryIsThin(text, options)).toBe(thin);
+  });
+
+  it.each(SKELETON_CASES)('matches calibrated skeleton case: $text', ({ text, hit }) => {
+    expect(deliverySkeletonLooksLikeRefusal(text)).toBe(hit);
+  });
+});
 
 describe('Spec #132 refusal pattern and thin-delivery engine', () => {
   it('ships the calibrated 26-rule detector without flagging real narrative prose', () => {
@@ -250,6 +261,38 @@ describe('Spec #132 120-character refusal wrapper', () => {
     });
   });
 
+  it('retries a thin skeleton once and keeps the recovered retry body', async () => {
+    const firstRaw = '我没办法给你这个。';
+    const retryRaw = '门外传来两声轻响，他停下手里的动作，侧耳去听。';
+    const retry = vi.fn();
+    const visible: string[] = [];
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: firstRaw },
+        { finishReason: 'stop' },
+      ]),
+      () => stream([
+        { contentDelta: retryRaw },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onRefusalRetry: retry, onContentDelta: (delta) => visible.push(delta) },
+    }));
+
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(transport.requests).toHaveLength(2);
+    expect(visible.join('')).toBe(retryRaw);
+    expect(visible.join('')).not.toContain(firstRaw);
+    expect(result.content).toBe(retryRaw);
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'retry-skeleton',
+      recoveredFromText: firstRaw,
+      matchedRuleId: 'skeleton-01',
+    });
+  });
+
   it('opens the gate after 120 characters and preserves a partial refusal with protocol artifacts', async () => {
     const visible: string[] = [];
     const longNarrative = '雨声落在窗沿上，他推门走进屋里，看见桌上还留着半盏温茶。'.repeat(4);
@@ -450,6 +493,60 @@ describe('Spec #132 120-character refusal wrapper', () => {
     expect(visible).toEqual(['第一句', '第二句']);
     expect(result.diagnostics).toBeUndefined();
     expect(transport.requests[0].prefixCompletion).toBeUndefined();
+  });
+
+  it('rejects when the transport aborts after a successful stream but before returning', async () => {
+    const controller = new AbortController();
+    const visible: string[] = [];
+    const raw = '雨声落在窗沿上，他推门走进屋里。';
+    const transport = scriptedTransport([
+      () => ({
+        async *[Symbol.asyncIterator]() {
+          try {
+            yield { contentDelta: raw };
+            yield { finishReason: 'stop' };
+          } finally {
+            controller.abort();
+          }
+        },
+      }),
+    ]);
+
+    await expect(streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: {
+        signal: controller.signal,
+        onContentDelta: (delta) => visible.push(delta),
+      },
+    }))).rejects.toMatchObject({ name: 'AbortError' });
+    expect(visible.join('')).toBe(raw);
+  });
+
+  it('rejects pass-through streams aborted after normal completion and keeps emitted text', async () => {
+    const controller = new AbortController();
+    const visible: string[] = [];
+    const raw = '第一句第二句';
+    const transport = scriptedTransport([
+      () => ({
+        async *[Symbol.asyncIterator]() {
+          try {
+            yield { contentDelta: '第一句' };
+            yield { contentDelta: '第二句' };
+            yield { finishReason: 'stop' };
+          } finally {
+            controller.abort();
+          }
+        },
+      }),
+    ]);
+
+    await expect(streamWithRefusalHandling(baseOptions(transport, {
+      promptPackOptions: { promptPackLibrary: library, generationPreference: { promptPackMode: 'off' } },
+      callbacks: {
+        signal: controller.signal,
+        onContentDelta: (delta) => visible.push(delta),
+      },
+    }))).rejects.toMatchObject({ name: 'AbortError' });
+    expect(visible.join('')).toBe(raw);
   });
 
   it('honors always-prefill on the first request', async () => {

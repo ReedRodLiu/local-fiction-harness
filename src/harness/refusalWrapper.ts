@@ -184,6 +184,10 @@ function createAbortError(): Error {
   return error;
 }
 
+function throwIfAborted(options: RefusalHandlingOptions): void {
+  if (options.callbacks?.signal?.aborted) throw createAbortError();
+}
+
 function deliveryOptions(mode: DeliveryMode, hasProtocolArtifacts: boolean) {
   return { mode, hasProtocolArtifacts };
 }
@@ -294,7 +298,7 @@ async function streamPassThrough(
     }
   }
 
-  if (options.callbacks?.signal?.aborted) throw createAbortError();
+  throwIfAborted(options);
   return { content: raw, reasoningContent, finishReason };
 }
 
@@ -479,6 +483,7 @@ export async function streamWithRefusalHandling(
         first.diagnostics.matchedRuleId,
       );
     }
+    throwIfAborted(options);
     return {
       content: first.raw,
       reasoningContent: first.reasoningContent,
@@ -518,6 +523,7 @@ export async function streamWithRefusalHandling(
       1,
       first.matchedRuleId,
     );
+    throwIfAborted(options);
     return {
       content: retry.raw,
       reasoningContent: retry.reasoningContent,
@@ -542,6 +548,7 @@ export async function streamWithRefusalHandling(
       1,
       first.matchedRuleId,
     );
+    throwIfAborted(options);
     return {
       content: retry.raw,
       reasoningContent: retry.reasoningContent,
@@ -552,6 +559,7 @@ export async function streamWithRefusalHandling(
   }
 
   if (retry.kind === 'result' && retry.finishReason !== 'stop') {
+    throwIfAborted(options);
     return {
       content: retry.raw,
       reasoningContent: retry.reasoningContent,
@@ -575,6 +583,7 @@ export async function streamWithRefusalHandling(
     1,
     first.matchedRuleId,
   );
+  throwIfAborted(options);
   return {
     content: REFUSAL_EXHAUSTED_MESSAGE,
     reasoningContent: '',

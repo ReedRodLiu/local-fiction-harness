@@ -324,6 +324,40 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     expect(() => parseAndValidateFolioBackup(JSON.stringify(corrupted))).toThrow(/proposals/);
   });
 
+  it('round-trips complete REFUSAL diagnostics through .folio.json v3 and rejects invalid values', () => {
+    const story = makeSampleStory('story-refusal');
+    const diagnostics = {
+      sourceStatus: 'REFUSAL' as const,
+      refusalRoute: 'refused_exhausted' as const,
+      recoveredFromText: '抱歉，我不能帮你写这段内容。',
+      retriedWithPrefix: true,
+      matchedRuleId: 'L1-02',
+    };
+    story.nodes.n2!.diagnostics = diagnostics;
+    const json = exportFolioBackupV3({
+      stories: [story],
+      workspace: emptyWorkspace(),
+    });
+
+    const parsed = parseAndValidateFolioBackup(json);
+    expect(parsed.stories[0]?.nodes.n2?.diagnostics).toEqual(diagnostics);
+
+    const invalidValues = [
+      ['sourceStatus', 'UNKNOWN'],
+      ['refusalRoute', 'not-a-route'],
+      ['recoveredFromText', 42],
+      ['retriedWithPrefix', 'true'],
+      ['matchedRuleId', 42],
+    ] as const;
+    for (const [field, value] of invalidValues) {
+      const corrupted = JSON.parse(json) as {
+        stories: Array<{ nodes: Record<string, { diagnostics?: Record<string, unknown> }> }>;
+      };
+      corrupted.stories[0]!.nodes.n2!.diagnostics![field] = value;
+      expect(() => parseAndValidateFolioBackup(JSON.stringify(corrupted))).toThrow(new RegExp(field));
+    }
+  });
+
   it('round-trips TurnNode.prefillContent through .folio.json v3 and rejects non-string values', () => {
     const story = makeSampleStory('story-prefill');
     story.nodes.n2!.prefillContent = '船夫递来';
