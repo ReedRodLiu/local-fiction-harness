@@ -120,13 +120,13 @@ export function createCapacitorSseTransport(
 
         async function* rawByteChunks(): AsyncIterable<Uint8Array> {
           while (true) {
-            if (req.signal?.aborted) {
-              onAbort();
-              throw createAbortError();
-            }
             if (queue.length > 0) {
               yield queue.shift()!;
               continue;
+            }
+            if (req.signal?.aborted) {
+              onAbort();
+              throw createAbortError();
             }
             if (streamError) {
               throw streamError;

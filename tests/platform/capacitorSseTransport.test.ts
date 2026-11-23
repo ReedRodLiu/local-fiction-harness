@@ -170,6 +170,43 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
     expect(output.join('')).toBe('预填续写');
   });
 
+  it('consumes a queued SSE chunk before surfacing an explicit abort', async () => {
+    const fake = createFakeNativeSsePlugin();
+    const transport = createCapacitorSseTransport(fake.plugin, () => 'req-abort-queued');
+    const controller = new AbortController();
+    const output: string[] = [];
+    let caught: unknown;
+
+    const run = (async () => {
+      try {
+        for await (const delta of transport.streamChat({
+          baseUrl: 'https://api.deepseek.com',
+          apiKey: 'k',
+          model: 'm',
+          messages: [{ role: 'user', content: '继续' }],
+          prefixCompletion: { content: '雨声在屋檐' },
+          signal: controller.signal,
+        })) {
+          if (delta.contentDelta) output.push(delta.contentDelta);
+        }
+      } catch (error) {
+        caught = error;
+      }
+    })();
+
+    await vi.waitFor(() => expect(fake.started).toHaveLength(1));
+    fake.emitChunk(
+      'req-abort-queued',
+      new TextEncoder().encode('data: {"choices":[{"delta":{"content":"雨声在"}}]}\n\n'),
+    );
+    controller.abort();
+    await run;
+
+    expect(output).toEqual(['雨声在']);
+    expect(caught).toMatchObject({ name: 'AbortError' });
+    expect(fake.aborted).toContain('req-abort-queued');
+  });
+
   it('isolates concurrent streams by requestId', async () => {
     const fake = createFakeNativeSsePlugin();
     let seq = 0;

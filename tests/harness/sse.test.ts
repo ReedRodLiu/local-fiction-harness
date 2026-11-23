@@ -411,4 +411,100 @@ describe('Prefix echo cursor', () => {
     expect(deltas.filter((delta) => delta.contentDelta)).toEqual([]);
     expect(deltas).toEqual([{ finishReason: 'stop' }]);
   });
+
+  it('emits a complete echoed prefill once when the stream ends normally', async () => {
+    const deltas = await collect(
+      applyPrefixEchoCursor(fromDeltas([{ contentDelta: '雨声在屋檐' }]), '雨声在屋檐'),
+    );
+
+    expect(deltas).toEqual([{ contentDelta: '雨声在屋檐' }]);
+  });
+
+  it('emits a complete echoed prefill once before a terminal finish reason', async () => {
+    const deltas = await collect(
+      applyPrefixEchoCursor(
+        fromDeltas([{ contentDelta: '雨声在屋檐' }, { finishReason: 'stop' }]),
+        '雨声在屋檐',
+      ),
+    );
+
+    expect(deltas).toEqual([
+      { contentDelta: '雨声在屋檐' },
+      { finishReason: 'stop' },
+    ]);
+  });
+
+  it('propagates an upstream error without synthesizing prefill when no content arrived', async () => {
+    const upstreamError = new Error('upstream disconnected before content');
+    const { deltas, error } = await collectUntilError(
+      applyPrefixEchoCursor(fromDeltasThenThrow([], upstreamError), '雨声在屋檐'),
+    );
+
+    expect(error).toBe(upstreamError);
+    expect(deltas).toEqual([]);
+  });
+
+  it('propagates an upstream abort without synthesizing prefill when no content arrived', async () => {
+    const abortError = new Error('aborted before content');
+    abortError.name = 'AbortError';
+    const { deltas, error } = await collectUntilError(
+      applyPrefixEchoCursor(fromDeltasThenThrow([], abortError), '雨声在屋檐'),
+    );
+
+    expect(error).toBe(abortError);
+    expect(deltas).toEqual([]);
+  });
+
+  it('preserves a diverged continuation once and propagates an upstream error', async () => {
+    const upstreamError = new Error('upstream disconnected after divergence');
+    const { deltas, error } = await collectUntilError(
+      applyPrefixEchoCursor(
+        fromDeltasThenThrow([{ contentDelta: '模型直接开写' }], upstreamError),
+        '雨声在屋檐',
+      ),
+    );
+
+    expect(error).toBe(upstreamError);
+    expect(deltas).toEqual([
+      { contentDelta: '雨声在屋檐' },
+      { contentDelta: '模型直接开写' },
+    ]);
+  });
+
+  it('preserves a diverged continuation once and propagates an upstream abort', async () => {
+    const abortError = new Error('aborted after divergence');
+    abortError.name = 'AbortError';
+    const { deltas, error } = await collectUntilError(
+      applyPrefixEchoCursor(
+        fromDeltasThenThrow([{ contentDelta: '模型直接开写' }], abortError),
+        '雨声在屋檐',
+      ),
+    );
+
+    expect(error).toBe(abortError);
+    expect(deltas).toEqual([
+      { contentDelta: '雨声在屋檐' },
+      { contentDelta: '模型直接开写' },
+    ]);
+  });
+
+  it('keeps reasoning and terminal metadata on a terminal delta that also contains echoed content', async () => {
+    const deltas = await collect(
+      applyPrefixEchoCursor(
+        fromDeltas([
+          {
+            contentDelta: '雨声在屋檐',
+            reasoningDelta: '思考中',
+            finishReason: 'stop',
+          },
+        ]),
+        '雨声在屋檐',
+      ),
+    );
+
+    expect(deltas).toEqual([
+      { contentDelta: '雨声在屋檐' },
+      { reasoningDelta: '思考中', finishReason: 'stop' },
+    ]);
+  });
 });
