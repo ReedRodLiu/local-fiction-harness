@@ -26,6 +26,11 @@ export const GO_USAGE_ENDPOINT = 'https://opencode.ai/inference/go/v1/usage';
 export const GO_MODEL = 'deepseek-v4.1-flash';
 export const GO_CANONICAL_MODEL = 'deepseek/deepseek-v4.1-flash-1017';
 export const GO_USER_AGENT = 'FolioContextBenchmark/0.3';
+export const GO_UPPER_BOUND_PRICING = {
+  basis: 'published Go model full price, uncached peak',
+  inputUsdPerMillion: 0.30,
+  outputUsdPerMillion: 1.20,
+} as const;
 
 export type LiveArm = 'full' | 'folio' | 'retrievable';
 export type LivePhase = 'generation' | 'summary' | 'probe';
@@ -78,6 +83,8 @@ export interface GoUsage {
   cacheWrite5mTokens: number | null;
   cacheWrite1hTokens: number | null;
   allowance: number | null;
+  listCostUsd: number | null;
+  chargedUsd: number | null;
   billingSource: string | null;
   hasCostField: boolean;
 }
@@ -110,6 +117,8 @@ export interface LiveRequestRecord {
   summaryCoveredThrough: string | null;
   firstContentLatencyMs: number | null;
   durationMs: number | null;
+  responseModel: string | null;
+  systemFingerprint: string | null;
   finishReason: string | null;
   refusal: string | null;
   truncated: boolean;
@@ -117,6 +126,7 @@ export interface LiveRequestRecord {
   reasoningCharCount: number;
   output: string | null;
   usage: GoUsage | null;
+  estimatedListCostUsdUpperBound: number;
   error?: GoRequestError;
 }
 
@@ -129,8 +139,9 @@ export interface LiveProbeRecord {
   answer: string | null;
   expectedFacts: string[];
   forbiddenFacts: string[];
-  expectedFactsPresent: boolean;
-  forbiddenFactsAbsent: boolean;
+  expectedFactsPresent: boolean | null;
+  forbiddenFactsAbsent: boolean | null;
+  correct: boolean | null;
   status: 'completed' | 'failed' | 'refused' | 'truncated';
 }
 
@@ -147,6 +158,7 @@ export interface LiveGeneratedOutput {
 interface LiveArmState {
   sessionId: string;
   status: 'not-started' | 'running' | 'completed' | 'incomplete';
+  incompletePhases: LivePhase[];
   nodes: Record<string, TurnNode>;
   activeLeafId: string | null;
   previousAssistantByRoute: Record<string, string>;
@@ -169,36 +181,68 @@ export interface LiveTokenTotals {
   cacheWrite1h: number | null;
 }
 
+export interface LiveRequestStatusCounts {
+  total: number;
+  inFlight: number;
+  completed: number;
+  refused: number;
+  truncated: number;
+  failed: number;
+  aborted: number;
+}
+
+export type LivePhaseCompletionStatus = 'completed' | 'incomplete' | 'not-required';
+
+export interface LiveLogicalTurnKey {
+  repetition: number;
+  logicalTurnId: string;
+}
+
 export interface LiveArmSummary {
   arm: LiveArm;
+  coreStatus: 'completed' | 'incomplete';
+  summaryStatus: LivePhaseCompletionStatus;
+  probeStatus: LivePhaseCompletionStatus;
+  qualityStatus: 'complete' | 'incomplete' | 'not-assessed';
   completedTurns: number;
-  completedTurnIds: string[];
+  completedLogicalTurnKeys: LiveLogicalTurnKey[];
   requestCounts: Record<LivePhase, number>;
+  phaseRequestStatusCounts: Record<LivePhase, LiveRequestStatusCounts>;
   refusalCount: number;
   truncationCount: number;
   missingUsageRecords: number;
+  unknownBillingRecords: number;
   tokenTotals: LiveTokenTotals;
   generationTokenTotals: LiveTokenTotals;
-  allowanceUsed: number | null;
+  planAllowanceUsed: number | null;
+  listCostUsd: number | null;
+  chargedUsd: number | null;
   firstContentLatencyMsP50: number | null;
   firstContentLatencyMsP95: number | null;
+  probesExpected: number;
   probesPassed: number;
+  probesScored: number;
+  probesIncorrect: number;
+  probesIncomplete: number;
   probesTotal: number;
 }
 
 export interface LiveCommonRange {
-  turnIds: string[];
+  logicalTurnKeys: LiveLogicalTurnKey[];
   byArm: Record<LiveArm, {
     completedTurns: number;
     billedRequests: number;
     phaseCounts: Record<LivePhase, number>;
+    billedPhaseCounts: Record<LivePhase, number>;
     promptTokens: number | null;
     completionTokens: number | null;
     reasoningTokens: number | null;
     cacheReadTokens: number | null;
     cacheWrite5mTokens: number | null;
     cacheWrite1hTokens: number | null;
-    allowance: number | null;
+    planAllowance: number | null;
+    listCostUsd: number | null;
+    chargedUsd: number | null;
     latencyMsP50: number | null;
     latencyMsP95: number | null;
   }>;
@@ -215,16 +259,20 @@ export interface LiveExperimentSummary {
     cacheReadTokenDelta: number | null;
     cacheWrite5mTokenDelta: number | null;
     cacheWrite1hTokenDelta: number | null;
-    allowanceDelta: number | null;
+    planAllowanceDelta: number | null;
+    listCostUsdDelta: number | null;
+    chargedUsdDelta: number | null;
   }>;
   usd: {
-    status: 'not-rendered';
-    reason: 'go-allowance-only';
+    status: 'reported-separately';
+    planAllowance: { unit: 'go-allowance'; notBalanceCharge: true };
+    listCost: { source: 'opencode.list_cost' };
+    charged: { source: 'usage.cost' };
   };
 }
 
 export interface LiveExperimentState {
-  schemaVersion: 1;
+  schemaVersion: 2;
   mode: 'live-opencode-go';
   runId: string;
   status: 'running' | 'completed' | 'incomplete' | 'failed';
@@ -238,6 +286,7 @@ export interface LiveExperimentState {
     canonicalModel: string;
     userAgent: string;
     sessionHeader: 'x-opencode-session';
+    upperBoundPricing: typeof GO_UPPER_BOUND_PRICING;
   };
   settings: GoExperimentSettings;
   schedule: Array<{
@@ -357,6 +406,8 @@ function parseUsage(raw: unknown): GoUsage | null {
   const cacheWrite5mTokens = optionalNestedNumber(raw, ['opencode', 'tokens', 'cache_write_5m']);
   const cacheWrite1hTokens = optionalNestedNumber(raw, ['opencode', 'tokens', 'cache_write_1h']);
   const allowance = optionalNestedNumber(raw, ['opencode', 'allowance']);
+  const listCostUsd = optionalNestedNumber(raw, ['opencode', 'list_cost']);
+  const chargedUsd = optionalNestedNumber(raw, ['cost']);
   const billingSource = optionalNestedString(raw, ['opencode', 'billing_source']);
   const hasCostField = Object.hasOwn(record, 'cost');
   if (
@@ -367,6 +418,8 @@ function parseUsage(raw: unknown): GoUsage | null {
     cacheWrite5mTokens === null &&
     cacheWrite1hTokens === null &&
     allowance === null &&
+    listCostUsd === null &&
+    chargedUsd === null &&
     billingSource === null &&
     !hasCostField
   ) {
@@ -380,6 +433,8 @@ function parseUsage(raw: unknown): GoUsage | null {
     cacheWrite5mTokens,
     cacheWrite1hTokens,
     allowance,
+    listCostUsd,
+    chargedUsd,
     billingSource,
     hasCostField,
   };
@@ -433,7 +488,10 @@ function requestErrorFromUnknown(error: unknown, timeoutMs: number): GoRequestEr
   };
 }
 
-async function responseError(response: GoFetchResponse, retryable: boolean): Promise<GoRequestError> {
+async function responseFailure(
+  response: GoFetchResponse,
+  retryable: boolean,
+): Promise<{ error: GoRequestError; usage: GoUsage | null }> {
   let parsed: unknown = null;
   try {
     const text = await response.text();
@@ -441,7 +499,10 @@ async function responseError(response: GoFetchResponse, retryable: boolean): Pro
   } catch {
     parsed = null;
   }
-  return parseErrorPayload(parsed, response.status, retryable);
+  return {
+    error: parseErrorPayload(parsed, response.status, retryable),
+    usage: parseUsage(parsed),
+  };
 }
 
 async function withTimeout<T>(
@@ -481,6 +542,8 @@ interface ParsedCompletion {
   refusal: string | null;
   finishReason: string | null;
   usage: GoUsage | null;
+  responseModel: string | null;
+  systemFingerprint: string | null;
   firstContentLatencyMs: number | null;
 }
 
@@ -495,6 +558,8 @@ async function parseCompletionStream(
   let refusal = '';
   let finishReason: string | null = null;
   let usage: GoUsage | null = null;
+  let responseModel: string | null = null;
+  let systemFingerprint: string | null = null;
   let firstContentLatencyMs: number | null = null;
 
   const parseEvent = (payload: string): boolean => {
@@ -510,6 +575,10 @@ async function parseCompletionStream(
     if (!parsed || typeof parsed !== 'object') return false;
     const event = parsed as Record<string, unknown>;
     if (Object.hasOwn(event, 'error')) throw parseErrorPayload(parsed);
+    if (typeof event.model === 'string' && event.model.trim()) responseModel = event.model.trim();
+    if (typeof event.system_fingerprint === 'string' && event.system_fingerprint.trim()) {
+      systemFingerprint = event.system_fingerprint.trim();
+    }
     const parsedUsage = parseUsage(event.usage);
     if (parsedUsage) usage = parsedUsage;
     const choices = Array.isArray(event.choices) ? event.choices : [];
@@ -551,14 +620,14 @@ async function parseCompletionStream(
     buffer = lines.pop() ?? '';
     for (const line of lines) {
       if (!line.startsWith('data:')) {
-        if (line === '' && flush()) return { content, reasoningCharacters, refusal: refusal || null, finishReason, usage, firstContentLatencyMs };
+        if (line === '' && flush()) return { content, reasoningCharacters, refusal: refusal || null, finishReason, usage, responseModel, systemFingerprint, firstContentLatencyMs };
         continue;
       }
       if (dataLines.length > 0) {
         const next = line[5] === ' ' ? line.slice(6) : line.slice(5);
         try {
           JSON.parse(next);
-          if (flush()) return { content, reasoningCharacters, refusal: refusal || null, finishReason, usage, firstContentLatencyMs };
+          if (flush()) return { content, reasoningCharacters, refusal: refusal || null, finishReason, usage, responseModel, systemFingerprint, firstContentLatencyMs };
         } catch {
           // Multi-line SSE data is joined below.
         }
@@ -570,12 +639,22 @@ async function parseCompletionStream(
     dataLines.push(buffer[5] === ' ' ? buffer.slice(6) : buffer.slice(5));
   }
   flush();
-  return { content, reasoningCharacters, refusal: refusal || null, finishReason, usage, firstContentLatencyMs };
+  return { content, reasoningCharacters, refusal: refusal || null, finishReason, usage, responseModel, systemFingerprint, firstContentLatencyMs };
 }
 
 function conservativeInputTokenUpperBound(messages: readonly LlmMessage[]): number {
-  const text = messages.map((message) => `${message.role}\0${message.content}`).join('\n');
+  const text = JSON.stringify(messages);
   return Math.max(text.length, new TextEncoder().encode(text).length);
+}
+
+function conservativeListCostUsdUpperBound(
+  inputTokens: number,
+  outputTokens: number,
+): number {
+  return (
+    inputTokens * GO_UPPER_BOUND_PRICING.inputUsdPerMillion +
+    outputTokens * GO_UPPER_BOUND_PRICING.outputUsdPerMillion
+  ) / 1_000_000;
 }
 
 function completedRecord(record: LiveRequestRecord): boolean {
@@ -597,14 +676,33 @@ function knownTokenSum(
 }
 
 function knownAllowanceSum(records: readonly LiveRequestRecord[]): number | null {
+  return knownUsageNumberSum(records, 'allowance');
+}
+
+function knownUsageNumberSum(
+  records: readonly LiveRequestRecord[],
+  key: keyof Pick<GoUsage, 'allowance' | 'listCostUsd' | 'chargedUsd'>,
+): number | null {
   let total = 0;
   for (const record of records) {
-    const value = record.usage?.allowance;
+    const value = record.usage?.[key];
     if (value === null || value === undefined) return null;
     total += value;
     if (!Number.isFinite(total)) return null;
   }
   return total;
+}
+
+function requestStatusCounts(records: readonly LiveRequestRecord[]): LiveRequestStatusCounts {
+  return {
+    total: records.length,
+    inFlight: records.filter((record) => record.status === 'in-flight').length,
+    completed: records.filter((record) => record.status === 'completed').length,
+    refused: records.filter((record) => record.status === 'refused').length,
+    truncated: records.filter((record) => record.status === 'truncated').length,
+    failed: records.filter((record) => record.status === 'failed').length,
+    aborted: records.filter((record) => record.status === 'aborted').length,
+  };
 }
 
 function tokenTotalsFor(records: readonly LiveRequestRecord[]): LiveTokenTotals {
@@ -634,6 +732,23 @@ function percentile(values: readonly number[], ratio: number): number | null {
   return sorted[Math.max(0, Math.ceil(ratio * sorted.length) - 1)];
 }
 
+type LiveScenarioRoute = GeneratedExperimentScenario['routes'][number];
+
+function routeStatePieces(route: LiveScenarioRoute): string[] {
+  const clothing = /衣物特征：([^；]+)/.exec(route.characterState)?.[1] ?? route.characterState;
+  const hand = /左手伤痕：([^；]+)/.exec(route.characterState)?.[1] ?? 'unknown-left-hand';
+  const item = /随身物：([^。]+)/.exec(route.characterState)?.[1] ?? 'unknown-item';
+  return [
+    `路线标记[${route.id}/衣物]=${clothing}`,
+    `路线标记[${route.id}/左手]=${hand}`,
+    `路线标记[${route.id}/随身物]=${item}`,
+  ];
+}
+
+function routeStateSeed(route: LiveScenarioRoute): string {
+  return `当前路线为${route.id}。路线独有银印是${route.uniqueFact}。当前路线沈砚状态：${routeStatePieces(route).join('；')}。只沿这条路线继续。`;
+}
+
 function seedTree(scenario: GeneratedExperimentScenario, arm: LiveArm, repetition: number) {
   const prefix = `seed-${arm}-r${repetition}`;
   const nodes: Record<string, TurnNode> = {};
@@ -654,7 +769,7 @@ function seedTree(scenario: GeneratedExperimentScenario, arm: LiveArm, repetitio
       assistantId,
       userId,
       'assistant',
-      `当前路线为${route.id}。路线独有银印是${route.uniqueFact}。${route.characterState} 只沿这条路线继续。`,
+      routeStateSeed(route),
       5 + routeIndex * 2,
     );
     routeSeedLeafId[route.id] = assistantId;
@@ -761,12 +876,18 @@ function createArmState(arm: LiveArm, repetition: number, sessionId: string): Li
   return {
     sessionId,
     status: 'not-started',
+    incompletePhases: [],
     nodes: {},
     activeLeafId: null,
     previousAssistantByRoute: {},
     completedTurnIds: [],
     generatedOutputs: [],
   };
+}
+
+function markArmIncomplete(armState: LiveArmState, phase: LivePhase): void {
+  if (!armState.incompletePhases.includes(phase)) armState.incompletePhases.push(phase);
+  armState.status = 'incomplete';
 }
 
 class GoExperimentFatalError extends Error {
@@ -779,17 +900,44 @@ class GoExperimentFatalError extends Error {
   }
 }
 
-function assertTerminalBillingEvidence(record: LiveRequestRecord): void {
-  if (record.status !== 'completed' && record.status !== 'refused' && record.status !== 'truncated') return;
+function assertKnownBillingEvidence(record: LiveRequestRecord): void {
+  if (record.status === 'in-flight') return;
   if (record.usage === null) {
-    throw new GoExperimentFatalError('OpenCode Go terminal response omitted usage; stopping because quota is unknown.');
+    throw new GoExperimentFatalError('OpenCode Go attempt omitted usage; stopping because billing is unknown.');
   }
   if (record.usage.billingSource !== 'go') {
     throw new GoExperimentFatalError('OpenCode Go response did not report opencode.billing_source=go; stopping to avoid overage.');
   }
   if (record.usage.allowance === null) {
-    throw new GoExperimentFatalError('OpenCode Go response omitted opencode.allowance; stopping because quota is unknown.');
+    throw new GoExperimentFatalError('OpenCode Go attempt omitted opencode.allowance; stopping because billing is unknown.');
   }
+  if (record.usage.promptTokens === null || record.usage.completionTokens === null) {
+    throw new GoExperimentFatalError('OpenCode Go attempt omitted prompt or completion tokens; stopping because billing is unknown.');
+  }
+}
+
+function hasKnownBillingEvidence(record: LiveRequestRecord): boolean {
+  return record.status !== 'in-flight' &&
+    record.usage !== null &&
+    record.usage.billingSource === 'go' &&
+    record.usage.allowance !== null &&
+    record.usage.promptTokens !== null &&
+    record.usage.completionTokens !== null;
+}
+
+function assertNoUnknownBillingAttempts(state: LiveExperimentState): void {
+  for (const record of state.records) assertKnownBillingEvidence(record);
+}
+
+function conservativeInputTokensUsed(records: readonly LiveRequestRecord[]): number {
+  return records.reduce(
+    (total, record) => total + Math.max(record.estimatedInputTokenUpperBound, record.usage?.promptTokens ?? 0),
+    0,
+  );
+}
+
+function billedOutputTokensUsed(records: readonly LiveRequestRecord[]): number {
+  return records.reduce((total, record) => total + (record.usage?.completionTokens ?? 0), 0);
 }
 
 function newestRecord(records: readonly LiveRequestRecord[]): LiveRequestRecord | null {
@@ -924,22 +1072,65 @@ function assertUsageHeadroom(snapshot: GoUsageSnapshot, settings: GoExperimentSe
 function budgetHardStop(
   state: LiveExperimentState,
   settings: GoExperimentSettings,
+  estimatedInputTokenUpperBound: number,
+  estimatedAllowanceUpperBound: number,
 ): void {
-  if (state.records.length >= settings.maxRequests) {
+  assertNoUnknownBillingAttempts(state);
+  if (state.records.length + 1 > settings.maxRequests) {
     throw new Error('Experiment request cap reached before the next model request.');
   }
-  const estimatedInput = state.records.reduce((sum, record) => sum + record.estimatedInputTokenUpperBound, 0);
-  if (estimatedInput >= settings.maxTotalInputTokens) {
+  const projectedInput = conservativeInputTokensUsed(state.records) + estimatedInputTokenUpperBound;
+  if (projectedInput > settings.maxTotalInputTokens) {
     throw new Error('Experiment conservative input-token cap reached before the next model request.');
   }
-  const outputTokens = state.records.reduce((sum, record) => sum + (record.usage?.completionTokens ?? 0), 0);
-  if (outputTokens >= settings.maxTotalOutputTokens) {
+  const projectedOutput = billedOutputTokensUsed(state.records) + settings.maxOutputTokensPerRequest;
+  if (projectedOutput > settings.maxTotalOutputTokens) {
     throw new Error('Experiment output-token cap reached before the next model request.');
   }
   const allowance = knownAllowanceSum(state.records.filter((record) => record.usage !== null));
-  if (allowance !== null && allowance >= settings.maxAllowance) {
-    throw new Error('Experiment OpenCode Go allowance cap reached before the next model request.');
+  if (allowance === null || allowance + estimatedAllowanceUpperBound > settings.maxAllowance) {
+    throw new Error('Experiment conservative allowance reservation would exceed the OpenCode Go allowance cap.');
   }
+}
+
+function postRequestBudgetHardStop(
+  state: LiveExperimentState,
+  settings: GoExperimentSettings,
+  record: LiveRequestRecord,
+): void {
+  try {
+    assertKnownBillingEvidence(record);
+  } catch (error) {
+    if (error instanceof GoExperimentFatalError) {
+      throw new GoExperimentFatalError(
+        `${error.message} The attempted request was retained and no retry was sent.`,
+        record.error,
+      );
+    }
+    throw error;
+  }
+  const inputTokens = conservativeInputTokensUsed(state.records);
+  if (inputTokens > settings.maxTotalInputTokens) {
+    throw new GoExperimentFatalError('Experiment conservative input-token cap was exceeded; stopping before new traffic.');
+  }
+  if ((record.usage?.promptTokens ?? 0) > settings.maxInputTokensPerRequest) {
+    throw new GoExperimentFatalError('A billed request exceeded the per-request input-token cap; stopping before new traffic.');
+  }
+  const outputTokens = billedOutputTokensUsed(state.records);
+  if (outputTokens > settings.maxTotalOutputTokens) {
+    throw new GoExperimentFatalError('Experiment output-token cap was exceeded; stopping before new traffic.');
+  }
+  if ((record.usage?.completionTokens ?? 0) > settings.maxOutputTokensPerRequest) {
+    throw new GoExperimentFatalError('A billed request exceeded the per-request output-token cap; stopping before new traffic.');
+  }
+  const allowance = knownAllowanceSum(state.records.filter((candidate) => candidate.usage !== null));
+  if (allowance === null || allowance > settings.maxAllowance) {
+    throw new GoExperimentFatalError('Experiment OpenCode Go allowance cap was exceeded; stopping before new traffic.');
+  }
+}
+
+function isValidResponseModel(responseModel: string): boolean {
+  return responseModel === GO_MODEL || responseModel === GO_CANONICAL_MODEL;
 }
 
 interface CompletionOptions {
@@ -965,13 +1156,17 @@ async function completeModelRequest(
 ): Promise<LiveRequestRecord> {
   const settings = options.settings;
   for (let attempt = 0; attempt <= settings.maxRetries; attempt += 1) {
-    budgetHardStop(state, settings);
-    const delay = settings.cadenceMs - ((options.now?.() ?? Date.now()) - lastModelRequestEndedAt);
-    if (delay > 0) await (options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(delay);
     const estimatedInputTokenUpperBound = conservativeInputTokenUpperBound(completion.messages);
     if (estimatedInputTokenUpperBound > settings.maxInputTokensPerRequest) {
       throw new Error('A request exceeded the conservative per-request input-token cap before it was sent.');
     }
+    const estimatedListCostUsdUpperBound = conservativeListCostUsdUpperBound(
+      estimatedInputTokenUpperBound,
+      settings.maxOutputTokensPerRequest,
+    );
+    budgetHardStop(state, settings, estimatedInputTokenUpperBound, estimatedListCostUsdUpperBound);
+    const delay = settings.cadenceMs - ((options.now?.() ?? Date.now()) - lastModelRequestEndedAt);
+    if (delay > 0) await (options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(delay);
     const requestId = `${completion.operationId}-a${attempt}`;
     const preparedAt = options.now?.() ?? Date.now();
     const record: LiveRequestRecord = {
@@ -994,6 +1189,8 @@ async function completeModelRequest(
       summaryCoveredThrough: completion.summaryCoveredThrough,
       firstContentLatencyMs: null,
       durationMs: null,
+      responseModel: null,
+      systemFingerprint: null,
       finishReason: null,
       refusal: null,
       truncated: false,
@@ -1001,6 +1198,7 @@ async function completeModelRequest(
       reasoningCharCount: 0,
       output: null,
       usage: null,
+      estimatedListCostUsdUpperBound,
     };
     state.records.push(record);
     state.updatedAt = new Date(options.now?.() ?? Date.now()).toISOString();
@@ -1027,19 +1225,22 @@ async function completeModelRequest(
           },
         );
         if (!response.ok) {
+          const failure = await responseFailure(
+            response,
+            response.status === 429 || response.status >= 500,
+          );
           return {
             response,
             parsed: null,
-            error: await responseError(
-              response,
-              response.status === 429 || response.status >= 500,
-            ),
+            error: failure.error,
+            usage: failure.usage,
           };
         }
         return {
           response,
           parsed: await parseCompletionStream(response.body, started),
           error: null,
+          usage: null,
         };
       });
       if (!requestResult.response.ok) {
@@ -1048,17 +1249,27 @@ async function completeModelRequest(
           retryable: false,
         };
         record.status = 'failed';
+        record.usage = requestResult.usage;
       } else {
         const parsed = requestResult.parsed!;
         record.firstContentLatencyMs = parsed.firstContentLatencyMs;
         record.reasoningCharCount = parsed.reasoningCharacters;
+        record.responseModel = parsed.responseModel;
+        record.systemFingerprint = parsed.systemFingerprint;
         record.finishReason = parsed.finishReason;
         record.refusal = parsed.refusal;
         record.truncated = parsed.finishReason === 'length';
         record.output = parsed.content || parsed.refusal;
         record.visibleOutputCharCount = parsed.content ? parsed.content.length : null;
         record.usage = parsed.usage;
-        if (parsed.refusal || parsed.finishReason === 'content_filter' || parsed.finishReason === 'refusal') {
+        if (parsed.responseModel !== null && !isValidResponseModel(parsed.responseModel)) {
+          record.status = 'failed';
+          record.error = {
+            type: 'ModelMismatch',
+            message: `Response model ${parsed.responseModel} did not match ${GO_MODEL} or ${GO_CANONICAL_MODEL}.`,
+            retryable: false,
+          };
+        } else if (parsed.refusal || parsed.finishReason === 'content_filter' || parsed.finishReason === 'refusal') {
           record.status = 'refused';
         } else if (parsed.finishReason === 'length') {
           record.status = 'truncated';
@@ -1073,7 +1284,7 @@ async function completeModelRequest(
           };
         }
       }
-      assertTerminalBillingEvidence(record);
+      assertKnownBillingEvidence(record);
     } catch (error) {
       if (error instanceof GoExperimentFatalError) {
         record.error = {
@@ -1094,6 +1305,7 @@ async function completeModelRequest(
     state.updatedAt = record.completedAt;
     await options.onCheckpoint?.(state);
     if (fatalError) throw fatalError;
+    postRequestBudgetHardStop(state, settings, record);
 
     if (record.status === 'completed' || record.status === 'refused' || record.status === 'truncated') {
       return record;
@@ -1154,7 +1366,10 @@ async function summarizeFolioIfNeeded(
       summaryCoveredThrough: snapshot.coveredUpToNodeId,
     });
     summaryIndex += 1;
-    if (record.status !== 'completed' || !record.output?.trim()) return snapshot;
+    if (record.status !== 'completed' || !record.output?.trim()) {
+      markArmIncomplete(armState, 'summary');
+      return snapshot;
+    }
     snapshot = {
       content: record.output.trim(),
       coveredUpToNodeId: batch[batch.length - 1].id,
@@ -1219,11 +1434,11 @@ function appendGeneratedTurn(
 function probeFacts(scenario: GeneratedExperimentScenario, routeId: string) {
   const route = scenario.routes.find((candidate) => candidate.id === routeId)!;
   return {
-    expectedFacts: [route.uniqueFact, ...route.characterState.split('；').map((part) => part.replace(/^.*?：/, '').replace(/。$/, ''))],
+    expectedFacts: [route.uniqueFact, ...routeStatePieces(route)],
     forbiddenFacts: scenario.routes
       .filter((candidate) => candidate.id !== routeId)
       .slice(0, 3)
-      .flatMap((candidate) => [candidate.uniqueFact, candidate.characterState]),
+      .flatMap((candidate) => [candidate.uniqueFact, ...routeStatePieces(candidate)]),
   };
 }
 
@@ -1240,7 +1455,7 @@ async function runProbe(
   const armState = repetitionState.arms[arm];
   const routeId = state.schedule.find((entry) => entry.turnId === afterTurnId)!.routeId;
   const facts = probeFacts(scenario, routeId);
-  const query = '保持当前路线。仅根据已有历史，先逐字写出路线独有银印标记，再回答沈砚的衣物、左手伤痕和随身物。格式：银印：...；衣物：...；左手：...；随身物：...。不要引用其他路线。';
+  const query = '保持当前路线。仅根据已有历史，逐字写出路线独有银印，以及沈砚衣物、左手伤痕、随身物各自的完整路线标记。格式：银印：...；衣物：...；左手：...；随身物：...。不要引用其他路线。';
   const snapshot = arm === 'folio'
     ? await summarizeFolioIfNeeded(state, repetition, armState, parentId, afterTurnId, scenario, options)
     : getTurnTreeSummarySnapshot(armState.nodes, parentId);
@@ -1262,9 +1477,17 @@ async function runProbe(
     policy: arm === 'full' ? 'full-history' : arm === 'folio' ? 'rolling-summary' : 'branch-retrieval',
     summaryCoveredThrough: snapshot.coveredUpToNodeId,
   });
+  if (record.status === 'in-flight' || record.status === 'aborted') {
+    throw new Error(`Probe ${record.requestId} ended without a scoreable terminal response.`);
+  }
   const answer = record.output ?? '';
-  const expectedFactsPresent = facts.expectedFacts.every((fact) => answer.includes(fact));
-  const forbiddenFactsAbsent = facts.forbiddenFacts.every((fact) => !answer.includes(fact));
+  const scored = record.status === 'completed';
+  const expectedFactsPresent = scored ? facts.expectedFacts.every((fact) => answer.includes(fact)) : null;
+  const forbiddenFactsAbsent = scored ? facts.forbiddenFacts.every((fact) => !answer.includes(fact)) : null;
+  const correct = expectedFactsPresent === null || forbiddenFactsAbsent === null
+    ? null
+    : expectedFactsPresent && forbiddenFactsAbsent;
+  if (!scored) markArmIncomplete(armState, 'probe');
   state.probes.push({
     probeId: `r${repetition}-${afterTurnId}-${arm}`,
     repetition,
@@ -1276,84 +1499,143 @@ async function runProbe(
     forbiddenFacts: facts.forbiddenFacts,
     expectedFactsPresent,
     forbiddenFactsAbsent,
+    correct,
     status: record.status,
   });
 }
 
-function armSummary(
-  records: readonly LiveRequestRecord[],
-  probes: readonly LiveProbeRecord[],
-  arm: LiveArm,
-): LiveArmSummary {
-  const armRecords = records.filter((record) => record.arm === arm);
+function armSummary(state: LiveExperimentState, arm: LiveArm): LiveArmSummary {
+  const armRecords = state.records.filter((record) => record.arm === arm);
   const completedGenerations = armRecords.filter((record) => record.phase === 'generation' && completedRecord(record));
   const billedRecords = armRecords.filter((record) => record.usage !== null);
   const latencies = completedGenerations
     .map((record) => record.firstContentLatencyMs)
     .filter((value): value is number => value !== null);
-  const armProbes = probes.filter((probe) => probe.arm === arm);
+  const armProbes = state.probes.filter((probe) => probe.arm === arm);
+  const completedLogicalTurnKeyMap = new Map<string, LiveLogicalTurnKey>();
+  for (const record of completedGenerations) {
+    if (record.logicalTurnId === null) continue;
+    completedLogicalTurnKeyMap.set(`${record.repetition}\0${record.logicalTurnId}`, {
+      repetition: record.repetition,
+      logicalTurnId: record.logicalTurnId,
+    });
+  }
+  const completedLogicalTurnKeys = [...completedLogicalTurnKeyMap.values()];
+  const completedTurnCount = completedLogicalTurnKeys.length;
+  const expectedTurns = state.settings.turns * state.settings.repetitions;
+  const summaryRecords = armRecords.filter((record) => record.phase === 'summary');
+  const latestSummaryRecords = [...new Map(summaryRecords.map((record) => [record.operationId, record])).values()];
+  const summaryStatus: LivePhaseCompletionStatus = latestSummaryRecords.length === 0
+    ? 'not-required'
+    : latestSummaryRecords.every((record) => record.status === 'completed')
+      ? 'completed'
+      : 'incomplete';
+  const probesExpected = state.schedule.filter((entry) => entry.probeAfter).length * state.settings.repetitions;
+  const probeStatus: LivePhaseCompletionStatus = probesExpected === 0
+    ? 'not-required'
+    : armProbes.length === probesExpected && armProbes.every((probe) => probe.status === 'completed')
+      ? 'completed'
+      : 'incomplete';
+  const qualityStatus: LiveArmSummary['qualityStatus'] = probesExpected === 0
+    ? 'not-assessed'
+    : armProbes.length === probesExpected &&
+        armProbes.every((probe) => probe.correct === true) &&
+        summaryStatus !== 'incomplete'
+      ? 'complete'
+      : 'incomplete';
+  const phaseRecords = (phase: LivePhase) => armRecords.filter((record) => record.phase === phase);
   return {
     arm,
-    completedTurns: completedGenerations.length,
-    completedTurnIds: [...new Set(completedGenerations.flatMap((record) => record.logicalTurnId ? [record.logicalTurnId] : []))],
+    coreStatus: completedTurnCount === expectedTurns ? 'completed' : 'incomplete',
+    summaryStatus,
+    probeStatus,
+    qualityStatus,
+    completedTurns: completedTurnCount,
+    completedLogicalTurnKeys,
     requestCounts: {
-      generation: armRecords.filter((record) => record.phase === 'generation').length,
-      summary: armRecords.filter((record) => record.phase === 'summary').length,
-      probe: armRecords.filter((record) => record.phase === 'probe').length,
+      generation: phaseRecords('generation').length,
+      summary: phaseRecords('summary').length,
+      probe: phaseRecords('probe').length,
+    },
+    phaseRequestStatusCounts: {
+      generation: requestStatusCounts(phaseRecords('generation')),
+      summary: requestStatusCounts(phaseRecords('summary')),
+      probe: requestStatusCounts(phaseRecords('probe')),
     },
     refusalCount: armRecords.filter((record) => record.status === 'refused').length,
     truncationCount: armRecords.filter((record) => record.status === 'truncated').length,
-    missingUsageRecords: armRecords.filter((record) =>
-      (record.status === 'completed' || record.status === 'refused' || record.status === 'truncated') &&
-      record.usage === null,
-    ).length,
+    missingUsageRecords: armRecords.filter((record) => record.status !== 'in-flight' && record.usage === null).length,
+    unknownBillingRecords: armRecords.filter((record) => !hasKnownBillingEvidence(record)).length,
     tokenTotals: tokenTotalsFor(billedRecords),
     generationTokenTotals: tokenTotalsFor(completedGenerations),
-    allowanceUsed: billedRecords.length === 0 ? null : knownAllowanceSum(billedRecords),
+    planAllowanceUsed: billedRecords.length === 0 ? null : knownAllowanceSum(billedRecords),
+    listCostUsd: billedRecords.length === 0 ? null : knownUsageNumberSum(billedRecords, 'listCostUsd'),
+    chargedUsd: billedRecords.length === 0 ? null : knownUsageNumberSum(billedRecords, 'chargedUsd'),
     firstContentLatencyMsP50: percentile(latencies, 0.5),
     firstContentLatencyMsP95: percentile(latencies, 0.95),
-    probesPassed: armProbes.filter((probe) => probe.expectedFactsPresent && probe.forbiddenFactsAbsent).length,
+    probesExpected,
+    probesPassed: armProbes.filter((probe) => probe.correct === true).length,
+    probesScored: armProbes.filter((probe) => probe.correct !== null).length,
+    probesIncorrect: armProbes.filter((probe) => probe.correct === false).length,
+    probesIncomplete: probesExpected - armProbes.filter((probe) => probe.correct !== null).length,
     probesTotal: armProbes.length,
   };
 }
 
 function summarizeLiveExperiment(state: LiveExperimentState): LiveExperimentSummary {
-  const byArm = Object.fromEntries(ARMS.map((arm) => [arm, armSummary(state.records, state.probes, arm)])) as Record<LiveArm, LiveArmSummary>;
-  const commonTurnIds = state.schedule
-    .map((entry) => entry.turnId)
-    .filter((turnId) => ARMS.every((arm) => state.records.some(
-      (record) => record.arm === arm && record.phase === 'generation' && record.logicalTurnId === turnId && completedRecord(record),
-    )));
-  const commonTurnIdSet = new Set(commonTurnIds);
+  const byArm = Object.fromEntries(ARMS.map((arm) => [arm, armSummary(state, arm)])) as Record<LiveArm, LiveArmSummary>;
+  const logicalTurnKeys = state.repetitions.flatMap((repetitionState) => {
+    const prefix: LiveLogicalTurnKey[] = [];
+    for (const entry of state.schedule) {
+      const completeForEveryArm = ARMS.every((arm) => state.records.some(
+        (record) => record.repetition === repetitionState.index &&
+          record.arm === arm &&
+          record.phase === 'generation' &&
+          record.logicalTurnId === entry.turnId &&
+          completedRecord(record),
+      ));
+      if (!completeForEveryArm) break;
+      prefix.push({ repetition: repetitionState.index, logicalTurnId: entry.turnId });
+    }
+    return prefix;
+  });
+  const logicalTurnKeySet = new Set(logicalTurnKeys.map((key) => `${key.repetition}\0${key.logicalTurnId}`));
   const commonRecords = (arm: LiveArm) => state.records.filter(
-    (record) => record.arm === arm && record.logicalTurnId !== null && commonTurnIdSet.has(record.logicalTurnId),
+    (record) => record.arm === arm && record.logicalTurnId !== null &&
+      logicalTurnKeySet.has(`${record.repetition}\0${record.logicalTurnId}`),
   );
   const commonArm = (arm: LiveArm) => {
     const records = commonRecords(arm);
     const billedRecords = records.filter((record) => record.usage !== null);
     const completedGenerations = records.filter((record) => record.phase === 'generation' && completedRecord(record));
-    const hasUnknownTerminalUsage = records.some((record) =>
-      (record.status === 'completed' || record.status === 'refused' || record.status === 'truncated') &&
-      record.usage === null,
-    );
+    const hasUnknownUsage = records.some((record) => record.status !== 'in-flight' && record.usage === null);
     const latencies = completedGenerations.map((record) => record.firstContentLatencyMs)
       .filter((value): value is number => value !== null);
-    const empty = commonTurnIds.length === 0;
+    const empty = logicalTurnKeys.length === 0;
     return {
-      completedTurns: completedGenerations.length,
+      completedTurns: new Set(completedGenerations.flatMap((record) =>
+        record.logicalTurnId ? [`${record.repetition}\0${record.logicalTurnId}`] : [],
+      )).size,
       billedRequests: billedRecords.length,
       phaseCounts: {
         generation: records.filter((record) => record.phase === 'generation').length,
         summary: records.filter((record) => record.phase === 'summary').length,
         probe: records.filter((record) => record.phase === 'probe').length,
       },
-      promptTokens: empty || hasUnknownTerminalUsage ? null : knownTokenSum(billedRecords, 'promptTokens'),
-      completionTokens: empty || hasUnknownTerminalUsage ? null : knownTokenSum(billedRecords, 'completionTokens'),
-      reasoningTokens: empty || hasUnknownTerminalUsage ? null : knownTokenSum(billedRecords, 'reasoningTokens'),
-      cacheReadTokens: empty || hasUnknownTerminalUsage ? null : knownTokenSum(billedRecords, 'cacheReadTokens'),
-      cacheWrite5mTokens: empty || hasUnknownTerminalUsage ? null : knownTokenSum(billedRecords, 'cacheWrite5mTokens'),
-      cacheWrite1hTokens: empty || hasUnknownTerminalUsage ? null : knownTokenSum(billedRecords, 'cacheWrite1hTokens'),
-      allowance: empty || hasUnknownTerminalUsage ? null : knownAllowanceSum(billedRecords),
+      billedPhaseCounts: {
+        generation: billedRecords.filter((record) => record.phase === 'generation').length,
+        summary: billedRecords.filter((record) => record.phase === 'summary').length,
+        probe: billedRecords.filter((record) => record.phase === 'probe').length,
+      },
+      promptTokens: empty || hasUnknownUsage ? null : knownTokenSum(billedRecords, 'promptTokens'),
+      completionTokens: empty || hasUnknownUsage ? null : knownTokenSum(billedRecords, 'completionTokens'),
+      reasoningTokens: empty || hasUnknownUsage ? null : knownTokenSum(billedRecords, 'reasoningTokens'),
+      cacheReadTokens: empty || hasUnknownUsage ? null : knownTokenSum(billedRecords, 'cacheReadTokens'),
+      cacheWrite5mTokens: empty || hasUnknownUsage ? null : knownTokenSum(billedRecords, 'cacheWrite5mTokens'),
+      cacheWrite1hTokens: empty || hasUnknownUsage ? null : knownTokenSum(billedRecords, 'cacheWrite1hTokens'),
+      planAllowance: empty || hasUnknownUsage ? null : knownAllowanceSum(billedRecords),
+      listCostUsd: empty || hasUnknownUsage ? null : knownUsageNumberSum(billedRecords, 'listCostUsd'),
+      chargedUsd: empty || hasUnknownUsage ? null : knownUsageNumberSum(billedRecords, 'chargedUsd'),
       latencyMsP50: empty ? null : percentile(latencies, 0.5),
       latencyMsP95: empty ? null : percentile(latencies, 0.95),
     };
@@ -1365,31 +1647,40 @@ function summarizeLiveExperiment(state: LiveExperimentState): LiveExperimentSumm
   };
   const delta = (left: number | null, right: number | null) => left === null || right === null ? null : right - left;
   return {
-    commonRange: { turnIds: commonTurnIds, byArm: commonByArm },
+    commonRange: { logicalTurnKeys, byArm: commonByArm },
     byArm,
     comparisons: {
       fullToRetrievable: {
-        commonTurnCount: commonTurnIds.length,
+        commonTurnCount: logicalTurnKeys.length,
         promptTokenDelta: delta(commonByArm.full.promptTokens, commonByArm.retrievable.promptTokens),
         completionTokenDelta: delta(commonByArm.full.completionTokens, commonByArm.retrievable.completionTokens),
         reasoningTokenDelta: delta(commonByArm.full.reasoningTokens, commonByArm.retrievable.reasoningTokens),
         cacheReadTokenDelta: delta(commonByArm.full.cacheReadTokens, commonByArm.retrievable.cacheReadTokens),
         cacheWrite5mTokenDelta: delta(commonByArm.full.cacheWrite5mTokens, commonByArm.retrievable.cacheWrite5mTokens),
         cacheWrite1hTokenDelta: delta(commonByArm.full.cacheWrite1hTokens, commonByArm.retrievable.cacheWrite1hTokens),
-        allowanceDelta: delta(commonByArm.full.allowance, commonByArm.retrievable.allowance),
+        planAllowanceDelta: delta(commonByArm.full.planAllowance, commonByArm.retrievable.planAllowance),
+        listCostUsdDelta: delta(commonByArm.full.listCostUsd, commonByArm.retrievable.listCostUsd),
+        chargedUsdDelta: delta(commonByArm.full.chargedUsd, commonByArm.retrievable.chargedUsd),
       },
       folioToRetrievable: {
-        commonTurnCount: commonTurnIds.length,
+        commonTurnCount: logicalTurnKeys.length,
         promptTokenDelta: delta(commonByArm.folio.promptTokens, commonByArm.retrievable.promptTokens),
         completionTokenDelta: delta(commonByArm.folio.completionTokens, commonByArm.retrievable.completionTokens),
         reasoningTokenDelta: delta(commonByArm.folio.reasoningTokens, commonByArm.retrievable.reasoningTokens),
         cacheReadTokenDelta: delta(commonByArm.folio.cacheReadTokens, commonByArm.retrievable.cacheReadTokens),
         cacheWrite5mTokenDelta: delta(commonByArm.folio.cacheWrite5mTokens, commonByArm.retrievable.cacheWrite5mTokens),
         cacheWrite1hTokenDelta: delta(commonByArm.folio.cacheWrite1hTokens, commonByArm.retrievable.cacheWrite1hTokens),
-        allowanceDelta: delta(commonByArm.folio.allowance, commonByArm.retrievable.allowance),
+        planAllowanceDelta: delta(commonByArm.folio.planAllowance, commonByArm.retrievable.planAllowance),
+        listCostUsdDelta: delta(commonByArm.folio.listCostUsd, commonByArm.retrievable.listCostUsd),
+        chargedUsdDelta: delta(commonByArm.folio.chargedUsd, commonByArm.retrievable.chargedUsd),
       },
     },
-    usd: { status: 'not-rendered', reason: 'go-allowance-only' },
+    usd: {
+      status: 'reported-separately',
+      planAllowance: { unit: 'go-allowance', notBalanceCharge: true },
+      listCost: { source: 'opencode.list_cost' },
+      charged: { source: 'usage.cost' },
+    },
   };
 }
 
@@ -1414,7 +1705,7 @@ export async function runGoExperiment(options: RunGoExperimentOptions): Promise<
     };
   });
   const state: LiveExperimentState = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode: 'live-opencode-go',
     runId: options.runId,
     status: 'running',
@@ -1428,6 +1719,7 @@ export async function runGoExperiment(options: RunGoExperimentOptions): Promise<
       canonicalModel: GO_CANONICAL_MODEL,
       userAgent: GO_USER_AGENT,
       sessionHeader: 'x-opencode-session',
+      upperBoundPricing: GO_UPPER_BOUND_PRICING,
     },
     settings,
     schedule,
@@ -1439,7 +1731,8 @@ export async function runGoExperiment(options: RunGoExperimentOptions): Promise<
     summary: null,
     failure: null,
     limitations: [
-      'OpenCode Go allowance is a plan quota signal and is not rendered as USD or a balance charge.',
+      'Go allowance, usage.cost balance charge, and opencode.list_cost are reported separately.',
+      'Allowance reservation uses the published full uncached peak rates of $0.30/M input and $1.20/M output.',
       'The 30-turn run is a staged short sample and does not establish the full 300 / 500 / 1,000-turn matrix.',
       'Requests and summaries run serially. Natural generated outputs are retained outside the repository for this run.',
       'A usage endpoint percentage is checked before the run and opencode.allowance is enforced during the run; use a small allowance cap and avoid Extra Usage.',
@@ -1458,6 +1751,7 @@ export async function runGoExperiment(options: RunGoExperimentOptions): Promise<
         const seeds = seedTree(scenario, arm, repetitionState.index);
         armState.nodes = seeds.nodes;
         armState.status = 'running';
+        armState.incompletePhases = [];
         armState.activeLeafId = null;
         await options.onCheckpoint?.(state);
 
@@ -1486,7 +1780,7 @@ export async function runGoExperiment(options: RunGoExperimentOptions): Promise<
             summaryCoveredThrough: snapshot.coveredUpToNodeId,
           });
           if (record.status !== 'completed' || !record.output?.trim()) {
-            armState.status = 'incomplete';
+            markArmIncomplete(armState, 'generation');
             break;
           }
           appendGeneratedTurn(
@@ -1514,14 +1808,19 @@ export async function runGoExperiment(options: RunGoExperimentOptions): Promise<
             );
           }
         }
-        if (armState.status !== 'incomplete') armState.status = 'completed';
+        armState.status = armState.incompletePhases.length === 0 ? 'completed' : 'incomplete';
         await options.onCheckpoint?.(state);
       }
     }
 
     state.usagePostflight = await getUsageSnapshot(options, repetitions[0].arms[settings.order[0]].sessionId);
     state.summary = summarizeLiveExperiment(state);
-    state.status = ARMS.every((arm) => state.summary!.byArm[arm].completedTurns === settings.turns * settings.repetitions)
+    state.status = ARMS.every((arm) => {
+      const summary = state.summary!.byArm[arm];
+      return summary.coreStatus === 'completed' &&
+        summary.summaryStatus !== 'incomplete' &&
+        summary.probeStatus !== 'incomplete';
+    })
       ? 'completed'
       : 'incomplete';
   } catch (error) {

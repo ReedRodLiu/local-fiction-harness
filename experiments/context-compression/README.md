@@ -45,9 +45,13 @@ npm run experiment:context-go -- \
 
 `--repeat N` 为每一轮使用新的 arm session，并将下一轮的处理顺序左移一位。30 轮夹具为共同前置、8 轮 A、8 轮 B、返回 A 继续 7 轮、再切 C 7 轮；每段结束后运行银印与角色状态探针。每组主生成正文继续作为下一轮真实父节点，不在每轮重放同一固定回复。
 
-OpenCode Go usage 只作为配额证据。入口读取 GET `/inference/go/v1/usage` 返回的 `usage.rolling/weekly/monthly.percent` 和每次终态响应的 `opencode.allowance`、`opencode.billing_source`、缓存/输出/思考 token；`billing_source` 不是 `go` 或 allowance 缺失时立即停止。滚动、周、月任一达到默认 90% 时在模型调用前停止，本地 allowance 总额另受 `--max-allowance` 硬限制。`usage.cost` 和 `list_cost` 不作为费用展示，报告固定为 `usd.status=not-rendered`，不把 allowance 等同余额扣费。
+OpenCode Go usage 分别报告三类金额：`opencode.allowance` 是 Go 套餐额度占用，`opencode.list_cost` 是模型公开列表价成本，`usage.cost` 是余额实际扣费。前两者都不改写为余额扣费。入口同时保存每次响应的 `model` 与 `system_fingerprint`；字段缺失时保留为未知，显式返回非预期 model 时拒绝该尝试并停止。
 
-公共依据：[OpenCode Go 使用条件](https://opencode.ai/docs/console/go/) 要求自有 User-Agent 与稳定 session，并说明新接口获得相同额度与管理方式；[Harness Base URLs 与 Sessions](https://opencode.ai/docs/console/harnesses/) 给出当前 Go Chat Completions 路径和 `x-opencode-session`。
+每次模型调用前，runner 按公开 Go 模型的全价、全缓存未命中峰值 US$0.30/M input 与 US$1.20/M output 预留同值 allowance，并与 `--max-allowance` 及请求、输入、输出上限同时比较。响应后再次检查 provider 回报的 allowance、input、output；任一次已发请求的 usage/allowance 未知时保留该记录，并在下一次网络请求前停止。旧的 `max-retries` 只在失败尝试具有完整可核验计费时允许继续。
+
+核心生成、滚动摘要和探针分别报告完成状态与请求状态计数。摘要在拒绝/截断、探针未完成时，实验状态不会静默标记为完成；探针正文正确性另设为 `qualityStatus`，只有 `completed` 请求参与逐项精确评分。公共前缀以 `repetition + logicalTurnId` 为唯一键，并汇总该逻辑回合内所有已计费阶段。银印、衣物、左手伤痕和随身物使用带路线标识的独立精确标记，兄弟路线的共用文本不再被整段状态字符串掩盖。
+
+公共依据：[OpenCode Go 使用条件](https://opencode.ai/docs/console/go/) 要求自有 User-Agent 与稳定 session，并说明新接口获得相同额度与管理方式；[Harness Base URLs 与 Sessions](https://opencode.ai/docs/console/harnesses/) 给出当前 Go Chat Completions 路径和 `x-opencode-session`；[Console model pricing](https://opencode.ai/docs/console/models/#pricing) 给出 DeepSeek V4.1 Flash 的全价与未命中费率，[Inference cost fields](https://opencode.ai/docs/console/api/inference/#cost) 定义 `cost`、`list_cost` 与 `allowance` 的不同含义。
 
 ## 复跑离线证据
 
