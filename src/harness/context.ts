@@ -141,12 +141,11 @@ export function buildSystemAnchorPrompt(
     ? documentVersion(story.documents.container, storyDocumentState({ ...story, documents: story.documents }, nodeId,
       nodeId === story.activeLeafNodeId).container).markdown
     : legacyStoryMarkdown(story));
-  const effectivePromptPack = resolvePromptPackContext(promptPack);
   const basePrompt = [
     DEFAULT_STORY_SYSTEM_PROMPT,
     CHANGE_PROMPT,
   ].join('\n\n');
-  if (effectivePromptPack.enabled || !includeSetting) return basePrompt;
+  if (!includeSetting) return basePrompt;
   return [basePrompt, markdown && `以下是当前故事 Markdown。\n\n${markdown}`]
     .filter(Boolean)
     .join('\n\n');

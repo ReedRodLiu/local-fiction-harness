@@ -4452,11 +4452,15 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
         batches.some((text) => text.includes(OVERSIZED_BEGIN) && text.includes(OVERSIZED_END))) {
       throw new Error('Oversized history node did not reach summary in bounded chunks');
     }
-    const inAnchor = continuation[0].role === 'system' && continuation[0].content.includes(LONG_SCRIPT);
+    const firstNonSystemIndex = continuation.findIndex(({ role }) => role !== 'system');
+    const anchorEnd = firstNonSystemIndex === -1 ? continuation.length : firstNonSystemIndex;
+    const scriptMessageIndex = continuation.findIndex(({ content }) => content.includes(LONG_SCRIPT));
+    const inAnchor = scriptMessageIndex >= 0 && scriptMessageIndex < anchorEnd &&
+      continuation[scriptMessageIndex].role === 'system';
     const scriptOccurrences = continuation.map(({ content }) => content).join('\n').split(LONG_SCRIPT).length - 1;
-    const outsideAnchor = continuation.slice(1).map(({ content }) => content).some((text) =>
-      text.includes(LONG_SCRIPT.slice(0, 24)) || text.includes('剧本片段。'.repeat(10)),
-    );
+    const outsideAnchor = continuation.some(({ content }, index) => index !== scriptMessageIndex && (
+      content.includes(LONG_SCRIPT.slice(0, 24)) || content.includes('剧本片段。'.repeat(10))
+    ));
     if (!inAnchor || scriptOccurrences !== 1 || outsideAnchor) {
       throw new Error(`Setup Node DOCX anchor mismatch (inAnchor=${inAnchor}, occurrences=${scriptOccurrences}, outsideAnchor=${outsideAnchor})`);
     }

@@ -6,6 +6,7 @@ import {
   ENTRY_ROUTE_SYSTEM_PROMPT,
   PROMPT_PACK_SEMANTIC_PRIORITY,
   assembleThreeZoneContext,
+  buildSystemAnchorPrompt,
   buildEntryRouteMessages,
   characterContext,
   createDefaultBlueprint,
@@ -80,6 +81,22 @@ function positions(messages: readonly { content: string }[], markers: string[]):
 }
 
 describe('Prompt Pack three-zone physical assembly', () => {
+  it('includes the current setting when a prompt pack is enabled unless includeSetting is false', () => {
+    const withSetting = buildSystemAnchorPrompt(makeStory(), 'assistant', undefined, {
+      promptPackLibrary: library,
+    });
+    const withoutSetting = buildSystemAnchorPrompt(
+      makeStory(),
+      'assistant',
+      undefined,
+      { promptPackLibrary: library },
+      false,
+    );
+
+    expect(withSetting).toContain('当前设定正文');
+    expect(withoutSetting).not.toContain('当前设定正文');
+  });
+
   it('keeps story pack slots, protected prompts, documents, history, tail, and user input ordered', () => {
     const context = assembleThreeZoneContext(
       makeStory(),
