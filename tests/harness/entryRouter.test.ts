@@ -18,11 +18,13 @@ import {
   parseEntryRouteReply,
   parseManuscriptAssistantReply,
   routeEntryMessage,
+  storyDocumentState,
   storyExportMarkdown,
   visibleEntryRoutePrefix,
   writeDocument,
   type LlmTransport,
   type ModelConfig,
+  type StoryDocuments,
   type TurnNode,
 } from '../../src/harness/index.ts';
 
@@ -381,7 +383,7 @@ describe('V0.2 entryRouter & unified mode helpers', () => {
         documents: { container: 'char-v1', local: 'path-n2' },
       },
     };
-    sourceConversation.characterVersion = 'char-v2';
+    sourceConversation.characterVersion = 'char-v1';
     sourceConversation.activeLeafNodeId = 'c2';
     sourceConversation.edits = { c2: 'path-n2-edit' };
     sourceCharacter.conversations = [sourceConversation];
@@ -412,6 +414,78 @@ describe('V0.2 entryRouter & unified mode helpers', () => {
     expect(documentVersion(sourceCharacter.conversations[0].document, 'path-side').markdown).toContain(
       '不应带走的侧支秘密',
     );
+  });
+
+  it('preserves a story setting edit at a historical node through story -> character -> story', () => {
+    const story = materializeAssetFromNodes({
+      targetMode: 'story',
+      title: '灯塔档案',
+      settingMarkdown: 'BASE-SETTING',
+      turns: [
+        {
+          id: 'n1',
+          parentId: null,
+          role: 'user',
+          content: '先打开第一份档案。',
+          createdAt: 100,
+          summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        },
+        {
+          id: 'n2',
+          parentId: 'n1',
+          role: 'assistant',
+          content: '第二份档案仍封存着。',
+          createdAt: 101,
+          summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        },
+      ],
+    }).story!;
+    const nodeA = Object.values(story.nodes).find((node) => node.content === '先打开第一份档案。')!;
+    const baseHead = story.documents!.container.head;
+    const editedContainer = writeDocument(
+      story.documents!.container,
+      baseHead,
+      'EDITED-AT-A',
+      'user',
+      'setting-at-a',
+    );
+    const storyWithHistoricalEdit = {
+      ...story,
+      documents: {
+        ...story.documents!,
+        container: editedContainer,
+        containerEdits: { [nodeA.id]: 'setting-at-a' },
+      },
+    };
+
+    const character = convertActiveAssetMode({
+      fromMode: 'story',
+      toMode: 'character',
+      story: storyWithHistoricalEdit,
+    }).character!;
+    const conversation = character.conversations[0];
+    const convertedNodeA = Object.values(conversation.nodes).find((node) => node.content === '先打开第一份档案。')!;
+
+    expect(convertedNodeA.documents?.container).toBe('setting-at-a');
+    expect(conversation.characterVersion).toBe(baseHead);
+    expect(documentVersion(character.document, convertedNodeA.documents!.container).markdown).toBe('EDITED-AT-A');
+
+    const roundTripped = convertActiveAssetMode({
+      fromMode: 'character',
+      toMode: 'story',
+      character,
+    }).story!;
+    const roundTrippedNodeA = Object.values(roundTripped.nodes).find((node) => node.content === '先打开第一份档案。')!;
+    const activeState = storyDocumentState(
+      roundTripped as typeof roundTripped & { documents: StoryDocuments },
+      roundTripped.activeLeafNodeId,
+      true,
+    );
+
+    expect(roundTrippedNodeA.documents?.container).toBe('setting-at-a');
+    expect(documentVersion(roundTripped.documents!.container, roundTrippedNodeA.documents!.container).markdown)
+      .toBe('EDITED-AT-A');
+    expect(documentVersion(roundTripped.documents!.container, activeState.container).markdown).toBe('BASE-SETTING');
   });
 
   it('keeps document references valid across empty, writing, and reverse mode conversions', () => {
