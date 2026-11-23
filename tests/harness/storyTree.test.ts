@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SPAN_STAGE_MAX_TURNS,
   createFictionHarness,
   createInMemoryStoryStorage,
+  deriveBranchShortTitle,
   exportStoryBackup,
+  formatBranchCreatedAt,
   getActiveSummarySnapshot,
   importStoryBackup,
+  projectStoryTreeOverview,
+  projectStoryTreeSpanSegments,
   projectStoryTreeSpine,
   getForkSiblingBranches,
   computeActiveReviewState,
+  queryStoryBranches,
   type LlmStreamRequest,
   type LlmTransport,
   type Story,
@@ -374,5 +380,289 @@ describe('Slice 1 (#19): Focused vertical Story Tree, lazy branch cues, Story Re
     const switchedBackA = await harness.switchBranch(turnB.story, 'u2A');
     expect(getActiveSummarySnapshot(switchedBackA).content).toContain('事件X');
     expect(getActiveSummarySnapshot(switchedBackA).content).not.toContain('事件Y');
+  });
+});
+
+describe('Issue #125 (ADR-0015): Dual-view Story Tree, scale-aware retry folding & 50-turn span stages', () => {
+  it('formats branch creation timestamps deterministically and falls back for legacy timestamps', () => {
+    expect(formatBranchCreatedAt(0)).toBe('时间未知');
+    expect(formatBranchCreatedAt(946684800000 - 1)).toBe('时间未知');
+    expect(formatBranchCreatedAt(Number.NaN)).toBe('时间未知');
+    expect(formatBranchCreatedAt(Number.POSITIVE_INFINITY)).toBe('时间未知');
+
+    const ts = new Date(2026, 4, 9, 7, 5).getTime();
+    expect(formatBranchCreatedAt(ts)).toBe('2026-05-09 07:05');
+  });
+
+  it('derives short titles in priority customName > turnSummary > sanitized preview > fallback with zero LLM calls', () => {
+    const baseStory: Story = {
+      id: 'short-title-story',
+      title: '短标题测试',
+      rawScript: '',
+      blueprint: {
+        title: '短标题测试',
+        worldRules: [],
+        protagonist: '主角',
+        npcs: [],
+        taboos: [],
+        openingHook: '',
+        extractionStatus: 'complete',
+      },
+      nodes: {
+        u1: {
+          id: 'u1',
+          parentId: null,
+          role: 'user',
+          content: '> **选择**：推开沉重铁门查看密室里的古老机关日志',
+          createdAt: 1700000000000,
+          summarySnapshot: makeEmptySnapshot(),
+        },
+        a1: {
+          id: 'a1',
+          parentId: 'u1',
+          role: 'assistant',
+          content: '## 地下室\n\n石门缓缓开启。',
+          turnSummary: '## 地下室\n**推门见石阶与暗道机关**',
+          createdAt: 1700000001000,
+          summarySnapshot: makeEmptySnapshot(),
+        },
+        u2: {
+          id: 'u2',
+          parentId: 'a1',
+          role: 'user',
+          content: '```lfh-choices\n1. 继续\n2. 退出\n```',
+          createdAt: 1700000002000,
+          summarySnapshot: makeEmptySnapshot(),
+        },
+      },
+      rootNodeIds: ['u1'],
+      activeLeafNodeId: 'a1',
+      branchNames: { u1: '自定义线名' },
+      createdAt: 1700000000000,
+      updatedAt: 1700000002000,
+    };
+
+    const u1 = baseStory.nodes.u1;
+    const a1 = baseStory.nodes.a1;
+    const u2 = baseStory.nodes.u2;
+
+    expect(deriveBranchShortTitle(baseStory, [u1, a1], 'u1', '分支 1')).toBe('自定义线名');
+    expect(deriveBranchShortTitle({ ...baseStory, branchNames: {} }, [u1, a1], 'u1', '分支 1')).toBe(
+      '地下室 推门见石阶与暗…',
+    );
+    expect(
+      deriveBranchShortTitle(
+        { ...baseStory, branchNames: {} },
+        [u1, { ...a1, turnSummary: undefined }],
+        'u1',
+        '分支 1',
+      ),
+    ).toBe('选择：推开沉重铁门查看…');
+    expect(deriveBranchShortTitle({ ...baseStory, branchNames: {} }, [u2], 'u2', '分支 3')).toBe('分支 3');
+  });
+
+  it('handles 100+ branches / 1,000+ nodes with 600-turn deep path, 3+ nesting levels, 20 retries, duplicate titles, and legacy timestamps', () => {
+    const nodes: Record<string, TurnNode> = {};
+    const branchNames: Record<string, string> = {};
+    const baseTs = new Date(2026, 2, 10, 10, 0).getTime();
+
+    const addLinearChain = (
+      prefix: string,
+      parentId: string | null,
+      turns: number,
+      startTs: number,
+      options?: {
+        legacyTimestamp?: boolean;
+        userContentPrefix?: string;
+        assistantContentPrefix?: string;
+        turnSummaryPrefix?: string;
+        diagnosticsOnLast?: boolean;
+      },
+    ): { firstId: string; lastId: string; endTs: number } => {
+      let prev = parentId;
+      let firstId = '';
+      let ts = startTs;
+      for (let t = 1; t <= turns; t += 1) {
+        const uId = `${prefix}-u${t}`;
+        const aId = `${prefix}-a${t}`;
+        if (!firstId) firstId = uId;
+        const uTs = options?.legacyTimestamp ? t * 2 - 1 : ts;
+        const aTs = options?.legacyTimestamp ? t * 2 : ts + 1000;
+        ts += 2000;
+        nodes[uId] = {
+          id: uId,
+          parentId: prev,
+          role: 'user',
+          content: `${options?.userContentPrefix ?? '推进行动'}-${t}`,
+          createdAt: uTs,
+          summarySnapshot: makeEmptySnapshot(),
+        };
+        nodes[aId] = {
+          id: aId,
+          parentId: uId,
+          role: 'assistant',
+          content: `${options?.assistantContentPrefix ?? '剧情回执'}-${t}`,
+          ...(options?.turnSummaryPrefix ? { turnSummary: `${options.turnSummaryPrefix}${t}` } : {}),
+          ...(options?.diagnosticsOnLast && t === turns
+            ? { diagnostics: { sourceStatus: 'TIMEOUT', contentRisk: true } }
+            : {}),
+          createdAt: aTs,
+          summarySnapshot: makeEmptySnapshot(),
+        };
+        prev = aId;
+      }
+      return { firstId, lastId: prev!, endTs: ts };
+    };
+
+    // 1. 600-turn deep active spine (1,200 nodes) with legacy timestamps on first 2 turns and modern timestamps onward
+    const earlyMain = addLinearChain('main-early', null, 2, 1, {
+      legacyTimestamp: true,
+      userContentPrefix: '开局旧档',
+      assistantContentPrefix: '旧档初章',
+    });
+    const deepMain = addLinearChain('main-deep', earlyMain.lastId, 598, baseTs + 10_000, {
+      userContentPrefix: '深层主干推进',
+      assistantContentPrefix: '第600轮终章长线',
+      turnSummaryPrefix: '主线深处第',
+      diagnosticsOnLast: true,
+    });
+    branchNames[earlyMain.firstId] = '六百轮主干';
+
+    // 2. Fork at turn 2 (earlyMain.lastId): 20 single-turn retries + 1 named single-turn retry + 1 multi-turn branch
+    for (let r = 1; r <= 20; r += 1) {
+      const retryLeafId = `retry-a-${r}`;
+      nodes[retryLeafId] = {
+        id: retryLeafId,
+        parentId: 'main-early-u2',
+        role: 'assistant',
+        content: `重抽回执-${r}`,
+        createdAt: baseTs + r * 100,
+        summarySnapshot: makeEmptySnapshot(),
+      };
+    }
+    nodes['retry-named'] = {
+      id: 'retry-named',
+      parentId: 'main-early-u2',
+      role: 'assistant',
+      content: '手动保留的重抽版本',
+      createdAt: baseTs + 3000,
+      summarySnapshot: makeEmptySnapshot(),
+    };
+    branchNames['retry-named'] = '保留重试版本';
+
+    // 3. Level 1 -> Level 2 -> Level 3 nested branches with duplicate titles and ancestor cues
+    const lvl1A = addLinearChain('lvl1-a', earlyMain.lastId, 6, baseTs + 5_000_000, {
+      userContentPrefix: '潜入北塔密道',
+      assistantContentPrefix: '地点：北塔三层\n暗格现世',
+      turnSummaryPrefix: '重复短标题线',
+    });
+    branchNames[lvl1A.firstId] = '北塔祖先线';
+
+    const lvl2A = addLinearChain('lvl2-a', lvl1A.lastId, 8, baseTs + 6_000_000, {
+      userContentPrefix: '破解钟楼齿轮',
+      assistantContentPrefix: '地点：钟楼机括室\n发现残页',
+      turnSummaryPrefix: '重复短标题线',
+    });
+
+    const lvl3Grandchild = addLinearChain('lvl3-grand', lvl2A.lastId, 4, baseTs + 7_000_000, {
+      userContentPrefix: '开启星象密匣',
+      assistantContentPrefix: '地点：星象密室\n拿到最终星盘钥匙',
+      turnSummaryPrefix: '星象密匣终章',
+    });
+    const lvl3Alt = addLinearChain('lvl3-alt', lvl2A.lastId, 2, baseTs + 6_500_000, {
+      userContentPrefix: '封存星象密匣',
+      assistantContentPrefix: '地点：星象密室旁廊\n选择封存',
+      turnSummaryPrefix: '封存星象密匣',
+    });
+
+    // 4. Add 85 more multi-turn effective branches across multiple forks to exceed 100 total branches
+    for (let b = 1; b <= 85; b += 1) {
+      const parentAnchor = b % 2 === 0 ? lvl1A.lastId : earlyMain.lastId;
+      addLinearChain(`side-${b}`, parentAnchor, 2 + (b % 5), baseTs + 1_000_000 + b * 5000, {
+        userContentPrefix: `旁支探索${b}`,
+        assistantContentPrefix: b <= 3 ? '完全相同内容分支' : `旁支剧情结果${b}`,
+      });
+    }
+
+    const story: Story = {
+      id: 'chaotic-scale-story',
+      title: '百分支千节点压测故事',
+      rawScript: '长篇测试剧本',
+      blueprint: {
+        title: '百分支千节点压测故事',
+        worldRules: [],
+        protagonist: '调查员',
+        npcs: [],
+        taboos: [],
+        openingHook: '夜幕降临',
+        extractionStatus: 'complete',
+      },
+      nodes,
+      rootNodeIds: [earlyMain.firstId],
+      activeLeafNodeId: deepMain.lastId,
+      branchNames,
+      createdAt: 1,
+      updatedAt: baseTs + 8_000_000,
+    };
+
+    expect(Object.keys(story.nodes).length).toBeGreaterThan(1000);
+
+    // A. Overview partitions 20 single-turn retries cleanly while preserving named retry & all effective branches
+    const overview = projectStoryTreeOverview(story);
+    expect(overview.totalRetryBranches).toBe(20);
+    expect(overview.totalEffectiveBranches).toBe(89);
+    expect(overview.totalEffectiveBranches + overview.totalRetryBranches).toBe(109);
+    expect(overview.effectiveBranches.some((b) => b.entryNodeId === 'retry-named')).toBe(true);
+    expect(overview.effectiveBranches.some((b) => b.entryNodeId === lvl3Alt.firstId)).toBe(true);
+    expect(overview.retryBranches.every((b) => b.isSingleTurnRetry)).toBe(true);
+
+    // B. Legacy timestamps yield '时间未知'
+    const legacySiblings = getForkSiblingBranches(story, null);
+    expect(legacySiblings[0].createdAtLabel).toBe('时间未知');
+    expect(legacySiblings[0].subBranchCount).toBeGreaterThan(0);
+
+    // C. Fork siblings at main-early-u2 mark all 20 unnamed assistant retries as isSingleTurnRetry
+    const forkSiblings = getForkSiblingBranches(story, 'main-early-u2');
+    expect(forkSiblings.filter((b) => b.isSingleTurnRetry)).toHaveLength(20);
+    expect(forkSiblings.find((b) => b.entryNodeId === 'retry-named')?.isSingleTurnRetry).toBe(false);
+    expect(forkSiblings.find((b) => b.isActive)?.isSingleTurnRetry).toBe(false);
+
+    // D. Sorting: active pinned first, 'recent' vs 'scale'
+    const byRecent = queryStoryBranches(overview, { sortBy: 'recent' });
+    const byScale = queryStoryBranches(overview, { sortBy: 'scale' });
+    expect(byRecent[0].isActive).toBe(true);
+    expect(byScale[0].isActive).toBe(true);
+    expect(byRecent[1].entryNodeId).toBe(lvl3Grandchild.firstId);
+    expect(byScale[1].branchTurnCount).toBeGreaterThanOrEqual(byScale[2].branchTurnCount);
+    expect(byScale[1].branchTurnCount).toBe(6);
+
+    // E. Deep search finds level-3 grandchild by ancestor name, ancestor cue, and fork turn
+    const foundByAncestorName = queryStoryBranches(overview, { query: '北塔祖先线' });
+    expect(foundByAncestorName.some((b) => b.entryNodeId === lvl3Grandchild.firstId)).toBe(true);
+    const foundByAncestorCue = queryStoryBranches(overview, { query: '钟楼机括室' });
+    expect(foundByAncestorCue.some((b) => b.entryNodeId === lvl3Grandchild.firstId)).toBe(true);
+    const foundByTitle = queryStoryBranches(overview, { query: '星象密匣终章' });
+    expect(foundByTitle.map((b) => b.entryNodeId)).toEqual([lvl3Grandchild.firstId]);
+    const foundWithRetries = queryStoryBranches(overview, {
+      query: '重抽回执-19',
+      includeRetries: true,
+    });
+    expect(foundWithRetries.map((b) => b.entryNodeId)).toEqual(['retry-a-19']);
+
+    // F. 50-turn span stage segmentation on 600-turn deep active spine
+    const spine = projectStoryTreeSpine(story);
+    expect(spine.totalActiveTurns).toBe(600);
+    const longTailSpan = spine.items.find(
+      (item): item is Extract<typeof item, { kind: 'span' }> =>
+        item.kind === 'span' && item.turnCount > SPAN_STAGE_MAX_TURNS,
+    );
+    expect(longTailSpan).toBeDefined();
+    const segments = projectStoryTreeSpanSegments(story, longTailSpan!);
+    expect(segments).toHaveLength(Math.ceil(longTailSpan!.turnCount / SPAN_STAGE_MAX_TURNS));
+    expect(segments[0].turnCount).toBe(SPAN_STAGE_MAX_TURNS);
+    expect(segments[0].nodeIds).toHaveLength(SPAN_STAGE_MAX_TURNS * 2);
+    expect(segments.every((seg) => seg.turnCount <= SPAN_STAGE_MAX_TURNS)).toBe(true);
+    expect(segments[segments.length - 1].diagnosticsCount).toBe(1);
+    expect(segments.reduce((sum, seg) => sum + seg.nodeIds.length, 0)).toBe(longTailSpan!.nodeCount);
   });
 });
