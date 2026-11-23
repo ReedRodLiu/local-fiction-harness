@@ -316,6 +316,9 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
   ) {
     throw new Error(`备份文件中的节点 ${expectedId ?? '(unknown)'} 格式无效。`);
   }
+  if (entry.prefillContent !== undefined && typeof entry.prefillContent !== 'string') {
+    throw new Error(`备份文件中的节点 ${expectedId ?? entry.id} 的 prefillContent 必须为字符串。`);
+  }
   if (entry.reasoningEffort !== undefined && !isReasoningEffort(entry.reasoningEffort)) {
     throw new Error(`备份文件中的节点 ${expectedId ?? entry.id} 的 reasoningEffort 无效。`);
   }
@@ -338,6 +341,7 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
     parentId: entry.parentId,
     role: entry.role,
     content: entry.content,
+    ...(entry.prefillContent !== undefined ? { prefillContent: entry.prefillContent } : {}),
     ...(trimmedTurnSummary !== undefined ? { turnSummary: trimmedTurnSummary } : {}),
     ...(entry.reasoningContent !== undefined ? { reasoningContent: entry.reasoningContent } : {}),
     ...(trimmedModel !== undefined ? { model: trimmedModel } : {}),

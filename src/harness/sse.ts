@@ -204,7 +204,16 @@ export function resolveBetaChatCompletionsUrl(baseUrl: string): string {
   if (cleaned.endsWith('/beta')) {
     return `${cleaned}/chat/completions`;
   }
-  return `${cleaned}/beta/chat/completions`;
+
+  let base = cleaned;
+  if (base.endsWith('/v1/chat/completions')) {
+    base = base.slice(0, -'/v1/chat/completions'.length);
+  } else if (base.endsWith('/chat/completions')) {
+    base = base.slice(0, -'/chat/completions'.length);
+  } else if (base.endsWith('/v1')) {
+    base = base.slice(0, -'/v1'.length);
+  }
+  return `${base}/beta/chat/completions`;
 }
 
 /**
@@ -245,80 +254,94 @@ export async function* applyPrefixEchoCursor(
     };
   };
 
-  for await (const delta of deltas) {
-    const hasContent = typeof delta.contentDelta === 'string';
-    const isTerminal = typeof delta.finishReason === 'string';
-    let outputContent: string | undefined;
-
-    if (hasContent) {
-      const content = delta.contentDelta!;
-      if (state === 'pending') {
-        const candidate = heldContent + content;
-        if (prefillContent.startsWith(candidate)) {
-          heldContent = candidate;
-          if (candidate === prefillContent) {
-            state = 'echoed';
-          }
-        } else if (candidate.startsWith(prefillContent)) {
-          state = 'echoed';
-          heldContent = '';
-          outputContent = candidate.slice(prefillContent.length);
-        } else {
-          state = 'diverged';
-          heldContent = '';
-          outputContent = candidate;
-        }
-      } else {
-        outputContent = content;
-      }
-    }
-
-    if (isTerminal && state === 'pending') {
-      state = 'diverged';
-      outputContent = (outputContent ?? '') + heldContent;
-      heldContent = '';
-    }
-
-    if (outputContent !== undefined && outputContent.length > 0) {
+  const flushUnconfirmedContent = function* (): Generator<LlmStreamDelta> {
+    if (state === 'pending') {
       const prefixDelta = takePrefillDelta();
       if (prefixDelta) yield prefixDelta;
-      yield { ...delta, contentDelta: outputContent };
-      continue;
+      if (heldContent) {
+        yield { contentDelta: heldContent };
+      }
+    } else {
+      const prefixDelta = takePrefillDelta();
+      if (prefixDelta) yield prefixDelta;
     }
+  };
 
-    if (hasContent) {
-      const nonContentParts = emitNonContentParts(delta);
-      if (nonContentParts) {
-        if (isTerminal) {
-          const prefixDelta = takePrefillDelta();
-          if (prefixDelta) yield prefixDelta;
+  try {
+    for await (const delta of deltas) {
+      const hasContent = typeof delta.contentDelta === 'string';
+      const isTerminal = typeof delta.finishReason === 'string';
+      let outputContent: string | undefined;
+
+      if (hasContent) {
+        const content = delta.contentDelta!;
+        if (state === 'pending') {
+          const candidate = heldContent + content;
+          if (prefillContent.startsWith(candidate)) {
+            heldContent = candidate;
+            if (candidate === prefillContent) {
+              state = 'echoed';
+            }
+          } else if (candidate.startsWith(prefillContent)) {
+            state = 'echoed';
+            heldContent = '';
+            outputContent = candidate.slice(prefillContent.length);
+          } else {
+            state = 'diverged';
+            heldContent = '';
+            outputContent = candidate;
+          }
+        } else {
+          outputContent = content;
         }
-        yield nonContentParts;
-      } else if (delta.contentDelta === '' && state !== 'pending') {
+      }
+
+      if (isTerminal && state === 'pending') {
+        state = 'diverged';
+        outputContent = (outputContent ?? '') + heldContent;
+        heldContent = '';
+      }
+
+      if (outputContent !== undefined && outputContent.length > 0) {
         const prefixDelta = takePrefillDelta();
         if (prefixDelta) yield prefixDelta;
-        yield { ...delta, contentDelta: '' };
+        yield { ...delta, contentDelta: outputContent };
+        continue;
       }
-      continue;
-    }
 
-    if (isTerminal) {
-      const prefixDelta = takePrefillDelta();
-      if (prefixDelta) yield prefixDelta;
+      if (hasContent) {
+        const nonContentParts = emitNonContentParts(delta);
+        if (nonContentParts) {
+          if (isTerminal) {
+            const prefixDelta = takePrefillDelta();
+            if (prefixDelta) yield prefixDelta;
+          }
+          yield nonContentParts;
+        } else if (delta.contentDelta === '' && state !== 'pending') {
+          const prefixDelta = takePrefillDelta();
+          if (prefixDelta) yield prefixDelta;
+          yield { ...delta, contentDelta: '' };
+        }
+        continue;
+      }
+
+      if (isTerminal) {
+        const prefixDelta = takePrefillDelta();
+        if (prefixDelta) yield prefixDelta;
+      }
+      yield delta;
     }
-    yield delta;
+  } catch (error) {
+    // An upstream error or abort cannot confirm whether held text is an echo.
+    // Preserve the same conservative contract as a normal end: emit the
+    // configured prefill, then the held bytes, before propagating the error.
+    // This may duplicate a partial echo, but never silently drops content or
+    // blindly cuts unconfirmed server text.
+    yield* flushUnconfirmedContent();
+    throw error;
   }
 
-  if (state === 'pending') {
-    const prefixDelta = takePrefillDelta();
-    if (prefixDelta) yield prefixDelta;
-    if (heldContent) {
-      yield { contentDelta: heldContent };
-    }
-  } else {
-    const prefixDelta = takePrefillDelta();
-    if (prefixDelta) yield prefixDelta;
-  }
+  yield* flushUnconfirmedContent();
 }
 
 export function mapReasoningEffortToDeepSeekParams(effort: ReasoningEffort = 'high'): {
@@ -352,6 +375,11 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
   const thinking = req.thinking ?? mapped.thinking;
   const reasoning_effort = req.reasoning_effort ?? mapped.reasoning_effort;
   const allowReasoning = thinking.type !== 'disabled' && reasoning_effort !== 'none';
+  if (req.prefixCompletion && req.messages.at(-1)?.role === 'assistant') {
+    throw new Error(
+      'Cannot append an assistant prefix after an assistant message. The final original message must be user or system.',
+    );
+  }
   const messages = req.prefixCompletion
     ? [
         ...req.messages,

@@ -19,20 +19,48 @@ async function* fromDeltas(deltas: LlmStreamDelta[]): AsyncIterable<LlmStreamDel
   yield* deltas;
 }
 
+async function* fromDeltasThenThrow(
+  deltas: LlmStreamDelta[],
+  error: Error,
+): AsyncIterable<LlmStreamDelta> {
+  yield* deltas;
+  throw error;
+}
+
+async function collectUntilError(iterable: AsyncIterable<LlmStreamDelta>): Promise<{
+  deltas: LlmStreamDelta[];
+  error: unknown;
+}> {
+  const deltas: LlmStreamDelta[] = [];
+  try {
+    for await (const delta of iterable) {
+      deltas.push(delta);
+    }
+  } catch (error) {
+    return { deltas, error };
+  }
+  return { deltas, error: undefined };
+}
+
 describe('DeepSeek beta prefix completion request assembly', () => {
-  it('derives an idempotent beta chat completions URL', () => {
-    expect(resolveBetaChatCompletionsUrl('https://api.deepseek.com')).toBe(
-      'https://api.deepseek.com/beta/chat/completions',
-    );
-    expect(resolveBetaChatCompletionsUrl('https://api.deepseek.com/')).toBe(
-      'https://api.deepseek.com/beta/chat/completions',
-    );
-    expect(resolveBetaChatCompletionsUrl('https://api.deepseek.com/beta')).toBe(
-      'https://api.deepseek.com/beta/chat/completions',
-    );
-    expect(resolveBetaChatCompletionsUrl('https://api.deepseek.com/beta/chat/completions/')).toBe(
-      'https://api.deepseek.com/beta/chat/completions',
-    );
+  it.each([
+    'https://api.deepseek.com',
+    'https://api.deepseek.com/',
+    'https://api.deepseek.com/v1',
+    'https://api.deepseek.com/v1/',
+    'https://api.deepseek.com/chat/completions',
+    'https://api.deepseek.com/chat/completions/',
+    'https://api.deepseek.com/v1/chat/completions',
+    'https://api.deepseek.com/v1/chat/completions/',
+    'https://api.deepseek.com/beta',
+    'https://api.deepseek.com/beta/',
+    'https://api.deepseek.com/beta/chat/completions',
+    'https://api.deepseek.com/beta/chat/completions/',
+  ])('derives an idempotent beta chat completions URL from %s', (baseUrl) => {
+    const expected = 'https://api.deepseek.com/beta/chat/completions';
+    const resolved = resolveBetaChatCompletionsUrl(baseUrl);
+    expect(resolved).toBe(expected);
+    expect(resolveBetaChatCompletionsUrl(resolved)).toBe(expected);
   });
 
   it.each([
@@ -76,6 +104,7 @@ describe('DeepSeek beta prefix completion request assembly', () => {
       { role: 'system' as const, content: '系统' },
       { role: 'user' as const, content: '用户' },
       { role: 'assistant' as const, content: '历史助手' },
+      { role: 'user' as const, content: '继续' },
     ];
     const request = buildOpenAiChatRequest({
       baseUrl: 'https://api.deepseek.com',
@@ -104,6 +133,21 @@ describe('DeepSeek beta prefix completion request assembly', () => {
       prefix: true,
     });
     expect(prefixMessage?.reasoning_content).toBe(reasoningContent);
+  });
+
+  it('rejects prefix completion when the original messages already end with assistant', () => {
+    expect(() =>
+      buildOpenAiChatRequest({
+        baseUrl: 'https://api.deepseek.com',
+        apiKey: 'secret',
+        model: 'deepseek-flash',
+        messages: [
+          { role: 'user', content: '开始' },
+          { role: 'assistant', content: '尚未结束的回复' },
+        ],
+        prefixCompletion: { content: '继续' },
+      }),
+    ).toThrow(/assistant prefix.*assistant message/i);
   });
 
   it('keeps ordinary requests on the stable URL and does not add a prefix message', () => {
@@ -216,5 +260,36 @@ describe('Prefix echo cursor', () => {
     expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta).join('')).toBe(
       '雨声在屋檐雨声在',
     );
+  });
+
+  it('flushes held content before propagating an upstream error', async () => {
+    const upstreamError = new Error('upstream disconnected');
+    const { deltas, error } = await collectUntilError(
+      applyPrefixEchoCursor(
+        fromDeltasThenThrow([{ contentDelta: '雨声在' }], upstreamError),
+        '雨声在屋檐',
+      ),
+    );
+
+    expect(error).toBe(upstreamError);
+    expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta).join('')).toBe(
+      '雨声在屋檐雨声在',
+    );
+  });
+
+  it('emits an exactly held prefill once before propagating an upstream abort', async () => {
+    const abortError = new Error('aborted');
+    abortError.name = 'AbortError';
+    const { deltas, error } = await collectUntilError(
+      applyPrefixEchoCursor(
+        fromDeltasThenThrow([{ contentDelta: '雨声在屋檐' }], abortError),
+        '雨声在屋檐',
+      ),
+    );
+
+    expect(error).toBe(abortError);
+    expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta)).toEqual([
+      '雨声在屋檐',
+    ]);
   });
 });
