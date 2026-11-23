@@ -14,7 +14,7 @@ status: accepted
 2. **官方地址族与请求层派生规则**：
    - `ModelConfig.baseUrl` 持久化配置仍锁定 `https://api.deepseek.com`，生产界面不暴露 URL 输入框。
    - `GenerationPreference` 新增 `promptPackMode` 与 `prefixCompletion`（`'off' | 'on_retry' | 'always'`），沿用「全局默认 + 按故事/作品/角色独立覆盖」作用域模型。
-   - `/beta` 路径仅在请求携带前缀续写时按需派生；后台轻量任务固定走稳定端点。
+   - `/beta` 路径仅在 `src/harness/sse.ts` 的 `buildOpenAiChatRequest` 中因请求携带 `prefixCompletion` 时按需派生（`resolveBetaChatCompletionsUrl`），后台轻量任务（`createBackgroundModelConfig`）固定走稳定端点。
 3. **`keyConfig.ts` API Key 保留正则同步加固**：
    - `normalizeOfficialModelConfig` 必须同步放宽端点校验正则至 `/^https:\/\/api\.deepseek\.com(?:\/v1|\/beta)?\/?$/i`，并由单元测试锁死 `/beta` 传入时不得静默清空 `apiKey`。
 4. **本地数据隔离与零正文诊断**：
@@ -23,4 +23,4 @@ status: accepted
 ## Consequences
 
 - `#1` Out of scope 中关于第三方审核规避机制的表述修订为指向本 ADR：Folio 仅提供中立的本地提示词槽位、官方 `/beta` 协议能力与拒答容错体验，外部导入文本及其接口调用合规性与重试额外 Token 消耗由用户自行承担。
-- Web 与 Android `NativeSse` 共享同一套请求拼装与回显游标逻辑，原生 Java 层保持零改动。
+- Web 与 Android `NativeSse` 共享同一套 `buildOpenAiChatRequest` 与回显游标逻辑，原生 Java 层保持零改动。

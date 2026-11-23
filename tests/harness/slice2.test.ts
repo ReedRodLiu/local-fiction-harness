@@ -264,7 +264,10 @@ describe('Slice 2: Blueprint extraction & full rawScript anchoring', () => {
     });
 
     expect(capturedRequests).toHaveLength(2);
-    const systemPrompt = capturedRequests[1].messages.find((m) => m.role === 'system')?.content ?? '';
+    const systemPrompt = capturedRequests[1].messages
+      .filter((message) => message.role === 'system')
+      .map((message) => message.content)
+      .join('\n');
     // Raw script details omitted from blueprint MUST still be anchored
     expect(systemPrompt).toContain('每周三食堂二楼不供应番茄炒蛋');
     // User edits to confirmed blueprint MUST also appear

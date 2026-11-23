@@ -111,7 +111,7 @@ _Avoid_: 故事存档备份、静默后台遥测
 ### 模型与生成偏好
 
 **生成偏好（Generation Preference）**:
-玩家在创作或游玩时选用的 DeepSeek 官方模型与思考强度组合，在全局默认之外支持按单个故事、作品或角色独立覆盖。
+玩家在创作或游玩时选用的 DeepSeek 官方模型、思考强度、提示词包模式（`promptPackMode`）与前缀续写模式（`prefixCompletion`）组合，在全局默认之外支持按单个故事、作品或角色独立覆盖。
 _Avoid_: 模型参数、接口配置、提示词模板
 
 **思考强度（Reasoning Effort）**:

@@ -135,6 +135,7 @@ export function buildSystemAnchorPrompt(
   nodeId = story.activeLeafNodeId,
   selected?: MarkdownVersion,
   promptPack?: PromptPackContextOptions,
+  includeSetting = true,
 ): string {
   const markdown = selected?.markdown ?? (story.documents
     ? documentVersion(story.documents.container, storyDocumentState({ ...story, documents: story.documents }, nodeId,
@@ -145,7 +146,7 @@ export function buildSystemAnchorPrompt(
     DEFAULT_STORY_SYSTEM_PROMPT,
     CHANGE_PROMPT,
   ].join('\n\n');
-  if (effectivePromptPack.enabled) return basePrompt;
+  if (effectivePromptPack.enabled || !includeSetting) return basePrompt;
   return [basePrompt, markdown && `以下是当前故事 Markdown。\n\n${markdown}`]
     .filter(Boolean)
     .join('\n\n');
@@ -290,6 +291,7 @@ export function assembleThreeZoneContext(
     targetParentId,
     requestDocuments?.container,
     resolvedPromptPackOptions,
+    false,
   );
   const setupFilter = getSetupNodeFilter(story, targetParentId, requestDocuments?.container);
   const snapshot = requestDocuments?.snapshot ?? getActiveSummarySnapshot(story, targetParentId);
@@ -313,15 +315,16 @@ export function assembleThreeZoneContext(
         storyDocumentState({ ...story, documents: story.documents }, targetParentId, targetParentId === story.activeLeafNodeId).container,
       ).markdown
     : legacyStoryMarkdown(story));
+  const settingMessage = settingMarkdown.trim()
+    ? { role: 'system' as const, content: `以下是当前故事 Markdown。\n\n${settingMarkdown}` }
+    : null;
   const anchorMessages = effectivePromptPack.enabled
     ? [
         ...buildPromptPackAnchorMessages(anchorText, effectivePromptPack),
         ...readDocs,
-        ...(settingMarkdown.trim()
-          ? [{ role: 'system' as const, content: `以下是当前故事 Markdown。\n\n${settingMarkdown}` }]
-          : []),
+        ...(settingMessage ? [settingMessage] : []),
       ]
-    : [{ role: 'system' as const, content: anchorText }, ...readDocs];
+    : [{ role: 'system' as const, content: anchorText }, ...readDocs, ...(settingMessage ? [settingMessage] : [])];
   const messages: LlmMessage[] = [...anchorMessages];
   let summaryChars = 0;
 

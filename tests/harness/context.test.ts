@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   BUILTIN_NARRATIVE_PROMPT_PACK,
+  CHANGE_PROMPT,
   EMPTY_SUMMARY_SNAPSHOT,
   ENTRY_ROUTE_SYSTEM_PROMPT,
+  PROMPT_PACK_SEMANTIC_PRIORITY,
   assembleThreeZoneContext,
   buildEntryRouteMessages,
   characterContext,
@@ -113,8 +115,97 @@ describe('Prompt Pack three-zone physical assembly', () => {
     expect(note).toBeLessThan(recent);
     expect(recent).toBeLessThan(tail);
     expect(tail).toBeLessThan(input);
+    expect(context.messages[base].content).toContain(CHANGE_PROMPT);
+    expect(context.messages[base].content).toContain(PROMPT_PACK_SEMANTIC_PRIORITY);
     expect(context.metrics.anchorChars).toBeGreaterThan('PACK_HEAD'.length + 'PACK_MID'.length);
     expect(context.messages.map((message) => message.content).join('\n')).toContain('lfh-choices');
+  });
+
+  it('keeps memory before setting when the prompt pack is explicitly off', () => {
+    const context = assembleThreeZoneContext(
+      makeStory(),
+      'assistant',
+      '本轮 user 输入',
+      undefined,
+      false,
+      {
+        publicVersion: version('我的记忆：记忆内容'),
+        container: version('当前设定：设定内容'),
+        local: version('分支笔记：笔记内容'),
+        snapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+        promptPackLibrary: library,
+        generationPreference: { promptPackMode: 'off' },
+      },
+    );
+    const [base, memory, setting, note, recent, input] = positions(context.messages, [
+      'lfh-summary',
+      '我的记忆：记忆内容',
+      '当前设定：设定内容',
+      '分支笔记：笔记内容',
+      '近期玩家输入',
+      '本轮 user 输入',
+    ]);
+    expect(context.messages[base].content).toContain(CHANGE_PROMPT);
+    expect(context.messages[base].content).not.toContain('当前设定：设定内容');
+    expect(base).toBeLessThan(memory);
+    expect(memory).toBeLessThan(setting);
+    expect(setting).toBeLessThan(note);
+    expect(note).toBeLessThan(recent);
+    expect(recent).toBeLessThan(input);
+  });
+
+  it('does not inject the tail by default and injects it when explicitly enabled', () => {
+    const requestDocuments = {
+      publicVersion: version('我的记忆：记忆内容'),
+      container: version('当前设定：设定内容'),
+      local: version('分支笔记：笔记内容'),
+      snapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+      promptPackLibrary: library,
+    };
+    const withoutTail = assembleThreeZoneContext(
+      makeStory(),
+      'assistant',
+      '本轮 user 输入',
+      undefined,
+      false,
+      requestDocuments,
+    );
+    const withTail = assembleThreeZoneContext(
+      makeStory(),
+      'assistant',
+      '本轮 user 输入',
+      undefined,
+      false,
+      { ...requestDocuments, includePromptPackTail: true },
+    );
+    expect(withoutTail.messages.some((message) => message.content === 'PACK_TAIL')).toBe(false);
+    expect(withTail.messages.some((message) => message.content === 'PACK_TAIL')).toBe(true);
+  });
+
+  it('counts anchor characters exactly without reducing the recent window budget', () => {
+    const context = assembleThreeZoneContext(
+      makeStory(),
+      'assistant',
+      '本轮 user 输入',
+      { recentMaxChars: 10 },
+      false,
+      {
+        publicVersion: version('我的记忆：记忆内容'),
+        container: version('当前设定：设定内容'),
+        local: version('分支笔记：笔记内容'),
+        snapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+        promptPackLibrary: library,
+      },
+    );
+    const settingIndex = context.messages.findIndex((message) => message.content.includes('当前设定：设定内容'));
+    expect(settingIndex).toBeGreaterThanOrEqual(0);
+    expect(context.metrics.anchorChars).toBe(
+      context.messages.slice(0, settingIndex + 1).reduce((sum, message) => sum + message.content.length, 0),
+    );
+    expect(context.metrics.recentChars).toBe(
+      '近期玩家输入'.length + '近期叙事回复'.length + '本轮 user 输入'.length,
+    );
+    expect(context.metrics.anchorChars).toBeGreaterThan(10);
   });
 
   it('uses the same pack seam for writing, character interaction, and welcome routing', () => {
@@ -153,8 +244,15 @@ describe('Prompt Pack three-zone physical assembly', () => {
     });
     expect(entry[0].content).toBe('PACK_HEAD');
     expect(entry[1].content).toContain(ENTRY_ROUTE_SYSTEM_PROMPT);
+    expect(entry[1].content).toContain(CHANGE_PROMPT);
+    expect(entry[1].content).toContain(PROMPT_PACK_SEMANTIC_PRIORITY);
+    expect(entry[1].content).toContain('lfh-route');
+    expect(entry[1].content).toContain('entryRouter');
     expect(entry[1].content).toContain('lfh-proposal');
     expect(entry[2].content).toBe('PACK_MID');
+    expect(entry.findIndex((message) => message.content.includes(PROMPT_PACK_SEMANTIC_PRIORITY))).toBeLessThan(
+      entry.findIndex((message) => message.content === 'PACK_MID'),
+    );
     expect(entry.at(-2)?.content).toBe('PACK_TAIL');
     expect(entry.at(-1)).toEqual({ role: 'user', content: '欢迎输入' });
   });

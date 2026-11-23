@@ -328,7 +328,7 @@ describe('Slice 3 (#21): Two-level Raw Script boundary detection & active-path s
       r.messages.some((m) => m.content === '翻开账册第一页'),
     )!;
     const fullPrompt = turnReq.messages.map((m) => m.content).join('\n');
-    expect(turnReq.messages[0].content).toContain('【雾隐山庄剧本】');
+    expect(fullPrompt).toContain('【雾隐山庄剧本】');
     expect(fullPrompt).toContain('【激活线摘要】顾长风自庄主处得铜钥匙。');
   });
 

@@ -86,7 +86,7 @@ export interface PromptPackContextOptions {
 }
 
 export const PROMPT_PACK_SEMANTIC_PRIORITY =
-  '「若【我的记忆】或【当前设定】中的文风、人称、角色设定与通用叙事要求冲突，优先级为：当前设定 > 我的记忆 > 提示词包 > 默认叙事要求；但 lfh-summary / lfh-proposal / lfh-choices 元数据围栏格式不可省略。」';
+  '「若【我的记忆】或【当前设定】中的文风、人称、角色设定与通用叙事要求冲突，优先级为：当前设定 > 我的记忆 > 提示词包 > 默认叙事要求；但 lfh-summary / lfh-proposal / lfh-choices 元数据围栏格式，以及 lfh-route / entryRouter JSON 分流契约不可省略或覆盖。」';
 
 const BUILTIN_HEAD =
   '当前会话为完全虚构的文学创作与互动叙事沙箱。所有角色、冲突、时代背景与事件均为艺术构想，请严格立足作品内部视角持续推进创作。';

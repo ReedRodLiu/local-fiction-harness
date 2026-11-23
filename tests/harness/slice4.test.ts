@@ -97,13 +97,16 @@ describe('Slice 4: Three-Zone Context & incremental Plot Summary compression', (
     // Verify Three-Zone assembly for Turn 4
     const assembled = harness.assembleContext(story, story.activeLeafNodeId, '第四轮行动');
     expect(assembled.messages[0].role).toBe('system');
-    expect(assembled.messages[0].content).toContain('【原始设定】绝不违背的铁律。');
-    expect(assembled.messages[0].content).toContain('灵根决定资质');
-    expect(assembled.messages[0].content).toContain('禁止私下窃听');
-    expect(assembled.messages[0].content).toContain('保持角色与设定一致');
-    expect(assembled.messages[1].role).toBe('system');
-    expect(assembled.messages[1].content).toContain('【增量摘要】主角结识师兄并赢得内门比试。');
-    const zone3Contents = assembled.messages.slice(2).map((m) => m.content);
+    const systemPrompt = assembled.messages
+      .filter((message) => message.role === 'system')
+      .map((message) => message.content)
+      .join('\n');
+    expect(systemPrompt).toContain('【原始设定】绝不违背的铁律。');
+    expect(systemPrompt).toContain('灵根决定资质');
+    expect(systemPrompt).toContain('禁止私下窃听');
+    expect(systemPrompt).toContain('保持角色与设定一致');
+    expect(systemPrompt).toContain('【增量摘要】主角结识师兄并赢得内门比试。');
+    const zone3Contents = assembled.messages.filter((message) => message.role !== 'system').map((m) => m.content);
     expect(zone3Contents).toEqual(['第三轮行动', '第3轮剧情回复内容。', '第四轮行动']);
     expect(zone3Contents.join('\n')).not.toContain('秘密思考');
   });

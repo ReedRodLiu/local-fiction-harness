@@ -42,13 +42,36 @@ describe('Prompt Pack storage and exchange formats', () => {
     expect(store.setEnabled(BUILTIN_NARRATIVE_PROMPT_PACK.id, true).packs[0]?.enabled).toBe(true);
   });
 
-  it('rejects slot and total hard-limit violations and reports a long-pack warning', () => {
+  it('accepts exact slot boundaries and rejects each slot and total hard-limit overflow', () => {
     const store = createPromptPackStore(createMemoryStorage());
-    const tooLongHead = {
-      ...createPromptPack('head-too-long', emptyPromptPackSlots()),
-      slots: { ...emptyPromptPackSlots(), head: '甲'.repeat(PROMPT_PACK_LIMITS.head + 1) },
+    const boundary = createPromptPack('boundary-pack', {
+      head: '甲'.repeat(PROMPT_PACK_LIMITS.head),
+      mid: '乙'.repeat(PROMPT_PACK_LIMITS.mid),
+      tail: '丙'.repeat(PROMPT_PACK_LIMITS.tail),
+    });
+    expect(store.add(boundary).packs.find((pack) => pack.id === boundary.id)?.slots).toEqual(boundary.slots);
+
+    for (const slot of ['head', 'mid', 'tail'] as const) {
+      const tooLong = {
+        ...createPromptPack(`${slot}-too-long`, emptyPromptPackSlots()),
+        slots: { ...emptyPromptPackSlots(), [slot]: '甲'.repeat(PROMPT_PACK_LIMITS[slot] + 1) },
+      };
+      expect(() => store.add(tooLong)).toThrow(new RegExp(`${slot}.*${PROMPT_PACK_LIMITS[slot]}`));
+    }
+
+    const totalTooLong = {
+      ...createPromptPack('total-too-long', emptyPromptPackSlots()),
+      slots: {
+        head: '甲'.repeat(PROMPT_PACK_LIMITS.head),
+        mid: '乙'.repeat(PROMPT_PACK_LIMITS.mid),
+        tail: '丙'.repeat(PROMPT_PACK_LIMITS.tail + 1),
+      },
     };
-    expect(() => store.add(tooLongHead)).toThrow(/head/);
+    expect(() => store.add(totalTooLong)).toThrow(/总长度.*32000/);
+  });
+
+  it('reports a long-pack warning above 12000 characters', () => {
+    const store = createPromptPackStore(createMemoryStorage());
 
     const longPack = createPromptPack('long-pack', {
       head: '甲'.repeat(12001),
