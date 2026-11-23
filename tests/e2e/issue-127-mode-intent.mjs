@@ -2,8 +2,12 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const viteBinary = path.join(path.dirname(require.resolve('vite/package.json')), 'bin/vite.js');
 const playwrightCorePath =
   process.env.PLAYWRIGHT_CORE_PATH ||
   '/Users/liuyuxuan/.npm-global/lib/node_modules/@playwright/cli/node_modules/playwright-core';
@@ -23,20 +27,33 @@ function resolveBrowserExecutable() {
 }
 
 async function startViteServer() {
-  const server = spawn('npx', ['vite', '--port', String(PORT), '--strictPort'], {
+  const server = spawn(process.execPath, [viteBinary, '--port', String(PORT), '--strictPort'], {
+    cwd: repoRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Vite dev server timeout')), 15000);
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      server.kill('SIGTERM');
+      reject(error);
+    };
+    const timer = setTimeout(() => fail(new Error('Vite dev server timeout')), 15000);
     server.stdout.on('data', (chunk) => {
-      if (!chunk.toString().includes(String(PORT))) return;
+      if (settled || !chunk.toString().includes(String(PORT))) return;
+      settled = true;
       clearTimeout(timer);
       resolve();
     });
     server.stderr.on('data', (chunk) => process.stderr.write(chunk));
+    server.once('error', (error) => {
+      clearTimeout(timer);
+      fail(error);
+    });
     server.once('exit', (code) => {
       clearTimeout(timer);
-      reject(new Error(`Vite exited before startup with code ${code ?? 'unknown'}.`));
+      fail(new Error(`Vite exited before startup with code ${code ?? 'unknown'}.`));
     });
   });
   return server;
@@ -194,7 +211,7 @@ async function main() {
     await page.getByTestId('topbar-mode-switcher').click();
     await page.getByTestId('topbar-mode-option-story').click();
     await page.getByTestId('story-timeline').waitFor();
-    await page.fill('#turn-input', '切换到写故事');
+    await page.fill('#turn-input', '帮我切换到写故事吧');
     await page.getByRole('button', { name: '发送行动', exact: true }).click();
     await page.getByTestId('writing-page').waitFor();
     const afterExplicitSwitch = await readPersistedState(page);
@@ -259,7 +276,7 @@ async function main() {
     await page.getByRole('button', { name: '发送行动', exact: true }).click();
     await page.getByTestId('neutral-timeline').waitFor();
     const beforeWelcomeSwitch = await readPersistedState(page);
-    await page.fill('#turn-input', '切换到写故事');
+    await page.fill('#turn-input', '现在请把模式切换为写故事');
     await page.locator('#turn-input').evaluate((inputElement) => {
       inputElement.form.requestSubmit();
       inputElement.form.requestSubmit();
