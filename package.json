@@ -17,6 +17,7 @@
     "test:e2e:markdown": "node tests/e2e/markdown-message-rendering.mjs",
     "test:ui-impl-05:dev": "LFH_UI_IMPL_05_ONLY=1 node tests/e2e/run-e2e.mjs",
     "test:ui-impl-05:production": "LFH_E2E_PRODUCTION=1 LFH_UI_IMPL_05_PRODUCTION_ONLY=1 node tests/e2e/run-e2e.mjs",
+    "experiment:context-go": "node --experimental-strip-types experiments/context-compression/live.mjs",
     "android:sync": "npm run build && npx cap sync android",
     "android:test": "cd android && ./gradlew testDebugUnitTest",
     "android:build": "npm run android:sync && cd android && ./gradlew --offline :app:testDebugUnitTest --rerun-tasks assembleDebug",

@@ -5,10 +5,49 @@
 ## 当前状态
 
 - 已运行：30 轮三组离线短跑（每组 10 个连续、10 个多分支、10 个嵌套分支行动）。
-- 未运行：DeepSeek 官方 V4.1 Flash 回放、完整 300 / 500 / 1,000 轮矩阵、真实质量盲评。
-- 原因：当前任务没有已授权的官方 DeepSeek 测试凭据。没有读取环境变量、应用密钥、用户密钥或其他凭据存储，也没有改用 Go 或其他实验端点。
+- 已提供但未由本提交运行：OpenCode Go `deepseek-v4.1-flash` 的 1–3 轮 smoke、固定 30 轮三臂短跑和重复轮换入口。
+- 未运行：任何真实 OpenCode Go 或 DeepSeek 官方回放、完整 300 / 500 / 1,000 轮矩阵、真实质量盲评。
+- 本提交只用进程内模拟 transport 验证 live 入口，没有读取 `LFH_OPENCODE_GO_API_KEY`、用户密钥或其他凭据存储，也没有发送模型请求。
 - 因此两组省费比较均返回 `unavailable / non-official-provider`，界面不得显示金额结论。
 - 本提交没有向生产 Settings 接入占位金额或推测性配置。会话级省费展示的 `unavailable` / `available` 最小设计见下文，正式实现仍等待真实 usage 数据路径和官方证据。
+
+## OpenCode Go 短跑入口
+
+固定服务参数为 `https://opencode.ai/inference/go/openai/v1/chat/completions`、模型 `deepseek-v4.1-flash`、Canonical ID `deepseek/deepseek-v4.1-flash-1017`、User-Agent `FolioContextBenchmark/0.3`。每次模型调用都带同一轮次内稳定、不同 arm/repetition 彼此不同的 `x-opencode-session`，没有冒充 OpenCode 客户端。
+
+运行前必须由外部进程环境提供 `LFH_OPENCODE_GO_API_KEY`。入口没有读取其他凭据来源，也不会把请求头、API Key 或完整请求正文写入证据。`--output-dir` 必须在仓库外；运行中每个请求前及结束后以原子替换更新 `run.json`，并同步保存真实生成正文到 `generated-output.md`。中断后保留最后 checkpoint，不自动重放不确定请求，避免重复计费。
+
+正式 smoke 前由账户持有人确认 OpenCode Console 的 Extra Usage 已关闭。runner 能读取 usage 百分比、设置 allowance 硬上限并在缺失 billing evidence 时停止，但不能修改订阅端是否回退到余额。
+
+先跑 1 轮/arm 的收发与 schema smoke：
+
+```sh
+npm run experiment:context-go -- \
+  --live --turns 1 --repeat 1 \
+  --order full,folio,retrievable \
+  --reasoning-effort high --summary-reasoning-effort none \
+  --max-requests 20 --max-allowance 0.05 \
+  --max-output-tokens 256 --request-timeout-ms 120000 --cadence-ms 1000 \
+  --output-dir /absolute/path/outside/repo/go-smoke-YYYYMMDD-HHMMSS
+```
+
+smoke 通过后再跑固定 30 轮/arm：
+
+```sh
+npm run experiment:context-go -- \
+  --live --turns 30 --repeat 1 \
+  --order full,folio,retrievable \
+  --reasoning-effort high --summary-reasoning-effort none \
+  --max-requests 180 --max-allowance 0.5 \
+  --max-output-tokens 512 --request-timeout-ms 120000 --cadence-ms 1000 \
+  --output-dir /absolute/path/outside/repo/go-30-YYYYMMDD-HHMMSS
+```
+
+`--repeat N` 为每一轮使用新的 arm session，并将下一轮的处理顺序左移一位。30 轮夹具为共同前置、8 轮 A、8 轮 B、返回 A 继续 7 轮、再切 C 7 轮；每段结束后运行银印与角色状态探针。每组主生成正文继续作为下一轮真实父节点，不在每轮重放同一固定回复。
+
+OpenCode Go usage 只作为配额证据。入口读取 GET `/inference/go/v1/usage` 返回的 `usage.rolling/weekly/monthly.percent` 和每次终态响应的 `opencode.allowance`、`opencode.billing_source`、缓存/输出/思考 token；`billing_source` 不是 `go` 或 allowance 缺失时立即停止。滚动、周、月任一达到默认 90% 时在模型调用前停止，本地 allowance 总额另受 `--max-allowance` 硬限制。`usage.cost` 和 `list_cost` 不作为费用展示，报告固定为 `usd.status=not-rendered`，不把 allowance 等同余额扣费。
+
+公共依据：[OpenCode Go 使用条件](https://opencode.ai/docs/console/go/) 要求自有 User-Agent 与稳定 session，并说明新接口获得相同额度与管理方式；[Harness Base URLs 与 Sessions](https://opencode.ai/docs/console/harnesses/) 给出当前 Go Chat Completions 路径和 `x-opencode-session`。
 
 ## 复跑离线证据
 
@@ -90,8 +129,8 @@ node --experimental-strip-types experiments/context-compression/run.mjs \
 
 ## 尚未关闭的验收项
 
-1. 使用已授权的官方测试凭据完成 30 轮预检与真实回放，保存逐请求 usage、实际输出、峰谷费率和重试记录。
-2. 用真实短跑结果估算完整矩阵费用并设置阶段中断上限。
-3. 对共享伏笔、分支互斥事实、短指令执行、角色一致性和剧情连贯性进行盲评。
-4. 重复运行关键分支并统计波动；Web/Android 直连兼容性需由正式产品采用路径验证。
+1. 用已授权的 OpenCode Go 环境先跑 1 轮/arm smoke，再跑固定 30 轮/arm；检查真实正文、usage/allowance、拒绝与截断记录。
+2. smoke 与 30 轮通过后，再考虑 repeat rotation 或更长样本；Go 结果只能报告配额，不能转成 USD 省费。
+3. 使用已授权的官方 DeepSeek 测试凭据完成对应回放，保存逐请求 usage、实际输出、峰谷费率和重试记录，之后才评估官方 API 美元费用。
+4. 对共享伏笔、分支互斥事实、短指令执行、角色一致性和剧情连贯性进行盲评。
 5. 设计并验证真实 usage 的会话级持久化，再按上述 `available` / `unavailable` 契约接入产品界面。
