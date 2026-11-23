@@ -164,6 +164,15 @@ function migrateCharacterToV02(character: LocalCharacter): LocalCharacter {
       changed = true;
     }
     const normalized = conv.kind === kind && conv.title === title ? conv : { ...conv, kind, title };
+    const activeNodeContainer = normalized.activeLeafNodeId
+      ? normalized.nodes[normalized.activeLeafNodeId]?.documents?.container
+      : undefined;
+    const characterVersion = Object.hasOwn(character.document.versions, normalized.characterVersion)
+      ? normalized.characterVersion
+      : activeNodeContainer && Object.hasOwn(character.document.versions, activeNodeContainer)
+        ? activeNodeContainer
+        : character.document.head;
+    const versionChanged = characterVersion !== normalized.characterVersion;
     const edits: CharacterConversation['edits'] = {};
     let documentsChanged = false;
     for (const [anchor, revision] of Object.entries(normalized.edits)) {
@@ -196,9 +205,9 @@ function migrateCharacterToV02(character: LocalCharacter): LocalCharacter {
       if (node !== nodes[id]) documentsChanged = true;
     }
 
-    if (normalized !== conv || documentsChanged) changed = true;
-    return documentsChanged
-      ? { ...normalized, edits, nodes }
+    if (normalized !== conv || documentsChanged || versionChanged) changed = true;
+    return documentsChanged || versionChanged
+      ? { ...normalized, characterVersion, edits, nodes }
       : normalized;
   });
 

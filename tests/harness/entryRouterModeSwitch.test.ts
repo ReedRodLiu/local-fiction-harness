@@ -11,6 +11,7 @@ describe('explicit natural-language mode switches', () => {
     ['请把它切换到写故事', 'writing'],
     ['切换到小说', 'writing'],
     ['把模式改成小说', 'writing'],
+    ['请切换到写故事，谢谢。', 'writing'],
   ] as const)('accepts the complete explicit request %s', (input, expected) => {
     expect(detectNaturalModeSwitchIntent(input)).toBe(expected);
   });
@@ -23,6 +24,8 @@ describe('explicit natural-language mode switches', () => {
     '把这一段改成小说里的书信体。',
     '下一幕转成角色互动式对话',
     '现在请把这一段改成小说里的书信体，并保持第一人称。',
+    '请切换到写故事，谢谢，并保留当前第一人称。',
+    '请切换到写故事，谢谢你的耐心。',
   ])('keeps contextual prose in the active mode: %s', (input) => {
     expect(detectNaturalModeSwitchIntent(input)).toBeNull();
   });

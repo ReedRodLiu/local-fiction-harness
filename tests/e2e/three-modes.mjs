@@ -83,7 +83,7 @@ async function assertReadableSevenColumnTable(scope, label, { checkEditEntry = f
   assert.ok(Math.min(...metrics.cellWidths) >= 70, `${label}: a data column became unreadably narrow`);
 
   await wrap.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
-  const lastHeader = await scope.locator('.md-table th').last().boundingBox();
+  const lastHeader = await wrap.locator('th').last().boundingBox();
   const wrapperBox = await wrap.boundingBox();
   assert.ok(lastHeader && wrapperBox, `${label}: missing table geometry`);
   assert.ok(lastHeader.x >= wrapperBox.x - 1, `${label}: last column could not be scrolled into view`);
