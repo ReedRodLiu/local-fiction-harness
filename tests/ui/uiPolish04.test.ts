@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
   EMPTY_SUMMARY_SNAPSHOT,
+  convertActiveAssetMode,
   emptyWorkspace,
+  materializeAssetFromNodes,
   newCharacter,
   newConversation,
 } from '../../src/harness/index.ts';
@@ -134,5 +136,48 @@ describe('UI-POLISH-04 V0.2 unified character chat stage', () => {
 
     expect(markup).toContain('让角色先开口');
     expect(markup).not.toContain('creative-section');
+  });
+
+  it('renders a story converted to character interaction without a missing branch-note version', () => {
+    const story = materializeAssetFromNodes({
+      targetMode: 'story',
+      title: '岑灯',
+      settingMarkdown: '夜航员人设',
+      turns: [{
+        id: 's1',
+        parentId: null,
+        role: 'assistant',
+        content: '渡口的灯刚刚亮起。',
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        createdAt: 20,
+      }],
+    }).story!;
+    const character = convertActiveAssetMode({
+      fromMode: 'story',
+      toMode: 'character',
+      story,
+    }).character!;
+    const workspace = { ...emptyWorkspace(), characters: [character], activeCharacterId: character.id };
+
+    const markup = renderToStaticMarkup(createElement(CreativeWorkspace, {
+      mode: 'character',
+      workspace,
+      ready: true,
+      storageError: '',
+      save: async () => workspace,
+      read: async () => workspace,
+      runtime: {} as never,
+      requestModel: () => undefined,
+      openPublic: () => undefined,
+      openDocument: () => undefined,
+      initialTurn: null,
+      onConsumeInitialTurn: () => undefined,
+      companionOpen: true,
+      setCompanionOpen: () => undefined,
+    }));
+
+    expect(markup).toContain('data-testid="character-timeline"');
+    expect(markup).toContain('渡口的灯刚刚亮起。');
+    expect(markup).toContain('夜航员人设');
   });
 });

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { verifyInactiveStoryReload, verifyThreeModes } from './three-modes.mjs';
+import { verifyIssue126ModeConversion } from './issue-126-mode-conversion.mjs';
 
 const require = createRequire(import.meta.url);
 const playwrightCorePath =
@@ -2958,6 +2959,13 @@ async function main() {
         holdNextStoryStorageCommit, releaseHeldStoryStorageCommit,
       });
       console.log('THREE_MODE_HARNESS_E2E_PASSED');
+      await verifyIssue126ModeConversion(browser, port, {
+        newOfflineContext,
+        mockSuccessfulKeyVerification,
+        completePendingSetup,
+        sseResponse,
+      });
+      console.log('ISSUE_126_MODE_CONVERSION_E2E_PASSED');
       if (process.env.LFH_CREATIVE_ONLY === '1') return;
     }
 
