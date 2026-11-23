@@ -106,23 +106,44 @@ const scenarios = [
       '原作：**《钢之炼金术师》**',
       '版本：**2003 动画版**。',
       '剧情时点：第 51 集结局后。',
-      '角色：**爱德华·艾尔利克**。',
-      '角色：阿尔冯斯·艾尔利克。',
+      '角色：**爱德华·艾尔利克**，私密关系设定。',
+      '角色：阿尔冯斯·艾尔利克，阿信。',
       '同人改设：两人可能还在寻找回家的办法，后续尚未确定。',
       '私密备注：不要发送这段。',
     ].join('\n'),
     mode: 'story',
     title: '炼金术师雨夜',
-    settingMarkdown: '原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集结局后\n角色：爱德华·艾尔利克、阿尔冯斯·艾尔利克\n同人改设：两人仍在寻找回家的办法。',
+    settingMarkdown: '原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集结局后\n角色：爱德华·艾尔利克，私密关系设定\n角色：阿尔冯斯·艾尔利克，阿信\n同人改设：两人仍在寻找回家的办法。',
     testId: 'story-timeline',
     body: '阿尔冯斯说：“哥哥，雨小了。”',
+    searchScope: ['钢之炼金术师', '2003 动画版', '第 51 集结局后'],
     research: {
+      firstReplyText: '称呼弟弟为「阿尔」',
       summary: [
         '### 爱德华·艾尔利克',
         '- 称呼弟弟为「阿尔」，急躁时句子短促。',
         '### 阿尔冯斯·艾尔利克',
         '- 说话温和，习惯称对方为「哥哥」。',
       ].join('\n'),
+    },
+  },
+  {
+    prompt: '开一个《钢之炼金术师》2003 动画版第 51 集后的文游。角色：爱德华·艾尔利克',
+    mode: 'story',
+    title: '炼金术师版本切换',
+    settingMarkdown: '原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集后\n角色：爱德华·艾尔利克',
+    testId: 'story-timeline',
+    body: '2003 年的雨落在中央市。',
+    searchScope: ['钢之炼金术师', '2003 动画版', '第 51 集后'],
+    followUps: [
+      { input: '版本：2009 动画版', body: '2009 年版的雨落在中央市。', research: true },
+      { input: '请继续。', body: '普通推进。', research: false },
+      { input: '切换到 2010 动画版', body: '2010 年版的雨落在中央市。', research: true },
+      { input: '继续推进。', body: '继续普通推进。', research: false },
+    ],
+    research: {
+      firstReplyText: '说话短促',
+      summary: '### 爱德华·艾尔利克\n- 说话短促，习惯先观察四周。',
     },
   },
 ];
@@ -182,18 +203,26 @@ async function runScenario(browser, scenario) {
       status: 200,
       json: {
         title: '官方角色资料',
-        content: '爱德华称呼阿尔冯斯为阿尔。阿尔冯斯说话温和。',
+        content: '爱德华·艾尔利克称呼弟弟阿尔冯斯·艾尔利克为「阿尔」。阿尔冯斯·艾尔利克说话温和。',
       },
     });
   });
 
   const completionRequests = [];
+  let mainReplyCount = 0;
+  let followUpReplyIndex = 0;
   await page.route('**/chat/completions', async (route) => {
     const requestBody = route.request().postDataJSON();
     completionRequests.push(requestBody);
-    const content = scenario.research && JSON.stringify(requestBody.messages).includes('公开角色资料提炼器')
-      ? scenario.research.summary
-      : routeReply(scenario);
+    const isSynthesis = scenario.research && JSON.stringify(requestBody.messages).includes('公开角色资料提炼器');
+    let content;
+    if (isSynthesis) {
+      content = scenario.research.summary;
+    } else if (!scenario.followUps?.length || mainReplyCount++ === 0) {
+      content = routeReply(scenario);
+    } else {
+      content = scenario.followUps[followUpReplyIndex++]?.body ?? routeReply(scenario);
+    }
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
@@ -226,16 +255,20 @@ async function runScenario(browser, scenario) {
       assert.deepEqual(Object.keys(searchBody).sort(), ['count', 'need_content', 'query']);
       assert.equal(searchBody.need_content, false);
       const query = String(searchBody.query);
-      for (const expected of [
-        '钢之炼金术师',
-        '2003 动画版',
-        '第 51 集结局后',
-        '爱德华·艾尔利克',
-        '阿尔冯斯·艾尔利克',
-      ]) {
+      for (const expected of scenario.searchScope) {
         assert.ok(query.includes(expected), `search query should include ${expected}`);
       }
-      for (const privateText of ['同人改设', '私密备注', '不要发送', '后续尚未确定', '。']) {
+      for (const privateText of [
+        '爱德华·艾尔利克',
+        '阿尔冯斯·艾尔利克',
+        '私密关系设定',
+        '阿信',
+        '同人改设',
+        '私密备注',
+        '不要发送',
+        '后续尚未确定',
+        '。',
+      ]) {
         assert.equal(query.includes(privateText), false, `search query must not include ${privateText}`);
       }
       assert.deepEqual(fetchRequests[0], { url: 'https://official.example/alchemy/characters' });
@@ -245,12 +278,54 @@ async function runScenario(browser, scenario) {
       const firstReplyRequest = completionRequests.find((request) => request !== synthesisRequest);
       assert.ok(synthesisRequest, 'the public evidence should be synthesized before the first reply');
       assert.ok(firstReplyRequest, 'the routed first reply request should exist');
+      const synthesisPayload = JSON.stringify(synthesisRequest.messages);
+      assert.ok(synthesisPayload.includes('爱德华·艾尔利克'), 'verified character names should reach synthesis');
+      assert.ok(synthesisPayload.includes('阿尔冯斯·艾尔利克'), 'all verified character names should reach synthesis');
+      assert.equal(synthesisPayload.includes('私密关系设定'), false, 'private annotation text must not reach synthesis');
+      assert.equal(synthesisPayload.includes('阿信'), false, 'an unverified short tail must not reach synthesis');
       const firstReplyPayload = JSON.stringify(firstReplyRequest.messages);
       assert.ok(firstReplyPayload.includes('公开资料参考'), 'the first reply should receive the researched reference');
-      assert.ok(firstReplyPayload.includes('称呼弟弟为「阿尔」'), 'the first reply should receive role-specific voice notes');
+      assert.ok(
+        firstReplyPayload.includes(scenario.research.firstReplyText),
+        'the first reply should receive role-specific voice notes',
+      );
       assert.ok(firstReplyPayload.includes('以用户已确认内容为准'), 'confirmed local setting should remain authoritative');
-      assert.ok(firstReplyPayload.includes('同人改设'), 'the local fan-AU setting should remain in context');
-      await page.getByTestId('turn-body').getByText('哥哥，雨小了。', { exact: false }).first().waitFor();
+      if (scenario.settingMarkdown.includes('同人改设')) {
+        assert.ok(firstReplyPayload.includes('同人改设'), 'the local fan-AU setting should remain in context');
+      }
+      await page.getByTestId('turn-body').getByText(scenario.body, { exact: false }).first().waitFor();
+
+      for (const followUp of scenario.followUps ?? []) {
+        await page.fill('#turn-input', followUp.input);
+        await page.getByRole('button', { name: '发送行动', exact: true }).click();
+        await page.getByTestId('turn-body').getByText(followUp.body, { exact: true }).last().waitFor();
+      }
+
+      if (scenario.followUps?.length) {
+        const researchFollowUps = scenario.followUps.filter((followUp) => followUp.research);
+        assert.equal(searchRequests.length, 1 + researchFollowUps.length, 'each concrete pivot should search once');
+        assert.equal(fetchRequests.length, 1 + researchFollowUps.length, 'each accepted pivot should fetch once');
+        assert.ok(
+          completionRequests.length >= 2 + scenario.followUps.length + researchFollowUps.length,
+          'pivots should add synthesis and main-generation calls while ordinary turns reuse the reference',
+        );
+        for (const request of searchRequests) {
+          assert.equal(String(request.query).includes('爱德华·艾尔利克'), false);
+        }
+        const synthesisPayloads = completionRequests
+          .filter((request) => JSON.stringify(request.messages).includes('公开角色资料提炼器'));
+        assert.equal(synthesisPayloads.length, 1 + researchFollowUps.length);
+        for (const [index, followUp] of researchFollowUps.entries()) {
+          const query = String(searchRequests[index + 1].query);
+          const version = followUp.input.match(/\d{4}\s*动画版/)?.[0];
+          assert.ok(version, 'the pivot should contain a concrete version');
+          assert.ok(query.includes(version), 'the pivot search should use the changed version');
+          assert.ok(query.includes(scenario.searchScope[2]), 'the pivot search should inherit the saved timeline');
+        }
+        for (const request of synthesisPayloads) {
+          assert.ok(JSON.stringify(request.messages).includes('爱德华·艾尔利克'));
+        }
+      }
     }
   } finally {
     await context.close();

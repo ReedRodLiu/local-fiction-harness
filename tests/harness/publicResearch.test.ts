@@ -263,6 +263,118 @@ describe('public character research', () => {
     expect(JSON.stringify(synthesisMessages)).not.toContain('sk-test');
   });
 
+  it('verifies character candidates against fetched public text before synthesis', async () => {
+    for (const privateTail of ['私密关系设定', '阿信']) {
+      const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const fetcher: FetchLike = async (url, init) => {
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        requests.push({ url, body });
+        if (url.endsWith('/v1/tools/search')) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            body: null,
+            async text() {
+              return JSON.stringify({
+                results: [{
+                  rerank_score: 2.6,
+                  authority: 4,
+                  title: '官方角色介绍',
+                  url: 'https://official.example/edward',
+                }],
+              });
+            },
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          body: null,
+          async text() {
+            return JSON.stringify({
+              title: '官方角色介绍',
+              content: '爱德华·艾尔利克说话短促，通常会先观察四周。',
+            });
+          },
+        };
+      };
+      let synthesisMessages: unknown;
+      const provider = createDeepSeekPublicResearchProvider({
+        fetcher,
+        transport: {
+          async *streamChat(request) {
+            synthesisMessages = request.messages;
+            yield { contentDelta: '### 爱德华·艾尔利克\n- 说话短促。' };
+            yield { finishReason: 'stop' };
+          },
+        },
+      });
+
+      const reference = await provider.resolve({
+        identity: {
+          work: '钢之炼金术师',
+          version: '2003 动画版',
+          timeline: '第 51 集结局后',
+          characters: ['爱德华·艾尔利克', privateTail],
+        },
+        config: testConfig,
+      });
+
+      expect(reference).not.toBeNull();
+      const searchQuery = String(requests[0].body.query);
+      expect(searchQuery).toContain('钢之炼金术师');
+      expect(searchQuery).toContain('2003 动画版');
+      expect(searchQuery).toContain('第 51 集结局后');
+      expect(searchQuery).not.toContain('爱德华·艾尔利克');
+      expect(searchQuery).not.toContain(privateTail);
+      expect(JSON.stringify(synthesisMessages)).toContain('爱德华·艾尔利克');
+      expect(JSON.stringify(synthesisMessages)).not.toContain(privateTail);
+    }
+  });
+
+  it('falls back before synthesis when fetched public text verifies no character candidate', async () => {
+    const fetcher: FetchLike = async (url) => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      body: null,
+      async text() {
+        return url.endsWith('/v1/tools/search')
+          ? JSON.stringify({
+              results: [{
+                rerank_score: 2.6,
+                authority: 4,
+                title: '公开作品资料',
+                url: 'https://official.example/cast',
+              }],
+            })
+          : JSON.stringify({ title: '公开作品资料', content: '该页面没有列出用户设定中的角色。' });
+      },
+    });
+    const transport = {
+      streamChat: vi.fn(async function* () {
+        yield { contentDelta: 'unexpected', finishReason: 'stop' };
+      }),
+    };
+    const provider = createDeepSeekPublicResearchProvider({
+      fetcher,
+      transport: transport as any,
+    });
+
+    await expect(provider.resolve({
+      identity: {
+        work: '钢之炼金术师',
+        version: '2003 动画版',
+        timeline: '第 51 集结局后',
+        characters: ['爱德华·艾尔利克', '阿信'],
+      },
+      config: testConfig,
+    })).resolves.toBeNull();
+    expect(transport.streamChat).not.toHaveBeenCalled();
+  });
+
   it('enriches the first story turn and reuses the branch reference without another lookup', async () => {
     const identities: unknown[] = [];
     const provider = {
@@ -559,7 +671,7 @@ describe('public character research', () => {
     expect(narrationCalls).toBe(2);
   });
 
-  it('refreshes research only when an explicit version or timeline changes', async () => {
+  it('inherits saved scope for concrete version-only pivots and reuses each result', async () => {
     const identities: any[] = [];
     const provider = {
       async resolve(request: any) {
@@ -591,7 +703,7 @@ describe('public character research', () => {
     const first = await harness.runTurn(story, '开始', testConfig);
     const second = await harness.runTurn(
       first.story,
-      '版本：2009 动画版\n剧情时点：第 64 集结局后\n角色：爱德华\n请从这里继续。',
+      '版本：2009 动画版',
       testConfig,
     );
     const third = await harness.runTurn(
@@ -599,20 +711,38 @@ describe('public character research', () => {
       '他仍记得刚才的誓言，请继续。',
       testConfig,
     );
-    await harness.runTurn(
+    const fourth = await harness.runTurn(
       third.story,
-      '版本：2010 动画版\n请从这里继续。',
+      '切换到 2010 动画版',
       testConfig,
     );
+    const fifth = await harness.runTurn(fourth.story, '继续推进。', testConfig);
 
-    expect(identities.map((identity) => [identity.version, identity.timeline])).toEqual([
-      ['2003 动画版', '第 51 集结局后'],
-      ['2009 动画版', '第 64 集结局后'],
+    expect(identities).toEqual([
+      {
+        work: '钢之炼金术师',
+        version: '2003 动画版',
+        timeline: '第 51 集结局后',
+        characters: ['爱德华'],
+      },
+      {
+        work: '钢之炼金术师',
+        version: '2009 动画版',
+        timeline: '第 51 集结局后',
+        characters: ['爱德华'],
+      },
+      {
+        work: '钢之炼金术师',
+        version: '2010 动画版',
+        timeline: '第 51 集结局后',
+        characters: ['爱德华'],
+      },
     ]);
-    expect(payloads[1]).toContain('2009 动画版 / 第 64 集结局后');
-    expect(payloads[1]).not.toContain('2003 动画版 / 第 51 集结局后');
-    expect(payloads[2]).toContain('2009 动画版 / 第 64 集结局后');
-    expect(payloads[2]).not.toContain('2003 动画版 / 第 51 集结局后');
+    expect(payloads[1]).toContain('2009 动画版 / 第 51 集结局后');
+    expect(payloads[2]).toContain('2009 动画版 / 第 51 集结局后');
+    expect(payloads[3]).toContain('2010 动画版 / 第 51 集结局后');
+    expect(payloads[4]).toContain('2010 动画版 / 第 51 集结局后');
+    expect(fifth.assistantNode.publicResearch?.identity.version).toBe('2010 动画版');
   });
 
   it('refreshes research when the saved setting changes scope without refreshing on incidental mentions', async () => {
@@ -1058,6 +1188,8 @@ describe('public character research', () => {
       '版本：2003/2009 动画版\n请继续。',
       '剧情时点：之后\n请继续。',
       '原作：雨夜重逢 私密补充\n请继续。',
+      '切换到动画版\n请继续。',
+      '切换到 2003/2009 动画版\n请继续。',
     ]) {
       expect(derivePublicResearchIdentity({ settingMarkdown, userInput })).toBeNull();
     }

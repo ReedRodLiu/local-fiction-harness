@@ -326,11 +326,8 @@ export function derivePublicResearchIdentity(
   if (userChangesScope) {
     const changedWork = Boolean(userWorkResult.value && settingWorkResult.value &&
       userWorkResult.value.normalize('NFKC') !== settingWorkResult.value.normalize('NFKC'));
-    const changedVersion = Boolean(userVersion.value && settingVersion.value &&
-      userVersion.value.normalize('NFKC') !== settingVersion.value.normalize('NFKC'));
-    if ((changedWork || changedVersion || clearScopeChange) && (!userVersion.value || !userTimeline.value)) {
-      return null;
-    }
+    if (clearScopeChange && !userVersion.value && !userTimeline.value) return null;
+    if (changedWork && (!userVersion.value || !userTimeline.value)) return null;
     if (changedWork && userCharacterValues.length === 0) return null;
   }
 
@@ -392,9 +389,17 @@ function fitUnicode(text: string, maxChars: number): string {
 
 export function buildPublicResearchQuery(identity: PublicResearchIdentity): string {
   return fitUnicode(
-    `《${identity.work}》 ${identity.version} ${identity.timeline} ${identity.characters.join(' ')} 角色语气 关系`,
+    `《${identity.work}》 ${identity.version} ${identity.timeline} 角色 语气 关系`,
     MAX_RESEARCH_QUERY_CHARS,
   );
+}
+
+function verifiedCharacters(identity: PublicResearchIdentity, sources: FetchedSource[]): string[] {
+  const publicText = sources
+    .map((source) => `${source.title}\n${source.content}`)
+    .join('\n')
+    .normalize('NFKC');
+  return identity.characters.filter((name) => publicText.includes(name.normalize('NFKC')));
 }
 
 function isPublicHttpUrl(raw: string): boolean {
@@ -823,6 +828,8 @@ export function createDeepSeekPublicResearchProvider(
             });
           }
           if (fetched.length === 0) return null;
+          const characters = verifiedCharacters(request.identity, fetched);
+          if (characters.length === 0) return null;
 
           let summary = '';
           let finished = false;
@@ -831,7 +838,7 @@ export function createDeepSeekPublicResearchProvider(
             apiKey,
             model: request.config.model,
             reasoningEffort: 'none',
-            messages: researchSynthesisMessages(request.identity, fetched),
+            messages: researchSynthesisMessages({ ...request.identity, characters }, fetched),
             signal,
           })) {
             if (delta.contentDelta) summary += delta.contentDelta;
