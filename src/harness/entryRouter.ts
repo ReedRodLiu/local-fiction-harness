@@ -125,10 +125,13 @@ export function deriveEntryTitle(input: string, fallback = '未命名创作'): s
  * Recognizes explicit in-chat commands asking to convert the current session to another mode.
  */
 export function detectNaturalModeSwitchIntent(input: string): StageAssetMode | null {
-  const normalized = input.replace(/\s+/g, '').trim();
+  const normalized = input
+    .replace(/\s+/g, '')
+    .replace(/[。！？!?]+$/u, '')
+    .trim();
   if (!normalized || normalized.length > 48) return null;
   const switchMatch =
-    /(?:转成|转为|切换成|切换到|切换为|改成|改为|换成|转去|切回|变成)(?:「)?(文游|互动故事|互动小说|写故事|写小说|小说|角色互动|角色聊天|对戏)(?:」)?/.exec(
+    /^(?:(?:请|麻烦)(?:帮我|帮忙)?|帮我|帮忙)?(?:(?:把|将)?(?:当前(?:的)?|这个)?(?:(?:App|应用)(?:的)?)?(?:模式|故事|作品|对话)?)?(?:切换成|切换到|切换为|转成|转为|改成|改为|换成|转去|切回|变成)(?:「)?(文游|互动故事|互动小说|写故事|写小说|小说|角色互动|角色聊天|对戏)(?:」)?(?:模式)?$/u.exec(
       normalized,
     );
   if (!switchMatch) return null;
