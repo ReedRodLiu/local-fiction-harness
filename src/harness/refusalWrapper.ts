@@ -213,43 +213,6 @@ function stripSentPrefix(raw: string, prefixContent: string | undefined): string
   return raw.slice(prefixContent.length);
 }
 
-function hasPotentialProtocolFenceStart(text: string): boolean {
-  const lastLine = String(text ?? '').replace(/\r\n?/g, '\n').split('\n').at(-1) ?? '';
-  // A protocol fence may arrive as `` + `lfh-`, `` + `lfh-s`, etc. Hold one
-  // more delta instead of aborting before the complete lfh-* line is visible.
-  return /^[ \t]{0,3}`+[ \t]*(?:l(?:f(?:h(?:-[a-z-]*)?)?)?)?$/i.test(lastLine);
-}
-
-const SCENE_DELIMITER_PAIRS: readonly (readonly [string, string])[] = [
-  ['（', '）'],
-  ['(', ')'],
-  ['「', '」'],
-  ['『', '』'],
-  ['“', '”'],
-  ['"', '"'],
-];
-
-const POTENTIAL_SCENE_ANCHOR_START_RE =
-  /^(?:你(?:听|看|觉|感|闻|发(?:现)?|注(?:意)?|想|记|抬|回|伸|转|走|站|坐|握|接|推|拉)?|他|她)$/;
-const PUNCTUATION_ONLY_RE = /^[\s。！？…~～.．!?,，、;；:：\-—–]*$/;
-
-/**
- * Holds a pending L1 refusal when the text after it may still become a scene
- * anchor. Streaming can split `（` from its action, or `你` from an experience
- * verb; aborting on those partial chunks would discard real narrative content.
- */
-function hasPotentialSceneAnchorStart(textSincePending: string): boolean {
-  const text = String(textSincePending ?? '').trim();
-  if (!text || PUNCTUATION_ONLY_RE.test(text)) return true;
-  if (POTENTIAL_SCENE_ANCHOR_START_RE.test(text)) return true;
-  return SCENE_DELIMITER_PAIRS.some(([open, close]) => {
-    const openCount = text.split(open).length - 1;
-    const closeCount = text.split(close).length - 1;
-    if (open === close) return openCount % 2 === 1;
-    return openCount > closeCount;
-  });
-}
-
 function withRetryTail(messages: LlmMessage[], tail: string): LlmMessage[] {
   const normalizedTail = tail.trim();
   if (
@@ -381,8 +344,6 @@ async function runAttempt(
   let finishReason: string | null | undefined;
   let shown = '';
   let gateOpen = false;
-  let pendingL1 = false;
-  let pendingDetectedChars = 0;
 
   const emitVisible = (): void => {
     const visible = toVisible(raw);
@@ -395,9 +356,7 @@ async function runAttempt(
   const evaluateFull = (): {
     route: RefusalRoute;
     matchedRuleId?: string;
-    layer?: RefusalVerdict['layer'];
     bodyChars: number;
-    detectedContent: string;
   } => {
     const detectedContent = stripSentPrefix(raw, prefixContent);
     const { body, hasProtocolArtifacts } = splitRefusalProtocolContent(detectedContent);
@@ -405,32 +364,20 @@ async function runAttempt(
     return {
       route: routeRefusal(body, Boolean(verdict), deliveryOptions(options.mode, hasProtocolArtifacts)),
       ...(ruleIdFor(verdict) ? { matchedRuleId: ruleIdFor(verdict)! } : {}),
-      ...(verdict ? { layer: verdict.layer } : {}),
       bodyChars: normalizeDeliveryBody(body).length,
-      detectedContent,
     };
   };
 
   const resultFor = (
     evaluated: ReturnType<typeof evaluateFull>,
   ): AttemptResult => {
-    const isNonStopRetryRoute =
-      !isStop(finishReason) &&
-      (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton');
     const diagnostics: NodeDiagnostics | undefined =
       evaluated.route === 'partial_refused'
         ? {
             refusalRoute: 'partial_refused',
             ...(evaluated.matchedRuleId ? { matchedRuleId: evaluated.matchedRuleId } : {}),
           }
-        : isNonStopRetryRoute
-          ? {
-              sourceStatus: 'REFUSAL',
-              refusalRoute: evaluated.route,
-              recoveredFromText: raw,
-              matchedRuleId: evaluated.matchedRuleId ?? 'skeleton-01',
-            }
-          : undefined;
+        : undefined;
 
     return {
       kind: 'result',
@@ -452,39 +399,13 @@ async function runAttempt(
       }
       if (delta.contentDelta) {
         raw += delta.contentDelta;
-        if (gateOpen) {
-          emitVisible();
-        } else if (!isStop(finishReason)) {
-          const evaluated = evaluateFull();
-          const wasPendingL1 = pendingL1;
-          if (evaluated.route === 'partial_refused' || evaluated.bodyChars > REFUSAL_OBSERVATION_CHARS) {
-            // Delivery evidence wins over an earlier L1 verdict. The 120-character
-            // window is the final protection against chunk boundaries.
-            gateOpen = true;
-            emitVisible();
-          } else if (wasPendingL1) {
-            const textSincePending = evaluated.detectedContent.slice(pendingDetectedChars);
-            const deltaHasContent = delta.contentDelta.trim().length > 0;
-            if (
-              deltaHasContent &&
-              !hasPotentialProtocolFenceStart(evaluated.detectedContent) &&
-              !hasPotentialSceneAnchorStart(textSincePending) &&
-              (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton')
-            ) {
-              internalAbort.abort();
-              return {
-                kind: 'refusal',
-                route: evaluated.route,
-                raw,
-                reasoningContent,
-                matchedRuleId: evaluated.matchedRuleId ?? 'skeleton-01',
-              };
-            }
-          } else if (evaluated.layer === 'L1') {
-            pendingL1 = true;
-            pendingDetectedChars = evaluated.detectedContent.length;
-          }
+        if (!gateOpen && evaluateFull().bodyChars > REFUSAL_OBSERVATION_CHARS) {
+          // No chunk boundary can prove that a later delta will not contain a
+          // scene or protocol artifact. Only the shared 120-character delivery
+          // window may open the gate before `stop`; never abort on partial L1.
+          gateOpen = true;
         }
+        if (gateOpen) emitVisible();
       }
 
       if (isStop(finishReason)) {
@@ -507,13 +428,11 @@ async function runAttempt(
     }
 
     // A provider may close a normally completed stream without a finishReason.
-    // A pending L1 refusal must still get its single retry; partial delivery is
-    // preserved with diagnostics, and other non-stop thin results retain their
-    // existing REFUSAL markers for context isolation.
+    // Evaluate the complete buffered body before deciding whether it is a thin
+    // refusal; this abnormal completion is still eligible for the single retry.
     const evaluated = evaluateFull();
     if (
       !gateOpen &&
-      pendingL1 &&
       (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton')
     ) {
       return {
@@ -523,13 +442,6 @@ async function runAttempt(
         reasoningContent,
         matchedRuleId: evaluated.matchedRuleId ?? 'skeleton-01',
       };
-    }
-    if (
-      attempt === 'retry' &&
-      !isStop(finishReason) &&
-      (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton')
-    ) {
-      return resultFor(evaluated);
     }
     emitVisible();
     return resultFor(evaluated);
@@ -547,9 +459,15 @@ async function runAttempt(
 
 /**
  * Wraps one foreground generation stream with the 120-character refusal observation
- * window and at most one silent retry. L1 is confirmed across chunk boundaries:
- * whitespace and possible protocol-fence prefixes keep the stream buffered, while a
- * later non-empty chunk that still has no delivery evidence aborts the first stream.
+ * window and at most one silent retry.
+ *
+ * Safety trade-off for ticket #132 path B: L1 and full delivery share the same
+ * 120-character observation window. We intentionally do not abort mid-stream on an
+ * L1 match, because no chunk boundary proves that a later delta will not add a scene
+ * or protocol artifact. Content stays buffered until `finishReason === 'stop'` or the
+ * normalized body exceeds 120 characters. Thin refusals are retried after `stop` or
+ * after a normally closed stream without `finishReason`. This is a deliberate revision
+ * of the original "immediate midstream abort" rule to satisfy "检测到才剥离，绝不盲切".
  * Background summary/import streams must not use it.
  */
 export async function streamWithRefusalHandling(
@@ -659,36 +577,6 @@ export async function streamWithRefusalHandling(
     };
   }
 
-  if (
-    retry.kind === 'result' &&
-    retry.finishReason !== 'stop' &&
-    retry.diagnostics?.sourceStatus === 'REFUSAL'
-  ) {
-    const matchedRuleId = retry.diagnostics.matchedRuleId ?? first.matchedRuleId;
-    const diagnostics: NodeDiagnostics = {
-      sourceStatus: 'REFUSAL',
-      refusalRoute: 'refused_exhausted',
-      recoveredFromText: first.raw,
-      retriedWithPrefix,
-      ...(matchedRuleId ? { matchedRuleId } : {}),
-    };
-    emitDiagnostic(
-      options,
-      effective,
-      'refusal_retry_exhausted',
-      'refused_exhausted',
-      1,
-      matchedRuleId,
-    );
-    throwIfAborted(options);
-    return {
-      content: REFUSAL_EXHAUSTED_MESSAGE,
-      reasoningContent: '',
-      finishReason: 'stop',
-      diagnostics,
-    };
-  }
-
   if (retry.kind === 'result' && retry.finishReason !== 'stop') {
     throwIfAborted(options);
     return {
@@ -700,12 +588,13 @@ export async function streamWithRefusalHandling(
     };
   }
 
+  const matchedRuleId = retry.kind === 'refusal' ? retry.matchedRuleId : first.matchedRuleId;
   const diagnostics: NodeDiagnostics = {
     sourceStatus: 'REFUSAL',
     refusalRoute: 'refused_exhausted',
     recoveredFromText: first.raw,
     retriedWithPrefix,
-    matchedRuleId: first.matchedRuleId,
+    matchedRuleId,
   };
   emitDiagnostic(
     options,
@@ -713,7 +602,7 @@ export async function streamWithRefusalHandling(
     'refusal_retry_exhausted',
     'refused_exhausted',
     1,
-    first.matchedRuleId,
+    matchedRuleId,
   );
   throwIfAborted(options);
   return {

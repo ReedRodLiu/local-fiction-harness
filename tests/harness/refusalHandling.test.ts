@@ -253,6 +253,10 @@ describe('Spec #132 120-character refusal wrapper', () => {
       name: 'three deltas with a punctuation-only middle chunk',
       deltas: ['抱歉，我不能帮你写这段内容。', '……', '（她放下杯子，抬眼看你。）'],
     },
+    {
+      name: 'punctuation followed by a split second-person anchor',
+      deltas: ['抱歉，我不能帮你写这段内容。', '。', '你', '听见门外传来脚步声。'],
+    },
   ])('keeps a short L1 scene delivery split across $name', async ({ deltas }) => {
     const raw = deltas.join('');
     const visible: string[] = [];
@@ -279,13 +283,17 @@ describe('Spec #132 120-character refusal wrapper', () => {
   it('keeps a short L1 scene when the opening parenthesis arrives before the action', async () => {
     const raw = '抱歉，我不能帮你写这段内容。\n（她放下杯子，抬眼看你。）';
     const visible: string[] = [];
+    let visibleBeforeStop = '';
     const transport = scriptedTransport([
-      () => stream([
-        { contentDelta: '抱歉，我不能帮你写这段内容。' },
-        { contentDelta: '\n（' },
-        { contentDelta: '她放下杯子，抬眼看你。）' },
-        { finishReason: 'stop' },
-      ]),
+      () => ({
+        async *[Symbol.asyncIterator]() {
+          yield { contentDelta: '抱歉，我不能帮你写这段内容。' };
+          yield { contentDelta: '\n（' };
+          yield { contentDelta: '她放下杯子，抬眼看你。）' };
+          visibleBeforeStop = visible.join('');
+          yield { finishReason: 'stop' };
+        },
+      }),
     ]);
 
     const result = await streamWithRefusalHandling(baseOptions(transport, {
@@ -293,6 +301,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
     }));
 
     expect(transport.requests).toHaveLength(1);
+    expect(visibleBeforeStop).toBe('');
     expect(visible.join('')).toBe(raw);
     expect(result.content).toBe(raw);
     expect(result.finishReason).toBe('stop');
@@ -427,7 +436,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
     expect(actions).toEqual(['refusal_partial_delivered']);
   });
 
-  it('retries a pending thin L1 refusal when the stream ends without finishReason', async () => {
+  it('retries a thin L1 refusal when the stream ends without finishReason', async () => {
     const firstRaw = '抱歉，我不能帮你写这段内容。';
     const retryRaw = '雨声落在窗沿上，他推门走进屋里，看见桌上还留着半盏温茶。';
     const retry = vi.fn();
@@ -459,7 +468,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
     expect(actions).toEqual(['refusal_detected', 'refusal_retry_recovered']);
   });
 
-  it('aborts a pending L1 refusal once a non-whitespace chunk confirms it', async () => {
+  it('waits for stop before retrying a thin L1 refusal', async () => {
     const firstRaw = '这个请求我不会提供，嗯。';
     const retryRaw = '雨声落在窗沿上，他推门走进屋里，看见桌上还留着半盏温茶。';
     const retry = vi.fn();
@@ -487,7 +496,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
       callbacks: { onRefusalRetry: retry, onContentDelta: (delta) => visible.push(delta) },
     }));
 
-    expect(firstRequestAborted).toBe(true);
+    expect(firstRequestAborted).toBe(false);
     expect(retry).toHaveBeenCalledTimes(1);
     expect(transport.requests).toHaveLength(2);
     expect(visible.join('')).toBe(retryRaw);
@@ -498,7 +507,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
     });
   });
 
-  it('retries a pending thin L1 refusal once with Pack.tail and a beta prefill', async () => {
+  it('retries a thin L1 refusal once after stop with Pack.tail and a beta prefill', async () => {
     const firstRaw = '抱歉，我不能帮你写这段内容。嗯。';
     const retry = vi.fn();
     const visible: string[] = [];
@@ -524,7 +533,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
       callbacks: { onRefusalRetry: retry, onContentDelta: (delta) => visible.push(delta) },
     }));
 
-    expect(firstRequestAborted).toBe(true);
+    expect(firstRequestAborted).toBe(false);
     expect(retry).toHaveBeenCalledTimes(1);
     expect(visible.join('')).toBe(result.content);
     expect(visible.join('')).not.toContain('抱歉');
