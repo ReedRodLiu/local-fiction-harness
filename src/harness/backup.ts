@@ -302,9 +302,6 @@ function validateCharacterConversation(
   if (raw.title !== undefined && typeof raw.title !== 'string') {
     throw new Error(`备份角色 ${character.id} 的对话标题必须为字符串。`);
   }
-  if (typeof raw.characterVersion !== 'string' || !Object.hasOwn(character.document.versions, raw.characterVersion)) {
-    throw new Error(`备份角色 ${character.id} 的对话缺少有效 characterVersion。`);
-  }
   const document = validateMarkdownDocument(raw.document);
   const nodes = validateNodes(raw.nodes);
   if (raw.activeLeafNodeId !== null && typeof raw.activeLeafNodeId !== 'string') {
@@ -313,6 +310,10 @@ function validateCharacterConversation(
   if (raw.activeLeafNodeId !== null && !Object.hasOwn(nodes, raw.activeLeafNodeId)) {
     throw new Error(`备份角色 ${character.id} 的 activeLeafNodeId 不存在。`);
   }
+  if (typeof raw.characterVersion !== 'string' || !raw.characterVersion.trim()) {
+    throw new Error(`备份角色 ${character.id} 的对话缺少可恢复的 characterVersion。`);
+  }
+  // Migration repairs a stale nonempty revision from the active node pin or profile head.
   if (!isRecord(raw.edits)) {
     throw new Error(`备份角色 ${character.id} 的 edits 必须为键值对象。`);
   }

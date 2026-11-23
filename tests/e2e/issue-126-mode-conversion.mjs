@@ -8,6 +8,7 @@ const STORY_REPLY = '故事续写：钟声在渡口回荡。';
 const CHARACTER_REPLY = '角色续写：雾里传来你的脚步声。';
 const NOTE_FIRST = '## 当前进度\n\n第一版分支笔记，渡口仍然有雾。';
 const NOTE_SECOND = '## 当前进度\n\n第二版分支笔记，灯塔重新亮起。';
+const IMPORTED_CONTINUATION = '导入修复后，角色互动仍可继续。';
 
 const routeReply = ({ mode, title, characterName, settingMarkdown = '', body }) => [
   `${fence}lfh-route`,
@@ -66,6 +67,7 @@ async function readStoredState(page) {
 
 function assertDocumentReferences(container, conversation, label) {
   assert.equal(typeof conversation.activeLeafNodeId, 'string', `${label} has no active leaf`);
+  assert.ok(container.versions?.[conversation.characterVersion], `${label} characterVersion is missing`);
   const activeAnchor = conversation.activeLeafNodeId;
   const editVersion = conversation.edits?.[activeAnchor];
   const activeNodeVersion = conversation.nodes?.[activeAnchor]?.documents?.local;
@@ -125,6 +127,7 @@ async function verifyRecoverableBackupImport(browser, port, helpers) {
     newOfflineContext,
     mockSuccessfulKeyVerification,
     completePendingSetup,
+    sseResponse,
   } = helpers;
   const context = await newOfflineContext(browser, port, { viewport: { width: 1280, height: 800 } });
   try {
@@ -134,6 +137,14 @@ async function verifyRecoverableBackupImport(browser, port, helpers) {
     await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
     await page.getByTestId('welcome-key-hint').click();
     await completePendingSetup(page, 'sk-issue-126-backup');
+    await page.route('**/chat/completions', async (route) => {
+      const content = `${IMPORTED_CONTINUATION}\n\n\`\`\`lfh-summary\n导入后再继续一轮对话\n\`\`\``;
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: sseResponse([{ choices: [{ delta: { content }, finish_reason: 'stop' }] }]),
+      });
+    });
 
     const characterDocument = markdownDocument('character-v1', '## 设定\n\n档案修复师。');
     const noteDocument = markdownDocument('note-v1', '## 当前进度\n\n仍可读取的有效分支笔记。');
@@ -154,7 +165,7 @@ async function verifyRecoverableBackupImport(browser, port, helpers) {
             id: 'recoverable-conversation',
             title: '恢复对话',
             kind: 'personal',
-            characterVersion: 'character-v1',
+            characterVersion: 'missing-character-version',
             document: noteDocument,
             edits: { c1: 'missing-note-version' },
             nodes: {
@@ -196,7 +207,16 @@ async function verifyRecoverableBackupImport(browser, port, helpers) {
     const imported = state.workspace.characters.find((item) => item.id === 'recoverable-character');
     const conversation = imported.conversations[0];
     assert.equal(conversation.edits.c1, undefined);
+    assert.equal(conversation.characterVersion, 'character-v1');
     assert.equal(assertDocumentReferences(imported.document, conversation, 'imported character'), 'note-v1');
+    assert.equal(await page.getByTestId('main-error-banner').count(), 0);
+
+    await page.getByLabel('发消息').fill('导入后继续对话');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await page.getByTestId('character-timeline').getByText(IMPORTED_CONTINUATION, { exact: true }).waitFor();
+    await page.reload({ waitUntil: 'networkidle' });
+    await openStoredCharacter(page, '恢复角色');
+    await page.getByTestId('character-timeline').getByText(IMPORTED_CONTINUATION, { exact: true }).waitFor();
     assert.equal(await page.getByTestId('main-error-banner').count(), 0);
   } finally {
     await context.close();
@@ -304,8 +324,9 @@ export async function verifyIssue126ModeConversion(browser, port, helpers) {
     await characterSheet.getByTestId('branch-note-details').getByText('分支笔记', { exact: true }).click();
     await characterSheet.getByText('第二版分支笔记', { exact: false }).waitFor();
     await characterSheet.getByRole('button', { name: '编辑分支笔记' }).click();
-    await documentDialog.getByRole('textbox').waitFor();
-    assert.match(await documentDialog.getByRole('textbox').inputValue(), /第二版分支笔记/);
+    await page.waitForFunction(() =>
+      document.querySelector('[data-testid="markdown-document"] textarea')?.value.includes('第二版分支笔记'),
+    );
     await documentDialog.getByText('历史版本', { exact: true }).click();
     assert.ok(await documentDialog.getByRole('button', { name: '查看并恢复此版' }).count() > 0);
     await documentDialog.getByRole('button', { name: '取消' }).click();

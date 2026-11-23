@@ -130,6 +130,7 @@ export function detectNaturalModeSwitchIntent(input: string): StageAssetMode | n
   const normalized = input
     .replace(/\s+/g, '')
     .replace(/[。！？!?]+$/u, '')
+    .replace(/[，,]谢谢$/u, '')
     .trim();
   if (!normalized || normalized.length > 48) return null;
 
@@ -703,7 +704,8 @@ export function materializeAssetFromNodes(opts: {
         {
           ...nodeMap[node.id],
           documents: {
-            container: containerMapping.versionsByNode.get(sourceNode.id) ?? containerMapping.document.head,
+            container: containerMapping.edits[sourceNode.id] ??
+              containerMapping.versionsByNode.get(sourceNode.id) ?? containerMapping.document.head,
             local: localMapping.versionsByNode.get(sourceNode.id) ?? localMapping.document.head,
           },
         },
@@ -782,7 +784,7 @@ export function convertActiveAssetMode(opts: {
     sourceDocuments = {
       container: {
         document: opts.character.document,
-        activeVersion: conv?.characterVersion ?? opts.character.document.head,
+        activeVersion: opts.character.document.head,
       },
       ...(conv ? {
         local: {

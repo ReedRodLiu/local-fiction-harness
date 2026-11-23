@@ -218,7 +218,7 @@ async function main() {
     await page.getByTestId('topbar-mode-switcher').click();
     await page.getByTestId('topbar-mode-option-story').click();
     await page.getByTestId('story-timeline').waitFor();
-    await page.fill('#turn-input', '请把它切换到写故事');
+    await page.fill('#turn-input', '请切换到写故事，谢谢。');
     await page.getByRole('button', { name: '发送行动', exact: true }).click();
     await page.getByTestId('writing-page').waitFor();
     const afterExplicitSwitch = await readPersistedState(page);
@@ -236,7 +236,7 @@ async function main() {
       button.click();
     });
     await page.getByTestId('writing-page').waitFor();
-    await page.waitForTimeout(400);
+    await page.getByTestId('status-notice-banner').getByText('已切换为「写故事」', { exact: false }).waitFor();
     const afterDuplicateDispatch = await readPersistedState(page);
     assert.equal(
       afterDuplicateDispatch.workIds.length,
@@ -289,7 +289,7 @@ async function main() {
       inputElement.form.requestSubmit();
     });
     await page.getByTestId('writing-page').waitFor();
-    await page.waitForTimeout(400);
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '先随便聊聊', exact: true }).waitFor();
     const afterWelcomeSwitch = await readPersistedState(page);
     assert.equal(
       afterWelcomeSwitch.workIds.length,
