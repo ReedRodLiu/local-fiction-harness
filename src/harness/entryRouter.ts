@@ -286,6 +286,7 @@ export function parseEntryRouteReply(
   neutralHistory: readonly TurnNode[] = [],
   reasoningContent = '',
 ): EntryRouteResult {
+  const cleanedHistory = excludeRefusedTurns(neutralHistory);
   const { fence, outsideContent } = extractLeadingRouteFence(rawContent);
   const parsedProposals = parseProposalReply(outsideContent);
   const cleanedReply = parsedProposals.content.trim();
@@ -311,7 +312,7 @@ export function parseEntryRouteReply(
       const settingMarkdown =
         parsedMode === 'ambiguous'
           ? ''
-          : bodyMd || [...neutralHistory.filter((n) => n.role === 'user').map((n) => n.content), userInput].join('\n\n');
+          : bodyMd || [...cleanedHistory.filter((n) => n.role === 'user').map((n) => n.content), userInput].join('\n\n');
       return {
         mode: parsedMode,
         title,
@@ -327,14 +328,14 @@ export function parseEntryRouteReply(
     }
   }
 
-  const mode = classifyEntryHeuristic(userInput, neutralHistory);
+  const mode = classifyEntryHeuristic(userInput, cleanedHistory);
   const fallbackTitle =
     mode === 'story' ? '新故事' : mode === 'writing' ? '未命名作品' : mode === 'character' ? '未命名角色' : '新对话';
   const title = deriveEntryTitle(userInput, fallbackTitle);
   const settingMarkdown =
     mode === 'ambiguous'
       ? ''
-      : [...neutralHistory.filter((n) => n.role === 'user').map((n) => n.content), userInput]
+      : [...cleanedHistory.filter((n) => n.role === 'user').map((n) => n.content), userInput]
           .filter(Boolean)
           .join('\n\n');
 
@@ -392,14 +393,15 @@ export async function routeEntryMessage(
   refusalOptions?: RefusalStreamIntegrationOptions,
 ): Promise<EntryRouteResult> {
   const effectivePromptPackOptions = refusalOptions?.promptPackOptions ?? promptPackOptions;
+  const cleanedHistory = excludeRefusedTurns(neutralHistory);
   const messages = buildEntryRouteMessages(
     userInput,
-    neutralHistory,
+    cleanedHistory,
     publicMemoryMarkdown,
     effectivePromptPackOptions,
   );
   const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
-  const heuristicMode = classifyEntryHeuristic(userInput, neutralHistory);
+  const heuristicMode = classifyEntryHeuristic(userInput, cleanedHistory);
   const routePrefillMode = heuristicMode === 'ambiguous' ? 'story' : heuristicMode;
   const result = await streamWithRefusalHandling({
     transport,
@@ -423,7 +425,7 @@ export async function routeEntryMessage(
     throw new Error('回复未完成，请重试。');
   }
   return {
-    ...parseEntryRouteReply(result.content, userInput, neutralHistory, result.reasoningContent),
+    ...parseEntryRouteReply(result.content, userInput, cleanedHistory, result.reasoningContent),
     ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
     ...(result.prefillContent ? { prefillContent: result.prefillContent } : {}),
     model: config.model,

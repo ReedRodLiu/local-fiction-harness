@@ -11,6 +11,7 @@ import {
 } from '../../src/harness/thinDelivery.ts';
 import { DELIVERY_CASES, SKELETON_CASES } from './refusalCalibrationCases.ts';
 import {
+  REFUSAL_EXHAUSTED_MESSAGE,
   streamWithRefusalHandling,
   type RefusalDiagnosticEvent,
   type RefusalHandlingOptions,
@@ -41,6 +42,7 @@ import {
   newWork,
   appendWorkDiscussionTurn,
   validateTurnNodeEntry,
+  createOpenAiTransport,
 } from '../../src/harness/index.ts';
 
 describe('Spec #132 refusal calibration fixtures', () => {
@@ -141,6 +143,34 @@ function stream(deltas: LlmStreamDelta[]): AsyncIterable<LlmStreamDelta> {
     async *[Symbol.asyncIterator]() {
       for (const delta of deltas) yield delta;
     },
+  };
+}
+
+function openAiSseResponse(deltas: LlmStreamDelta[]) {
+  const encoder = new TextEncoder();
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    text: async () => '',
+    body: (async function* () {
+      for (const delta of deltas) {
+        const payload = {
+          choices: [{
+            delta: {
+              ...(delta.contentDelta !== undefined ? { content: delta.contentDelta } : {}),
+              ...(delta.reasoningDelta !== undefined
+                ? { reasoning_content: delta.reasoningDelta }
+                : {}),
+            },
+            ...(delta.finishReason !== undefined
+              ? { finish_reason: delta.finishReason }
+              : {}),
+          }],
+        };
+        yield encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+      }
+    })(),
   };
 }
 
@@ -1011,6 +1041,123 @@ describe('Spec #132 120-character refusal wrapper', () => {
 
     expect(transport.requests[0].prefixCompletion?.content).toBe(buildModePrefill('writing'));
     expect(result.prefillContent).toBe(buildModePrefill('writing'));
+  });
+
+  it('treats a prefix-echoed thin refusal on retry as exhausted', async () => {
+    const prefill = buildModePrefill('story');
+    const refusal = '抱歉，我不能帮你写这段内容。';
+    const requestBodies: string[] = [];
+    const diagnostics: RefusalDiagnosticEvent[] = [];
+    const transport = createOpenAiTransport(async (_url, init) => {
+      requestBodies.push(init.body);
+      return requestBodies.length === 1
+        ? openAiSseResponse([
+            { contentDelta: refusal },
+            { finishReason: 'stop' },
+          ])
+        : openAiSseResponse([
+            { contentDelta: `${prefill}${refusal}`, finishReason: 'stop' },
+          ]);
+    });
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      onDiagnostic: (event) => diagnostics.push(event),
+    }));
+
+    expect(requestBodies).toHaveLength(2);
+    expect(result.content).toBe(REFUSAL_EXHAUSTED_MESSAGE);
+    expect(result.diagnostics).toMatchObject({
+      sourceStatus: 'REFUSAL',
+      refusalRoute: 'refused_exhausted',
+      recoveredFromText: refusal,
+      retriedWithPrefix: true,
+      matchedRuleId: 'L1-02',
+    });
+    expect(diagnostics.map((event) => event.action)).toEqual([
+      'refusal_detected',
+      'refusal_retry_exhausted',
+    ]);
+  });
+
+  it('detects an always-prefilled thin refusal and retries once', async () => {
+    const prefill = buildModePrefill('writing');
+    const refusal = '抱歉，我不能帮你写这段内容。';
+    const longNarrative = '雨声落在窗沿上，他推门走进屋里，看见桌上还留着半盏温茶。'.repeat(4);
+    const requestBodies: string[] = [];
+    const retry = vi.fn();
+    const visible: string[] = [];
+    const transport = createOpenAiTransport(async (_url, init) => {
+      requestBodies.push(init.body);
+      return requestBodies.length === 1
+        ? openAiSseResponse([
+            { contentDelta: `${prefill}${refusal}`, finishReason: 'stop' },
+          ])
+        : openAiSseResponse([
+            { contentDelta: `${prefill}${longNarrative}`, finishReason: 'stop' },
+          ]);
+    });
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      mode: 'writing',
+      promptPackOptions: {
+        promptPackLibrary: library,
+        generationPreference: { prefixCompletion: 'always' },
+      },
+      callbacks: {
+        onRefusalRetry: retry,
+        onContentDelta: (delta) => visible.push(delta),
+      },
+    }));
+
+    expect(requestBodies).toHaveLength(2);
+    expect(requestBodies.map((body) => JSON.parse(body).messages.at(-1).content)).toEqual([
+      prefill,
+      prefill,
+    ]);
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(visible.join('')).toBe(`${prefill}${longNarrative}`);
+    expect(result.content).toBe(`${prefill}${longNarrative}`);
+    expect(result.prefillContent).toBe(prefill);
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'retry',
+      recoveredFromText: `${prefill}${refusal}`,
+      retriedWithPrefix: true,
+      matchedRuleId: 'L1-02',
+    });
+  });
+
+  it('passes a prefilled long narrative without treating the prefill as refusal text', async () => {
+    const prefill = buildModePrefill('story');
+    const longNarrative = '风穿过长廊，灯影在墙上缓慢摇晃，他把信纸折好放进衣袋。'.repeat(5);
+    const retry = vi.fn();
+    const visible: string[] = [];
+    const diagnostics: RefusalDiagnosticEvent[] = [];
+    const requestBodies: string[] = [];
+    const transport = createOpenAiTransport(async (_url, init) => {
+      requestBodies.push(init.body);
+      return openAiSseResponse([
+        { contentDelta: `${prefill}${longNarrative}`, finishReason: 'stop' },
+      ]);
+    });
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      promptPackOptions: {
+        promptPackLibrary: library,
+        generationPreference: { prefixCompletion: 'always' },
+      },
+      callbacks: {
+        onRefusalRetry: retry,
+        onContentDelta: (delta) => visible.push(delta),
+      },
+      onDiagnostic: (event) => diagnostics.push(event),
+    }));
+
+    expect(requestBodies).toHaveLength(1);
+    expect(retry).not.toHaveBeenCalled();
+    expect(diagnostics).toEqual([]);
+    expect(result.content).toBe(`${prefill}${longNarrative}`);
+    expect(result.diagnostics).toBeUndefined();
+    expect(visible.join('')).toBe(`${prefill}${longNarrative}`);
   });
 });
 

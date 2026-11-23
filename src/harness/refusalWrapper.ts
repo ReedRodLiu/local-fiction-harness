@@ -208,6 +208,11 @@ function prefillFor(options: RefusalHandlingOptions): string {
     });
 }
 
+function stripSentPrefix(raw: string, prefixContent: string | undefined): string {
+  if (!prefixContent || !raw.startsWith(prefixContent)) return raw;
+  return raw.slice(prefixContent.length);
+}
+
 function withRetryTail(messages: LlmMessage[], tail: string): LlmMessage[] {
   const normalizedTail = tail.trim();
   if (
@@ -352,7 +357,8 @@ async function runAttempt(
     route: RefusalRoute;
     matchedRuleId?: string;
   } => {
-    const { body, hasProtocolArtifacts } = splitRefusalProtocolContent(raw);
+    const detectedContent = stripSentPrefix(raw, prefixContent);
+    const { body, hasProtocolArtifacts } = splitRefusalProtocolContent(detectedContent);
     const verdict = judgeRefusal(body);
     return {
       route: routeRefusal(body, Boolean(verdict), deliveryOptions(options.mode, hasProtocolArtifacts)),
@@ -404,7 +410,9 @@ async function runAttempt(
         if (gateOpen) {
           emitVisible();
         } else if (
-          normalizeDeliveryBody(splitRefusalProtocolContent(raw).body).length >
+          normalizeDeliveryBody(
+            splitRefusalProtocolContent(stripSentPrefix(raw, prefixContent)).body,
+          ).length >
           REFUSAL_OBSERVATION_CHARS
         ) {
           // The 120-character window is the final protection against chunk
