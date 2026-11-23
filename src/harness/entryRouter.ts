@@ -1,6 +1,7 @@
 import { createDefaultBlueprint } from './blueprint.ts';
 import { EMPTY_SUMMARY_SNAPSHOT, getActiveBranchNodes } from './context.ts';
 import {
+  conversationLocalVersion,
   getWorkActiveDiscussionNodes,
   newCharacter,
   newConversation,
@@ -437,6 +438,7 @@ export function materializeAssetFromNodes(opts: {
   targetMode: StageAssetMode;
   title: string;
   settingMarkdown: string;
+  localMarkdown?: string;
   turns: readonly TurnNode[];
   body?: string;
   characterName?: string;
@@ -475,7 +477,7 @@ export function materializeAssetFromNodes(opts: {
   if (opts.targetMode === 'story') {
     const storyId = createId();
     const containerDoc = newDocument(opts.settingMarkdown, 'user', 'story-original');
-    const localDoc = newDocument('', 'migration', 'path-original');
+    const localDoc = newDocument(opts.localMarkdown ?? '', 'migration', 'path-original');
     const rootNodeIds = clonedNodes.filter((n) => n.parentId === null).map((n) => n.id);
     const story: Story = {
       id: storyId,
@@ -520,8 +522,16 @@ export function materializeAssetFromNodes(opts: {
 
   const charName = opts.characterName?.trim() || opts.title.trim() || '未命名角色';
   const baseChar = newCharacter(charName, opts.settingMarkdown);
-  const conv = newConversation(baseChar, 'personal', '', clonedNodes[0]?.content.slice(0, 20));
-  conv.nodes = nodeMap;
+  const conv = newConversation(baseChar, 'personal', opts.localMarkdown ?? '', clonedNodes[0]?.content.slice(0, 20));
+  conv.nodes = Object.fromEntries(
+    Object.entries(nodeMap).map(([id, node]) => [
+      id,
+      {
+        ...node,
+        documents: { container: baseChar.document.head, local: conv.document.head },
+      },
+    ]),
+  );
   conv.activeLeafNodeId = leafId;
   const character: LocalCharacter = {
     ...baseChar,
@@ -548,6 +558,7 @@ export function convertActiveAssetMode(opts: {
 }): { story?: Story; work?: DraftWork; character?: LocalCharacter } {
   let title = '未命名创作';
   let settingMarkdown = '';
+  let localMarkdown = '';
   let turns: TurnNode[] = [];
   let body = '';
   let generationPreference: GenerationPreference | undefined;
@@ -559,6 +570,7 @@ export function convertActiveAssetMode(opts: {
       const scoped = { ...opts.story, documents: opts.story.documents };
       const state = storyDocumentState(scoped, opts.story.activeLeafNodeId, true);
       settingMarkdown = documentVersion(scoped.documents.container, state.container).markdown;
+      localMarkdown = documentVersion(scoped.documents.local, state.local).markdown;
     } else {
       settingMarkdown = opts.story.rawScript;
     }
@@ -575,12 +587,14 @@ export function convertActiveAssetMode(opts: {
     settingMarkdown = documentVersion(opts.character.document).markdown;
     const conv = opts.character.conversations.find((c) => c.id === opts.character!.activeConversationId);
     turns = conv ? getActiveBranchNodes(conv) : [];
+    localMarkdown = conv ? documentVersion(conv.document, conversationLocalVersion(conv)).markdown : '';
   }
 
   return materializeAssetFromNodes({
     targetMode: opts.toMode,
     title,
     settingMarkdown,
+    localMarkdown,
     turns,
     body,
     characterName: opts.toMode === 'character' ? title : undefined,

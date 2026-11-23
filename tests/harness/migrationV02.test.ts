@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   EMPTY_SUMMARY_SNAPSHOT,
+  conversationLocalVersion,
   createDefaultBlueprint,
   documentVersion,
   editStoryDocument,
@@ -230,5 +231,98 @@ describe('V0.1 -> V0.2 silent idempotent migration', () => {
     expect(convs[3].title).toBe('自定义雨夜线');
 
     expect(migrateWorkspaceToV02(migrated)).toEqual(migrated);
+  });
+
+  it('repairs dangling character branch-note references saved by the story conversion bug', () => {
+    const character = newCharacter('谢知微', '# 角色设定\n\n冷静的档案修复师');
+    const conversation = newConversation(
+      character,
+      'personal',
+      '## 当前进度\n\n她已经找到了那张缺失的胶片。',
+    );
+    conversation.nodes = {
+      c1: {
+        id: 'c1',
+        parentId: null,
+        role: 'user',
+        content: '再找找第三排。',
+        createdAt: 100,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        documents: { container: character.document.head, local: conversation.document.head },
+      },
+      c2: {
+        id: 'c2',
+        parentId: 'c1',
+        role: 'assistant',
+        content: '胶片上是一段被剪掉的雨夜。',
+        createdAt: 200,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        documents: { container: 'story-original', local: 'story-local-v2' },
+      },
+    };
+    conversation.activeLeafNodeId = 'c2';
+    conversation.edits = { c2: 'story-local-v2' };
+    character.conversations = [conversation];
+    character.activeConversationId = conversation.id;
+    const workspace: CreativeWorkspaceState = {
+      ...emptyWorkspace(),
+      characters: [character],
+      activeCharacterId: character.id,
+      v2Migrated: true,
+    };
+
+    const migrated = migrateWorkspaceToV02(workspace);
+    const loaded = migrated.characters[0].conversations[0];
+    const localVersion = documentVersion(loaded.document, conversationLocalVersion(loaded));
+
+    expect(localVersion.markdown).toContain('她已经找到了那张缺失的胶片');
+    expect(Object.values(loaded.nodes).every((node) => (
+      Boolean(node.documents) &&
+      Object.hasOwn(loaded.document.versions, node.documents!.local) &&
+      Object.hasOwn(migrated.characters[0].document.versions, node.documents!.container)
+    ))).toBe(true);
+    expect(loaded.nodes.c2.content).toBe('胶片上是一段被剪掉的雨夜。');
+    expect(migrateWorkspaceToV02(migrated)).toEqual(migrated);
+  });
+
+  it('keeps a valid node branch-note version when a saved edit override is dangling', () => {
+    const character = newCharacter('谢知微', '# 角色设定\n\n冷静的档案修复师');
+    const initialDocument = newDocument('## 当前进度\n\n仍可读取的有效分支笔记');
+    const conversation = newConversation(character, 'personal');
+    conversation.document = writeDocument(
+      initialDocument,
+      initialDocument.head,
+      '## 当前进度\n\n后来写下的当前分支笔记',
+      'user',
+      'local-current',
+    );
+    conversation.nodes = {
+      c1: {
+        id: 'c1',
+        parentId: null,
+        role: 'assistant',
+        content: '旧胶片里还有一段没看完。',
+        createdAt: 100,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        documents: { container: character.document.head, local: initialDocument.head },
+      },
+    };
+    conversation.activeLeafNodeId = 'c1';
+    conversation.edits = { c1: 'story-local-v2' };
+    character.conversations = [conversation];
+    character.activeConversationId = conversation.id;
+
+    const migrated = migrateWorkspaceToV02({
+      ...emptyWorkspace(),
+      characters: [character],
+      activeCharacterId: character.id,
+      v2Migrated: true,
+    });
+    const loaded = migrated.characters[0].conversations[0];
+
+    expect(documentVersion(loaded.document, conversationLocalVersion(loaded)).markdown).toContain(
+      '仍可读取的有效分支笔记',
+    );
+    expect(loaded.nodes.c1.content).toBe('旧胶片里还有一段没看完。');
   });
 });

@@ -163,11 +163,43 @@ function migrateCharacterToV02(character: LocalCharacter): LocalCharacter {
       usedTitles.add(title);
       changed = true;
     }
-    if (conv.kind !== kind || conv.title !== title) {
-      changed = true;
-      return { ...conv, kind, title };
+    const normalized = conv.kind === kind && conv.title === title ? conv : { ...conv, kind, title };
+    const edits: CharacterConversation['edits'] = {};
+    let documentsChanged = false;
+    for (const [anchor, revision] of Object.entries(normalized.edits)) {
+      if (Object.hasOwn(normalized.document.versions, revision)) {
+        edits[anchor] = revision;
+        continue;
+      }
+      const nodeLocal = normalized.nodes[anchor]?.documents?.local;
+      if (!nodeLocal || !Object.hasOwn(normalized.document.versions, nodeLocal)) {
+        edits[anchor] = normalized.document.head;
+      }
+      documentsChanged = true;
     }
-    return conv;
+
+    const nodes: CharacterConversation['nodes'] = {};
+    for (const [id, node] of Object.entries(normalized.nodes)) {
+      if (!node.documents) {
+        nodes[id] = node;
+        continue;
+      }
+      const container = Object.hasOwn(character.document.versions, node.documents.container)
+        ? node.documents.container
+        : character.document.head;
+      const local = Object.hasOwn(normalized.document.versions, node.documents.local)
+        ? node.documents.local
+        : edits[id] ?? normalized.document.head;
+      nodes[id] = container === node.documents.container && local === node.documents.local
+        ? node
+        : { ...node, documents: { container, local } };
+      if (node !== nodes[id]) documentsChanged = true;
+    }
+
+    if (normalized !== conv || documentsChanged) changed = true;
+    return documentsChanged
+      ? { ...normalized, edits, nodes }
+      : normalized;
   });
 
   if (!changed) return character;
