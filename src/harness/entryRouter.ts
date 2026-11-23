@@ -1,5 +1,5 @@
 import { createDefaultBlueprint } from './blueprint.ts';
-import { EMPTY_SUMMARY_SNAPSHOT, getActiveBranchNodes } from './context.ts';
+import { EMPTY_SUMMARY_SNAPSHOT, excludeRefusedTurns, getActiveBranchNodes } from './context.ts';
 import {
   getWorkActiveDiscussionNodes,
   newCharacter,
@@ -21,6 +21,10 @@ import {
   type PromptPackContextOptions,
 } from './promptPack.ts';
 import {
+  streamWithRefusalHandling,
+  type RefusalStreamIntegrationOptions,
+} from './refusalWrapper.ts';
+import {
   CHANGE_PROMPT,
   documentVersion,
   newDocument,
@@ -35,6 +39,7 @@ import type {
   LlmMessage,
   LlmTransport,
   ModelConfig,
+  NodeDiagnostics,
   ReasoningEffort,
   Story,
   TurnCallbacks,
@@ -57,6 +62,8 @@ export interface EntryRouteResult {
   proposals: ParsedProposal[];
   unparsedBlocks: UnparsedProposalBlock[];
   usedFallback: boolean;
+  diagnostics?: NodeDiagnostics;
+  prefillContent?: string;
 }
 
 export type ManuscriptReplyIntent =
@@ -362,7 +369,7 @@ export function buildEntryRouteMessages(
       content: `以下是作为资料使用的「我的记忆」Markdown。\n\n${publicMemoryMarkdown}`,
     });
   }
-  for (const node of neutralHistory) {
+  for (const node of excludeRefusedTurns(neutralHistory)) {
     messages.push({ role: node.role, content: node.content });
   }
   const tail = promptPackTailMessage(
@@ -382,55 +389,45 @@ export async function routeEntryMessage(
   callbacks: TurnCallbacks = {},
   publicMemoryMarkdown = '',
   promptPackOptions?: PromptPackContextOptions,
+  refusalOptions?: RefusalStreamIntegrationOptions,
 ): Promise<EntryRouteResult> {
   const messages = buildEntryRouteMessages(userInput, neutralHistory, publicMemoryMarkdown, promptPackOptions);
-  let raw = '';
-  let reasoningContent = '';
-  let finishReason: string | null | undefined;
-  let shown = '';
   const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
-
-  for await (const delta of transport.streamChat({
-    baseUrl: config.baseUrl,
-    apiKey: config.apiKey,
-    model: config.model,
-    reasoningEffort,
+  const heuristicMode = classifyEntryHeuristic(userInput, neutralHistory);
+  const routePrefillMode = heuristicMode === 'ambiguous' ? 'story' : heuristicMode;
+  const result = await streamWithRefusalHandling({
+    transport,
+    config,
     messages,
-    signal: callbacks.signal,
-  })) {
-    if (callbacks.signal?.aborted) {
-      const abortErr = new Error('操作已中止。');
-      abortErr.name = 'AbortError';
-      throw abortErr;
-    }
-    if (delta.finishReason != null) finishReason = delta.finishReason;
-    if (delta.reasoningDelta && reasoningEffort !== 'none') {
-      reasoningContent += delta.reasoningDelta;
-      callbacks.onReasoningDelta?.(delta.reasoningDelta);
-    }
-    if (!delta.contentDelta) continue;
-    raw += delta.contentDelta;
-    const nextVisible = visibleEntryRoutePrefix(raw);
-    if (nextVisible.length > shown.length) {
-      callbacks.onContentDelta?.(nextVisible.slice(shown.length));
-      shown = nextVisible;
-    }
-  }
+    callbacks,
+    mode: refusalOptions?.mode ?? routePrefillMode,
+    ...(promptPackOptions ? { promptPackOptions } : {}),
+    ...(refusalOptions?.promptPackOptions
+      ? { promptPackOptions: refusalOptions.promptPackOptions }
+      : {}),
+    prefixContent: `\`\`\`lfh-route\nmode: ${routePrefillMode}\n`,
+    ...(refusalOptions?.characterName ? { characterName: refusalOptions.characterName } : {}),
+    ...(refusalOptions?.onDiagnostic ? { onDiagnostic: refusalOptions.onDiagnostic } : {}),
+    toVisibleContent: visibleEntryRoutePrefix,
+  });
 
   if (callbacks.signal?.aborted) {
     const abortErr = new Error('操作已中止。');
     abortErr.name = 'AbortError';
     throw abortErr;
   }
-  if (finishReason !== 'stop' && !raw.trim()) {
+  if (result.finishReason !== 'stop' && !result.content.trim()) {
     throw new Error('回复未完成，请重试。');
   }
   return {
-    ...parseEntryRouteReply(raw, userInput, neutralHistory, reasoningContent),
+    ...parseEntryRouteReply(result.content, userInput, neutralHistory, result.reasoningContent),
+    ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+    ...(result.prefillContent ? { prefillContent: result.prefillContent } : {}),
     model: config.model,
     reasoningEffort,
   };
 }
+
 
 export { normalizeGenerationPreference } from './keyConfig.ts';
 

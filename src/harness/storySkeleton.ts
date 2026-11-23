@@ -173,7 +173,7 @@ export function buildRedactedStorySkeleton(story: Story): RedactedStorySkeleton 
       const sourceStatus = node.diagnostics?.sourceStatus;
       const contentRisk = node.diagnostics?.contentRisk;
       const diagnostics = {
-        ...(sourceStatus === 'CONTENT_FILTER' || sourceStatus === 'TIMEOUT' || sourceStatus === 'INCOMPLETE'
+        ...(sourceStatus === 'CONTENT_FILTER' || sourceStatus === 'TIMEOUT' || sourceStatus === 'INCOMPLETE' || sourceStatus === 'REFUSAL'
           ? { sourceStatus }
           : {}),
         ...(typeof contentRisk === 'boolean' ? { contentRisk } : {}),

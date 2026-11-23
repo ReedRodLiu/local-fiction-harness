@@ -9,6 +9,7 @@ import type {
   NodeDiagnostics,
   PlotSummarySnapshot,
   ReasoningEffort,
+  RefusalRouteDiagnostic,
   Story,
   StoryAttachment,
   StoryBackupEnvelope,
@@ -144,6 +145,7 @@ const VALID_DIAGNOSTIC_STATUSES = new Set<NodeDiagnosticStatus>([
   'CONTENT_FILTER',
   'TIMEOUT',
   'INCOMPLETE',
+  'REFUSAL',
 ]);
 
 function validateDiagnostics(raw: unknown, nodeId: string): NodeDiagnostics | undefined {
@@ -162,9 +164,39 @@ function validateDiagnostics(raw: unknown, nodeId: string): NodeDiagnostics | un
   if (raw.contentRisk !== undefined && typeof raw.contentRisk !== 'boolean') {
     throw new Error(`备份文件节点 ${nodeId} 的 diagnostics.contentRisk 必须为布尔值。`);
   }
-  const result: { sourceStatus?: NodeDiagnosticStatus; contentRisk?: boolean } = {};
-  if (sourceStatus !== undefined) result.sourceStatus = sourceStatus as NodeDiagnosticStatus;
-  if (raw.contentRisk !== undefined) result.contentRisk = raw.contentRisk;
+  const validRefusalRoutes = new Set<RefusalRouteDiagnostic>([
+    'pass',
+    'retry',
+    'retry-skeleton',
+    'partial_refused',
+    'refused_exhausted',
+  ]);
+  if (
+    raw.refusalRoute !== undefined &&
+    (typeof raw.refusalRoute !== 'string' ||
+      !validRefusalRoutes.has(raw.refusalRoute as RefusalRouteDiagnostic))
+  ) {
+    throw new Error(`备份文件节点 ${nodeId} 的 diagnostics.refusalRoute 无效。`);
+  }
+  if (raw.recoveredFromText !== undefined && typeof raw.recoveredFromText !== 'string') {
+    throw new Error(`备份文件节点 ${nodeId} 的 diagnostics.recoveredFromText 必须为字符串。`);
+  }
+  if (raw.retriedWithPrefix !== undefined && typeof raw.retriedWithPrefix !== 'boolean') {
+    throw new Error(`备份文件节点 ${nodeId} 的 diagnostics.retriedWithPrefix 必须为布尔值。`);
+  }
+  if (raw.matchedRuleId !== undefined && typeof raw.matchedRuleId !== 'string') {
+    throw new Error(`备份文件节点 ${nodeId} 的 diagnostics.matchedRuleId 必须为字符串。`);
+  }
+  const result: NodeDiagnostics = {
+    ...(sourceStatus !== undefined ? { sourceStatus: sourceStatus as NodeDiagnosticStatus } : {}),
+    ...(raw.contentRisk !== undefined ? { contentRisk: raw.contentRisk } : {}),
+    ...(raw.refusalRoute !== undefined
+      ? { refusalRoute: raw.refusalRoute as RefusalRouteDiagnostic }
+      : {}),
+    ...(raw.recoveredFromText !== undefined ? { recoveredFromText: raw.recoveredFromText } : {}),
+    ...(raw.retriedWithPrefix !== undefined ? { retriedWithPrefix: raw.retriedWithPrefix } : {}),
+    ...(raw.matchedRuleId !== undefined ? { matchedRuleId: raw.matchedRuleId } : {}),
+  };
   return Object.keys(result).length > 0 ? result : undefined;
 }
 

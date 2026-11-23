@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { strToU8, zipSync } from 'fflate';
 import {
+  BUILTIN_NARRATIVE_PROMPT_PACK,
   createDiagnosticCollector,
   createDiagnosticStoryStorage,
   createDiagnosticTransport,
@@ -638,4 +639,98 @@ describe('Spec #26 Slice 2: DeepSeek structure radar & breadcrumb wrappers', () 
       'compare_and_set_active_story_id_error',
     ]);
   });
+
+  it('records only zero-content refusal metrics and rejects pack names, slot text, and refusal text', async () => {
+    const collector = createDiagnosticCollector({ platform: 'web' });
+    collector.recordEvent({
+      level: 'error',
+      category: 'llm',
+      action: 'refusal_detected',
+      meta: {
+        packName: 'PACK_NAME_CANARY',
+        slotText: 'SLOT_TEXT_CANARY',
+        model: 'MODEL_CANARY',
+        sanitizedReason: 'ERROR_BODY_CANARY',
+        packEnabled: true,
+        slotChars: { head: 3, mid: 4, tail: 5 },
+        prefixMode: 'on_retry',
+        refusalRoute: 'retry',
+        matchedRuleId: 'L1-02',
+        retryCount: 0,
+        refusalText: 'REFUSAL_TEXT_CANARY',
+      } as never,
+    });
+
+    const library = {
+      packs: [{
+        ...BUILTIN_NARRATIVE_PROMPT_PACK,
+        id: 'diag-pack',
+        title: 'PACK_NAME_CANARY',
+        readOnly: false,
+        slots: {
+          head: 'SLOT_TEXT_CANARY',
+          mid: 'MID_CANARY',
+          tail: 'TAIL_CANARY',
+        },
+      }],
+      activePackId: 'diag-pack',
+    };
+    let requestCount = 0;
+    const transport: LlmTransport = {
+      async *streamChat() {
+        requestCount += 1;
+        if (requestCount === 1) {
+          yield { contentDelta: '抱歉，我不能帮你写这段内容。', finishReason: 'stop' };
+        } else {
+          yield { contentDelta: '雨声落在窗沿上，他推门走进屋里，看见桌上还留着半盏温茶。', finishReason: 'stop' };
+        }
+      },
+    };
+    const harness = createFictionHarness({
+      transport,
+      promptPackLibrary: library,
+      diagnostics: collector,
+    });
+    await harness.runTurn(harness.createStory({ title: '诊断测试' }), '继续', {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-flash',
+      apiKey: 'sk-test-123456',
+      memoryOnly: true,
+    });
+
+    const bundle = collector.buildBundle({
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-flash',
+      apiKey: '',
+      memoryOnly: true,
+    });
+    const refusalEvents = bundle.events.filter((event) => event.action.startsWith('refusal_'));
+    expect(refusalEvents.map((event) => event.action)).toEqual([
+      'refusal_detected',
+      'refusal_detected',
+      'refusal_retry_recovered',
+    ]);
+    expect(refusalEvents[1].meta).toEqual({
+      packEnabled: true,
+      slotChars: { head: 16, mid: 10, tail: 11 },
+      prefixMode: 'on_retry',
+      refusalRoute: 'retry',
+      matchedRuleId: 'L1-02',
+      retryCount: 0,
+    });
+    const json = JSON.stringify(bundle);
+    for (const canary of [
+      'PACK_NAME_CANARY',
+      'SLOT_TEXT_CANARY',
+      'MID_CANARY',
+      'TAIL_CANARY',
+      'REFUSAL_TEXT_CANARY',
+      'MODEL_CANARY',
+      'ERROR_BODY_CANARY',
+      '抱歉，我不能帮你写这段内容。',
+    ]) {
+      expect(json).not.toContain(canary);
+    }
+  });
+
 });

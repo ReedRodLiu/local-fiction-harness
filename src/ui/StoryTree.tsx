@@ -25,6 +25,7 @@ const DIAGNOSTIC_LABELS: Record<NodeDiagnosticStatus, string> = {
   CONTENT_FILTER: '这条历史消息在原平台未完整生成',
   TIMEOUT: '这条历史消息生成时响应超时',
   INCOMPLETE: '这条历史消息未完整生成',
+  REFUSAL: '本轮触发拒答，已从上下文隔离',
 };
 
 interface ExpandedSpanNode {

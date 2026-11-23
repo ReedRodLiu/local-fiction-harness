@@ -122,6 +122,41 @@ export function getUncoveredNodes(
   return branchNodes.slice(idx + 1);
 }
 
+/**
+ * Drops a refused assistant turn and its directly paired user turn from model
+ * history. The nodes remain in the persisted tree and visible timeline.
+ */
+export function excludeRefusedTurns(nodes: readonly TurnNode[]): TurnNode[] {
+  const refusedAssistants = nodes.filter(
+    (node) => node.role === 'assistant' && node.diagnostics?.sourceStatus === 'REFUSAL',
+  );
+  if (refusedAssistants.length === 0) return [...nodes];
+  const pairedUserIds = new Set(
+    refusedAssistants
+      .map((node) => node.parentId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  return nodes.filter(
+    (node) =>
+      !(node.role === 'assistant' && node.diagnostics?.sourceStatus === 'REFUSAL') &&
+      !(node.role === 'user' && pairedUserIds.has(node.id)),
+  );
+}
+
+/** Swaps the visible node content and its preserved first-pass refusal text. */
+export function restoreRefusalOriginalContent(node: TurnNode): TurnNode {
+  const recovered = node.diagnostics?.recoveredFromText;
+  if (recovered === undefined) return node;
+  return {
+    ...node,
+    content: recovered,
+    diagnostics: {
+      ...node.diagnostics,
+      recoveredFromText: node.content,
+    },
+  };
+}
+
 const DEFAULT_STORY_SYSTEM_PROMPT = [
   '你是文游的叙事者，也是在场的世界与众人。保持角色与设定一致，用具体场景、感官细节、动作与对话推进剧情，而非跳出戏外做总结或解说。',
   '禁止跳出叙事分析局势、评价玩家选择、写主题升华式结语、代写或劫持玩家的行动与内心决定，也不要在正文中用“1/2/3”列举下一步菜单。',
@@ -295,7 +330,7 @@ export function assembleThreeZoneContext(
   const setupFilter = getSetupNodeFilter(story, targetParentId, requestDocuments?.container);
   const snapshot = requestDocuments?.snapshot ?? getActiveSummarySnapshot(story, targetParentId);
   const branchNodes = getActiveBranchNodes(story, targetParentId);
-  const uncovered = getUncoveredNodes(branchNodes, snapshot.coveredUpToNodeId);
+  const uncovered = excludeRefusedTurns(getUncoveredNodes(branchNodes, snapshot.coveredUpToNodeId));
   const trimmedInput = userInput?.trim() ?? '';
   const historyChars = sumNodeChars(uncovered, setupFilter);
   if (requireHistory && historyChars > budget.recentMaxChars && uncovered.length > 2) {
@@ -382,6 +417,7 @@ export function selectNodesToSummarize(
   budgetOverrides?: Partial<ContextBudgetConfig>,
   filter?: SetupNodeFilter,
 ): TurnNode[] {
+  uncoveredNodes = excludeRefusedTurns(uncoveredNodes);
   const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...budgetOverrides };
   const maxNodes = Math.max(MIN_RECENT_NODES_PER_TURN, budget.recentMaxNodes);
   const totalChars = sumNodeChars(uncoveredNodes, filter);
@@ -416,7 +452,7 @@ export function buildSummaryCompressionMessages(
   filter?: SetupNodeFilter,
   maxPreviousSummaryChars = DEFAULT_CONTEXT_BUDGET.summaryBatchMaxChars,
 ): LlmMessage[] {
-  const turnsText = nodesToFold
+  const turnsText = excludeRefusedTurns(nodesToFold)
     .map(
       (n) =>
         `[${n.role === 'user' ? '玩家' : '叙事'}]: ${getEffectiveNodeContent(n, filter)}`,
@@ -541,7 +577,7 @@ export function assembleCreativeThreeZoneContext(
     { nodes: input.nodes, activeLeafNodeId: input.targetParentId },
     input.targetParentId,
   );
-  const uncovered = getUncoveredNodes(branchNodes, snapshot.coveredUpToNodeId);
+  const uncovered = excludeRefusedTurns(getUncoveredNodes(branchNodes, snapshot.coveredUpToNodeId));
   const trimmedInput = input.userInput?.trim() ?? '';
   const recentNodes = trimRecentWindow(uncovered, budget, trimmedInput.length);
 
@@ -602,6 +638,7 @@ function takeCreativeSummaryBatch(
   maxNodes: number,
   maxChars: number,
 ): TurnNode[] {
+  toSummarize = excludeRefusedTurns(toSummarize);
   let end = 0;
   let batchChars = 0;
   for (const node of toSummarize) {
