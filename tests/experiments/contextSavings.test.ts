@@ -502,6 +502,133 @@ describe('context compression cost evidence', () => {
     });
   });
 
+  it('rejects strict savings when billed outbound usage comes from an unmatched failed turn', () => {
+    const summaryFor = (
+      arm: 'full' | 'retrievable',
+      records: ContextExperimentGroup['records'],
+    ) => summarizeContextExperiment({
+      arm,
+      provider: 'deepseek-official',
+      model: 'deepseek-flash',
+      pricingSchedule: 'off-peak',
+      rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
+      effectiveTurns: 1,
+      records,
+    });
+    const completedTurn = (arm: 'full' | 'retrievable') => ({
+      requestId: `${arm}-generation-1`,
+      phase: 'generation' as const,
+      status: 'completed' as const,
+      logicalTurnId: 'turn-1',
+      transport: 'outbound-http' as const,
+      usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 100 },
+      visibleOutputCharCount: 20,
+    });
+    const baseline = summaryFor('full', [completedTurn('full')]);
+    const candidate = summaryFor('retrievable', [
+      completedTurn('retrievable'),
+      {
+        requestId: 'retrievable-failed-generation-2',
+        phase: 'generation',
+        status: 'failed',
+        logicalTurnId: 'turn-2',
+        transport: 'outbound-http',
+        usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 100 },
+        visibleOutputCharCount: 20,
+      },
+    ]);
+
+    expect(candidate.completedTurnIds).toEqual(baseline.completedTurnIds);
+    expect(estimateContextSavings(baseline, candidate)).toEqual({
+      status: 'unavailable',
+      reason: 'turn-id-mismatch',
+    });
+  });
+
+  it('rejects strict savings when completed turn IDs have equal membership but different order', () => {
+    const summaryFor = (
+      arm: 'full' | 'retrievable',
+      turnIds: string[],
+    ) => summarizeContextExperiment({
+      arm,
+      provider: 'deepseek-official',
+      model: 'deepseek-flash',
+      pricingSchedule: 'off-peak',
+      rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
+      effectiveTurns: turnIds.length,
+      records: turnIds.map((logicalTurnId, index) => ({
+        requestId: `${arm}-${index}`,
+        phase: 'generation' as const,
+        status: 'completed' as const,
+        logicalTurnId,
+        transport: 'outbound-http' as const,
+        usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 100 },
+        visibleOutputCharCount: 20,
+      })),
+    });
+    const baseline = summaryFor('full', ['turn-1', 'turn-2']);
+    const candidate = summaryFor('retrievable', ['turn-2', 'turn-1']);
+
+    expect(new Set(candidate.completedTurnIds)).toEqual(new Set(baseline.completedTurnIds));
+    expect(candidate.completedTurnIds).not.toEqual(baseline.completedTurnIds);
+    expect(estimateContextSavings(baseline, candidate)).toEqual({
+      status: 'unavailable',
+      reason: 'turn-id-mismatch',
+    });
+  });
+
+  it('keeps billed attempt costs when each attempt belongs to a matched completed turn', () => {
+    const summaryFor = (arm: 'full' | 'retrievable') => summarizeContextExperiment({
+      arm,
+      provider: 'deepseek-official',
+      model: 'deepseek-flash',
+      pricingSchedule: 'off-peak',
+      rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
+      effectiveTurns: 2,
+      records: [
+        {
+          requestId: `${arm}-failed-turn-1`,
+          phase: 'generation',
+          status: 'failed',
+          logicalTurnId: 'turn-1',
+          transport: 'outbound-http',
+          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 100 },
+          visibleOutputCharCount: 20,
+        },
+        {
+          requestId: `${arm}-retry-turn-1`,
+          phase: 'retry',
+          status: 'completed',
+          logicalTurnId: 'turn-1',
+          transport: 'outbound-http',
+          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 2_000, completionTokens: 50 },
+          visibleOutputCharCount: 20,
+        },
+        {
+          requestId: `${arm}-generation-turn-2`,
+          phase: 'generation',
+          status: 'completed',
+          logicalTurnId: 'turn-2',
+          transport: 'outbound-http',
+          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 3_000, completionTokens: 80 },
+          visibleOutputCharCount: 20,
+        },
+      ],
+    });
+    const baseline = summaryFor('full');
+    const candidate = summaryFor('retrievable');
+    const estimate = estimateContextSavings(baseline, candidate);
+
+    expect(candidate.outboundLogicalTurnIds).toEqual(['turn-1', 'turn-1', 'turn-2']);
+    expect(candidate.costUsd).toBeCloseTo(0.001038, 12);
+    expect(estimate).toMatchObject({
+      status: 'available',
+      baselineCostUsd: candidate.costUsd,
+      candidateCostUsd: candidate.costUsd,
+      savingsUsd: 0,
+    });
+  });
+
   it('blocks a funded run before transport when request, retry, token, concurrency, or dollar limits are exceeded', () => {
     const budget = {
       maxRequests: 2,
@@ -533,6 +660,32 @@ describe('context compression cost evidence', () => {
       'output-token-limit',
       'cost-limit',
     ]));
+  });
+
+  it('requires ordered contiguous unique attempts for each operation', () => {
+    const budget = {
+      maxRequests: 3,
+      maxRetriesPerOperation: 1,
+      maxInputTokensPerRequest: 100_000,
+      maxOutputTokensPerRequest: 512,
+      maxTotalCostUsd: 0.03,
+      concurrency: 1 as const,
+      rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
+    };
+    const request = { maxInputTokens: 1_000, maxOutputTokens: 128 };
+    const plansFor = (attempts: number[]) => attempts.map((attempt) => ({
+      operationId: 'generation-1',
+      attempt,
+      ...request,
+    }));
+
+    expect(preflightContextExperiment(budget, plansFor([0, 1])).ok).toBe(true);
+    for (const attempts of [[1], [0, 2], [0, 1, 1]]) {
+      expect(preflightContextExperiment(budget, plansFor(attempts))).toMatchObject({
+        ok: false,
+        violations: ['retry-limit'],
+      });
+    }
   });
 
   it('rejects invalid numeric quantities, invalid attempts, and anything other than outbound concurrency one', () => {

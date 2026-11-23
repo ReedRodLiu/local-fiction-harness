@@ -51,6 +51,7 @@ export interface ContextExperimentSummary {
   rates: ContextExperimentRates;
   effectiveTurns: number;
   completedTurnIds: string[];
+  outboundLogicalTurnIds: Array<string | null>;
   records: number;
   outboundRequestCount: number;
   localRetrievalCount: number;
@@ -231,9 +232,15 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
   let peakInputTokens = 0;
   const successfulLatencyByTurn = new Map<string, { latencyMs: number; branchSwitch: boolean }>();
   const completedTurnIds = new Set<string>();
+  const outboundLogicalTurnIds: Array<string | null> = [];
 
   for (const record of group.records) {
     if (record.transport === 'outbound-http') {
+      outboundLogicalTurnIds.push(
+        typeof record.logicalTurnId === 'string' && record.logicalTurnId.length > 0
+          ? record.logicalTurnId
+          : null,
+      );
       const recordUsage = contextExperimentUsageFromSse(record.usage ?? undefined);
       if (!recordUsage) {
         missingUsageRecords += 1;
@@ -337,6 +344,7 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
     rates: group.rates,
     effectiveTurns: group.effectiveTurns,
     completedTurnIds: [...completedTurnIds],
+    outboundLogicalTurnIds,
     records: group.records.length,
     outboundRequestCount,
     localRetrievalCount: group.records.filter(
@@ -393,20 +401,28 @@ export function estimateContextSavings(
   if (baseline.effectiveTurns !== candidate.effectiveTurns) {
     return { status: 'unavailable', reason: 'turn-count-mismatch' };
   }
-  const baselineTurnIds = new Set(baseline.completedTurnIds);
-  const candidateTurnIds = new Set(candidate.completedTurnIds);
-  if (baselineTurnIds.size === 0 || candidateTurnIds.size === 0) {
+  if (baseline.completedTurnIds.length === 0 || candidate.completedTurnIds.length === 0) {
     return { status: 'unavailable', reason: 'insufficient-turns' };
   }
   if (
-    baselineTurnIds.size !== baseline.effectiveTurns ||
-    candidateTurnIds.size !== candidate.effectiveTurns
+    baseline.completedTurnIds.length !== baseline.effectiveTurns ||
+    candidate.completedTurnIds.length !== candidate.effectiveTurns
   ) {
     return { status: 'unavailable', reason: 'incomplete-turns' };
   }
   if (
-    baselineTurnIds.size !== candidateTurnIds.size ||
-    [...baselineTurnIds].some((turnId) => !candidateTurnIds.has(turnId))
+    baseline.completedTurnIds.length !== candidate.completedTurnIds.length ||
+    baseline.completedTurnIds.some((turnId, index) => turnId !== candidate.completedTurnIds[index])
+  ) {
+    return { status: 'unavailable', reason: 'turn-id-mismatch' };
+  }
+  if (
+    baseline.outboundLogicalTurnIds.some(
+      (turnId) => turnId === null || !baseline.completedTurnIds.includes(turnId),
+    ) ||
+    candidate.outboundLogicalTurnIds.some(
+      (turnId) => turnId === null || !baseline.completedTurnIds.includes(turnId),
+    )
   ) {
     return { status: 'unavailable', reason: 'turn-id-mismatch' };
   }
@@ -557,12 +573,19 @@ export function preflightContextExperiment(
   if (budget.concurrency !== 1) violations.add('concurrency-limit');
 
   let maxEstimatedCostUsd = 0;
+  const attemptsByOperation = new Map<string, Set<number>>();
   for (const request of requests) {
     const validAttempt =
       Number.isSafeInteger(request.attempt) &&
       request.attempt >= 0 &&
       request.attempt <= budget.maxRetriesPerOperation;
     if (!validAttempt) violations.add('retry-limit');
+    if (validAttempt) {
+      const attempts = attemptsByOperation.get(request.operationId) ?? new Set<number>();
+      if (attempts.has(request.attempt)) violations.add('retry-limit');
+      attempts.add(request.attempt);
+      attemptsByOperation.set(request.operationId, attempts);
+    }
 
     const validInputTokens =
       Number.isSafeInteger(request.maxInputTokens) &&
@@ -588,6 +611,16 @@ export function preflightContextExperiment(
       budget.rates,
     );
     if (Number.isFinite(estimatedCost)) maxEstimatedCostUsd += estimatedCost;
+  }
+  for (const attempts of attemptsByOperation.values()) {
+    let expectedAttempt = 0;
+    for (const attempt of attempts) {
+      if (attempt !== expectedAttempt) {
+        violations.add('retry-limit');
+        break;
+      }
+      expectedAttempt += 1;
+    }
   }
   if (
     Number.isFinite(budget.maxTotalCostUsd) &&

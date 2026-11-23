@@ -1167,6 +1167,7 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
     generateExperimentScenario('nested', seed),
   ];
   const plans: ContextExperimentRequestPlan[] = [];
+  const generationOperationIds = new Map<string, string>();
   const recordsByArm: Record<ContextExperimentArm, ContextExperimentRequestRecord[]> = {
     full: [],
     folio: [],
@@ -1238,12 +1239,14 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
             : {}),
           ...(context.summaryCoverage ? { summaryCoverage: context.summaryCoverage } : {}),
         });
+        const generationOperationId = `${arm}-${scenario.spec.name}-${sceneTurn}`;
         plans.push({
-          operationId: `${arm}-${scenario.spec.name}-${sceneTurn}`,
+          operationId: generationOperationId,
           attempt: 0,
           maxInputTokens: new TextEncoder().encode(messages.map((message) => message.content).join('\n')).length,
           maxOutputTokens: 512,
         });
+        generationOperationIds.set(`${arm}\0${routed.logicalTurnId}`, generationOperationId);
 
         if (context.retrievalCount > 0) {
           const retrievalRecord: ContextExperimentRequestRecord = {
@@ -1327,11 +1330,12 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
       leakedRequests += 1;
     }
     const retryUsage = simulatedUsage(arm, retryMessages, 30, 24);
+    const retryLogicalTurnId = `continuous:turn-${retryTurnIndex + 1}`;
     const retryRecord: ContextExperimentRequestRecord = {
       requestId: `anonymous-${arm}-retry-001`,
       phase: 'retry',
       status: 'completed',
-      logicalTurnId: `continuous:turn-${retryTurnIndex + 1}`,
+      logicalTurnId: retryLogicalTurnId,
       transport: 'outbound-http',
       usage: retryUsage,
       visibleOutputCharCount: OFFLINE_VISIBLE_OUTPUT.retry.length,
@@ -1357,8 +1361,10 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
         : {}),
       ...(retryContext.summaryCoverage ? { summaryCoverage: retryContext.summaryCoverage } : {}),
     });
+    const retryOperationId = generationOperationIds.get(`${arm}\0${retryLogicalTurnId}`);
+    if (!retryOperationId) throw new Error(`Missing generation plan for retry turn ${retryLogicalTurnId}.`);
     plans.push({
-      operationId: `${arm}-retry`,
+      operationId: retryOperationId,
       attempt: 1,
       maxInputTokens: new TextEncoder().encode(
         retryMessages.map((message) => message.content).join('\n'),
