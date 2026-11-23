@@ -3,6 +3,7 @@ import {
   applyPrefixEchoCursor,
   buildOpenAiChatRequest,
   createOpenAiTransport,
+  parseOpenAiSseStream,
   resolveBetaChatCompletionsUrl,
   type LlmStreamDelta,
 } from '../../src/harness/index.ts';
@@ -150,6 +151,51 @@ describe('DeepSeek beta prefix completion request assembly', () => {
     ).toThrow(/assistant prefix.*assistant message/i);
   });
 
+  it('rejects prefix completion when the original message history is empty', () => {
+    expect(() =>
+      buildOpenAiChatRequest({
+        baseUrl: 'https://api.deepseek.com',
+        apiKey: 'secret',
+        model: 'deepseek-flash',
+        messages: [],
+        prefixCompletion: { content: '继续' },
+      }),
+    ).toThrow(/empty message/i);
+  });
+
+  it.each([
+    {
+      name: 'thinking is disabled',
+      thinking: { type: 'disabled' as const },
+      reasoning_effort: 'high' as const,
+    },
+    {
+      name: 'reasoning effort is none',
+      thinking: { type: 'enabled' as const },
+      reasoning_effort: 'none' as const,
+    },
+  ])('strips reasoning prefill when $name', ({ thinking, reasoning_effort }) => {
+    const request = buildOpenAiChatRequest({
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'secret',
+      model: 'deepseek-flash',
+      messages: [{ role: 'user', content: '继续' }],
+      prefixCompletion: { content: '正文预填', reasoningContent: '不得发送' },
+      thinking,
+      reasoning_effort,
+    });
+    const body = JSON.parse(request.body) as {
+      messages: Array<Record<string, unknown>>;
+    };
+
+    expect(body.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      content: '正文预填',
+      prefix: true,
+    });
+    expect(body.messages.at(-1)).not.toHaveProperty('reasoning_content');
+  });
+
   it('keeps ordinary requests on the stable URL and does not add a prefix message', () => {
     const request = buildOpenAiChatRequest({
       baseUrl: 'https://api.deepseek.com',
@@ -252,17 +298,17 @@ describe('Prefix echo cursor', () => {
     );
   });
 
-  it('does not drop a partial prefix when the upstream ends before confirming an echo', async () => {
+  it('emits only the synthesized prefill when a partial echo ends before confirmation', async () => {
     const deltas = await collect(
       applyPrefixEchoCursor(fromDeltas([{ contentDelta: '雨声在' }]), '雨声在屋檐'),
     );
 
-    expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta).join('')).toBe(
-      '雨声在屋檐雨声在',
-    );
+    expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta)).toEqual([
+      '雨声在屋檐',
+    ]);
   });
 
-  it('flushes held content before propagating an upstream error', async () => {
+  it('emits only the synthesized prefill before propagating an upstream error', async () => {
     const upstreamError = new Error('upstream disconnected');
     const { deltas, error } = await collectUntilError(
       applyPrefixEchoCursor(
@@ -272,9 +318,9 @@ describe('Prefix echo cursor', () => {
     );
 
     expect(error).toBe(upstreamError);
-    expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta).join('')).toBe(
-      '雨声在屋檐雨声在',
-    );
+    expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta)).toEqual([
+      '雨声在屋檐',
+    ]);
   });
 
   it('emits an exactly held prefill once before propagating an upstream abort', async () => {
@@ -291,5 +337,59 @@ describe('Prefix echo cursor', () => {
     expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta)).toEqual([
       '雨声在屋檐',
     ]);
+  });
+
+  it('emits only the synthesized prefill before propagating an abort after a partial echo', async () => {
+    const abortError = new Error('aborted');
+    abortError.name = 'AbortError';
+    const { deltas, error } = await collectUntilError(
+      applyPrefixEchoCursor(
+        fromDeltasThenThrow([{ contentDelta: '雨声在' }], abortError),
+        '雨声在屋檐',
+      ),
+    );
+
+    expect(error).toBe(abortError);
+    expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta)).toEqual([
+      '雨声在屋檐',
+    ]);
+  });
+
+  it('does not synthesize prefill for an empty upstream stream', async () => {
+    const deltas = await collect(applyPrefixEchoCursor(fromDeltas([]), '雨声在屋檐'));
+
+    expect(deltas).toEqual([]);
+  });
+
+  it('does not synthesize prefill for an empty content delta', async () => {
+    const deltas = await collect(
+      applyPrefixEchoCursor(fromDeltas([{ contentDelta: '' }]), '雨声在屋檐'),
+    );
+
+    expect(deltas.filter((delta) => delta.contentDelta)).toEqual([]);
+  });
+
+  it('does not synthesize prefill when the upstream only sends [DONE]', async () => {
+    const deltas = await collect(
+      applyPrefixEchoCursor(
+        parseOpenAiSseStream(
+          (async function* () {
+            yield new TextEncoder().encode('data: [DONE]\n\n');
+          })(),
+        ),
+        '雨声在屋檐',
+      ),
+    );
+
+    expect(deltas).toEqual([]);
+  });
+
+  it('does not synthesize prefill when the upstream only sends a finish reason', async () => {
+    const deltas = await collect(
+      applyPrefixEchoCursor(fromDeltas([{ finishReason: 'stop' }]), '雨声在屋檐'),
+    );
+
+    expect(deltas.filter((delta) => delta.contentDelta)).toEqual([]);
+    expect(deltas).toEqual([{ finishReason: 'stop' }]);
   });
 });

@@ -22,7 +22,7 @@ export const PREFILL_TEMPLATES: Readonly<
   },
   character: {
     opening: '（她把杯子往你面前推了推）你正要开口，',
-    dialogue: '你听见她轻声说：',
+    dialogue: '（她放下杯子，抬眼看向你）你',
     scene: '（沉默了很久）她终于开口：',
   },
 };

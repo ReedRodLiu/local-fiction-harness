@@ -235,12 +235,16 @@ export async function* applyPrefixEchoCursor(
   let state: EchoState = 'pending';
   let heldContent = '';
   let emittedPrefill = false;
+  let sawNonEmptyContent = false;
 
   const takePrefillDelta = (): LlmStreamDelta | undefined => {
     if (emittedPrefill) return undefined;
     emittedPrefill = true;
     return { contentDelta: prefillContent };
   };
+
+  const canSynthesizePrefill = (): boolean =>
+    sawNonEmptyContent || state !== 'pending';
 
   const emitNonContentParts = (delta: LlmStreamDelta): LlmStreamDelta | undefined => {
     if (delta.reasoningDelta === undefined && delta.finishReason === undefined) {
@@ -254,14 +258,8 @@ export async function* applyPrefixEchoCursor(
     };
   };
 
-  const flushUnconfirmedContent = function* (): Generator<LlmStreamDelta> {
-    if (state === 'pending') {
-      const prefixDelta = takePrefillDelta();
-      if (prefixDelta) yield prefixDelta;
-      if (heldContent) {
-        yield { contentDelta: heldContent };
-      }
-    } else {
+  const flushPendingPrefill = function* (): Generator<LlmStreamDelta> {
+    if (canSynthesizePrefill()) {
       const prefixDelta = takePrefillDelta();
       if (prefixDelta) yield prefixDelta;
     }
@@ -275,6 +273,9 @@ export async function* applyPrefixEchoCursor(
 
       if (hasContent) {
         const content = delta.contentDelta!;
+        if (content.length > 0) {
+          sawNonEmptyContent = true;
+        }
         if (state === 'pending') {
           const candidate = heldContent + content;
           if (prefillContent.startsWith(candidate)) {
@@ -296,12 +297,6 @@ export async function* applyPrefixEchoCursor(
         }
       }
 
-      if (isTerminal && state === 'pending') {
-        state = 'diverged';
-        outputContent = (outputContent ?? '') + heldContent;
-        heldContent = '';
-      }
-
       if (outputContent !== undefined && outputContent.length > 0) {
         const prefixDelta = takePrefillDelta();
         if (prefixDelta) yield prefixDelta;
@@ -312,7 +307,7 @@ export async function* applyPrefixEchoCursor(
       if (hasContent) {
         const nonContentParts = emitNonContentParts(delta);
         if (nonContentParts) {
-          if (isTerminal) {
+          if (isTerminal && canSynthesizePrefill()) {
             const prefixDelta = takePrefillDelta();
             if (prefixDelta) yield prefixDelta;
           }
@@ -326,22 +321,23 @@ export async function* applyPrefixEchoCursor(
       }
 
       if (isTerminal) {
-        const prefixDelta = takePrefillDelta();
-        if (prefixDelta) yield prefixDelta;
+        if (canSynthesizePrefill()) {
+          const prefixDelta = takePrefillDelta();
+          if (prefixDelta) yield prefixDelta;
+        }
       }
       yield delta;
     }
   } catch (error) {
     // An upstream error or abort cannot confirm whether held text is an echo.
-    // Preserve the same conservative contract as a normal end: emit the
-    // configured prefill, then the held bytes, before propagating the error.
-    // This may duplicate a partial echo, but never silently drops content or
-    // blindly cuts unconfirmed server text.
-    yield* flushUnconfirmedContent();
+    // If any non-empty content arrived, treat a partial prefix match as an
+    // unconfirmed echo and synthesize only the complete prefill before
+    // propagating the error. Never append the held echo fragment.
+    yield* flushPendingPrefill();
     throw error;
   }
 
-  yield* flushUnconfirmedContent();
+  yield* flushPendingPrefill();
 }
 
 export function mapReasoningEffortToDeepSeekParams(effort: ReasoningEffort = 'high'): {
@@ -375,6 +371,11 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
   const thinking = req.thinking ?? mapped.thinking;
   const reasoning_effort = req.reasoning_effort ?? mapped.reasoning_effort;
   const allowReasoning = thinking.type !== 'disabled' && reasoning_effort !== 'none';
+  if (req.prefixCompletion && req.messages.length === 0) {
+    throw new Error(
+      'Cannot use prefix completion with an empty message history. The final original message must be user or system.',
+    );
+  }
   if (req.prefixCompletion && req.messages.at(-1)?.role === 'assistant') {
     throw new Error(
       'Cannot append an assistant prefix after an assistant message. The final original message must be user or system.',

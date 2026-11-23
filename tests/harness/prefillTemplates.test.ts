@@ -27,7 +27,9 @@ describe('DeepSeek prefix completion narrative prefill templates', () => {
     expect(buildModePrefill('character', { variant: 'dialogue', characterName: '沈砚' })).toBe(
       '沈砚：',
     );
-    expect(buildModePrefill('character', { variant: 'dialogue' })).toBe('你听见她轻声说：');
+    expect(buildModePrefill('character', { variant: 'dialogue' })).toBe(
+      '（她放下杯子，抬眼看向你）你',
+    );
     expect(JSON.stringify(PREFILL_TEMPLATES)).not.toContain('阿箬');
   });
 
