@@ -143,6 +143,9 @@ export interface LlmUsage {
   totalTokens?: number;
   promptCacheHitTokens?: number;
   promptCacheMissTokens?: number;
+  completionTokensDetails?: {
+    reasoningTokens?: number;
+  };
 }
 
 export interface AbortSignalLike {

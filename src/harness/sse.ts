@@ -77,6 +77,9 @@ function parseSseEventData(dataText: string): { done: boolean; delta?: LlmStream
       total_tokens?: unknown;
       prompt_cache_hit_tokens?: unknown;
       prompt_cache_miss_tokens?: unknown;
+      completion_tokens_details?: {
+        reasoning_tokens?: unknown;
+      };
     };
   };
   try {
@@ -135,16 +138,30 @@ function parseUsage(raw: {
   total_tokens?: unknown;
   prompt_cache_hit_tokens?: unknown;
   prompt_cache_miss_tokens?: unknown;
+  completion_tokens_details?: {
+    reasoning_tokens?: unknown;
+  };
 } | undefined): LlmUsage | undefined {
   if (!raw) return undefined;
+  const reasoningTokens = optionalTokenCount(raw.completion_tokens_details?.reasoning_tokens);
   const usage: LlmUsage = {
     promptTokens: optionalTokenCount(raw.prompt_tokens),
     completionTokens: optionalTokenCount(raw.completion_tokens),
     totalTokens: optionalTokenCount(raw.total_tokens),
     promptCacheHitTokens: optionalTokenCount(raw.prompt_cache_hit_tokens),
     promptCacheMissTokens: optionalTokenCount(raw.prompt_cache_miss_tokens),
+    ...(reasoningTokens === undefined
+      ? {}
+      : { completionTokensDetails: { reasoningTokens } }),
   };
-  return Object.values(usage).some((value) => value !== undefined) ? usage : undefined;
+  return usage.promptTokens !== undefined ||
+    usage.completionTokens !== undefined ||
+    usage.totalTokens !== undefined ||
+    usage.promptCacheHitTokens !== undefined ||
+    usage.promptCacheMissTokens !== undefined ||
+    usage.completionTokensDetails !== undefined
+    ? usage
+    : undefined;
 }
 
 /**

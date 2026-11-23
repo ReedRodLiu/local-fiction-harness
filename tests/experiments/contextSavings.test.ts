@@ -23,7 +23,13 @@ describe('context compression cost evidence', () => {
           status: 'completed',
           logicalTurnId: 'turn-1',
           transport: 'outbound-http',
-          usage: { promptCacheHitTokens: 500_000, promptCacheMissTokens: 500_000, completionTokens: 50_000 },
+          usage: {
+            promptCacheHitTokens: 500_000,
+            promptCacheMissTokens: 500_000,
+            completionTokens: 50_000,
+            completionTokensDetails: { reasoningTokens: 30_000 },
+          },
+          visibleOutputCharCount: 100,
           firstContentLatencyMs: 900,
         },
         {
@@ -32,7 +38,13 @@ describe('context compression cost evidence', () => {
           status: 'completed',
           logicalTurnId: 'turn-1',
           transport: 'outbound-http',
-          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 100_000, completionTokens: 10_000 },
+          usage: {
+            promptCacheHitTokens: 0,
+            promptCacheMissTokens: 100_000,
+            completionTokens: 10_000,
+            completionTokensDetails: { reasoningTokens: 7_000 },
+          },
+          visibleOutputCharCount: 40,
           firstContentLatencyMs: 2_000,
         },
         {
@@ -41,7 +53,13 @@ describe('context compression cost evidence', () => {
           status: 'failed',
           logicalTurnId: 'turn-1',
           transport: 'outbound-http',
-          usage: { promptCacheHitTokens: 25_000, promptCacheMissTokens: 25_000, completionTokens: 5_000 },
+          usage: {
+            promptCacheHitTokens: 25_000,
+            promptCacheMissTokens: 25_000,
+            completionTokens: 5_000,
+            completionTokensDetails: { reasoningTokens: 2_000 },
+          },
+          visibleOutputCharCount: 10,
           firstContentLatencyMs: 1_500,
         },
       ],
@@ -54,10 +72,12 @@ describe('context compression cost evidence', () => {
     expect(summary.outboundRequestCount).toBe(3);
     expect(summary.localRetrievalCount).toBe(0);
     expect(summary.missingUsageRecords).toBe(0);
+    expect(summary.visibleOutputCharCount).toBe(150);
     expect(summary.usage).toEqual({
       promptCacheHitTokens: 525_000,
       promptCacheMissTokens: 625_000,
       completionTokens: 65_000,
+      completionTokensDetails: { reasoningTokens: 39_000 },
     });
     expect(summary.costUsd).toBeCloseTo(0.134325, 10);
     expect(summary.costPer100TurnsUsd).toBeCloseTo(1.34325, 10);
@@ -89,6 +109,7 @@ describe('context compression cost evidence', () => {
           logicalTurnId: `turn-${index + 1}`,
           transport: 'outbound-http' as const,
           usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 10_000, completionTokens: completionTokens / 100 },
+          visibleOutputCharCount: 12,
         })),
         ...(missingUsage
           ? [{
@@ -98,6 +119,7 @@ describe('context compression cost evidence', () => {
               logicalTurnId: 'turn-1',
               transport: 'outbound-http' as const,
               usage: null,
+              visibleOutputCharCount: null,
             }]
           : []),
       ],
@@ -155,6 +177,7 @@ describe('context compression cost evidence', () => {
           logicalTurnId: 'turn-1',
           transport: 'outbound-http',
           usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 10 },
+          visibleOutputCharCount: 0,
         },
         {
           requestId: 'generation-retry',
@@ -163,6 +186,7 @@ describe('context compression cost evidence', () => {
           logicalTurnId: 'turn-1',
           transport: 'outbound-http',
           usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 20 },
+          visibleOutputCharCount: 15,
           firstContentLatencyMs: 900,
         },
       ],
@@ -172,6 +196,108 @@ describe('context compression cost evidence', () => {
     expect(summary.completionRate).toBe(1);
     expect(summary.records).toBe(2);
     expect(summary.usage.completionTokens).toBe(30);
+  });
+
+  it('treats local retrieval as having no provider-usage requirement', () => {
+    const summary = summarizeContextExperiment({
+      arm: 'retrievable',
+      provider: 'deepseek-official',
+      model: 'deepseek-flash',
+      pricingSchedule: 'off-peak',
+      rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
+      effectiveTurns: 1,
+      records: [
+        {
+          requestId: 'generation-1',
+          phase: 'generation',
+          status: 'completed',
+          logicalTurnId: 'turn-1',
+          transport: 'outbound-http',
+          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 20 },
+          visibleOutputCharCount: 15,
+          firstContentLatencyMs: 800,
+        },
+        {
+          requestId: 'retrieval-1',
+          phase: 'retrieval',
+          status: 'completed',
+          logicalTurnId: 'turn-1',
+          transport: 'local',
+          usage: null,
+          visibleOutputCharCount: null,
+        },
+      ],
+    });
+
+    expect(summary.localRetrievalCount).toBe(1);
+    expect(summary.missingUsageRecords).toBe(0);
+    expect(summary.costUsd).not.toBeNull();
+  });
+
+  it('measures nearest-rank latency for successful logical generations including completed retries', () => {
+    const summary = summarizeContextExperiment({
+      arm: 'retrievable',
+      provider: 'deepseek-official',
+      model: 'deepseek-flash',
+      pricingSchedule: 'off-peak',
+      rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
+      effectiveTurns: 2,
+      records: [
+        {
+          requestId: 'generation-failed',
+          phase: 'generation',
+          status: 'failed',
+          logicalTurnId: 'turn-1',
+          transport: 'outbound-http',
+          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 5 },
+          visibleOutputCharCount: 2,
+          firstContentLatencyMs: 100,
+        },
+        {
+          requestId: 'generation-retry',
+          phase: 'retry',
+          status: 'completed',
+          logicalTurnId: 'turn-1',
+          transport: 'outbound-http',
+          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 20 },
+          visibleOutputCharCount: 15,
+          firstContentLatencyMs: 900,
+        },
+        {
+          requestId: 'generation-2',
+          phase: 'generation',
+          status: 'completed',
+          logicalTurnId: 'turn-2',
+          transport: 'outbound-http',
+          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 20 },
+          visibleOutputCharCount: 15,
+          firstContentLatencyMs: 300,
+        },
+        {
+          requestId: 'summary-2',
+          phase: 'summary',
+          status: 'completed',
+          logicalTurnId: 'turn-2',
+          transport: 'outbound-http',
+          usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 500, completionTokens: 10 },
+          visibleOutputCharCount: 8,
+          firstContentLatencyMs: 50,
+        },
+        {
+          requestId: 'retrieval-2',
+          phase: 'retrieval',
+          status: 'completed',
+          logicalTurnId: 'turn-2',
+          transport: 'local',
+          usage: null,
+          visibleOutputCharCount: null,
+        },
+      ],
+    });
+
+    expect(summary.completedTurnIds).toEqual(['turn-1', 'turn-2']);
+    expect(summary.firstContentLatencyMsP50).toBe(300);
+    expect(summary.firstContentLatencyMsP95).toBe(900);
   });
 
   it('never estimates savings from empty, truncated, or same-size misaligned turn ranges', () => {
@@ -193,6 +319,7 @@ describe('context compression cost evidence', () => {
         logicalTurnId,
         transport: 'outbound-http' as const,
         usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 1_000, completionTokens: 100 },
+        visibleOutputCharCount: 20,
       })),
     });
 
@@ -249,6 +376,65 @@ describe('context compression cost evidence', () => {
       'output-token-limit',
       'cost-limit',
     ]));
+  });
+
+  it('rejects invalid numeric quantities, invalid attempts, and anything other than outbound concurrency one', () => {
+    const budget = {
+      maxRequests: 2,
+      maxRetriesPerOperation: 1,
+      maxInputTokensPerRequest: 100_000,
+      maxOutputTokensPerRequest: 512,
+      maxTotalCostUsd: 0.03,
+      concurrency: 1,
+      rates: DEEPSEEK_V41_FLASH_OFF_PEAK_RATES,
+    };
+    const safeRequest = {
+      operationId: 'generation-1',
+      attempt: 0,
+      maxInputTokens: 1_000,
+      maxOutputTokens: 128,
+    };
+
+    for (const invalidBudget of [
+      { ...budget, maxRequests: Number.NaN },
+      { ...budget, maxRequests: -1 },
+      { ...budget, maxRequests: 1.5 },
+      { ...budget, maxRetriesPerOperation: Number.NaN },
+      { ...budget, maxInputTokensPerRequest: -1 },
+      { ...budget, maxOutputTokensPerRequest: 1.5 },
+      { ...budget, maxTotalCostUsd: Number.NaN },
+      { ...budget, rates: { ...budget.rates, cacheMissInputPerMillionUsd: -0.1 } },
+    ]) {
+      const result = preflightContextExperiment(invalidBudget, [safeRequest]);
+      expect(result.ok).toBe(false);
+      expect(result.violations).toContain('invalid-budget');
+    }
+
+    for (const concurrency of [0, 2, 1.5, Number.NaN]) {
+      const result = preflightContextExperiment({ ...budget, concurrency }, [safeRequest]);
+      expect(result.ok).toBe(false);
+      expect(result.violations).toContain('concurrency-limit');
+    }
+
+    for (const attempt of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const result = preflightContextExperiment(budget, [{ ...safeRequest, attempt }]);
+      expect(result.ok).toBe(false);
+      expect(result.violations).toContain('retry-limit');
+      expect(Number.isFinite(result.maxEstimatedCostUsd)).toBe(true);
+    }
+
+    for (const requestPatch of [
+      { maxInputTokens: -1 },
+      { maxInputTokens: 1.5 },
+      { maxInputTokens: Number.NaN },
+      { maxOutputTokens: -1 },
+      { maxOutputTokens: 1.5 },
+      { maxOutputTokens: Number.NaN },
+    ]) {
+      const result = preflightContextExperiment(budget, [{ ...safeRequest, ...requestPatch }]);
+      expect(result.ok).toBe(false);
+      expect(Number.isFinite(result.maxEstimatedCostUsd)).toBe(true);
+    }
   });
 
 });

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "mode": "offline-simulated",
   "generatedAt": "2026-11-22T16:00:00.000Z",
   "providerRuns": 0,
@@ -57,12 +57,14 @@
         "promptCacheMissTokens": 75918,
         "completionTokens": 1944
       },
+      "visibleOutputCharCount": 217,
       "costUsd": null,
       "costPer100TurnsUsd": null,
       "cacheHitRate": 0.7553896566278842,
       "firstContentLatencyMsP50": 928,
       "firstContentLatencyMsP95": 1113,
       "branchSwitchFirstContentLatencyMsP50": 965,
+      "latencySampleCount": 30,
       "peakInputTokens": 17907,
       "completionRate": 1
     },
@@ -118,12 +120,14 @@
         "promptCacheMissTokens": 122694,
         "completionTokens": 2904
       },
+      "visibleOutputCharCount": 427,
       "costUsd": null,
       "costPer100TurnsUsd": null,
       "cacheHitRate": 0.5270868745736058,
       "firstContentLatencyMsP50": 928,
       "firstContentLatencyMsP95": 1113,
       "branchSwitchFirstContentLatencyMsP50": 965,
+      "latencySampleCount": 30,
       "peakInputTokens": 4315,
       "completionRate": 1
     },
@@ -179,12 +183,14 @@
         "promptCacheMissTokens": 4501,
         "completionTokens": 1944
       },
+      "visibleOutputCharCount": 217,
       "costUsd": null,
       "costPer100TurnsUsd": null,
       "cacheHitRate": 0.6282008921196102,
       "firstContentLatencyMsP50": 928,
       "firstContentLatencyMsP95": 1113,
       "branchSwitchFirstContentLatencyMsP50": 965,
+      "latencySampleCount": 30,
       "peakInputTokens": 592,
       "completionRate": 1
     }
@@ -200,7 +206,10 @@
     }
   },
   "branchIsolation": {
-    "checkedRequests": 90,
+    "checkedRequests": 123,
+    "checkedGenerationRequests": 90,
+    "checkedSummaryRequests": 30,
+    "checkedRetryRequests": 3,
     "leakedRequests": 0,
     "passed": true
   },
@@ -352,6 +361,7 @@
         "promptCacheMissTokens": 5080,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "full",
@@ -374,6 +384,7 @@
         "promptCacheMissTokens": 4957,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "full",
@@ -396,6 +407,7 @@
         "promptCacheMissTokens": 4832,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 854,
       "branchSwitch": false,
       "arm": "full",
@@ -418,6 +430,7 @@
         "promptCacheMissTokens": 4707,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "full",
@@ -440,6 +453,7 @@
         "promptCacheMissTokens": 4581,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 928,
       "branchSwitch": false,
       "arm": "full",
@@ -462,6 +476,7 @@
         "promptCacheMissTokens": 4455,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 965,
       "branchSwitch": false,
       "arm": "full",
@@ -484,6 +499,7 @@
         "promptCacheMissTokens": 4328,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1002,
       "branchSwitch": false,
       "arm": "full",
@@ -506,6 +522,7 @@
         "promptCacheMissTokens": 4199,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "full",
@@ -528,6 +545,7 @@
         "promptCacheMissTokens": 4070,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1076,
       "branchSwitch": false,
       "arm": "full",
@@ -550,6 +568,7 @@
         "promptCacheMissTokens": 3940,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "full",
@@ -572,6 +591,7 @@
         "promptCacheMissTokens": 1250,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "full",
@@ -594,6 +614,7 @@
         "promptCacheMissTokens": 1232,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "full",
@@ -616,6 +637,7 @@
         "promptCacheMissTokens": 1214,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 854,
       "branchSwitch": false,
       "arm": "full",
@@ -638,6 +660,7 @@
         "promptCacheMissTokens": 1194,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "full",
@@ -660,6 +683,7 @@
         "promptCacheMissTokens": 1173,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 928,
       "branchSwitch": false,
       "arm": "full",
@@ -682,6 +706,7 @@
         "promptCacheMissTokens": 1067,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 965,
       "branchSwitch": true,
       "arm": "full",
@@ -704,6 +729,7 @@
         "promptCacheMissTokens": 1048,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1002,
       "branchSwitch": false,
       "arm": "full",
@@ -726,6 +752,7 @@
         "promptCacheMissTokens": 1027,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "full",
@@ -748,6 +775,7 @@
         "promptCacheMissTokens": 1005,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1076,
       "branchSwitch": false,
       "arm": "full",
@@ -770,6 +798,7 @@
         "promptCacheMissTokens": 982,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "full",
@@ -792,6 +821,7 @@
         "promptCacheMissTokens": 2101,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "full",
@@ -814,6 +844,7 @@
         "promptCacheMissTokens": 2059,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "full",
@@ -836,6 +867,7 @@
         "promptCacheMissTokens": 1989,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 854,
       "branchSwitch": true,
       "arm": "full",
@@ -858,6 +890,7 @@
         "promptCacheMissTokens": 1947,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "full",
@@ -880,6 +913,7 @@
         "promptCacheMissTokens": 1883,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 928,
       "branchSwitch": true,
       "arm": "full",
@@ -902,6 +936,7 @@
         "promptCacheMissTokens": 1840,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 965,
       "branchSwitch": false,
       "arm": "full",
@@ -924,6 +959,7 @@
         "promptCacheMissTokens": 1743,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1002,
       "branchSwitch": true,
       "arm": "full",
@@ -946,6 +982,7 @@
         "promptCacheMissTokens": 1700,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "full",
@@ -968,6 +1005,7 @@
         "promptCacheMissTokens": 1643,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1076,
       "branchSwitch": true,
       "arm": "full",
@@ -990,6 +1028,7 @@
         "promptCacheMissTokens": 1597,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "full",
@@ -1012,6 +1051,7 @@
         "promptCacheMissTokens": 1075,
         "completionTokens": 24
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 980,
       "arm": "full",
       "scenario": "continuous",
@@ -1033,6 +1073,7 @@
         "promptCacheMissTokens": 2210,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "folio",
@@ -1062,9 +1103,14 @@
         "promptCacheMissTokens": 2173,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 719,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputCharCount": 2193,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "0b4aa8d3"
     },
     {
       "requestId": "anonymous-folio-continuous-02",
@@ -1077,6 +1123,7 @@
         "promptCacheMissTokens": 2174,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "folio",
@@ -1106,9 +1153,14 @@
         "promptCacheMissTokens": 2141,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 738,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "a81a5d81"
     },
     {
       "requestId": "anonymous-folio-continuous-03",
@@ -1121,6 +1173,7 @@
         "promptCacheMissTokens": 2137,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 854,
       "branchSwitch": false,
       "arm": "folio",
@@ -1150,9 +1203,14 @@
         "promptCacheMissTokens": 2107,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 757,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "3b1a44a9"
     },
     {
       "requestId": "anonymous-folio-continuous-04",
@@ -1165,6 +1223,7 @@
         "promptCacheMissTokens": 2101,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "folio",
@@ -1194,9 +1253,14 @@
         "promptCacheMissTokens": 2073,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 776,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "b3d4e452"
     },
     {
       "requestId": "anonymous-folio-continuous-05",
@@ -1209,6 +1273,7 @@
         "promptCacheMissTokens": 2041,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 928,
       "branchSwitch": false,
       "arm": "folio",
@@ -1238,9 +1303,14 @@
         "promptCacheMissTokens": 2064,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 795,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputCharCount": 2221,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "9fcc2aa5"
     },
     {
       "requestId": "anonymous-folio-continuous-06",
@@ -1253,6 +1323,7 @@
         "promptCacheMissTokens": 2006,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 965,
       "branchSwitch": false,
       "arm": "folio",
@@ -1282,9 +1353,14 @@
         "promptCacheMissTokens": 2006,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 814,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputCharCount": 2195,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "5c0a6832"
     },
     {
       "requestId": "anonymous-folio-continuous-07",
@@ -1297,6 +1373,7 @@
         "promptCacheMissTokens": 1973,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1002,
       "branchSwitch": false,
       "arm": "folio",
@@ -1326,9 +1403,14 @@
         "promptCacheMissTokens": 1970,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 833,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputCharCount": 2193,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "bf19f39b"
     },
     {
       "requestId": "anonymous-folio-continuous-08",
@@ -1341,6 +1423,7 @@
         "promptCacheMissTokens": 1942,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "folio",
@@ -1370,9 +1453,14 @@
         "promptCacheMissTokens": 1934,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 852,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputCharCount": 2191,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "2e495f06"
     },
     {
       "requestId": "anonymous-folio-continuous-09",
@@ -1385,6 +1473,7 @@
         "promptCacheMissTokens": 1909,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1076,
       "branchSwitch": false,
       "arm": "folio",
@@ -1414,9 +1503,14 @@
         "promptCacheMissTokens": 1902,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 871,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputCharCount": 2193,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "b34a8d61"
     },
     {
       "requestId": "anonymous-folio-continuous-10",
@@ -1429,6 +1523,7 @@
         "promptCacheMissTokens": 1875,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "folio",
@@ -1458,9 +1553,14 @@
         "promptCacheMissTokens": 1869,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 890,
       "arm": "folio",
-      "scenario": "continuous"
+      "scenario": "continuous",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "dd21724b"
     },
     {
       "requestId": "anonymous-folio-branching-01",
@@ -1473,6 +1573,7 @@
         "promptCacheMissTokens": 2175,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "folio",
@@ -1502,9 +1603,14 @@
         "promptCacheMissTokens": 2172,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 719,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "973783b2"
     },
     {
       "requestId": "anonymous-folio-branching-02",
@@ -1517,6 +1623,7 @@
         "promptCacheMissTokens": 2141,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "folio",
@@ -1546,9 +1653,14 @@
         "promptCacheMissTokens": 2138,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 738,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "1aee946b"
     },
     {
       "requestId": "anonymous-folio-branching-03",
@@ -1561,6 +1673,7 @@
         "promptCacheMissTokens": 2107,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 854,
       "branchSwitch": false,
       "arm": "folio",
@@ -1590,9 +1703,14 @@
         "promptCacheMissTokens": 2106,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 757,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputCharCount": 2195,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "44b08b4b"
     },
     {
       "requestId": "anonymous-folio-branching-04",
@@ -1605,6 +1723,7 @@
         "promptCacheMissTokens": 2074,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "folio",
@@ -1634,9 +1753,14 @@
         "promptCacheMissTokens": 2070,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 776,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputCharCount": 2193,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "f18715af"
     },
     {
       "requestId": "anonymous-folio-branching-05",
@@ -1649,6 +1773,7 @@
         "promptCacheMissTokens": 2042,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 928,
       "branchSwitch": false,
       "arm": "folio",
@@ -1678,9 +1803,14 @@
         "promptCacheMissTokens": 2034,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 795,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputCharCount": 2191,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "3e83041f"
     },
     {
       "requestId": "anonymous-folio-branching-06",
@@ -1693,6 +1823,7 @@
         "promptCacheMissTokens": 2008,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 965,
       "branchSwitch": true,
       "arm": "folio",
@@ -1722,9 +1853,14 @@
         "promptCacheMissTokens": 2000,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 814,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputCharCount": 2191,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "7b14dff1"
     },
     {
       "requestId": "anonymous-folio-branching-07",
@@ -1737,6 +1873,7 @@
         "promptCacheMissTokens": 1975,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1002,
       "branchSwitch": false,
       "arm": "folio",
@@ -1766,9 +1903,14 @@
         "promptCacheMissTokens": 1968,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 833,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputCharCount": 2193,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "a6785b09"
     },
     {
       "requestId": "anonymous-folio-branching-08",
@@ -1781,6 +1923,7 @@
         "promptCacheMissTokens": 1941,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "folio",
@@ -1810,9 +1953,14 @@
         "promptCacheMissTokens": 1935,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 852,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "dc0e06f4"
     },
     {
       "requestId": "anonymous-folio-branching-09",
@@ -1825,6 +1973,7 @@
         "promptCacheMissTokens": 1906,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1076,
       "branchSwitch": false,
       "arm": "folio",
@@ -1854,9 +2003,14 @@
         "promptCacheMissTokens": 1901,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 871,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "de564f83"
     },
     {
       "requestId": "anonymous-folio-branching-10",
@@ -1869,6 +2023,7 @@
         "promptCacheMissTokens": 1872,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "folio",
@@ -1898,9 +2053,14 @@
         "promptCacheMissTokens": 1867,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 890,
       "arm": "folio",
-      "scenario": "branching"
+      "scenario": "branching",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "b6cda319"
     },
     {
       "requestId": "anonymous-folio-nested-01",
@@ -1913,6 +2073,7 @@
         "promptCacheMissTokens": 2180,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "folio",
@@ -1942,9 +2103,14 @@
         "promptCacheMissTokens": 2173,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 719,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "2347028d"
     },
     {
       "requestId": "anonymous-folio-nested-02",
@@ -1957,6 +2123,7 @@
         "promptCacheMissTokens": 2146,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "folio",
@@ -1986,9 +2153,14 @@
         "promptCacheMissTokens": 2139,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 738,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "5a6f8b8b"
     },
     {
       "requestId": "anonymous-folio-nested-03",
@@ -2001,6 +2173,7 @@
         "promptCacheMissTokens": 2114,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 854,
       "branchSwitch": true,
       "arm": "folio",
@@ -2030,9 +2203,14 @@
         "promptCacheMissTokens": 2104,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 757,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputCharCount": 2193,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "22563f6f"
     },
     {
       "requestId": "anonymous-folio-nested-04",
@@ -2045,6 +2223,7 @@
         "promptCacheMissTokens": 2079,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "folio",
@@ -2074,9 +2253,14 @@
         "promptCacheMissTokens": 2071,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 776,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "c133790c"
     },
     {
       "requestId": "anonymous-folio-nested-05",
@@ -2089,6 +2273,7 @@
         "promptCacheMissTokens": 2040,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 928,
       "branchSwitch": true,
       "arm": "folio",
@@ -2118,9 +2303,14 @@
         "promptCacheMissTokens": 2036,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 795,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "9c872890"
     },
     {
       "requestId": "anonymous-folio-nested-06",
@@ -2133,6 +2323,7 @@
         "promptCacheMissTokens": 2005,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 965,
       "branchSwitch": false,
       "arm": "folio",
@@ -2162,9 +2353,14 @@
         "promptCacheMissTokens": 2003,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 814,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputCharCount": 2195,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "385c5721"
     },
     {
       "requestId": "anonymous-folio-nested-07",
@@ -2177,6 +2373,7 @@
         "promptCacheMissTokens": 1976,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1002,
       "branchSwitch": true,
       "arm": "folio",
@@ -2206,9 +2403,14 @@
         "promptCacheMissTokens": 1969,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 833,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "ee17acf9"
     },
     {
       "requestId": "anonymous-folio-nested-08",
@@ -2221,6 +2423,7 @@
         "promptCacheMissTokens": 1944,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "folio",
@@ -2250,9 +2453,14 @@
         "promptCacheMissTokens": 1934,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 852,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputCharCount": 2193,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "5d3349be"
     },
     {
       "requestId": "anonymous-folio-nested-09",
@@ -2265,6 +2473,7 @@
         "promptCacheMissTokens": 1908,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1076,
       "branchSwitch": true,
       "arm": "folio",
@@ -2294,9 +2503,14 @@
         "promptCacheMissTokens": 1901,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 871,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "8d0ea1fb"
     },
     {
       "requestId": "anonymous-folio-nested-10",
@@ -2309,6 +2523,7 @@
         "promptCacheMissTokens": 1873,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "folio",
@@ -2338,9 +2553,14 @@
         "promptCacheMissTokens": 1867,
         "completionTokens": 32
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 890,
       "arm": "folio",
-      "scenario": "nested"
+      "scenario": "nested",
+      "inputCharCount": 2194,
+      "messageCount": 2,
+      "contextPolicy": "rolling-summary",
+      "contextFingerprint": "34258c9a"
     },
     {
       "requestId": "anonymous-folio-retry-001",
@@ -2353,6 +2573,7 @@
         "promptCacheMissTokens": 1193,
         "completionTokens": 24
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 980,
       "arm": "folio",
       "scenario": "continuous",
@@ -2381,6 +2602,7 @@
         "promptCacheMissTokens": 183,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2398,11 +2620,8 @@
       "status": "completed",
       "logicalTurnId": "continuous:turn-291",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "continuous"
     },
@@ -2417,6 +2636,7 @@
         "promptCacheMissTokens": 174,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2434,11 +2654,8 @@
       "status": "completed",
       "logicalTurnId": "continuous:turn-292",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "continuous"
     },
@@ -2453,6 +2670,7 @@
         "promptCacheMissTokens": 235,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 854,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2470,11 +2688,8 @@
       "status": "completed",
       "logicalTurnId": "continuous:turn-293",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "continuous"
     },
@@ -2489,6 +2704,7 @@
         "promptCacheMissTokens": 144,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2506,11 +2722,8 @@
       "status": "completed",
       "logicalTurnId": "continuous:turn-294",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "continuous"
     },
@@ -2525,6 +2738,7 @@
         "promptCacheMissTokens": 143,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 928,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2542,11 +2756,8 @@
       "status": "completed",
       "logicalTurnId": "continuous:turn-295",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "continuous"
     },
@@ -2561,6 +2772,7 @@
         "promptCacheMissTokens": 140,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 965,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2578,11 +2790,8 @@
       "status": "completed",
       "logicalTurnId": "continuous:turn-296",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "continuous"
     },
@@ -2597,6 +2806,7 @@
         "promptCacheMissTokens": 140,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1002,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2614,11 +2824,8 @@
       "status": "completed",
       "logicalTurnId": "continuous:turn-297",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "continuous"
     },
@@ -2633,6 +2840,7 @@
         "promptCacheMissTokens": 137,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2650,11 +2858,8 @@
       "status": "completed",
       "logicalTurnId": "continuous:turn-298",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "continuous"
     },
@@ -2669,6 +2874,7 @@
         "promptCacheMissTokens": 134,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1076,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2686,11 +2892,8 @@
       "status": "completed",
       "logicalTurnId": "continuous:turn-299",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "continuous"
     },
@@ -2705,6 +2908,7 @@
         "promptCacheMissTokens": 131,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2722,11 +2926,8 @@
       "status": "completed",
       "logicalTurnId": "continuous:turn-300",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "continuous"
     },
@@ -2741,6 +2942,7 @@
         "promptCacheMissTokens": 152,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2758,11 +2960,8 @@
       "status": "completed",
       "logicalTurnId": "branching:turn-69",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "branching"
     },
@@ -2777,6 +2976,7 @@
         "promptCacheMissTokens": 151,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2794,11 +2994,8 @@
       "status": "completed",
       "logicalTurnId": "branching:turn-70",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "branching"
     },
@@ -2813,6 +3010,7 @@
         "promptCacheMissTokens": 149,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 854,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2830,11 +3028,8 @@
       "status": "completed",
       "logicalTurnId": "branching:turn-71",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "branching"
     },
@@ -2849,6 +3044,7 @@
         "promptCacheMissTokens": 148,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2866,11 +3062,8 @@
       "status": "completed",
       "logicalTurnId": "branching:turn-72",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "branching"
     },
@@ -2885,6 +3078,7 @@
         "promptCacheMissTokens": 146,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 928,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2902,11 +3096,8 @@
       "status": "completed",
       "logicalTurnId": "branching:turn-73",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "branching"
     },
@@ -2921,6 +3112,7 @@
         "promptCacheMissTokens": 143,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 965,
       "branchSwitch": true,
       "arm": "retrievable",
@@ -2938,11 +3130,8 @@
       "status": "completed",
       "logicalTurnId": "branching:turn-298",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "branching"
     },
@@ -2957,6 +3146,7 @@
         "promptCacheMissTokens": 140,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1002,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -2974,11 +3164,8 @@
       "status": "completed",
       "logicalTurnId": "branching:turn-299",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "branching"
     },
@@ -2993,6 +3180,7 @@
         "promptCacheMissTokens": 137,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -3010,11 +3198,8 @@
       "status": "completed",
       "logicalTurnId": "branching:turn-300",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "branching"
     },
@@ -3029,6 +3214,7 @@
         "promptCacheMissTokens": 131,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1076,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -3046,11 +3232,8 @@
       "status": "completed",
       "logicalTurnId": "branching:turn-301",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "branching"
     },
@@ -3065,6 +3248,7 @@
         "promptCacheMissTokens": 130,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -3082,11 +3266,8 @@
       "status": "completed",
       "logicalTurnId": "branching:turn-302",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "branching"
     },
@@ -3101,6 +3282,7 @@
         "promptCacheMissTokens": 156,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 780,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -3118,11 +3300,8 @@
       "status": "completed",
       "logicalTurnId": "nested:turn-196",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "nested"
     },
@@ -3137,6 +3316,7 @@
         "promptCacheMissTokens": 155,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 817,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -3154,11 +3334,8 @@
       "status": "completed",
       "logicalTurnId": "nested:turn-197",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "nested"
     },
@@ -3173,6 +3350,7 @@
         "promptCacheMissTokens": 157,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 854,
       "branchSwitch": true,
       "arm": "retrievable",
@@ -3190,11 +3368,8 @@
       "status": "completed",
       "logicalTurnId": "nested:turn-366",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "nested"
     },
@@ -3209,6 +3384,7 @@
         "promptCacheMissTokens": 148,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 891,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -3226,11 +3402,8 @@
       "status": "completed",
       "logicalTurnId": "nested:turn-367",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "nested"
     },
@@ -3245,6 +3418,7 @@
         "promptCacheMissTokens": 143,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 928,
       "branchSwitch": true,
       "arm": "retrievable",
@@ -3262,11 +3436,8 @@
       "status": "completed",
       "logicalTurnId": "nested:turn-535",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "nested"
     },
@@ -3281,6 +3452,7 @@
         "promptCacheMissTokens": 141,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 965,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -3298,11 +3470,8 @@
       "status": "completed",
       "logicalTurnId": "nested:turn-536",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "nested"
     },
@@ -3317,6 +3486,7 @@
         "promptCacheMissTokens": 140,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1002,
       "branchSwitch": true,
       "arm": "retrievable",
@@ -3334,11 +3504,8 @@
       "status": "completed",
       "logicalTurnId": "nested:turn-695",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "nested"
     },
@@ -3353,6 +3520,7 @@
         "promptCacheMissTokens": 140,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1039,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -3370,11 +3538,8 @@
       "status": "completed",
       "logicalTurnId": "nested:turn-696",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "nested"
     },
@@ -3389,6 +3554,7 @@
         "promptCacheMissTokens": 134,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1076,
       "branchSwitch": true,
       "arm": "retrievable",
@@ -3406,11 +3572,8 @@
       "status": "completed",
       "logicalTurnId": "nested:turn-855",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "nested"
     },
@@ -3425,6 +3588,7 @@
         "promptCacheMissTokens": 129,
         "completionTokens": 64
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 1113,
       "branchSwitch": false,
       "arm": "retrievable",
@@ -3442,11 +3606,8 @@
       "status": "completed",
       "logicalTurnId": "nested:turn-856",
       "transport": "local",
-      "usage": {
-        "promptCacheHitTokens": 0,
-        "promptCacheMissTokens": 0,
-        "completionTokens": 0
-      },
+      "usage": null,
+      "visibleOutputCharCount": null,
       "arm": "retrievable",
       "scenario": "nested"
     },
@@ -3461,6 +3622,7 @@
         "promptCacheMissTokens": 70,
         "completionTokens": 24
       },
+      "visibleOutputCharCount": 7,
       "firstContentLatencyMs": 980,
       "arm": "retrievable",
       "scenario": "continuous",
@@ -3476,7 +3638,8 @@
     "Offline simulated usage validates branch identity and measurement plumbing only.",
     "Folio summary text and request cadence are deterministic offline simulations driven by the production summary-selection and rolling-batch policy.",
     "Route-return and old-turn edit probes use the pure Harness entry points with an in-process fake model transport; no provider response quality is measured.",
-    "It cannot establish quality, real prefix-cache behavior, latency, or API savings.",
+    "Latency percentiles use deterministic offline timestamps for completed logical generation/retry attempts and cannot establish provider latency.",
+    "It cannot establish quality, real prefix-cache behavior, or API savings.",
     "No DeepSeek credential was read and no funded request was sent."
   ]
 }

@@ -70,9 +70,12 @@ console.log(JSON.stringify({
     completedTurns: summary.completedTurnIds.length,
     outboundRequestCount: summary.outboundRequestCount,
     localRetrievalCount: summary.localRetrievalCount,
+    missingUsageRecords: summary.missingUsageRecords,
+    visibleOutputCharCount: summary.visibleOutputCharCount,
     completionRate: summary.completionRate,
     firstContentLatencyMsP50: summary.firstContentLatencyMsP50,
     firstContentLatencyMsP95: summary.firstContentLatencyMsP95,
+    latencySampleCount: summary.latencySampleCount,
   }])),
   comparisons: report.comparisons,
 }, null, 2));

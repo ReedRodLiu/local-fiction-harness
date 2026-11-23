@@ -62,7 +62,7 @@ describe('Slice 1: OpenAI SSE streaming & reasoning separation', () => {
       expect(body.max_tokens).toBe(512);
       const payload = new TextEncoder().encode([
         'data: {"choices":[{"delta":{"content":"铜钥匙还在。"},"finish_reason":"stop"}]}\n\n',
-        'data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":18,"total_tokens":138,"prompt_cache_hit_tokens":100,"prompt_cache_miss_tokens":20}}\n\n',
+        'data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":18,"total_tokens":138,"prompt_cache_hit_tokens":100,"prompt_cache_miss_tokens":20,"completion_tokens_details":{"reasoning_tokens":7}}}\n\n',
         'data: [DONE]\n\n',
       ].join(''));
       let read = false;
@@ -108,6 +108,7 @@ describe('Slice 1: OpenAI SSE streaming & reasoning separation', () => {
           totalTokens: 138,
           promptCacheHitTokens: 100,
           promptCacheMissTokens: 20,
+          completionTokensDetails: { reasoningTokens: 7 },
         },
       },
     ]);

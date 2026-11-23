@@ -441,7 +441,7 @@ export interface OfflineOldTurnEditResult {
 }
 
 export interface OfflineSmokeReport {
-  schemaVersion: 3;
+  schemaVersion: 4;
   mode: 'offline-simulated';
   generatedAt: string;
   providerRuns: 0;
@@ -453,6 +453,9 @@ export interface OfflineSmokeReport {
   };
   branchIsolation: {
     checkedRequests: number;
+    checkedGenerationRequests: number;
+    checkedSummaryRequests: number;
+    checkedRetryRequests: number;
     leakedRequests: number;
     passed: boolean;
   };
@@ -537,6 +540,12 @@ const OFFLINE_FOLIO_BUDGET = {
 } as const;
 
 const OFFLINE_FOLIO_FIXTURE_TAIL_NODES = 10;
+
+const OFFLINE_VISIBLE_OUTPUT = {
+  generation: '离线模拟正文。',
+  summary: '离线模拟摘要。',
+  retry: '离线模拟重试。',
+} as const;
 
 interface OfflineArmContext {
   messages: LlmMessage[];
@@ -698,6 +707,19 @@ function contextFingerprint(messages: readonly LlmMessage[]): string {
     }
   }
   return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function hasForbiddenSiblingFact(
+  messages: readonly LlmMessage[],
+  allowedNodeIds: ReadonlySet<string>,
+  forbiddenFacts: readonly string[],
+): boolean {
+  const serialized = messages.map((message) => message.content).join('\n');
+  return forbiddenFacts.some((fact) => serialized.includes(fact)) ||
+    messages.some((message) => {
+      const match = message.content.match(/当前路线 (turn-\d+-a)/);
+      return Boolean(match && !allowedNodeIds.has(match[1]));
+    });
 }
 
 function simulatedTokens(value: string): number {
@@ -958,6 +980,9 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
   const allRequests: OfflineSmokeReport['requests'] = [];
   let leakedRequests = 0;
   let checkedRequests = 0;
+  let checkedGenerationRequests = 0;
+  let checkedSummaryRequests = 0;
+  let checkedRetryRequests = 0;
   let folioContextsChecked = 0;
   let folioCoverageViolations = 0;
 
@@ -983,13 +1008,8 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
           if (!context.summaryCoverage?.contiguous) folioCoverageViolations += 1;
         }
         checkedRequests += 1;
-        const serialized = messages.map((message) => message.content).join('\n');
-        const leaked = forbiddenFacts.some((fact) => serialized.includes(fact)) ||
-          messages.some((message) => {
-            const match = message.content.match(/当前路线 (turn-\d+-a)/);
-            return Boolean(match && !allowedIds.has(match[1]));
-          });
-        if (leaked) leakedRequests += 1;
+        checkedGenerationRequests += 1;
+        if (hasForbiddenSiblingFact(messages, allowedIds, forbiddenFacts)) leakedRequests += 1;
         const sampleNumber = sceneTurn + 1;
         const usage = simulatedUsage(arm, messages, sampleNumber);
         const record: ContextExperimentRequestRecord = {
@@ -999,6 +1019,7 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
           logicalTurnId: routed.logicalTurnId,
           transport: 'outbound-http',
           usage,
+          visibleOutputCharCount: OFFLINE_VISIBLE_OUTPUT.generation.length,
           firstContentLatencyMs: 420 + (sampleNumber * 37 + seed) % 900,
           branchSwitch: routed.branchSwitch,
         };
@@ -1029,7 +1050,8 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
             status: 'completed',
             logicalTurnId: routed.logicalTurnId,
             transport: 'local',
-            usage: { promptCacheHitTokens: 0, promptCacheMissTokens: 0, completionTokens: 0 },
+            usage: null,
+            visibleOutputCharCount: null,
           };
           recordsByArm[arm].push(retrievalRecord);
           allRequests.push({ ...retrievalRecord, arm, scenario: scenario.spec.name });
@@ -1037,6 +1059,9 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
 
         for (let summaryIndex = 0; summaryIndex < context.summaryRequests.length; summaryIndex += 1) {
           const summaryMessages = context.summaryRequests[summaryIndex];
+          checkedRequests += 1;
+          checkedSummaryRequests += 1;
+          if (hasForbiddenSiblingFact(summaryMessages, allowedIds, forbiddenFacts)) leakedRequests += 1;
           const summaryUsage = simulatedUsage(arm, summaryMessages, sampleNumber, 32);
           const summaryRecord: ContextExperimentRequestRecord = {
             requestId: `anonymous-${arm}-summary-${scenario.spec.name}-${String(summaryIndex + 1).padStart(2, '0')}-${String(sampleNumber).padStart(2, '0')}`,
@@ -1045,10 +1070,22 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
             logicalTurnId: routed.logicalTurnId,
             transport: 'outbound-http',
             usage: summaryUsage,
+            visibleOutputCharCount: OFFLINE_VISIBLE_OUTPUT.summary.length,
             firstContentLatencyMs: 700 + (sampleNumber * 19) % 600,
           };
           recordsByArm[arm].push(summaryRecord);
-          allRequests.push({ ...summaryRecord, arm, scenario: scenario.spec.name });
+          allRequests.push({
+            ...summaryRecord,
+            arm,
+            scenario: scenario.spec.name,
+            inputCharCount: summaryMessages.reduce(
+              (total, message) => total + message.content.length,
+              0,
+            ),
+            messageCount: summaryMessages.length,
+            contextPolicy: 'rolling-summary',
+            contextFingerprint: contextFingerprint(summaryMessages),
+          });
           plans.push({
             operationId: `summary-${scenario.spec.name}-${summaryIndex}-${sceneTurn}`,
             attempt: 0,
@@ -1066,6 +1103,19 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
     const retryAction = scenarios[0].actions[retryTurnIndex];
     const retryContext = contextForArm(arm, scenarios[0], retryParentId, retryAction);
     const retryMessages = retryContext.messages;
+    const retryPath = getActiveBranchNodes(
+      { nodes: scenarios[0].nodes, activeLeafNodeId: retryParentId },
+      retryParentId,
+    );
+    const retryAllowedIds = new Set(retryPath.map((node) => node.id));
+    const retryForbiddenFacts = scenarios[0].routes
+      .filter((route) => route.id !== scenarios[0].routes[0].id)
+      .flatMap((route) => [route.uniqueFact, route.characterState]);
+    checkedRequests += 1;
+    checkedRetryRequests += 1;
+    if (hasForbiddenSiblingFact(retryMessages, retryAllowedIds, retryForbiddenFacts)) {
+      leakedRequests += 1;
+    }
     const retryUsage = simulatedUsage(arm, retryMessages, 30, 24);
     const retryRecord: ContextExperimentRequestRecord = {
       requestId: `anonymous-${arm}-retry-001`,
@@ -1074,6 +1124,7 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
       logicalTurnId: `continuous:turn-${retryTurnIndex + 1}`,
       transport: 'outbound-http',
       usage: retryUsage,
+      visibleOutputCharCount: OFFLINE_VISIBLE_OUTPUT.retry.length,
       firstContentLatencyMs: 980,
     };
     recordsByArm[arm].push(retryRecord);
@@ -1120,7 +1171,7 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
   ) as Record<ContextExperimentArm, ContextExperimentSummary>;
 
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     mode: 'offline-simulated',
     generatedAt: new Date(now()).toISOString(),
     providerRuns: 0,
@@ -1132,6 +1183,9 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
     },
     branchIsolation: {
       checkedRequests,
+      checkedGenerationRequests,
+      checkedSummaryRequests,
+      checkedRetryRequests,
       leakedRequests,
       passed: leakedRequests === 0,
     },
@@ -1156,7 +1210,8 @@ export async function runOfflineSmoke(options: OfflineSmokeOptions = {}): Promis
       'Offline simulated usage validates branch identity and measurement plumbing only.',
       'Folio summary text and request cadence are deterministic offline simulations driven by the production summary-selection and rolling-batch policy.',
       'Route-return and old-turn edit probes use the pure Harness entry points with an in-process fake model transport; no provider response quality is measured.',
-      'It cannot establish quality, real prefix-cache behavior, latency, or API savings.',
+      'Latency percentiles use deterministic offline timestamps for completed logical generation/retry attempts and cannot establish provider latency.',
+      'It cannot establish quality, real prefix-cache behavior, or API savings.',
       'No DeepSeek credential was read and no funded request was sent.',
     ],
   };

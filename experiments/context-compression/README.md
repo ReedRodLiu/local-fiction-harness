@@ -18,17 +18,18 @@ node --experimental-strip-types experiments/context-compression/run.mjs \
   --output experiments/context-compression/evidence/offline-smoke.json
 ```
 
-输出包含：
+输出（`schemaVersion: 4`）包含：
 
-- 每组匿名逐请求 token 用量、首段正文等待、分支切换首轮等待、完成率、完成回合 ID 和请求阶段。
-- 生成、剧情摘要、回取、重试的独立记录；每条记录标明 `outbound-http` 或 `local`，缺失 usage 的单列为未知，不计作零。
+- 每组匿名逐请求 token 用量、可见正文 UTF-16 字符数、首段正文等待、分支切换首轮等待、完成率、完成回合 ID 和请求阶段。
+- 生成、剧情摘要、回取、重试的独立记录；每条记录标明 `outbound-http` 或 `local`。只有出站请求把缺失 provider usage 计为未知，本地回取的 `usage` 明确为 `null`，不计作零，也不要求 provider usage。
 - 固定历史连续回放逐轮使用当前行动的前一回复作为父节点；离线证据记录输入历史长度与末尾节点，不重复发送最终历史或行动本身。
 - B 组使用生产代码的 `selectNodesToSummarize` 与滚动批次口径；每条上下文记录摘要覆盖到哪个节点、已覆盖/未覆盖节点数以及覆盖是否连续。摘要正文和 30 次摘要请求均由固定算法离线模拟，报告明确标记 `deterministic-offline`，不能当作真实摘要质量。
 - 固定历史的分支身份、同名角色在不同路线的互斥状态、共享祖先回取、`A → B → A` 与 `A → B → C` 路线切换、重启重开、续写，以及真实 `FictionHarness.editAndBranch` 入口的旧轮分叉隔离。旧轮测试只使用进程内假 transport，记录 `modelCalls: 1` 和 `providerCalls: 0`。
-- 全历史、滚动摘要和按需回取各自的 retry 记录复用同组具体策略；报告保存输入字符数、消息数、策略名称和内容指纹，不保存请求正文。
+- 90 个生成、30 个滚动摘要和 3 个 retry 出站输入都检查兄弟路线禁止事实；背景摘要与 retry 同样保存输入字符数、消息数、策略名称和内容指纹，不保存请求正文。本地回取不计入这些出站输入。
+- 官方 SSE usage 若提供 `completion_tokens_details.reasoning_tokens`，实验契约会作为独立元数据保留。`completion_tokens` 已包含该思考 token，费用与总 completion token 只按 `completion_tokens` 计算一次，不会再次相加。
 - 明确标记 `mode: offline-simulated`、`providerRuns: 0` 和 `credentialStatus: not-read`。本次会话另由主代理确认父进程没有 `DEEPSEEK_API_KEY`。
 
-离线记录中的 token 数是按固定文本计算的模拟值，`costUsd` 固定为 `null`，不能用于判断真实缓存命中、延迟或费用。
+离线记录中的 token 数和延迟均为固定算法模拟值，`costUsd` 固定为 `null`，不能用于判断真实缓存命中、延迟或费用。延迟 p50/p95 采用 nearest-rank，只覆盖已完成的逻辑生成；逻辑生成包括成功生成或成功 retry，同一 `logicalTurnId` 以最后成功尝试的首段可见正文等待为一个样本。失败尝试、摘要请求和本地回取不计入该分位数。
 
 ## 夹具
 
@@ -53,7 +54,7 @@ node --experimental-strip-types experiments/context-compression/run.mjs \
 | 总费用 | US$0.25 |
 | 并发 | 1 |
 
-预检按每次出站请求的固定输入和最大输出，使用缓存全部未命中的最坏价格计算；任何一项越界都会在传输层发出请求前阻止运行。官方短跑还必须使用 `https://api.deepseek.com`、`deepseek-flash`、主生成思考强度 `high`，并显式选择与账单一致的峰谷费率。当前 `--real` 会直接拒绝，因为尚无已授权的官方测试凭据和实际预检记录。
+预检按每次出站请求的固定输入和最大输出，使用缓存全部未命中的最坏价格计算；任何一项越界都会在传输层发出请求前阻止运行。请求数、retry 数、输入/输出 token 必须是安全非负整数，retry attempt 必须在 `0..maxRetriesPerOperation` 内。费用和费率为非负有限数，出站并发必须精确等于 1，`0`、小数或更大并发都拒绝。官方短跑还必须使用 `https://api.deepseek.com`、`deepseek-flash`、主生成思考强度 `high`，并显式选择与账单一致的峰谷费率。当前 `--real` 会直接拒绝，因为尚无已授权的官方测试凭据和实际预检记录。
 
 当前固定夹具的离线预检计划为 90 次生成、30 次模拟摘要和 3 次重试，共 123 次出站 HTTP 请求，另有 30 条本地回取记录。本地回取没有上游 usage，不计入 128 次出站上限或费用。最坏出站费用上限 US$0.17205945 仍在 US$0.25 总上限内。这个数字按字节数上界和全部缓存未命中计算，是中断用的保守上限，不是预计账单。
 

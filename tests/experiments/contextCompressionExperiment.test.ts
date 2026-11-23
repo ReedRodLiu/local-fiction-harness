@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import { EMPTY_SUMMARY_SNAPSHOT, getActiveBranchNodes, type TurnNode } from '../../src/harness/index.ts';
 import {
   generateExperimentScenario,
@@ -17,6 +18,17 @@ function node(
 }
 
 describe('branch-safe context retrieval', () => {
+  it('keeps the committed offline evidence identical to a deterministic replay', async () => {
+    const generatedAt = Date.parse('2026-11-23T00:00:00+08:00');
+    const report = await runOfflineSmoke({ seed: 20261123, now: () => generatedAt });
+    const committed = JSON.parse(await readFile(
+      new URL('../../experiments/context-compression/evidence/offline-smoke.json', import.meta.url),
+      'utf8',
+    ));
+
+    expect(committed).toEqual(report);
+  });
+
   it('retrieves shared ancestors and current-branch facts without leaking sibling branches', () => {
     const nodes: Record<string, TurnNode> = {
       root: node('root', null, 'assistant', '共同伏笔：青铜钥匙藏在钟楼。', 1),
@@ -98,7 +110,7 @@ describe('branch-safe context retrieval', () => {
   it('runs the 30-turn three-arm smoke offline with anonymous usage, counted background calls, and no cost claim', async () => {
     const report = await runOfflineSmoke({ seed: 20261123, now: () => 1_765_000_000_000 });
 
-    expect(report.schemaVersion).toBe(3);
+    expect(report.schemaVersion).toBe(4);
     expect(report.mode).toBe('offline-simulated');
     for (const arm of ['full', 'folio', 'retrievable'] as const) {
       expect(report.groups[arm].effectiveTurns).toBe(30);
@@ -116,7 +128,14 @@ describe('branch-safe context retrieval', () => {
       status: 'unavailable',
       reason: 'non-official-provider',
     });
-    expect(report.branchIsolation).toMatchObject({ checkedRequests: 90, leakedRequests: 0, passed: true });
+    expect(report.branchIsolation).toMatchObject({
+      checkedRequests: 123,
+      checkedGenerationRequests: 90,
+      checkedSummaryRequests: 30,
+      checkedRetryRequests: 3,
+      leakedRequests: 0,
+      passed: true,
+    });
     expect(report.branchLifecycle).toMatchObject({
       continuedTurns: 2,
       reopenedAfterRestart: true,
@@ -141,6 +160,9 @@ describe('branch-safe context retrieval', () => {
     expect(report.officialPreflight.requestCount).toBe(outboundRecords.length);
     expect(localRetrievalRecords).toHaveLength(30);
     expect(localRetrievalRecords.every((record) => record.phase === 'retrieval')).toBe(true);
+    expect(localRetrievalRecords.every((record) => record.usage === null)).toBe(true);
+    expect(report.groups.retrievable.missingUsageRecords).toBe(0);
+    expect(outboundRecords.every((record) => (record.visibleOutputCharCount ?? 0) > 0)).toBe(true);
     expect(report.requests.every((record) => !Object.hasOwn(record, 'content'))).toBe(true);
 
     const continuousReplay = report.requests.filter(
@@ -166,7 +188,7 @@ describe('branch-safe context retrieval', () => {
     const probes = (['continuous', 'branching', 'nested'] as const)
       .flatMap((scenario) => generateExperimentScenario(scenario, 20261123).probes);
 
-    expect(report.schemaVersion).toBe(3);
+    expect(report.schemaVersion).toBe(4);
     expect(report.folioSummaryPolicy).toMatchObject({
       simulation: 'deterministic-offline',
       policy: 'production-selectNodesToSummarize-with-rolling-batches',
@@ -176,6 +198,23 @@ describe('branch-safe context retrieval', () => {
       passed: true,
     });
     expect(report.folioSummaryPolicy.simulatedSummaryRequests).toBeGreaterThan(0);
+
+    const backgroundSummaryRecords = report.requests.filter((record) => record.phase === 'summary');
+    expect(backgroundSummaryRecords).toHaveLength(30);
+    for (const record of backgroundSummaryRecords) {
+      expect(record).toMatchObject({
+        arm: 'folio',
+        transport: 'outbound-http',
+        contextPolicy: 'rolling-summary',
+        inputCharCount: expect.any(Number),
+        messageCount: expect.any(Number),
+        visibleOutputCharCount: expect.any(Number),
+      });
+      expect(record.contextFingerprint).toMatch(/^[0-9a-f]{8}$/);
+      expect(record.inputCharCount).toBeGreaterThan(0);
+      expect(record.messageCount).toBeGreaterThan(0);
+      expect(record.visibleOutputCharCount).toBeGreaterThan(0);
+    }
 
     const folioContexts = report.requests.filter(
       (record) =>

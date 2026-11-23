@@ -14,6 +14,9 @@ export interface ContextExperimentUsage {
   promptCacheHitTokens: number;
   promptCacheMissTokens: number;
   completionTokens: number;
+  completionTokensDetails?: {
+    reasoningTokens?: number;
+  };
 }
 
 export interface ContextExperimentRequestRecord {
@@ -23,6 +26,7 @@ export interface ContextExperimentRequestRecord {
   logicalTurnId?: string;
   transport: 'outbound-http' | 'local';
   usage: ContextExperimentUsage | null;
+  visibleOutputCharCount: number | null;
   firstContentLatencyMs?: number | null;
   branchSwitch?: boolean;
 }
@@ -50,12 +54,14 @@ export interface ContextExperimentSummary {
   localRetrievalCount: number;
   missingUsageRecords: number;
   usage: ContextExperimentUsage;
+  visibleOutputCharCount: number;
   costUsd: number | null;
   costPer100TurnsUsd: number | null;
   cacheHitRate: number | null;
   firstContentLatencyMsP50: number | null;
   firstContentLatencyMsP95: number | null;
   branchSwitchFirstContentLatencyMsP50: number | null;
+  latencySampleCount: number;
   peakInputTokens: number;
   completionRate: number;
 }
@@ -154,31 +160,39 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
     promptCacheMissTokens: 0,
     completionTokens: 0,
   };
+  let reasoningTokens = 0;
+  let hasReasoningTokens = false;
+  let visibleOutputCharCount = 0;
   let missingUsageRecords = 0;
   let peakInputTokens = 0;
-  const latencyValues: number[] = [];
-  const branchSwitchLatencies: number[] = [];
+  const successfulLatencyByTurn = new Map<string, { latencyMs: number; branchSwitch: boolean }>();
   const completedTurnIds = new Set<string>();
 
   for (const record of group.records) {
-    if (!record.usage) {
-      missingUsageRecords += 1;
-    } else {
-      usage.promptCacheHitTokens += record.usage.promptCacheHitTokens;
-      usage.promptCacheMissTokens += record.usage.promptCacheMissTokens;
-      usage.completionTokens += record.usage.completionTokens;
-      peakInputTokens = Math.max(
-        peakInputTokens,
-        record.usage.promptCacheHitTokens + record.usage.promptCacheMissTokens,
-      );
+    if (record.transport === 'outbound-http') {
+      if (!record.usage) {
+        missingUsageRecords += 1;
+      } else {
+        usage.promptCacheHitTokens += record.usage.promptCacheHitTokens;
+        usage.promptCacheMissTokens += record.usage.promptCacheMissTokens;
+        usage.completionTokens += record.usage.completionTokens;
+        const recordReasoningTokens = record.usage.completionTokensDetails?.reasoningTokens;
+        if (recordReasoningTokens !== undefined) {
+          reasoningTokens += recordReasoningTokens;
+          hasReasoningTokens = true;
+        }
+        peakInputTokens = Math.max(
+          peakInputTokens,
+          record.usage.promptCacheHitTokens + record.usage.promptCacheMissTokens,
+        );
+      }
     }
     if (
-      record.phase === 'generation' &&
-      typeof record.firstContentLatencyMs === 'number' &&
-      Number.isFinite(record.firstContentLatencyMs)
+      typeof record.visibleOutputCharCount === 'number' &&
+      Number.isSafeInteger(record.visibleOutputCharCount) &&
+      record.visibleOutputCharCount >= 0
     ) {
-      latencyValues.push(record.firstContentLatencyMs);
-      if (record.branchSwitch) branchSwitchLatencies.push(record.firstContentLatencyMs);
+      visibleOutputCharCount += record.visibleOutputCharCount;
     }
     if (
       (record.phase === 'generation' || record.phase === 'retry') &&
@@ -187,8 +201,26 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
       record.logicalTurnId.length > 0
     ) {
       completedTurnIds.add(record.logicalTurnId);
+      if (
+        typeof record.firstContentLatencyMs === 'number' &&
+        Number.isFinite(record.firstContentLatencyMs) &&
+        record.firstContentLatencyMs >= 0
+      ) {
+        successfulLatencyByTurn.set(record.logicalTurnId, {
+          latencyMs: record.firstContentLatencyMs,
+          branchSwitch: record.branchSwitch === true,
+        });
+      }
     }
   }
+
+  if (hasReasoningTokens) {
+    usage.completionTokensDetails = { reasoningTokens };
+  }
+  const latencyValues = [...successfulLatencyByTurn.values()].map((sample) => sample.latencyMs);
+  const branchSwitchLatencies = [...successfulLatencyByTurn.values()]
+    .filter((sample) => sample.branchSwitch)
+    .map((sample) => sample.latencyMs);
 
   const totalInputTokens = usage.promptCacheHitTokens + usage.promptCacheMissTokens;
   const complete = missingUsageRecords === 0;
@@ -213,12 +245,14 @@ export function summarizeContextExperiment(group: ContextExperimentGroup): Conte
     ).length,
     missingUsageRecords,
     usage,
+    visibleOutputCharCount,
     costUsd,
     costPer100TurnsUsd,
     cacheHitRate: totalInputTokens > 0 ? usage.promptCacheHitTokens / totalInputTokens : null,
     firstContentLatencyMsP50: percentile(latencyValues, 0.5),
     firstContentLatencyMsP95: percentile(latencyValues, 0.95),
     branchSwitchFirstContentLatencyMsP50: percentile(branchSwitchLatencies, 0.5),
+    latencySampleCount: latencyValues.length,
     peakInputTokens,
     completionRate:
       group.effectiveTurns > 0
@@ -297,29 +331,52 @@ export function preflightContextExperiment(
   requests: readonly ContextExperimentRequestPlan[],
 ): ContextExperimentPreflight {
   const violations = new Set<ContextExperimentBudgetViolation>();
-  const numericLimits = [
+  const integerLimits = [
     budget.maxRequests,
     budget.maxRetriesPerOperation,
     budget.maxInputTokensPerRequest,
     budget.maxOutputTokensPerRequest,
+  ];
+  const nonnegativeFiniteLimits = [
     budget.maxTotalCostUsd,
-    budget.concurrency,
     budget.rates.cacheHitInputPerMillionUsd,
     budget.rates.cacheMissInputPerMillionUsd,
     budget.rates.outputPerMillionUsd,
   ];
-  if (numericLimits.some((value) => !Number.isFinite(value) || value < 0)) {
+  if (
+    integerLimits.some((value) => !Number.isSafeInteger(value) || value < 0) ||
+    nonnegativeFiniteLimits.some((value) => !Number.isFinite(value) || value < 0) ||
+    !Number.isSafeInteger(budget.concurrency)
+  ) {
     violations.add('invalid-budget');
   }
   if (requests.length > budget.maxRequests) violations.add('request-limit');
-  if (budget.concurrency > 1) violations.add('concurrency-limit');
+  if (budget.concurrency !== 1) violations.add('concurrency-limit');
 
   let maxEstimatedCostUsd = 0;
   for (const request of requests) {
-    if (request.attempt > budget.maxRetriesPerOperation) violations.add('retry-limit');
-    if (request.maxInputTokens > budget.maxInputTokensPerRequest) violations.add('input-token-limit');
-    if (request.maxOutputTokens > budget.maxOutputTokensPerRequest) violations.add('output-token-limit');
-    maxEstimatedCostUsd += contextExperimentUsageCostUsd(
+    const validAttempt =
+      Number.isSafeInteger(request.attempt) &&
+      request.attempt >= 0 &&
+      request.attempt <= budget.maxRetriesPerOperation;
+    if (!validAttempt) violations.add('retry-limit');
+
+    const validInputTokens =
+      Number.isSafeInteger(request.maxInputTokens) &&
+      request.maxInputTokens >= 0;
+    if (!validInputTokens || request.maxInputTokens > budget.maxInputTokensPerRequest) {
+      violations.add('input-token-limit');
+    }
+
+    const validOutputTokens =
+      Number.isSafeInteger(request.maxOutputTokens) &&
+      request.maxOutputTokens >= 0;
+    if (!validOutputTokens || request.maxOutputTokens > budget.maxOutputTokensPerRequest) {
+      violations.add('output-token-limit');
+    }
+
+    if (!validInputTokens || !validOutputTokens) continue;
+    const estimatedCost = contextExperimentUsageCostUsd(
       {
         promptCacheHitTokens: 0,
         promptCacheMissTokens: request.maxInputTokens,
@@ -327,8 +384,15 @@ export function preflightContextExperiment(
       },
       budget.rates,
     );
+    if (Number.isFinite(estimatedCost)) maxEstimatedCostUsd += estimatedCost;
   }
-  if (maxEstimatedCostUsd > budget.maxTotalCostUsd) violations.add('cost-limit');
+  if (
+    Number.isFinite(budget.maxTotalCostUsd) &&
+    budget.maxTotalCostUsd >= 0 &&
+    maxEstimatedCostUsd > budget.maxTotalCostUsd
+  ) {
+    violations.add('cost-limit');
+  }
 
   return {
     ok: violations.size === 0,
