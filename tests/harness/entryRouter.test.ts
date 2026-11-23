@@ -93,6 +93,14 @@ describe('V0.2 entryRouter & unified mode helpers', () => {
     expect(classifyEntryHeuristic('我想写一篇同人小说大纲')).toBe('writing');
   });
 
+  it.each([
+    '角色互动不要了，帮我写一篇正文。',
+    '角色互动先不做，帮我写一篇正文。',
+    '角色互动取消，帮我写一篇正文。',
+  ])('does not affirm a mode cancel at the end of its clause: %s', (input) => {
+    expect(classifyEntryHeuristic(input)).toBe('writing');
+  });
+
   it('detects explicit mode-switch commands without hijacking normal character creation', () => {
     expect(detectNaturalModeSwitchIntent('转成写故事')).toBe('writing');
     expect(detectNaturalModeSwitchIntent('帮我切换到文游')).toBe('story');

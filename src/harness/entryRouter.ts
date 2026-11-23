@@ -183,11 +183,13 @@ export function detectNaturalModeSwitchIntent(input: string): StageAssetMode | n
 function hasAffirmedIntent(text: string, pattern: RegExp): boolean {
   const matcher = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
   const negatedBefore = /(?:不要|不是|并非|而非|无需|不必|禁止|不能|不用|不想|勿|别(?:再|把|将|写成|写|做成|做|用|按|转|设|当作|当成|来|搞|弄)?$)/u;
+  const rejectedAfter = /^\s*(?:(?:先)?不做(?:了)?|不要(?:了)?|不用(?:了)?|取消(?:了)?|停止|算了)(?:[啊呀啦嘛吧])?\s*$/u;
   for (const clause of text.split(/[\n，,。！？!?；;]+/u)) {
     for (const match of clause.matchAll(matcher)) {
       const prefix = clause.slice(0, match.index);
       const localPrefix = prefix.split(/(?:而是|而要|但是|不过|然而|但|而|却)/u).at(-1) ?? prefix;
-      if (!negatedBefore.test(localPrefix)) return true;
+      const suffix = clause.slice(match.index + match[0].length);
+      if (!negatedBefore.test(localPrefix) && !rejectedAfter.test(suffix)) return true;
     }
   }
   return false;

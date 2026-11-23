@@ -802,7 +802,10 @@ describe('public character research', () => {
     expect(result.publicResearch).toBeUndefined();
   });
 
-  it('treats a latest standalone writing correction as authoritative over older character mode', async () => {
+  it.each([
+    ['leading rejection', '不用角色互动，帮我写一篇正文。'],
+    ['trailing rejection', '角色互动不要了，帮我写一篇正文。'],
+  ])('treats a latest %s as authoritative over older character mode', async (_case, latest) => {
     const provider = {
       resolve: vi.fn(async () => ({
         identity: {
@@ -831,15 +834,18 @@ describe('public character research', () => {
       createdAt: 1,
       summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
     }];
-    const latest = '不用角色互动，帮我写一篇正文。';
+    const routedPayloads: string[] = [];
     const routedTransport: LlmTransport = {
-      async *streamChat() {
+      async *streamChat(request) {
+        routedPayloads.push(JSON.stringify(request.messages));
         yield { contentDelta: '```lfh-route\nmode: writing\ntitle: 钢之炼金术师同人\n---\n原作：《钢之炼金术师》\n版本：2003 动画版\n剧情时点：第 51 集后\n角色：爱德华·艾尔利克\n```\n\n雨落在中央市。' };
         yield { finishReason: 'stop' };
       },
     };
+    const fallbackPayloads: string[] = [];
     const fallbackTransport: LlmTransport = {
-      async *streamChat() {
+      async *streamChat(request) {
+        fallbackPayloads.push(JSON.stringify(request.messages));
         yield { contentDelta: '雨落在中央市。' };
         yield { finishReason: 'stop' };
       },
@@ -849,6 +855,9 @@ describe('public character research', () => {
       publicResearch: provider as any,
     });
     expect(routed.mode).toBe('writing');
+    expect(routed.publicResearch).toBeUndefined();
+    expect(routedPayloads).toHaveLength(1);
+    expect(routedPayloads[0]).not.toContain('公开资料参考');
     expect(provider.resolve).not.toHaveBeenCalled();
 
     const fallback = await routeEntryMessage(latest, neutralHistory, fallbackTransport, testConfig, {}, '', {
@@ -856,6 +865,9 @@ describe('public character research', () => {
     });
     expect(fallback.mode).toBe('writing');
     expect(fallback.usedFallback).toBe(true);
+    expect(fallback.publicResearch).toBeUndefined();
+    expect(fallbackPayloads).toHaveLength(1);
+    expect(fallbackPayloads[0]).not.toContain('公开资料参考');
     expect(provider.resolve).not.toHaveBeenCalled();
   });
 
