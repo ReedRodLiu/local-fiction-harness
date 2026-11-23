@@ -2,7 +2,7 @@ import { createDefaultBlueprint } from './blueprint.ts';
 import { isOfficialDeepSeekModel, isReasoningEffort } from './keyConfig.ts';
 import { documentVersion, migrateStoryDocuments, replaceDocumentProgress, validateDocumentReads, validateMarkdownDocument, writeDocument, type StoryDocuments } from './markdownDocuments.ts';
 import { createDefaultId } from './id.ts';
-import { validatePublicResearchReference } from './publicResearch.ts';
+import { validatePublicResearchFailure, validatePublicResearchReference } from './publicResearch.ts';
 import type {
   ActiveStorySelection,
   GenerationPreference,
@@ -325,6 +325,7 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
   const reads = validateDocumentReads(entry.documentReads);
   const proposals = validateProposals(entry.proposals, entry.id);
   const publicResearch = validatePublicResearchReference(entry.publicResearch);
+  const publicResearchFailure = validatePublicResearchFailure(entry.publicResearchFailure);
   const documents = entry.documents;
   if (documents !== undefined && (!isRecord(documents) ||
     typeof documents.local !== 'string' || typeof documents.container !== 'string')) {
@@ -352,6 +353,7 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
     ...(reads ? { documentReads: reads } : {}),
     ...(proposals ? { proposals } : {}),
     ...(publicResearch ? { publicResearch } : {}),
+    ...(publicResearchFailure ? { publicResearchFailure } : {}),
   };
 }
 

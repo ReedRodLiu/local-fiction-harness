@@ -26,6 +26,8 @@ import {
   type LocalCharacter,
   type ModelConfig,
   type PlatformRuntime,
+  type PublicResearchFailure,
+  type PublicResearchReference,
   type StageAssetMode,
   type TurnProposalRecord,
 } from '../harness/index.ts';
@@ -247,7 +249,12 @@ export function CharacterPane(props: CharacterPaneProps) {
   function send(
     conversationId: string,
     contents: string,
-    options: { parentId?: string | null; label?: string } = {},
+    options: {
+      parentId?: string | null;
+      label?: string;
+      preferredResearch?: PublicResearchReference;
+      preferredResearchFailure?: PublicResearchFailure;
+    } = {},
   ) {
     const trimmed = contents.trim();
     if (trimmed) {
@@ -270,7 +277,7 @@ export function CharacterPane(props: CharacterPaneProps) {
         options.parentId !== undefined ? { ...target, activeLeafNodeId: options.parentId } : target;
       const effectiveConfig = resolveEffectiveModelConfig(config, current.generationPreference);
       const personaMarkdown = documentVersion(current.document, targetConv.characterVersion).markdown;
-      const publicResearch = await resolvePublicResearchForTurn({
+      const research = await resolvePublicResearchForTurn({
         provider: runtime.publicResearch,
         nodes: targetConv.nodes,
         parentId: targetConv.activeLeafNodeId,
@@ -279,6 +286,8 @@ export function CharacterPane(props: CharacterPaneProps) {
         userInput: trimmed,
         config: effectiveConfig,
         signal,
+        preferred: options.preferredResearch,
+        preferredFailure: options.preferredResearchFailure,
       });
       if (signal.aborted) return;
       const ctx = characterContext(
@@ -287,7 +296,7 @@ export function CharacterPane(props: CharacterPaneProps) {
         targetConv,
         trimmed,
         undefined,
-        publicResearch ?? undefined,
+        research.reference ?? undefined,
       );
       const result = await request(ctx.messages, { config: effectiveConfig });
       if (signal.aborted) return;
@@ -324,7 +333,8 @@ export function CharacterPane(props: CharacterPaneProps) {
               reasoningEffort: result.reasoningEffort,
               documents: docs,
               documentReads: ctx.reads,
-              ...(publicResearch ? { publicResearch } : {}),
+              ...(research.reference ? { publicResearch: research.reference } : {}),
+              ...(research.failure ? { publicResearchFailure: research.failure } : {}),
               ...(proposalRecords.length > 0 ? { proposals: proposalRecords } : {}),
             };
             assistantId = assistant.id;
@@ -411,7 +421,12 @@ export function CharacterPane(props: CharacterPaneProps) {
     const node = conversation.nodes[assistantNodeId];
     if (!node || node.role !== 'assistant') return;
     if (!node.parentId) {
-      send(conversation.id, '', { parentId: null, label: '重新生成开场' });
+      send(conversation.id, '', {
+        parentId: null,
+        label: '重新生成开场',
+        preferredResearch: node.publicResearch,
+        preferredResearchFailure: node.publicResearchFailure,
+      });
       return;
     }
     const userNode = conversation.nodes[node.parentId];
@@ -428,8 +443,29 @@ export function CharacterPane(props: CharacterPaneProps) {
         ...target,
         activeLeafNodeId: userNode.parentId,
       };
-      const ctx = characterContext(state.publicDocument, current, convAtUserParent, userNode.content);
       const effectiveConfig = resolveEffectiveModelConfig(config, current.generationPreference);
+      const personaMarkdown = documentVersion(current.document, target.characterVersion).markdown;
+      const research = await resolvePublicResearchForTurn({
+        provider: runtime.publicResearch,
+        nodes: convAtUserParent.nodes,
+        parentId: convAtUserParent.activeLeafNodeId,
+        settingMarkdown: personaMarkdown,
+        title: current.name,
+        userInput: userNode.content,
+        config: effectiveConfig,
+        signal,
+        preferred: node.publicResearch,
+        preferredFailure: node.publicResearchFailure,
+      });
+      if (signal.aborted) return;
+      const ctx = characterContext(
+        state.publicDocument,
+        current,
+        convAtUserParent,
+        userNode.content,
+        undefined,
+        research.reference ?? undefined,
+      );
       const result = await request(ctx.messages, { config: effectiveConfig });
       if (signal.aborted) return;
 
@@ -459,6 +495,8 @@ export function CharacterPane(props: CharacterPaneProps) {
               reasoningEffort: result.reasoningEffort,
               documents: docs,
               documentReads: ctx.reads,
+              ...(research.reference ? { publicResearch: research.reference } : {}),
+              ...(research.failure ? { publicResearchFailure: research.failure } : {}),
               ...(proposalRecords.length > 0 ? { proposals: proposalRecords } : {}),
             };
             assistantId = assistant.id;

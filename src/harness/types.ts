@@ -1,7 +1,11 @@
 import type { MarkdownProposal, MarkdownProposalStatus, StoryDocumentState, StoryDocuments } from './markdownDocuments.ts';
 import type { CreativeStorage } from './creative.ts';
 import type { DiagnosticCollector } from './diagnostics.ts';
-import type { PublicResearchProvider, PublicResearchReference } from './publicResearch.ts';
+import type {
+  PublicResearchFailure,
+  PublicResearchProvider,
+  PublicResearchReference,
+} from './publicResearch.ts';
 
 export interface StoryBlueprint {
   title: string;
@@ -103,6 +107,7 @@ export interface TurnNode {
   attachmentIds?: string[];
   proposals?: TurnProposalRecord[];
   publicResearch?: PublicResearchReference;
+  publicResearchFailure?: PublicResearchFailure;
 }
 
 export interface Story {

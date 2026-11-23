@@ -16,6 +16,7 @@ import {
 import { findLeafForBranchNode } from './branches.ts';
 import {
   resolvePublicResearchForTurn,
+  type PublicResearchFailure,
   type PublicResearchProvider,
   type PublicResearchReference,
 } from './publicResearch.ts';
@@ -395,6 +396,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     signal?: AbortSignalLike,
     applyEdit = parentId === story.activeLeafNodeId,
     preferredResearch?: PublicResearchReference,
+    preferredResearchFailure?: PublicResearchFailure,
   ) => {
     const globalDocument = await deps.loadPublicDocument?.();
     const publicVersion = globalDocument ? documentVersion(globalDocument) : undefined;
@@ -420,6 +422,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       config,
       signal,
       preferred: preferredResearch,
+      preferredFailure: preferredResearchFailure,
     });
     const reads: DocumentRead[] = [
       ...(publicVersion ? [referenceDocument('public', '我的记忆', publicVersion)] : []),
@@ -438,7 +441,14 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       snapshot,
       expectedUpdatedAt: saved?.updatedAt,
       reads,
-      request: { publicVersion, container, local: documentVersion(local), snapshot, publicResearch: publicResearch ?? undefined },
+      request: {
+        publicVersion,
+        container,
+        local: documentVersion(local),
+        snapshot,
+        publicResearch: publicResearch.reference ?? undefined,
+        publicResearchFailure: publicResearch.failure,
+      },
     };
   };
 
@@ -497,6 +507,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     config: ModelConfig;
     signal?: AbortSignalLike;
     publicResearch?: PublicResearchReference;
+    publicResearchFailure?: PublicResearchFailure;
   }): Promise<TurnExecutionResult> => {
     const assistantCreatedAt = Math.max(now(), opts.baseStory.updatedAt + 1);
     const reasoningEffort = normalizeReasoningEffort(opts.config.reasoningEffort);
@@ -514,6 +525,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       documents: opts.documentState,
       documentReads: opts.reads,
       ...(opts.publicResearch ? { publicResearch: opts.publicResearch } : {}),
+      ...(opts.publicResearchFailure ? { publicResearchFailure: opts.publicResearchFailure } : {}),
       ...(opts.proposals && opts.proposals.length > 0 ? { proposals: opts.proposals } : {}),
     };
 
@@ -640,6 +652,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       config,
       signal: callbacks?.signal,
       publicResearch: prepared.request.publicResearch,
+      publicResearchFailure: prepared.request.publicResearchFailure,
     });
   };
 
@@ -865,6 +878,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         callbacks?.signal,
         false,
         targetNode.publicResearch,
+        targetNode.publicResearchFailure,
       );
       const { story: workingStory, snapshot: parentSnapshot } = prepared;
       const { messages } = assembleThreeZoneContext(
@@ -913,6 +927,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         config,
         signal: callbacks?.signal,
         publicResearch: prepared.request.publicResearch,
+        publicResearchFailure: prepared.request.publicResearchFailure,
       });
     },
 

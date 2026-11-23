@@ -13,6 +13,7 @@ import { createDefaultId } from './id.ts';
 import {
   publicResearchContextMessage,
   resolvePublicResearchForTurn,
+  type PublicResearchFailure,
   type PublicResearchProvider,
   type PublicResearchReference,
 } from './publicResearch.ts';
@@ -59,6 +60,7 @@ export interface EntryRouteResult {
   unparsedBlocks: UnparsedProposalBlock[];
   usedFallback: boolean;
   publicResearch?: PublicResearchReference;
+  publicResearchFailure?: PublicResearchFailure;
 }
 
 export type ManuscriptReplyIntent =
@@ -374,6 +376,11 @@ export interface EntryRouteOptions {
   publicResearch?: PublicResearchProvider;
 }
 
+function hasExplicitStageIntent(userInput: string, history: readonly TurnNode[]): boolean {
+  const combined = [...history.map((node) => node.content), userInput].join('\n');
+  return /(?:文游|跑团|互动叙事|互动故事|互动小说|第一幕|角色互动|角色聊天|扮演对戏|直接.{0,16}(?:对话|对戏|互动))/im.test(combined);
+}
+
 export async function routeEntryMessage(
   userInput: string,
   neutralHistory: readonly TurnNode[],
@@ -384,18 +391,25 @@ export async function routeEntryMessage(
   options: EntryRouteOptions = {},
 ): Promise<EntryRouteResult> {
   const heuristicMode = classifyEntryHeuristic(userInput, neutralHistory);
-  const publicResearch = heuristicMode === 'writing' || heuristicMode === 'ambiguous'
-    ? null
+  const canResolveResearch = heuristicMode !== 'ambiguous' &&
+    (heuristicMode !== 'writing' || hasExplicitStageIntent(userInput, neutralHistory));
+  const publicResearch = !canResolveResearch
+    ? { reference: null }
     : await resolvePublicResearchForTurn({
         provider: options.publicResearch,
-        nodes: {},
-        parentId: null,
+        nodes: Object.fromEntries(neutralHistory.map((node) => [node.id, node])),
+        parentId: neutralHistory.at(-1)?.id ?? null,
         settingMarkdown: userInput,
         userInput,
         config,
         signal: callbacks.signal,
       });
-  const messages = buildEntryRouteMessages(userInput, neutralHistory, publicMemoryMarkdown, publicResearch ?? undefined);
+  const messages = buildEntryRouteMessages(
+    userInput,
+    neutralHistory,
+    publicMemoryMarkdown,
+    publicResearch.reference ?? undefined,
+  );
   let raw = '';
   let reasoningContent = '';
   let finishReason: string | null | undefined;
@@ -438,11 +452,13 @@ export async function routeEntryMessage(
     throw new Error('回复未完成，请重试。');
   }
   const parsed = parseEntryRouteReply(raw, userInput, neutralHistory, reasoningContent);
+  const retainsPublicResearch = parsed.mode === 'story' || parsed.mode === 'character';
   return {
     ...parsed,
     model: config.model,
     reasoningEffort,
-    ...(publicResearch && parsed.mode !== 'writing' ? { publicResearch } : {}),
+    ...(retainsPublicResearch && publicResearch.reference ? { publicResearch: publicResearch.reference } : {}),
+    ...(retainsPublicResearch && publicResearch.failure ? { publicResearchFailure: publicResearch.failure } : {}),
   };
 }
 
