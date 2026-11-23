@@ -298,17 +298,36 @@ describe('Prefix echo cursor', () => {
     );
   });
 
-  it('emits only the synthesized prefill when a partial echo ends before confirmation', async () => {
-    const deltas = await collect(
+  it('preserves held bytes then fails when a partial echo ends before confirmation', async () => {
+    const { deltas, error } = await collectUntilError(
       applyPrefixEchoCursor(fromDeltas([{ contentDelta: '雨声在' }]), '雨声在屋檐'),
     );
 
+    expect(error).toEqual(
+      new Error('Prefix echo could not be confirmed before the stream ended.'),
+    );
     expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta)).toEqual([
-      '雨声在屋檐',
+      '雨声在',
     ]);
   });
 
-  it('emits only the synthesized prefill before propagating an upstream error', async () => {
+  it('preserves held bytes then fails when a terminal finish reason arrives before confirmation', async () => {
+    const { deltas, error } = await collectUntilError(
+      applyPrefixEchoCursor(
+        fromDeltas([{ contentDelta: '雨声在' }, { finishReason: 'stop' }]),
+        '雨声在屋檐',
+      ),
+    );
+
+    expect(error).toEqual(
+      new Error('Prefix echo could not be confirmed before the stream ended.'),
+    );
+    expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta)).toEqual([
+      '雨声在',
+    ]);
+  });
+
+  it('preserves held bytes before propagating an upstream error', async () => {
     const upstreamError = new Error('upstream disconnected');
     const { deltas, error } = await collectUntilError(
       applyPrefixEchoCursor(
@@ -319,7 +338,7 @@ describe('Prefix echo cursor', () => {
 
     expect(error).toBe(upstreamError);
     expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta)).toEqual([
-      '雨声在屋檐',
+      '雨声在',
     ]);
   });
 
@@ -339,7 +358,7 @@ describe('Prefix echo cursor', () => {
     ]);
   });
 
-  it('emits only the synthesized prefill before propagating an abort after a partial echo', async () => {
+  it('preserves held bytes before propagating an abort after a partial echo', async () => {
     const abortError = new Error('aborted');
     abortError.name = 'AbortError';
     const { deltas, error } = await collectUntilError(
@@ -351,7 +370,7 @@ describe('Prefix echo cursor', () => {
 
     expect(error).toBe(abortError);
     expect(deltas.filter((delta) => delta.contentDelta).map((delta) => delta.contentDelta)).toEqual([
-      '雨声在屋檐',
+      '雨声在',
     ]);
   });
 

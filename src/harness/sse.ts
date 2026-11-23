@@ -220,7 +220,9 @@ export function resolveBetaChatCompletionsUrl(baseUrl: string): string {
  * Normalizes the two provider behaviors for Chat Prefix Completion: a provider
  * may echo the assistant prefix before continuing, or may start directly with
  * new content. Until the prefix is either confirmed or contradicted, content
- * is held so a partial match is never silently discarded.
+ * is held so a partial match is never silently discarded. If the stream ends or
+ * fails while that match is still unconfirmed, the held bytes are emitted and
+ * the stream fails explicitly instead of pretending success or blindly cutting.
  */
 export async function* applyPrefixEchoCursor(
   deltas: AsyncIterable<LlmStreamDelta>,
@@ -235,7 +237,6 @@ export async function* applyPrefixEchoCursor(
   let state: EchoState = 'pending';
   let heldContent = '';
   let emittedPrefill = false;
-  let sawNonEmptyContent = false;
 
   const takePrefillDelta = (): LlmStreamDelta | undefined => {
     if (emittedPrefill) return undefined;
@@ -243,8 +244,22 @@ export async function* applyPrefixEchoCursor(
     return { contentDelta: prefillContent };
   };
 
-  const canSynthesizePrefill = (): boolean =>
-    sawNonEmptyContent || state !== 'pending';
+  const canSynthesizePrefill = (): boolean => state !== 'pending';
+
+  const flushHeldContent = function* (): Generator<LlmStreamDelta> {
+    if (!heldContent) return;
+    const content = heldContent;
+    heldContent = '';
+    yield { contentDelta: content };
+  };
+
+  const failUnconfirmedPrefixEcho = function* (): Generator<LlmStreamDelta> {
+    // A partial prefix match cannot prove whether the provider echoed the
+    // prefill. Preserve the received bytes, but fail explicitly rather than
+    // pretending the stream succeeded or silently cutting the text.
+    yield* flushHeldContent();
+    throw new Error('Prefix echo could not be confirmed before the stream ended.');
+  };
 
   const emitNonContentParts = (delta: LlmStreamDelta): LlmStreamDelta | undefined => {
     if (delta.reasoningDelta === undefined && delta.finishReason === undefined) {
@@ -258,7 +273,7 @@ export async function* applyPrefixEchoCursor(
     };
   };
 
-  const flushPendingPrefill = function* (): Generator<LlmStreamDelta> {
+  const flushConfirmedPrefill = function* (): Generator<LlmStreamDelta> {
     if (canSynthesizePrefill()) {
       const prefixDelta = takePrefillDelta();
       if (prefixDelta) yield prefixDelta;
@@ -273,9 +288,6 @@ export async function* applyPrefixEchoCursor(
 
       if (hasContent) {
         const content = delta.contentDelta!;
-        if (content.length > 0) {
-          sawNonEmptyContent = true;
-        }
         if (state === 'pending') {
           const candidate = heldContent + content;
           if (prefillContent.startsWith(candidate)) {
@@ -295,6 +307,10 @@ export async function* applyPrefixEchoCursor(
         } else {
           outputContent = content;
         }
+      }
+
+      if (isTerminal && state === 'pending' && heldContent) {
+        yield* failUnconfirmedPrefixEcho();
       }
 
       if (outputContent !== undefined && outputContent.length > 0) {
@@ -330,14 +346,20 @@ export async function* applyPrefixEchoCursor(
     }
   } catch (error) {
     // An upstream error or abort cannot confirm whether held text is an echo.
-    // If any non-empty content arrived, treat a partial prefix match as an
-    // unconfirmed echo and synthesize only the complete prefill before
-    // propagating the error. Never append the held echo fragment.
-    yield* flushPendingPrefill();
+    // Preserve those exact bytes and propagate the original failure; only an
+    // already-confirmed echo may synthesize the complete prefill.
+    if (state === 'pending') {
+      yield* flushHeldContent();
+    } else {
+      yield* flushConfirmedPrefill();
+    }
     throw error;
   }
 
-  yield* flushPendingPrefill();
+  if (state === 'pending' && heldContent) {
+    yield* failUnconfirmedPrefixEcho();
+  }
+  yield* flushConfirmedPrefill();
 }
 
 export function mapReasoningEffortToDeepSeekParams(effort: ReasoningEffort = 'high'): {
