@@ -391,7 +391,13 @@ export async function routeEntryMessage(
   promptPackOptions?: PromptPackContextOptions,
   refusalOptions?: RefusalStreamIntegrationOptions,
 ): Promise<EntryRouteResult> {
-  const messages = buildEntryRouteMessages(userInput, neutralHistory, publicMemoryMarkdown, promptPackOptions);
+  const effectivePromptPackOptions = refusalOptions?.promptPackOptions ?? promptPackOptions;
+  const messages = buildEntryRouteMessages(
+    userInput,
+    neutralHistory,
+    publicMemoryMarkdown,
+    effectivePromptPackOptions,
+  );
   const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
   const heuristicMode = classifyEntryHeuristic(userInput, neutralHistory);
   const routePrefillMode = heuristicMode === 'ambiguous' ? 'story' : heuristicMode;
@@ -401,10 +407,7 @@ export async function routeEntryMessage(
     messages,
     callbacks,
     mode: refusalOptions?.mode ?? routePrefillMode,
-    ...(promptPackOptions ? { promptPackOptions } : {}),
-    ...(refusalOptions?.promptPackOptions
-      ? { promptPackOptions: refusalOptions.promptPackOptions }
-      : {}),
+    ...(effectivePromptPackOptions ? { promptPackOptions: effectivePromptPackOptions } : {}),
     prefixContent: `\`\`\`lfh-route\nmode: ${routePrefillMode}\n`,
     ...(refusalOptions?.characterName ? { characterName: refusalOptions.characterName } : {}),
     ...(refusalOptions?.onDiagnostic ? { onDiagnostic: refusalOptions.onDiagnostic } : {}),

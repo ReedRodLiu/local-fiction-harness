@@ -191,22 +191,22 @@ export function inspectDelivery(text: string, options: DeliveryOptions = {}): De
 
   const base = { bodyChars, bodyLines, anchors, interjection, protocol, listItems, codeLines };
 
-  // ① 空白回复：没交付。
+  // ① 协议围栏 = 履行了输出契约，哪怕正文为空。
+  if (protocol) return { ...base, thin: false };
+  // ② 空白回复且没有协议产物：没交付。
   if (!trimmed) return { ...base, thin: true };
-  // ①b 纯标点（`……` / `——`）：文游里的「无声」，是正文不是拒答。
+  // ③ 纯标点（`……` / `——`）：文游里的「无声」，是正文不是拒答。
   //     拒答至少要有一个交付动词，所以纯标点不可能由拒答产生。
   if (bodyChars > 0 && bare.length === 0) return { ...base, thin: false };
-  // ② 协议围栏 = 履行了输出契约，哪怕正文只有一句。
-  if (protocol) return { ...base, thin: false };
-  // ③ 结构化多行块（人物面板 / 数值表）：是交付，只是没有叙事。拒答 65/65 全是单行。
+  // ④ 结构化多行块（人物面板 / 数值表）：是交付，只是没有叙事。拒答 65/65 全是单行。
   if (bodyLines >= structuredLineGuard) return { ...base, thin: false };
-  // ④ 字数够了。
+  // ⑤ 字数够了。
   if (bodyChars >= thinMaxChars) return { ...base, thin: false };
-  // ⑤ 叹词白名单：极短合法回复的第一道兜底。
+  // ⑥ 叹词白名单：极短合法回复的第一道兜底。
   if (interjection) return { ...base, thin: false };
-  // ⑥ 场景锚点一票通过。
+  // ⑦ 场景锚点一票通过。
   if (anchors.length >= sceneAnchorMin) return { ...base, thin: false };
-  // ⑦ 写故事模式：大纲 / 要点列表算交付。文游与角色互动不算——那里的列表是跳出戏外。
+  // ⑧ 写故事模式：大纲 / 要点列表算交付。文游与角色互动不算——那里的列表是跳出戏外。
   if (mode === "writing" && (listItems >= listRescueMin || codeLines >= codeRescueMin)) {
     return { ...base, thin: false };
   }

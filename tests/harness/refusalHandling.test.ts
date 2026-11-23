@@ -66,6 +66,8 @@ describe('Spec #132 refusal pattern and thin-delivery engine', () => {
     expect(deliveryIsThin('（她没说话，只是把杯子推过来。）')).toBe(false);
     expect(deliveryIsThin('谢云\n40\n邯河县主')).toBe(false);
     expect(deliveryIsThin('……', { hasProtocolArtifacts: true })).toBe(false);
+    expect(deliveryIsThin('', { hasProtocolArtifacts: true })).toBe(false);
+    expect(deliveryIsThin('')).toBe(true);
     expect(deliveryIsThin('嗯。\n```lfh-summary\n她把茶推过来，等他先开口。\n```')).toBe(false);
   });
 
@@ -155,6 +157,30 @@ describe('Spec #132 120-character refusal wrapper', () => {
     expect(events).toEqual(['r:先想场景。', 'c:嗯。']);
     expect(transport.requests).toHaveLength(1);
     expect(result.diagnostics).toBeUndefined();
+  });
+
+  it('evaluates a stopped delta in full before L1 can trigger an early retry', async () => {
+    const raw = '抱歉，我不能帮你写这段内容。\n```lfh-summary\n她把茶推过来，等他先开口。\n```';
+    const visible: string[] = [];
+    const actions: string[] = [];
+    const transport = scriptedTransport([
+      () => stream([{ contentDelta: raw, finishReason: 'stop' }]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onContentDelta: (delta) => visible.push(delta) },
+      onDiagnostic: (event) => actions.push(event.action),
+    }));
+
+    expect(transport.requests).toHaveLength(1);
+    expect(visible.join('')).toBe(raw);
+    expect(result.content).toBe(raw);
+    expect(result.finishReason).toBe('stop');
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'partial_refused',
+      matchedRuleId: 'L1-02',
+    });
+    expect(actions).toEqual(['refusal_partial_delivered']);
   });
 
   it('aborts an L1 hard refusal before stop and retries once with Pack.tail and a beta prefill', async () => {
@@ -275,6 +301,136 @@ describe('Spec #132 120-character refusal wrapper', () => {
       recoveredFromText: '抱歉，我不能帮你写这段内容。',
       retriedWithPrefix: true,
     });
+  });
+
+  it('delivers a retry partial refusal instead of exhausting it', async () => {
+    const firstRaw = '抱歉，我不能帮你写这段内容。';
+    const longNarrative = '雨声落在窗沿上，他推门走进屋里，看见桌上还留着半盏温茶。'.repeat(4);
+    const retryRaw = `${longNarrative}\n这一段我可以先说结构：开场的雨、两人在廊下擦肩……这类内容的我不写。\n\`\`\`lfh-summary\n两人在屋里重新坐下。\n\`\`\``;
+    const visible: string[] = [];
+    const actions: string[] = [];
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: firstRaw },
+        { finishReason: 'stop' },
+      ]),
+      () => stream([
+        { reasoningDelta: '重拟思路。' },
+        { contentDelta: retryRaw, finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onContentDelta: (delta) => visible.push(delta) },
+      onDiagnostic: (event) => actions.push(event.action),
+    }));
+
+    expect(transport.requests).toHaveLength(2);
+    expect(visible.join('')).toBe(retryRaw);
+    expect(result.content).toBe(retryRaw);
+    expect(result.reasoningContent).toBe('重拟思路。');
+    expect(result.finishReason).toBe('stop');
+    expect(result.prefillContent).toBe(buildModePrefill('story'));
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'partial_refused',
+      recoveredFromText: firstRaw,
+      retriedWithPrefix: true,
+      matchedRuleId: 'L1-02',
+    });
+    expect(actions).toEqual(['refusal_detected', 'refusal_partial_delivered']);
+  });
+
+  it.each(['throw', 'yield'] as const)(
+    'emits buffered content before AbortError when the transport later tries to %s',
+    async (failureMode) => {
+      const controller = new AbortController();
+      const visible: string[] = [];
+      const transport = scriptedTransport([
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { contentDelta: '雨声在' };
+            controller.abort();
+            if (failureMode === 'throw') throw new Error('upstream failed');
+            yield { contentDelta: '屋檐' };
+          },
+        }),
+      ]);
+
+      await expect(streamWithRefusalHandling(baseOptions(transport, {
+        callbacks: {
+          signal: controller.signal,
+          onContentDelta: (delta) => visible.push(delta),
+        },
+      }))).rejects.toMatchObject({ name: 'AbortError' });
+      expect(visible.join('')).toBe('雨声在');
+    },
+  );
+
+  it('does not retry when the first refusal stream ends after an external abort', async () => {
+    const controller = new AbortController();
+    const retry = vi.fn();
+    const transport = scriptedTransport([
+      () => ({
+        async *[Symbol.asyncIterator]() {
+          try {
+            yield { contentDelta: '这个我不能写。' };
+            yield { finishReason: 'stop' };
+          } finally {
+            controller.abort();
+          }
+        },
+      }),
+    ]);
+
+    await expect(streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { signal: controller.signal, onRefusalRetry: retry },
+    }))).rejects.toMatchObject({ name: 'AbortError' });
+    expect(retry).not.toHaveBeenCalled();
+    expect(transport.requests).toHaveLength(1);
+  });
+
+  it('does not retry when onRefusalRetry aborts the operation', async () => {
+    const controller = new AbortController();
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: '抱歉，我不能帮你写这段内容。' },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    await expect(streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: {
+        signal: controller.signal,
+        onRefusalRetry: () => controller.abort(),
+      },
+    }))).rejects.toMatchObject({ name: 'AbortError' });
+    expect(transport.requests).toHaveLength(1);
+  });
+
+  it('does not duplicate a resident Pack.tail on retry', async () => {
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: '抱歉，我不能帮你写这段内容。' },
+        { finishReason: 'stop' },
+      ]),
+      () => stream([
+        { contentDelta: '雨声落在窗沿上，他推门走进屋里，看见桌上还留着半盏温茶。' },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    await streamWithRefusalHandling(baseOptions(transport, {
+      messages: [
+        { role: 'system', content: 'PACK_TAIL' },
+        { role: 'user', content: '继续写下去' },
+      ],
+    }));
+
+    expect(
+      transport.requests[1].messages.filter(
+        (message) => message.role === 'system' && message.content === 'PACK_TAIL',
+      ),
+    ).toHaveLength(1);
   });
 
   it('passes through immediately when no prompt pack is enabled', async () => {
@@ -491,6 +647,40 @@ describe('Spec #132 foreground integration and background exclusion', () => {
     );
     expect(entryTransport.requests).toHaveLength(2);
     expect(entryTransport.requests[1].prefixCompletion?.content).toBe('```lfh-route\nmode: story\n');
+    expect(routed.mode).toBe('story');
+    expect(routed.diagnostics).toMatchObject({ refusalRoute: 'retry' });
+  });
+
+  it('uses refusalOptions prompt pack options for entry messages and retry handling', async () => {
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: '抱歉，我不能帮你写这段内容。' },
+        { finishReason: 'stop' },
+      ]),
+      () => stream([
+        { contentDelta: '```lfh-route\nmode: story\ntitle: 雾港\n---\n## 设定\n雾港。\n```\n\n雾里传来船笛声。' },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const routed = await routeEntryMessage(
+      '开一个雾港文游',
+      [],
+      transport,
+      config,
+      {},
+      '',
+      undefined,
+      {
+        mode: 'story',
+        promptPackOptions: { promptPackLibrary: library },
+      },
+    );
+
+    const firstRequestText = transport.requests[0].messages.map((message) => message.content).join('\n');
+    expect(firstRequestText).toContain('PACK_HEAD');
+    expect(firstRequestText).toContain('PACK_MID');
+    expect(transport.requests[1].messages).toContainEqual({ role: 'system', content: 'PACK_TAIL' });
     expect(routed.mode).toBe('story');
     expect(routed.diagnostics).toMatchObject({ refusalRoute: 'retry' });
   });

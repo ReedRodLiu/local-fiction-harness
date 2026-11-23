@@ -200,8 +200,16 @@ function prefillFor(options: RefusalHandlingOptions): string {
 }
 
 function withRetryTail(messages: LlmMessage[], tail: string): LlmMessage[] {
+  const normalizedTail = tail.trim();
+  if (
+    messages.some(
+      (message) => message.role === 'system' && message.content.trim() === normalizedTail,
+    )
+  ) {
+    return [...messages];
+  }
   const next = [...messages];
-  const tailMessage: LlmMessage = { role: 'system', content: tail };
+  const tailMessage: LlmMessage = { role: 'system', content: normalizedTail };
   const last = next.at(-1);
   if (last?.role === 'user') {
     next.splice(next.length - 1, 0, tailMessage);
@@ -295,6 +303,7 @@ async function runAttempt(
   effective: EffectivePromptPack,
   attempt: 'first' | 'retry',
 ): Promise<AttemptOutcome> {
+  if (options.callbacks?.signal?.aborted) throw createAbortError();
   const reasoningEffort = normalizeReasoningEffort(options.config.reasoningEffort);
   const toVisible = options.toVisibleContent ?? ((text: string) => text);
   const shouldPrefix =
@@ -355,18 +364,20 @@ async function runAttempt(
         if (gateOpen) {
           emitVisible();
         } else {
-          const { body } = splitRefusalProtocolContent(raw);
-          const hardVerdict = raw.length <= REFUSAL_OBSERVATION_CHARS ? judgeHardRefusal(body) : null;
-          if (hardVerdict) {
-            earlyRefusal = {
-              kind: 'refusal',
-              route: 'retry',
-              raw,
-              reasoningContent,
-              matchedRuleId: hardVerdict.ruleId,
-            };
-            internalAbort.abort();
-            break;
+          if (!isStop(finishReason)) {
+            const { body } = splitRefusalProtocolContent(raw);
+            const hardVerdict = raw.length <= REFUSAL_OBSERVATION_CHARS ? judgeHardRefusal(body) : null;
+            if (hardVerdict) {
+              earlyRefusal = {
+                kind: 'refusal',
+                route: 'retry',
+                raw,
+                reasoningContent,
+                matchedRuleId: hardVerdict.ruleId,
+              };
+              internalAbort.abort();
+              break;
+            }
           }
           if (raw.length > REFUSAL_OBSERVATION_CHARS) {
             gateOpen = true;
@@ -434,8 +445,11 @@ async function runAttempt(
       ...(prefixContent !== undefined ? { prefillContent: prefixContent } : {}),
     };
   } catch (error) {
+    if (options.callbacks?.signal?.aborted) {
+      emitVisible();
+      throw createAbortError();
+    }
     if (earlyRefusal) return earlyRefusal;
-    if (options.callbacks?.signal?.aborted) throw createAbortError();
     emitVisible();
     throw error;
   } finally {
@@ -470,11 +484,13 @@ export async function streamWithRefusalHandling(
       reasoningContent: first.reasoningContent,
       finishReason: first.finishReason,
       ...(first.diagnostics ? { diagnostics: first.diagnostics } : {}),
-      ...(first.prefillContent ? { prefillContent: first.prefillContent } : {}),
+      ...(first.prefillContent !== undefined ? { prefillContent: first.prefillContent } : {}),
     };
   }
 
+  if (options.callbacks?.signal?.aborted) throw createAbortError();
   options.callbacks?.onRefusalRetry?.();
+  if (options.callbacks?.signal?.aborted) throw createAbortError();
   emitDiagnostic(
     options,
     effective,
@@ -507,7 +523,31 @@ export async function streamWithRefusalHandling(
       reasoningContent: retry.reasoningContent,
       finishReason: retry.finishReason,
       diagnostics,
-      ...(retry.prefillContent ? { prefillContent: retry.prefillContent } : {}),
+      ...(retry.prefillContent !== undefined ? { prefillContent: retry.prefillContent } : {}),
+    };
+  }
+
+  if (retry.kind === 'result' && retry.diagnostics?.refusalRoute === 'partial_refused') {
+    const diagnostics: NodeDiagnostics = {
+      refusalRoute: 'partial_refused',
+      recoveredFromText: first.raw,
+      retriedWithPrefix,
+      matchedRuleId: first.matchedRuleId,
+    };
+    emitDiagnostic(
+      options,
+      effective,
+      'refusal_partial_delivered',
+      'partial_refused',
+      1,
+      first.matchedRuleId,
+    );
+    return {
+      content: retry.raw,
+      reasoningContent: retry.reasoningContent,
+      finishReason: retry.finishReason,
+      diagnostics,
+      ...(retry.prefillContent !== undefined ? { prefillContent: retry.prefillContent } : {}),
     };
   }
 
@@ -516,7 +556,7 @@ export async function streamWithRefusalHandling(
       content: retry.raw,
       reasoningContent: retry.reasoningContent,
       finishReason: retry.finishReason,
-      ...(retry.prefillContent ? { prefillContent: retry.prefillContent } : {}),
+      ...(retry.prefillContent !== undefined ? { prefillContent: retry.prefillContent } : {}),
     };
   }
 
