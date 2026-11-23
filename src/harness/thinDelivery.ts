@@ -136,10 +136,12 @@ const LIST_ITEM_RE = /^[ \t]*(?:\d+[.、)）]|[-*+])[ \t]+\S/gm;
 const CODE_FENCE_RE = /^[ \t]{0,3}`{3,}[a-zA-Z0-9+#._-]*[ \t]*$/gm;
 
 /**
- * 会把字数算多的 Markdown 噪音：围栏记号、标题符、引用符、强调符、行内代码反引号。
- * 不清掉它们，一条 `**嗯。**` 会被算成 6 字，挤出 `thinMaxChars` 的判区。
+ * 归一化交付正文：剥掉协议围栏、Markdown 噪音与空白，得到用于字数判定的正文。
+ *
+ * 观察窗与 `deliveryIsThin` 必须共用这一份规则；否则反引号、标题符等格式噪音
+ * 会让短拒答被误认为已经超过 120 字，从而跳过应有的单次重试。
  */
-function stripMarkdownNoise(text: string): string {
+export function normalizeDeliveryBody(text: string): string {
   return text
     .replace(/\r\n?/g, "\n")
     .replace(PROTOCOL_FENCE_RE, "")
@@ -148,7 +150,7 @@ function stripMarkdownNoise(text: string): string {
     .replace(/^[ \t]{0,3}>[ \t]?/gm, "") // 引用符
     .replace(/^[ \t]{0,3}(?:\d+[.、)）]|[-*+])[ \t]+/gm, "") // 列表符
     .replace(/[*_~`]+/g, "") // 强调 / 行内代码
-    .replace(/[ \t\u3000]+/g, ""); // 空白与全角空格不计入正文字数
+    .replace(/\s+/g, ""); // 空白（含换行与全角空格）不计入正文字数
 }
 
 /** 判定「这条回复有没有交付任何东西」。 */
@@ -172,11 +174,11 @@ export function inspectDelivery(text: string, options: DeliveryOptions = {}): De
 
   const raw = String(text ?? "").replace(/\r\n?/g, "\n");
   const trimmed = raw.trim();
-  const stripped = stripMarkdownNoise(trimmed);
+  const stripped = normalizeDeliveryBody(trimmed);
   // 剥掉句末标点再判：`嗯。` 与 `嗯` 是同一件事，句号不该把它挤出白名单。
   const bare = stripped.replace(/[。！？…~～.．!?,，、;；:：\-—–\s]+/g, "");
 
-  const bodyChars = stripped.replace(/\n+/g, "").length;
+  const bodyChars = stripped.length;
   const bodyLines = trimmed.split("\n").filter((line) => line.trim() !== "").length;
   const listItems = (trimmed.match(LIST_ITEM_RE) ?? []).length;
   const codeFences = (trimmed.match(CODE_FENCE_RE) ?? []).length;

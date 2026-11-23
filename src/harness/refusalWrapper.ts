@@ -10,7 +10,12 @@ import {
   type PromptPackSlotChars,
 } from './promptPack.ts';
 import { judgeRefusal, type RefusalVerdict } from './refusalPatterns.ts';
-import { routeRefusal, type DeliveryMode, type RefusalRoute } from './thinDelivery.ts';
+import {
+  normalizeDeliveryBody,
+  routeRefusal,
+  type DeliveryMode,
+  type RefusalRoute,
+} from './thinDelivery.ts';
 import type {
   AbortSignalLike,
   LlmMessage,
@@ -399,7 +404,7 @@ async function runAttempt(
         if (gateOpen) {
           emitVisible();
         } else if (
-          splitRefusalProtocolContent(raw).body.replace(/\s/g, '').length >
+          normalizeDeliveryBody(splitRefusalProtocolContent(raw).body).length >
           REFUSAL_OBSERVATION_CHARS
         ) {
           // The 120-character window is the final protection against chunk
@@ -548,6 +553,37 @@ export async function streamWithRefusalHandling(
       'partial_refused',
       1,
       first.matchedRuleId,
+    );
+    throwIfAborted(options);
+    return {
+      content: retry.raw,
+      reasoningContent: retry.reasoningContent,
+      finishReason: retry.finishReason,
+      diagnostics,
+      ...(retry.prefillContent !== undefined ? { prefillContent: retry.prefillContent } : {}),
+    };
+  }
+
+  if (
+    retry.kind === 'result' &&
+    retry.finishReason !== 'stop' &&
+    retry.diagnostics?.sourceStatus === 'REFUSAL'
+  ) {
+    const matchedRuleId = retry.diagnostics.matchedRuleId ?? first.matchedRuleId;
+    const diagnostics: NodeDiagnostics = {
+      sourceStatus: 'REFUSAL',
+      refusalRoute: retry.diagnostics.refusalRoute ?? 'refused_exhausted',
+      recoveredFromText: first.raw,
+      retriedWithPrefix,
+      ...(matchedRuleId ? { matchedRuleId } : {}),
+    };
+    emitDiagnostic(
+      options,
+      effective,
+      'refusal_retry_exhausted',
+      diagnostics.refusalRoute ?? 'refused_exhausted',
+      1,
+      matchedRuleId,
     );
     throwIfAborted(options);
     return {

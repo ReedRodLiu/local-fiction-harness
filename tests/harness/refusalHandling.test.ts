@@ -6,6 +6,7 @@ import {
 import {
   deliveryIsThin,
   deliverySkeletonLooksLikeRefusal,
+  normalizeDeliveryBody,
   routeRefusal,
 } from '../../src/harness/thinDelivery.ts';
 import { DELIVERY_CASES, SKELETON_CASES } from './refusalCalibrationCases.ts';
@@ -87,6 +88,10 @@ describe('Spec #132 refusal pattern and thin-delivery engine', () => {
     expect(deliveryIsThin('', { hasProtocolArtifacts: true })).toBe(false);
     expect(deliveryIsThin('')).toBe(true);
     expect(deliveryIsThin('嗯。\n```lfh-summary\n她把茶推过来，等他先开口。\n```')).toBe(false);
+  });
+
+  it('uses the shared body normalization for delivery length', () => {
+    expect(normalizeDeliveryBody('**嗯。**' + '`'.repeat(110))).toBe('嗯。');
   });
 
   it('routes regex refusals through thin delivery and recovers thin skeletons', () => {
@@ -480,6 +485,36 @@ describe('Spec #132 120-character refusal wrapper', () => {
     expect(result.diagnostics).toMatchObject({ refusalRoute: 'retry' });
   });
 
+  it('ignores Markdown noise when deciding whether to retry a stopped refusal', async () => {
+    const firstRaw = `抱歉，我不能帮你写这段内容。${'`'.repeat(110)}`;
+    const retryRaw = '门外传来两声轻响，他停下手里的动作，侧耳去听。';
+    const visible: string[] = [];
+    const transport = scriptedTransport([
+      () => stream([
+        { contentDelta: firstRaw },
+        { finishReason: 'stop' },
+      ]),
+      () => stream([
+        { contentDelta: retryRaw },
+        { finishReason: 'stop' },
+      ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      callbacks: { onContentDelta: (delta) => visible.push(delta) },
+    }));
+
+    expect(transport.requests).toHaveLength(2);
+    expect(visible.join('')).toBe(retryRaw);
+    expect(result.content).toBe(retryRaw);
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'retry',
+      recoveredFromText: firstRaw,
+      retriedWithPrefix: true,
+      matchedRuleId: 'L1-02',
+    });
+  });
+
   it('retries a thin skeleton once and keeps the recovered retry body', async () => {
     const firstRaw = '我没办法给你这个。';
     const retryRaw = '门外传来两声轻响，他停下手里的动作，侧耳去听。';
@@ -666,9 +701,10 @@ describe('Spec #132 120-character refusal wrapper', () => {
     expect(actions).toEqual(['refusal_detected', 'refusal_partial_delivered']);
   });
 
-  it('passes through REFUSAL diagnostics when a thin retry ends without finishReason', async () => {
+  it('unifies diagnostics when a thin retry ends without finishReason', async () => {
     const firstRaw = '抱歉，我不能帮你写这段内容。';
     const retryRaw = '我没办法给你这个。';
+    const diagnostics: RefusalDiagnosticEvent[] = [];
     const transport = scriptedTransport([
       () => stream([
         { contentDelta: firstRaw },
@@ -677,7 +713,9 @@ describe('Spec #132 120-character refusal wrapper', () => {
       () => stream([{ contentDelta: retryRaw }]),
     ]);
 
-    const result = await streamWithRefusalHandling(baseOptions(transport));
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      onDiagnostic: (event) => diagnostics.push(event),
+    }));
 
     expect(transport.requests).toHaveLength(2);
     expect(result.content).toBe(retryRaw);
@@ -685,9 +723,31 @@ describe('Spec #132 120-character refusal wrapper', () => {
     expect(result.diagnostics).toMatchObject({
       sourceStatus: 'REFUSAL',
       refusalRoute: 'retry-skeleton',
-      recoveredFromText: retryRaw,
+      recoveredFromText: firstRaw,
+      retriedWithPrefix: true,
       matchedRuleId: 'skeleton-01',
     });
+    expect(diagnostics).toEqual([
+      {
+        action: 'refusal_detected',
+        metrics: expect.objectContaining({
+          refusalRoute: 'retry',
+          matchedRuleId: 'L1-02',
+          retryCount: 0,
+        }),
+      },
+      {
+        action: 'refusal_retry_exhausted',
+        metrics: expect.objectContaining({
+          refusalRoute: 'retry-skeleton',
+          matchedRuleId: 'skeleton-01',
+          retryCount: 1,
+        }),
+      },
+    ]);
+    const serialized = JSON.stringify(diagnostics);
+    expect(serialized).not.toContain(firstRaw);
+    expect(serialized).not.toContain(retryRaw);
   });
 
   it('preserves a retry partial refusal that ends without finishReason', async () => {
