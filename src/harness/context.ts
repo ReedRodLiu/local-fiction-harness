@@ -741,7 +741,7 @@ export function assembleCreativeThreeZoneContext(
   };
 }
 
-function takeCreativeSummaryBatch(
+export function takeCreativeSummaryBatch(
   toSummarize: TurnNode[],
   maxNodes: number,
   maxChars: number,
