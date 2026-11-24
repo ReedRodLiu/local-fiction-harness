@@ -322,6 +322,9 @@ export async function streamPrefixContinuation(
     }
     if (!delta.contentDelta) continue;
     content += delta.contentDelta;
+    if (options.prefixContent && options.prefixContent.startsWith(content)) {
+      continue;
+    }
     const continuation = content.startsWith(options.prefixContent)
       ? content.slice(options.prefixContent.length)
       : content;

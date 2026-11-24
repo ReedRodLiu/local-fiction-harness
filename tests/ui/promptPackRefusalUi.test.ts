@@ -252,6 +252,53 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     expect(result.finishReason).toBe('stop');
   });
 
+  it('holds partial prefix matches across chunks until echoed prefix completes or diverges', async () => {
+    const baseConfig = {
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-test',
+      model: 'deepseek-flash',
+      reasoningEffort: 'high' as const,
+      memoryOnly: false,
+    };
+
+    const echoedDeltas: string[] = [];
+    const echoedResult = await streamPrefixContinuation({
+      transport: {
+        async *streamChat() {
+          yield { contentDelta: '雨声' };
+          yield { contentDelta: '在屋檐上' };
+          yield { contentDelta: '落下。', finishReason: 'stop' };
+        },
+      },
+      config: baseConfig,
+      messages: [{ role: 'user', content: '继续。' }],
+      prefixContent: '雨声在屋檐上',
+      onContentDelta: (delta) => echoedDeltas.push(delta),
+    });
+
+    expect(echoedDeltas).toEqual(['落下。']);
+    expect(echoedDeltas.join('')).toBe('落下。');
+    expect(echoedResult.content).toBe('雨声在屋檐上落下。');
+
+    const divergedDeltas: string[] = [];
+    const divergedResult = await streamPrefixContinuation({
+      transport: {
+        async *streamChat() {
+          yield { contentDelta: '雨声' };
+          yield { contentDelta: '停了', finishReason: 'stop' };
+        },
+      },
+      config: baseConfig,
+      messages: [{ role: 'user', content: '继续。' }],
+      prefixContent: '雨声在屋檐上',
+      onContentDelta: (delta) => divergedDeltas.push(delta),
+    });
+
+    expect(divergedDeltas).toEqual(['雨声停了']);
+    expect(divergedDeltas.join('')).toBe('雨声停了');
+    expect(divergedResult.content).toBe('雨声停了');
+  });
+
   it.each([
     {
       name: 'echoed prefix with only an lfh-summary block',
