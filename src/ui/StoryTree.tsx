@@ -25,6 +25,7 @@ const DIAGNOSTIC_LABELS: Record<NodeDiagnosticStatus, string> = {
   CONTENT_FILTER: '这条历史消息在原平台未完整生成',
   TIMEOUT: '这条历史消息生成时响应超时',
   INCOMPLETE: '这条历史消息未完整生成',
+  REFUSAL: '本轮触发拒答，已从上下文隔离',
 };
 
 interface ExpandedSpanNode {
@@ -61,7 +62,29 @@ export function StoryTree({
   const treeOpen = !collapsible || isPanelOpen;
   const spanIdPrefix = useId();
 
-  const spine = useMemo(() => projectStoryTreeSpine(story), [story]);
+  const { spine, activePath, spanRefusalById } = useMemo(() => {
+    const nextSpine = projectStoryTreeSpine(story);
+    const nextActivePath = getActiveBranchNodes(story, nextSpine.activeLeafNodeId);
+    const indexById = new Map<string, number>();
+    nextActivePath.forEach((node, idx) => indexById.set(node.id, idx));
+    const refusalMap = new Map<string, boolean>();
+    for (const item of nextSpine.items) {
+      if (item.kind !== 'span') continue;
+      const startIndex = indexById.get(item.startNodeId) ?? -1;
+      const endIndex = indexById.get(item.endNodeId) ?? -1;
+      let hasRefusal = false;
+      if (startIndex >= 0 && endIndex >= startIndex) {
+        for (let i = startIndex; i <= endIndex; i++) {
+          if (nextActivePath[i].diagnostics?.sourceStatus === 'REFUSAL') {
+            hasRefusal = true;
+            break;
+          }
+        }
+      }
+      refusalMap.set(item.id, hasRefusal);
+    }
+    return { spine: nextSpine, activePath: nextActivePath, spanRefusalById: refusalMap };
+  }, [story]);
 
   const toggleFork = (forkId: string) => {
     setExpandedForkIds((prev) => ({ ...prev, [forkId]: !prev[forkId] }));
@@ -77,7 +100,6 @@ export function StoryTree({
       return;
     }
 
-    const activePath = getActiveBranchNodes(story, spine.activeLeafNodeId);
     const startIndex = activePath.findIndex((node) => node.id === item.startNodeId);
     const endIndex = activePath.findIndex((node) => node.id === item.endNodeId);
     if (startIndex < 0 || endIndex < startIndex) return;
@@ -140,6 +162,7 @@ export function StoryTree({
                   const expandedNodes = expandedSpanNodes[item.id];
                   const isExpanded = expandedNodes !== undefined;
                   const previewId = `${spanIdPrefix}-span-${index}`;
+                  const spanHasRefusal = spanRefusalById.get(item.id) ?? false;
                   return (
                     <li
                       key={item.id}
@@ -165,6 +188,11 @@ export function StoryTree({
                         {item.diagnosticsCount > 0 && (
                           <span className="badge badge-warn">
                             含 {item.diagnosticsCount} 条来源提示
+                          </span>
+                        )}
+                        {spanHasRefusal && (
+                          <span className="story-tree-refusal-note" data-testid="story-tree-diag-refusal">
+                            本轮触发拒答，已从上下文隔离
                           </span>
                         )}
                         <span className="story-tree-preview-inline">{item.preview}</span>
@@ -199,7 +227,10 @@ export function StoryTree({
                                   {formatTurnPreview(node)}
                                 </p>
                                 {diagnostics.length > 0 && (
-                                  <span className="story-tree-span-node-diagnostics" role="note">
+                                  <span
+                                    className="story-tree-span-node-diagnostics"
+                                    role="note"
+                                  >
                                     来源提示：{diagnostics.join(' · ')}
                                   </span>
                                 )}
@@ -281,7 +312,11 @@ export function StoryTree({
                               </div>
 
                               {diagTags.length > 0 && (
-                                <div className="story-tree-diagnostics" role="note">
+                                <div
+                                  className="story-tree-diagnostics"
+                                  role="note"
+                                  data-testid={branch.diagnostics.includes('REFUSAL') ? 'story-tree-diag-refusal' : undefined}
+                                >
                                   来源提示：{diagTags.join(' · ')}
                                 </div>
                               )}

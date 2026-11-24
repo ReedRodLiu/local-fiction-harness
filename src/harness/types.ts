@@ -18,13 +18,24 @@ export interface PlotSummarySnapshot {
   summarizedTurnCount: number;
 }
 
-export type NodeDiagnosticStatus = 'CONTENT_FILTER' | 'TIMEOUT' | 'INCOMPLETE';
+export type NodeDiagnosticStatus = 'CONTENT_FILTER' | 'TIMEOUT' | 'INCOMPLETE' | 'REFUSAL';
 
 export type StorySourceKind = 'manual_script' | 'deepseek_import';
+
+export type RefusalRouteDiagnostic =
+  | 'pass'
+  | 'retry'
+  | 'retry-skeleton'
+  | 'partial_refused'
+  | 'refused_exhausted';
 
 export interface NodeDiagnostics {
   readonly sourceStatus?: NodeDiagnosticStatus;
   readonly contentRisk?: boolean;
+  readonly refusalRoute?: RefusalRouteDiagnostic;
+  readonly recoveredFromText?: string;
+  readonly retriedWithPrefix?: boolean;
+  readonly matchedRuleId?: string;
 }
 
 export interface DocumentRead {
@@ -76,9 +87,13 @@ export type OfficialDeepSeekModel = 'deepseek-flash' | 'deepseek-v4-pro';
 
 export type ReasoningEffort = 'none' | 'low' | 'high' | 'max';
 
+export type PrefixCompletionMode = 'off' | 'on_retry' | 'always';
+
 export interface GenerationPreference {
   model?: OfficialDeepSeekModel;
   reasoningEffort?: ReasoningEffort;
+  promptPackMode?: 'inherit' | 'off' | string;
+  prefixCompletion?: PrefixCompletionMode;
 }
 
 export interface DeepSeekThinkingParam {
@@ -90,6 +105,7 @@ export interface TurnNode {
   parentId: string | null;
   role: 'user' | 'assistant';
   content: string;
+  prefillContent?: string;
   turnSummary?: string;
   reasoningContent?: string;
   model?: string;
@@ -145,6 +161,10 @@ export interface LlmStreamRequest {
   apiKey: string;
   model: string;
   messages: LlmMessage[];
+  prefixCompletion?: {
+    content: string;
+    reasoningContent?: string;
+  };
   reasoningEffort?: ReasoningEffort;
   thinking?: DeepSeekThinkingParam;
   reasoning_effort?: ReasoningEffort;
@@ -222,6 +242,7 @@ export interface BinaryDownloader {
 export interface PlatformRuntime {
   platform: 'web' | 'android';
   diagnostics: DiagnosticCollector;
+  promptPackStorage: KeyValueStorage;
   transport: LlmTransport;
   binaryDownloader: BinaryDownloader;
   storyStorage: StoryStorage;
@@ -234,6 +255,7 @@ export interface PlatformRuntime {
 export interface TurnCallbacks {
   onReasoningDelta?: (delta: string) => void;
   onContentDelta?: (delta: string) => void;
+  onRefusalRetry?: () => void;
   signal?: AbortSignalLike;
 }
 

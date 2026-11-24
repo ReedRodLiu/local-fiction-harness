@@ -3,7 +3,15 @@ import {
   normalizeReasoningEffort,
   sanitizeDiagnosticModelName,
 } from './keyConfig.ts';
-import type { KeyValueStorage, LlmTransport, ReasoningEffort, Story, StoryStorage } from './types.ts';
+import type {
+  KeyValueStorage,
+  LlmTransport,
+  NodeDiagnostics,
+  ReasoningEffort,
+  Story,
+  StoryStorage,
+} from './types.ts';
+import type { RefusalDiagnosticEvent } from './refusalWrapper.ts';
 import {
   buildRedactedStorySkeleton,
   buildRedactedWorkspaceSkeleton,
@@ -131,7 +139,28 @@ const DIAGNOSTIC_ACTIONS = new Set([
   // V0.2+ balance check (zero-content status/latency only)
   'balance_check_done',
   'balance_check_failed',
+  // V0.4 refusal governance (zero-content metrics only)
+  'refusal_detected',
+  'refusal_retry_recovered',
+  'refusal_retry_exhausted',
+  'refusal_partial_delivered',
+  'refusal_original_restored',
   'other',
+]);
+const REFUSAL_DIAGNOSTIC_ACTIONS = new Set([
+  'refusal_detected',
+  'refusal_retry_recovered',
+  'refusal_retry_exhausted',
+  'refusal_partial_delivered',
+  'refusal_original_restored',
+]);
+const REFUSAL_SAFE_METRICS = new Set([
+  'packEnabled',
+  'slotChars',
+  'prefixMode',
+  'refusalRoute',
+  'matchedRuleId',
+  'retryCount',
 ]);
 const CRASH_DIAGNOSTIC_ACTIONS = new Set([
   'unhandled_render_crash',
@@ -162,6 +191,7 @@ const SAFE_NUMERIC_METRICS = new Set([
   'durationMs',
   'hydratedCount',
   'migratedCount',
+  'retryCount',
 ]);
 const SAFE_ENUM_METRICS: Record<string, ReadonlySet<string>> = {
   target: new Set([
@@ -188,6 +218,8 @@ const SAFE_ENUM_METRICS: Record<string, ReadonlySet<string>> = {
   ]),
   routeMode: new Set(['story', 'writing', 'character', 'neutral', 'ambiguous', 'unknown']),
   reasoningEffort: new Set(['none', 'low', 'high', 'max']),
+  prefixMode: new Set(['off', 'on_retry', 'always']),
+  refusalRoute: new Set(['pass', 'retry', 'retry-skeleton', 'partial_refused', 'refused_exhausted']),
 };
 const SAFE_REASON_CODE_UPPER_ALLOWLIST = new Set([
   'TIMEOUT',
@@ -255,7 +287,12 @@ export interface DeepSeekImportRadar {
   status: 'success' | 'error';
 }
 
-export type DiagnosticMetaValue = string | number | boolean | null;
+export type DiagnosticMetaValue =
+  | string
+  | number
+  | boolean
+  | null
+  | { head: number; mid: number; tail: number };
 
 export interface DiagnosticEvent {
   ts: number;
@@ -334,6 +371,42 @@ export interface DiagnosticCollector {
     options?: DiagnosticBundleBuildOptions,
   ): DiagnosticBundle;
   clear(): void;
+}
+
+
+/** Records one zero-content refusal breadcrumb through the same fail-closed allowlist. */
+export function recordRefusalDiagnostic(
+  collector: DiagnosticCollector,
+  event: RefusalDiagnosticEvent,
+): void {
+  try {
+    collector.recordEvent({
+      level: event.action === 'refusal_retry_exhausted' ? 'warn' : 'info',
+      category: 'llm',
+      action: event.action,
+      meta: event.metrics as unknown as Record<string, DiagnosticMetaValue>,
+    });
+  } catch {
+    // Diagnostics must never alter generation behavior.
+  }
+}
+
+export function recordRefusalOriginalRestoredDiagnostic(
+  collector: DiagnosticCollector,
+  nodeDiagnostics?: Pick<NodeDiagnostics, 'refusalRoute' | 'retriedWithPrefix' | 'matchedRuleId'>,
+): void {
+  const route = nodeDiagnostics?.refusalRoute;
+  const retryCount = route
+    ? route === 'pass' ? 0 : 1
+    : nodeDiagnostics?.retriedWithPrefix ? 1 : undefined;
+  recordRefusalDiagnostic(collector, {
+    action: 'refusal_original_restored',
+    metrics: {
+      ...(route ? { refusalRoute: route } : {}),
+      ...(nodeDiagnostics?.matchedRuleId ? { matchedRuleId: nodeDiagnostics.matchedRuleId } : {}),
+      ...(retryCount !== undefined ? { retryCount } : {}),
+    },
+  });
 }
 
 export function formatDiagnosticBundleFileName(date: Date = new Date()): string {
@@ -552,11 +625,14 @@ function sanitizeReasonCode(value: unknown): string | undefined {
 }
 
 function sanitizeMeta(
-  meta?: Record<string, DiagnosticMetaValue>,
+  meta: Record<string, DiagnosticMetaValue> | undefined,
+  action: string,
 ): Record<string, DiagnosticMetaValue> | undefined {
   if (!meta) return undefined;
   const out: Record<string, DiagnosticMetaValue> = {};
+  const refusalAction = REFUSAL_DIAGNOSTIC_ACTIONS.has(action);
   for (const [k, v] of Object.entries(meta)) {
+    if (refusalAction && !REFUSAL_SAFE_METRICS.has(k)) continue;
     if (SAFE_NUMERIC_METRICS.has(k)) {
       if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
         out[k] = Math.round(v);
@@ -568,6 +644,23 @@ function sanitizeMeta(
       if (typeof v === 'string' && enumSet.has(v)) {
         out[k] = v;
       }
+      continue;
+    }
+    if (k === 'packEnabled') {
+      if (typeof v === 'boolean') out[k] = v;
+      continue;
+    }
+    if (k === 'slotChars') {
+      if (isRecord(v)) {
+        const head = normalizeCount(v.head);
+        const mid = normalizeCount(v.mid);
+        const tail = normalizeCount(v.tail);
+        out[k] = { head, mid, tail };
+      }
+      continue;
+    }
+    if (k === 'matchedRuleId') {
+      if (typeof v === 'string' && /^(?:L[1-4]-\d{2}|skeleton-\d{2})$/.test(v)) out[k] = v;
       continue;
     }
     if (k === 'model') {
@@ -725,18 +818,22 @@ function normalizeEvent(value: unknown): DiagnosticEvent | null {
     return null;
   }
   const safeAction = DIAGNOSTIC_ACTIONS.has(rawAction) ? rawAction : 'other';
-  const durationMs = normalizeDurationMs(value.durationMs);
-  const statusCode = normalizeStatusCode(value.statusCode);
-  const errorName = level === 'error' ? normalizeErrorName(value.errorName) : undefined;
-  const errorCode = level === 'error' ? normalizeErrorCode(value.errorCode, statusCode) : undefined;
-  const sanitizedReason =
-    level === 'error' ? sanitizeSingleLineText(value.sanitizedReason, MAX_ERROR_REASON_CHARS) : undefined;
-  const stackTop = normalizeStackTop(value.stackTop);
-  const sanitizedMessage = level === 'error'
+  const refusalAction = REFUSAL_DIAGNOSTIC_ACTIONS.has(safeAction);
+  const durationMs = refusalAction ? undefined : normalizeDurationMs(value.durationMs);
+  const statusCode = refusalAction ? undefined : normalizeStatusCode(value.statusCode);
+  const errorName = !refusalAction && level === 'error' ? normalizeErrorName(value.errorName) : undefined;
+  const errorCode = !refusalAction && level === 'error'
+    ? normalizeErrorCode(value.errorCode, statusCode)
+    : undefined;
+  const sanitizedReason = !refusalAction && level === 'error'
+    ? sanitizeSingleLineText(value.sanitizedReason, MAX_ERROR_REASON_CHARS)
+    : undefined;
+  const stackTop = refusalAction ? [] : normalizeStackTop(value.stackTop);
+  const sanitizedMessage = !refusalAction && level === 'error'
     ? `${safeAction.replaceAll('_', ' ')}${statusCode === undefined ? '' : ` (HTTP ${statusCode})`}`
     : undefined;
   const meta = isRecord(value.meta)
-    ? sanitizeMeta(value.meta as Record<string, DiagnosticMetaValue>)
+    ? sanitizeMeta(value.meta as Record<string, DiagnosticMetaValue>, safeAction)
     : undefined;
 
   return {

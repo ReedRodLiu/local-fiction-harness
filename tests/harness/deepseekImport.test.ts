@@ -381,7 +381,7 @@ describe('Slice 2 (#20): DeepSeek v3 two-stage .zip scan, sanitization, Node Dia
     // Context assembly immediately uses canonical 「故事设定」 Markdown and strictly excludes NodeDiagnostics and THINK reasoningContent
     const ctx = harness.assembleContext(restoredFiction, restoredFiction.activeLeafNodeId, '询问故人身份');
     const promptText = ctx.messages.map((m) => m.content).join('\n');
-    expect(ctx.messages[0].content).toContain('【宫廷剧本】主角：沈知微');
+    expect(promptText).toContain('【宫廷剧本】主角：沈知微');
     expect(promptText).toContain('落款写着“旧日故人”');
     expect(promptText).not.toContain('CONTENT_FILTER');
     expect(promptText).not.toContain('CONTENT_RISK');

@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createAsyncModelConfigStore,
   createDiagnosticCollector,
+  type KeyValueStorage,
   type Story,
 } from '../../src/harness/index.ts';
 import {
@@ -11,6 +12,19 @@ import {
   type NativeVaultPluginLike,
 } from '../../src/platform/capacitorVaultAdapters.ts';
 import { createAndroidPlatformRuntime } from '../../src/platform/androidRuntime.ts';
+
+function createMemoryStorage(): KeyValueStorage {
+  const map = new Map<string, string>();
+  return {
+    getItem: (key) => map.get(key) ?? null,
+    setItem: (key, value) => map.set(key, value),
+    removeItem: (key) => map.delete(key),
+  };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function makeStory(id: string, title: string, updatedAt: number): Story {
   return {
@@ -244,5 +258,34 @@ describe('Android NativeVault TS adapters & PlatformRuntime parity', () => {
     await expect(runtime.storyStorage.compareAndSetActiveStoryId('s2', 's1')).resolves.toBe(true);
     expect(await runtime.storyStorage.getActiveStorySelection()).toEqual({ status: 'present', id: 's1' });
     expect((await runtime.storyStorage.listStories()).map((s) => s.id)).toEqual(['s2']);
+  });
+
+  it('uses injected prompt-pack storage before browser localStorage', () => {
+    const injectedStorage = createMemoryStorage();
+    vi.stubGlobal('window', { localStorage: createMemoryStorage() });
+
+    const runtime = createAndroidPlatformRuntime({ promptPackStorage: injectedStorage });
+
+    expect(runtime.promptPackStorage).toBe(injectedStorage);
+  });
+
+  it('uses browser localStorage as the default prompt-pack storage', () => {
+    const browserStorage = createMemoryStorage();
+    vi.stubGlobal('window', { localStorage: browserStorage });
+
+    const runtime = createAndroidPlatformRuntime();
+
+    expect(runtime.promptPackStorage).toBe(browserStorage);
+  });
+
+  it('uses functional in-memory prompt-pack storage when browser localStorage is unavailable', () => {
+    vi.stubGlobal('window', undefined);
+
+    const runtime = createAndroidPlatformRuntime();
+    runtime.promptPackStorage.setItem('prompt-packs', 'stored');
+
+    expect(runtime.promptPackStorage.getItem('prompt-packs')).toBe('stored');
+    runtime.promptPackStorage.removeItem('prompt-packs');
+    expect(runtime.promptPackStorage.getItem('prompt-packs')).toBeNull();
   });
 });

@@ -120,9 +120,11 @@ describe('Slice 5: Branching, rewind, edit-resend, regenerate, and Plot Summary 
   });
 
   it('regenerates an assistant reply as a parallel sibling branch under the same user node', async () => {
+    const requests: LlmStreamRequest[] = [];
     let genCount = 0;
     const transport: LlmTransport = {
-      async *streamChat() {
+      async *streamChat(req) {
+        requests.push(req);
         genCount += 1;
         yield { contentDelta: `第${genCount}版AI结局`, finishReason: 'stop' };
       },
@@ -137,10 +139,30 @@ describe('Slice 5: Branching, rewind, edit-resend, regenerate, and Plot Summary 
 
     const story = harness.createStory({ title: '重生成测试' });
     const t1 = await harness.runTurn(story, '推开石门', testConfig);
-    const regen = await harness.regenerateNode(t1.story, t1.assistantNode.id, testConfig);
+    const targetAssistantContent = 'TARGET_ASSISTANT_CONTENT_CANARY';
+    const targetPrefillContent = 'TARGET_PREFILL_CONTENT_CANARY';
+    const targetNode = t1.story.nodes[t1.assistantNode.id]!;
+    const storyWithTargetPrefill = await harness.saveStory({
+      ...t1.story,
+      nodes: {
+        ...t1.story.nodes,
+        [targetNode.id]: {
+          ...targetNode,
+          content: targetAssistantContent,
+          prefillContent: targetPrefillContent,
+        },
+      },
+      updatedAt: t1.story.updatedAt + 1,
+    });
+    requests.length = 0;
+    const regen = await harness.regenerateNode(storyWithTargetPrefill, t1.assistantNode.id, testConfig);
 
     expect(regen.assistantNode.parentId).toBe(t1.userNode.id);
     expect(regen.assistantNode.content).toBe('第2版AI结局');
+    const regenerationRequestText = requests.flatMap((request) => request.messages).map((message) => message.content).join('\n');
+    expect(regenerationRequestText).toContain('推开石门');
+    expect(regenerationRequestText).not.toContain(targetAssistantContent);
+    expect(regenerationRequestText).not.toContain(targetPrefillContent);
     const siblings = getSiblingBranchInfo(regen.story, regen.assistantNode.id);
     expect(siblings.total).toBe(2);
     expect(siblings.currentIndex).toBe(1);

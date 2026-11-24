@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
+import { runIssue113PromptPackRefusalE2E } from './issue-113-prompt-pack-refusal.mjs';
 import { verifyInactiveStoryReload, verifyThreeModes } from './three-modes.mjs';
 
 const require = createRequire(import.meta.url);
@@ -892,7 +893,10 @@ async function runImportWizardE2E(browser, port, tmpDir) {
     await page.route('https://cdn.deepseek.example/export-fail.zip', (route) => route.abort('failed'));
     await page.route('**/chat/completions', async (route) => {
       const body = route.request().postDataJSON();
-      const systemPrompt = body.messages?.[0]?.content ?? '';
+      const systemPrompt = (body.messages ?? [])
+        .filter((message) => message.role === 'system')
+        .map((message) => message.content)
+        .join('\n');
       if (systemPrompt.includes('严格只输出一个 JSON 对象')) {
         blueprintRequestCount += 1;
         await route.fulfill({
@@ -2041,6 +2045,21 @@ function contrastRatio(foreground, background) {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
+async function waitForThemeOptionStylesToSettle(page, theme) {
+  await page.waitForFunction(async (expectedTheme) => {
+    const root = document.documentElement;
+    const option = document.querySelector('[data-testid="theme-option-warm"]');
+    if (root.dataset.theme !== expectedTheme || !option) return false;
+    const readColors = () => {
+      const style = getComputedStyle(option);
+      return `${style.backgroundColor}|${style.color}`;
+    };
+    const before = readColors();
+    await new Promise((resolve) => window.setTimeout(resolve, 180));
+    return root.dataset.theme === expectedTheme && readColors() === before;
+  }, theme);
+}
+
 async function verifyDisplayPreferenceMatrix(page, port) {
   await page.route(`http://localhost:${port}/__dev_test_config`, (route) =>
     route.fulfill({
@@ -2103,6 +2122,7 @@ async function verifyDisplayPreferenceMatrix(page, port) {
     ]) {
       await page.setViewportSize(viewport);
       await settings.getByTestId(`theme-option-${theme}`).click();
+      await waitForThemeOptionStylesToSettle(page, theme);
       await settings.getByTestId(`theme-option-${theme}`).scrollIntoViewIfNeeded();
       const layout = await settings.evaluate((element) => {
         const root = document.documentElement;
@@ -3001,7 +3021,10 @@ async function main() {
 
     await page.route('**/chat/completions', async (route) => {
       const reqBody = JSON.parse(route.request().postData() || '{}');
-      const sys = reqBody.messages?.[0]?.content || '';
+      const sys = (reqBody.messages || [])
+        .filter((message) => message.role === 'system')
+        .map((message) => message.content)
+        .join('\n');
       const lastMsg = reqBody.messages?.[reqBody.messages.length - 1]?.content || '';
 
       if (
@@ -3979,6 +4002,13 @@ async function main() {
       await runDiagnosticsE2E(browser, port, tmpDir, viewport);
       console.log(`SPEC24_E2E_PASSED ${viewport.width}x${viewport.height} (long import, catch-up, branch rename, diagnostics, crash recovery, privacy)`);
     }
+    await runIssue113PromptPackRefusalE2E(browser, port, {
+      newOfflineContext,
+      mockSuccessfulKeyVerification,
+      sseResponse,
+      openSettings,
+      closeSettings,
+    });
 
     console.log('ALL_E2E_CHECKS_PASSED');
   } finally {
@@ -4126,7 +4156,10 @@ async function runComprehensiveSpec18MobileE2E(browser, port, tmpDir) {
 
     await page.route('**/chat/completions', async (route) => {
       const reqBody = JSON.parse(route.request().postData() || '{}');
-      const sys = reqBody.messages?.[0]?.content || '';
+      const sys = (reqBody.messages || [])
+        .filter((message) => message.role === 'system')
+        .map((message) => message.content)
+        .join('\n');
       const allText = (reqBody.messages || []).map((m) => m.content).join('\n');
 
       if (sys.includes('剧情摘要压缩')) {
@@ -4405,8 +4438,12 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
     await mockSuccessfulKeyVerification(page);
     await page.route('**/chat/completions', async (route) => {
       const { messages } = route.request().postDataJSON();
-      const summary = messages[0].content.includes('剧情摘要压缩');
-      const gist = messages[0].content.includes('分支梗概助手');
+      const systemText = messages
+        .filter((message) => message.role === 'system')
+        .map((message) => message.content)
+        .join('\n');
+      const summary = systemText.includes('剧情摘要压缩');
+      const gist = systemText.includes('分支梗概助手');
       requests.push({ summary, messages });
       const branchB = alternateSelected;
       if (summary && branchB) {
@@ -4452,11 +4489,15 @@ async function runSpec24LongImportE2E(browser, port, viewport) {
         batches.some((text) => text.includes(OVERSIZED_BEGIN) && text.includes(OVERSIZED_END))) {
       throw new Error('Oversized history node did not reach summary in bounded chunks');
     }
-    const inAnchor = continuation[0].role === 'system' && continuation[0].content.includes(LONG_SCRIPT);
+    const firstNonSystemIndex = continuation.findIndex(({ role }) => role !== 'system');
+    const anchorEnd = firstNonSystemIndex === -1 ? continuation.length : firstNonSystemIndex;
+    const scriptMessageIndex = continuation.findIndex(({ content }) => content.includes(LONG_SCRIPT));
+    const inAnchor = scriptMessageIndex >= 0 && scriptMessageIndex < anchorEnd &&
+      continuation[scriptMessageIndex].role === 'system';
     const scriptOccurrences = continuation.map(({ content }) => content).join('\n').split(LONG_SCRIPT).length - 1;
-    const outsideAnchor = continuation.slice(1).map(({ content }) => content).some((text) =>
-      text.includes(LONG_SCRIPT.slice(0, 24)) || text.includes('剧本片段。'.repeat(10)),
-    );
+    const outsideAnchor = continuation.some(({ content }, index) => index !== scriptMessageIndex && (
+      content.includes(LONG_SCRIPT.slice(0, 24)) || content.includes('剧本片段。'.repeat(10))
+    ));
     if (!inAnchor || scriptOccurrences !== 1 || outsideAnchor) {
       throw new Error(`Setup Node DOCX anchor mismatch (inAnchor=${inAnchor}, occurrences=${scriptOccurrences}, outsideAnchor=${outsideAnchor})`);
     }

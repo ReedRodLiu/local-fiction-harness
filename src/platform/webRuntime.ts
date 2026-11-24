@@ -94,6 +94,7 @@ export function createWebPlatformRuntime(options: WebRuntimeOptions = {}): Platf
   return {
     platform: 'web',
     diagnostics,
+    promptPackStorage: kvStorage,
     transport: createDiagnosticTransport(createOpenAiTransport(devAwareFetch), diagnostics),
     binaryDownloader: options.binaryDownloader ?? createWebBinaryDownloader(binaryFetch),
     storyStorage: createDiagnosticStoryStorage(

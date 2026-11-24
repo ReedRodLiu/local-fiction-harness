@@ -193,6 +193,175 @@ export function resolveChatCompletionsUrl(baseUrl: string): string {
   return `${cleaned}/chat/completions`;
 }
 
+export function resolveBetaChatCompletionsUrl(baseUrl: string): string {
+  const cleaned = baseUrl.trim().replace(/\/+$/, '');
+  if (!cleaned) {
+    throw new Error('Model Base URL cannot be empty.');
+  }
+  if (cleaned.endsWith('/beta/chat/completions')) {
+    return cleaned;
+  }
+  if (cleaned.endsWith('/beta')) {
+    return `${cleaned}/chat/completions`;
+  }
+
+  let base = cleaned;
+  if (base.endsWith('/v1/chat/completions')) {
+    base = base.slice(0, -'/v1/chat/completions'.length);
+  } else if (base.endsWith('/chat/completions')) {
+    base = base.slice(0, -'/chat/completions'.length);
+  } else if (base.endsWith('/v1')) {
+    base = base.slice(0, -'/v1'.length);
+  }
+  return `${base}/beta/chat/completions`;
+}
+
+/**
+ * Normalizes the two provider behaviors for Chat Prefix Completion: a provider
+ * may echo the assistant prefix before continuing, or may start directly with
+ * new content. Until the prefix is either confirmed or contradicted, content
+ * is held so a partial match is never silently discarded. If the stream ends or
+ * fails while that match is still unconfirmed, the held bytes are emitted and
+ * the stream fails explicitly instead of pretending success or blindly cutting.
+ */
+export async function* applyPrefixEchoCursor(
+  deltas: AsyncIterable<LlmStreamDelta>,
+  prefillContent: string,
+): AsyncIterable<LlmStreamDelta> {
+  if (!prefillContent) {
+    yield* deltas;
+    return;
+  }
+
+  type EchoState = 'pending' | 'echoed' | 'diverged';
+  let state: EchoState = 'pending';
+  let heldContent = '';
+  let emittedPrefill = false;
+
+  const takePrefillDelta = (): LlmStreamDelta | undefined => {
+    if (emittedPrefill) return undefined;
+    emittedPrefill = true;
+    return { contentDelta: prefillContent };
+  };
+
+  const canSynthesizePrefill = (): boolean => state !== 'pending';
+
+  const flushHeldContent = function* (): Generator<LlmStreamDelta> {
+    if (!heldContent) return;
+    const content = heldContent;
+    heldContent = '';
+    yield { contentDelta: content };
+  };
+
+  const failUnconfirmedPrefixEcho = function* (): Generator<LlmStreamDelta> {
+    // A partial prefix match cannot prove whether the provider echoed the
+    // prefill. Preserve the received bytes, but fail explicitly rather than
+    // pretending the stream succeeded or silently cutting the text.
+    yield* flushHeldContent();
+    throw new Error('Prefix echo could not be confirmed before the stream ended.');
+  };
+
+  const emitNonContentParts = (delta: LlmStreamDelta): LlmStreamDelta | undefined => {
+    if (delta.reasoningDelta === undefined && delta.finishReason === undefined) {
+      return undefined;
+    }
+    return {
+      ...(delta.reasoningDelta !== undefined
+        ? { reasoningDelta: delta.reasoningDelta }
+        : {}),
+      ...(delta.finishReason !== undefined ? { finishReason: delta.finishReason } : {}),
+    };
+  };
+
+  const flushConfirmedPrefill = function* (): Generator<LlmStreamDelta> {
+    if (canSynthesizePrefill()) {
+      const prefixDelta = takePrefillDelta();
+      if (prefixDelta) yield prefixDelta;
+    }
+  };
+
+  try {
+    for await (const delta of deltas) {
+      const hasContent = typeof delta.contentDelta === 'string';
+      const isTerminal = typeof delta.finishReason === 'string';
+      let outputContent: string | undefined;
+
+      if (hasContent) {
+        const content = delta.contentDelta!;
+        if (state === 'pending') {
+          const candidate = heldContent + content;
+          if (prefillContent.startsWith(candidate)) {
+            heldContent = candidate;
+            if (candidate === prefillContent) {
+              state = 'echoed';
+            }
+          } else if (candidate.startsWith(prefillContent)) {
+            state = 'echoed';
+            heldContent = '';
+            outputContent = candidate.slice(prefillContent.length);
+          } else {
+            state = 'diverged';
+            heldContent = '';
+            outputContent = candidate;
+          }
+        } else {
+          outputContent = content;
+        }
+      }
+
+      if (isTerminal && state === 'pending' && heldContent) {
+        yield* failUnconfirmedPrefixEcho();
+      }
+
+      if (outputContent !== undefined && outputContent.length > 0) {
+        const prefixDelta = takePrefillDelta();
+        if (prefixDelta) yield prefixDelta;
+        yield { ...delta, contentDelta: outputContent };
+        continue;
+      }
+
+      if (hasContent) {
+        const nonContentParts = emitNonContentParts(delta);
+        if (nonContentParts) {
+          if (isTerminal && canSynthesizePrefill()) {
+            const prefixDelta = takePrefillDelta();
+            if (prefixDelta) yield prefixDelta;
+          }
+          yield nonContentParts;
+        } else if (delta.contentDelta === '' && state !== 'pending') {
+          const prefixDelta = takePrefillDelta();
+          if (prefixDelta) yield prefixDelta;
+          yield { ...delta, contentDelta: '' };
+        }
+        continue;
+      }
+
+      if (isTerminal) {
+        if (canSynthesizePrefill()) {
+          const prefixDelta = takePrefillDelta();
+          if (prefixDelta) yield prefixDelta;
+        }
+      }
+      yield delta;
+    }
+  } catch (error) {
+    // An upstream error or abort cannot confirm whether held text is an echo.
+    // Preserve those exact bytes and propagate the original failure; only an
+    // already-confirmed echo may synthesize the complete prefill.
+    if (state === 'pending') {
+      yield* flushHeldContent();
+    } else {
+      yield* flushConfirmedPrefill();
+    }
+    throw error;
+  }
+
+  if (state === 'pending' && heldContent) {
+    yield* failUnconfirmedPrefixEcho();
+  }
+  yield* flushConfirmedPrefill();
+}
+
 export function mapReasoningEffortToDeepSeekParams(effort: ReasoningEffort = 'high'): {
   thinking: DeepSeekThinkingParam;
   reasoning_effort: ReasoningEffort;
@@ -209,7 +378,6 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
   headers: Record<string, string>;
   body: string;
 } {
-  const url = resolveChatCompletionsUrl(req.baseUrl);
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'text/event-stream',
@@ -224,12 +392,39 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
   const mapped = mapReasoningEffortToDeepSeekParams(effort);
   const thinking = req.thinking ?? mapped.thinking;
   const reasoning_effort = req.reasoning_effort ?? mapped.reasoning_effort;
+  const allowReasoning = thinking.type !== 'disabled' && reasoning_effort !== 'none';
+  if (req.prefixCompletion && req.messages.length === 0) {
+    throw new Error(
+      'Cannot use prefix completion with an empty message history. The final original message must be user or system.',
+    );
+  }
+  if (req.prefixCompletion && req.messages.at(-1)?.role === 'assistant') {
+    throw new Error(
+      'Cannot append an assistant prefix after an assistant message. The final original message must be user or system.',
+    );
+  }
+  const messages = req.prefixCompletion
+    ? [
+        ...req.messages,
+        {
+          role: 'assistant' as const,
+          content: req.prefixCompletion.content,
+          prefix: true as const,
+          ...(allowReasoning && req.prefixCompletion.reasoningContent !== undefined
+            ? { reasoning_content: req.prefixCompletion.reasoningContent }
+            : {}),
+        },
+      ]
+    : req.messages;
+  const url = req.prefixCompletion
+    ? resolveBetaChatCompletionsUrl(req.baseUrl)
+    : resolveChatCompletionsUrl(req.baseUrl);
   return {
     url,
     headers,
     body: JSON.stringify({
       model: req.model,
-      messages: req.messages,
+      messages,
       stream: true,
       thinking,
       reasoning_effort,
@@ -276,7 +471,10 @@ export function createOpenAiTransport(fetchImpl?: FetchLike): LlmTransport {
         throw new Error('Model response body is empty.');
       }
 
-      yield* parseOpenAiSseStream(toAsyncChunks(response.body));
+      yield* applyPrefixEchoCursor(
+        parseOpenAiSseStream(toAsyncChunks(response.body)),
+        req.prefixCompletion?.content ?? '',
+      );
     },
   };
 }

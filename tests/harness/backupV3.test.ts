@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BUILTIN_NARRATIVE_PROMPT_PACK,
   EMPTY_SUMMARY_SNAPSHOT,
   createDefaultBlueprint,
   detectBackupSchemaVersion,
@@ -255,6 +256,121 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     expect(mergedAgain.report.mergedPublicMemory).toBe(false);
   });
 
+  it('preserves an explicit null prompt-pack activation and remaps imported preference references', () => {
+    let seq = 0;
+    const createId = () => `fresh-${++seq}`;
+    const localPack = {
+      id: 'same-pack',
+      title: '本地包',
+      slots: { head: '本地规则', mid: '', tail: '' },
+    };
+    const incomingPack = {
+      id: 'same-pack',
+      title: '备份包',
+      slots: { head: '备份规则', mid: '', tail: '' },
+    };
+    const incomingStory = makeSampleStory('story-with-pack', '带提示词包的故事');
+    incomingStory.generationPreference = { promptPackMode: 'same-pack' };
+    const incomingWork = { ...newWork('带提示词包的作品'), id: 'work-with-pack' };
+    incomingWork.generationPreference = { promptPackMode: 'same-pack' };
+    const incomingCharacter = { ...newCharacter('带提示词包的角色', '角色设定'), id: 'character-with-pack' };
+    incomingCharacter.generationPreference = { promptPackMode: 'same-pack' };
+
+    const merged = mergeRestoredBackup(
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        promptPacks: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK, localPack],
+          activePackId: null,
+        },
+      },
+      {
+        stories: [incomingStory],
+        workspace: {
+          ...emptyWorkspace(),
+          works: [incomingWork],
+          characters: [incomingCharacter],
+        },
+        promptPacks: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK, incomingPack],
+          activePackId: 'same-pack',
+        },
+      },
+      { createId },
+    );
+
+    const importedPack = merged.promptPacks?.packs.find((pack) => pack.title.includes('(备份导入)'));
+    expect(importedPack).toBeDefined();
+    expect(importedPack!.id).not.toBe('same-pack');
+    expect(merged.promptPacks?.activePackId).toBeNull();
+    expect(merged.stories[0].generationPreference?.promptPackMode).toBe(importedPack!.id);
+    expect(merged.workspace.works[0].generationPreference?.promptPackMode).toBe(importedPack!.id);
+    expect(merged.workspace.characters[0].generationPreference?.promptPackMode).toBe(importedPack!.id);
+  });
+
+  it('restores incoming prompt-pack global state when the local library is untouched defaults', () => {
+    const incomingPack = {
+      id: 'incoming-pack',
+      title: '备份叙事包',
+      slots: { head: '备份头部', mid: '备份中段', tail: '备份尾部' },
+    };
+    const merged = mergeRestoredBackup(
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        promptPacks: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+          activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+          defaultPrefixCompletion: 'on_retry',
+          includeTail: false,
+        },
+      },
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        promptPacks: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK, incomingPack],
+          activePackId: incomingPack.id,
+          defaultPrefixCompletion: 'always',
+          includeTail: true,
+        },
+      },
+    );
+
+    expect(merged.promptPacks?.activePackId).toBe(incomingPack.id);
+    expect(merged.promptPacks?.defaultPrefixCompletion).toBe('always');
+    expect(merged.promptPacks?.includeTail).toBe(true);
+  });
+
+  it('keeps modified local prompt-pack global state ahead of incoming defaults', () => {
+    const local = {
+      packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+      activePackId: null,
+      defaultPrefixCompletion: 'off' as const,
+      includeTail: true,
+    };
+    const merged = mergeRestoredBackup(
+      { stories: [], workspace: emptyWorkspace(), promptPacks: local },
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        promptPacks: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+          activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+          defaultPrefixCompletion: 'always',
+          includeTail: false,
+        },
+      },
+    );
+
+    expect(merged.promptPacks).toMatchObject({
+      activePackId: null,
+      defaultPrefixCompletion: 'off',
+      includeTail: true,
+    });
+  });
+
   it('detects schema versions and rejects invalid TurnProposalRecord entries in backups', () => {
     const v3Json = exportFolioBackupV3({
       stories: [makeSampleStory()],
@@ -268,5 +384,88 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     const corrupted = JSON.parse(v3Json);
     corrupted.stories[0].nodes.n2.proposals[0].status = 'invalid_status';
     expect(() => parseAndValidateFolioBackup(JSON.stringify(corrupted))).toThrow(/proposals/);
+  });
+
+  it('round-trips complete REFUSAL diagnostics through .folio.json v3 and rejects invalid values', () => {
+    const story = makeSampleStory('story-refusal');
+    const diagnostics = {
+      sourceStatus: 'REFUSAL' as const,
+      refusalRoute: 'refused_exhausted' as const,
+      recoveredFromText: '抱歉，我不能帮你写这段内容。',
+      retriedWithPrefix: true,
+      matchedRuleId: 'L1-02',
+    };
+    story.nodes.n2!.diagnostics = diagnostics;
+    const json = exportFolioBackupV3({
+      stories: [story],
+      workspace: emptyWorkspace(),
+    });
+
+    const parsed = parseAndValidateFolioBackup(json);
+    expect(parsed.stories[0]?.nodes.n2?.diagnostics).toEqual(diagnostics);
+
+    const invalidValues = [
+      ['sourceStatus', 'UNKNOWN'],
+      ['refusalRoute', 'not-a-route'],
+      ['recoveredFromText', 42],
+      ['retriedWithPrefix', 'true'],
+      ['matchedRuleId', 42],
+    ] as const;
+    for (const [field, value] of invalidValues) {
+      const corrupted = JSON.parse(json) as {
+        stories: Array<{ nodes: Record<string, { diagnostics?: Record<string, unknown> }> }>;
+      };
+      corrupted.stories[0]!.nodes.n2!.diagnostics![field] = value;
+      expect(() => parseAndValidateFolioBackup(JSON.stringify(corrupted))).toThrow(new RegExp(field));
+    }
+  });
+
+  it('round-trips TurnNode.prefillContent through .folio.json v3 and rejects non-string values', () => {
+    const story = makeSampleStory('story-prefill');
+    story.nodes.n2!.prefillContent = '船夫递来';
+    const json = exportFolioBackupV3({
+      stories: [story],
+      workspace: emptyWorkspace(),
+    });
+
+    const parsed = parseAndValidateFolioBackup(json);
+    expect(parsed.stories[0]?.nodes.n2?.prefillContent).toBe('船夫递来');
+
+    const corrupted = JSON.parse(json) as {
+      stories: Array<{ nodes: Record<string, Record<string, unknown>> }>;
+    };
+    corrupted.stories[0]!.nodes.n2!.prefillContent = 42;
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(corrupted))).toThrow(/prefillContent/);
+  });
+
+  it('preserves incoming built-in enabled: false state when the local prompt-pack library is untouched defaults', () => {
+    const merged = mergeRestoredBackup(
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        promptPacks: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+          activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+          defaultPrefixCompletion: 'on_retry',
+          includeTail: false,
+        },
+      },
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        promptPacks: {
+          packs: [{ ...BUILTIN_NARRATIVE_PROMPT_PACK, enabled: false }],
+          activePackId: null,
+          defaultPrefixCompletion: 'on_retry',
+          includeTail: false,
+        },
+      },
+    );
+
+    const builtin = merged.promptPacks?.packs.find(
+      (pack) => pack.id === BUILTIN_NARRATIVE_PROMPT_PACK.id,
+    );
+    expect(builtin?.enabled).toBe(false);
+    expect(merged.promptPacks?.activePackId).toBeNull();
   });
 });

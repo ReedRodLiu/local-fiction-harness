@@ -1,5 +1,5 @@
 import { createDefaultBlueprint } from './blueprint.ts';
-import { isOfficialDeepSeekModel, isReasoningEffort } from './keyConfig.ts';
+import { isOfficialDeepSeekModel, isPrefixCompletionMode, isReasoningEffort } from './keyConfig.ts';
 import { documentVersion, migrateStoryDocuments, replaceDocumentProgress, validateDocumentReads, validateMarkdownDocument, writeDocument, type StoryDocuments } from './markdownDocuments.ts';
 import { createDefaultId } from './id.ts';
 import type {
@@ -9,6 +9,7 @@ import type {
   NodeDiagnostics,
   PlotSummarySnapshot,
   ReasoningEffort,
+  RefusalRouteDiagnostic,
   Story,
   StoryAttachment,
   StoryBackupEnvelope,
@@ -144,6 +145,7 @@ const VALID_DIAGNOSTIC_STATUSES = new Set<NodeDiagnosticStatus>([
   'CONTENT_FILTER',
   'TIMEOUT',
   'INCOMPLETE',
+  'REFUSAL',
 ]);
 
 function validateDiagnostics(raw: unknown, nodeId: string): NodeDiagnostics | undefined {
@@ -162,9 +164,39 @@ function validateDiagnostics(raw: unknown, nodeId: string): NodeDiagnostics | un
   if (raw.contentRisk !== undefined && typeof raw.contentRisk !== 'boolean') {
     throw new Error(`备份文件节点 ${nodeId} 的 diagnostics.contentRisk 必须为布尔值。`);
   }
-  const result: { sourceStatus?: NodeDiagnosticStatus; contentRisk?: boolean } = {};
-  if (sourceStatus !== undefined) result.sourceStatus = sourceStatus as NodeDiagnosticStatus;
-  if (raw.contentRisk !== undefined) result.contentRisk = raw.contentRisk;
+  const validRefusalRoutes = new Set<RefusalRouteDiagnostic>([
+    'pass',
+    'retry',
+    'retry-skeleton',
+    'partial_refused',
+    'refused_exhausted',
+  ]);
+  if (
+    raw.refusalRoute !== undefined &&
+    (typeof raw.refusalRoute !== 'string' ||
+      !validRefusalRoutes.has(raw.refusalRoute as RefusalRouteDiagnostic))
+  ) {
+    throw new Error(`备份文件节点 ${nodeId} 的 diagnostics.refusalRoute 无效。`);
+  }
+  if (raw.recoveredFromText !== undefined && typeof raw.recoveredFromText !== 'string') {
+    throw new Error(`备份文件节点 ${nodeId} 的 diagnostics.recoveredFromText 必须为字符串。`);
+  }
+  if (raw.retriedWithPrefix !== undefined && typeof raw.retriedWithPrefix !== 'boolean') {
+    throw new Error(`备份文件节点 ${nodeId} 的 diagnostics.retriedWithPrefix 必须为布尔值。`);
+  }
+  if (raw.matchedRuleId !== undefined && typeof raw.matchedRuleId !== 'string') {
+    throw new Error(`备份文件节点 ${nodeId} 的 diagnostics.matchedRuleId 必须为字符串。`);
+  }
+  const result: NodeDiagnostics = {
+    ...(sourceStatus !== undefined ? { sourceStatus: sourceStatus as NodeDiagnosticStatus } : {}),
+    ...(raw.contentRisk !== undefined ? { contentRisk: raw.contentRisk } : {}),
+    ...(raw.refusalRoute !== undefined
+      ? { refusalRoute: raw.refusalRoute as RefusalRouteDiagnostic }
+      : {}),
+    ...(raw.recoveredFromText !== undefined ? { recoveredFromText: raw.recoveredFromText } : {}),
+    ...(raw.retriedWithPrefix !== undefined ? { retriedWithPrefix: raw.retriedWithPrefix } : {}),
+    ...(raw.matchedRuleId !== undefined ? { matchedRuleId: raw.matchedRuleId } : {}),
+  };
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
@@ -296,6 +328,18 @@ export function validateGenerationPreference(
     }
     pref.reasoningEffort = raw.reasoningEffort;
   }
+  if (raw.promptPackMode !== undefined) {
+    if (typeof raw.promptPackMode !== 'string' || !raw.promptPackMode.trim()) {
+      throw new Error(`${contextLabel} 的 generationPreference.promptPackMode 无效。`);
+    }
+    pref.promptPackMode = raw.promptPackMode.trim();
+  }
+  if (raw.prefixCompletion !== undefined) {
+    if (!isPrefixCompletionMode(raw.prefixCompletion)) {
+      throw new Error(`${contextLabel} 的 generationPreference.prefixCompletion 无效。`);
+    }
+    pref.prefixCompletion = raw.prefixCompletion;
+  }
   return Object.keys(pref).length > 0 ? pref : undefined;
 }
 
@@ -315,6 +359,9 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
     (entry.model !== undefined && typeof entry.model !== 'string')
   ) {
     throw new Error(`备份文件中的节点 ${expectedId ?? '(unknown)'} 格式无效。`);
+  }
+  if (entry.prefillContent !== undefined && typeof entry.prefillContent !== 'string') {
+    throw new Error(`备份文件中的节点 ${expectedId ?? entry.id} 的 prefillContent 必须为字符串。`);
   }
   if (entry.reasoningEffort !== undefined && !isReasoningEffort(entry.reasoningEffort)) {
     throw new Error(`备份文件中的节点 ${expectedId ?? entry.id} 的 reasoningEffort 无效。`);
@@ -338,6 +385,7 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
     parentId: entry.parentId,
     role: entry.role,
     content: entry.content,
+    ...(entry.prefillContent !== undefined ? { prefillContent: entry.prefillContent } : {}),
     ...(trimmedTurnSummary !== undefined ? { turnSummary: trimmedTurnSummary } : {}),
     ...(entry.reasoningContent !== undefined ? { reasoningContent: entry.reasoningContent } : {}),
     ...(trimmedModel !== undefined ? { model: trimmedModel } : {}),

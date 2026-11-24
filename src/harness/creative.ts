@@ -4,6 +4,7 @@ import { normalizeReasoningEffort } from './keyConfig.ts';
 import {
   EMPTY_SUMMARY_SNAPSHOT,
   assembleCreativeThreeZoneContext,
+  excludeRefusedTurns,
   getActiveBranchNodes,
   getActiveSummarySnapshot,
   summarizeCreativeTurnNodes,
@@ -27,6 +28,17 @@ import {
   type MarkdownVersion,
   type StoryDocuments,
 } from './markdownDocuments.ts';
+import {
+  buildPromptPackAnchorMessages,
+  promptPackTailMessage,
+  resolvePromptPackContext,
+  type PromptPackContextOptions,
+  type PromptPackLibrary,
+} from './promptPack.ts';
+import {
+  streamWithRefusalHandling,
+  type RefusalStreamIntegrationOptions,
+} from './refusalWrapper.ts';
 import type {
   AbortSignalLike,
   DocumentRead,
@@ -193,6 +205,8 @@ export function appendWorkDiscussionTurn(
     reasoningContent?: string;
     model?: string;
     reasoningEffort?: ReasoningEffort;
+    diagnostics?: TurnNode['diagnostics'];
+    prefillContent?: string;
     parentId?: string | null;
     id?: string;
     createdAt?: number;
@@ -216,6 +230,8 @@ export function appendWorkDiscussionTurn(
     ...(nodeInput.reasoningContent ? { reasoningContent: nodeInput.reasoningContent } : {}),
     ...(nodeInput.model ? { model: nodeInput.model } : {}),
     ...(nodeInput.reasoningEffort ? { reasoningEffort: nodeInput.reasoningEffort } : {}),
+    ...(nodeInput.diagnostics ? { diagnostics: nodeInput.diagnostics } : {}),
+    ...(nodeInput.prefillContent !== undefined ? { prefillContent: nodeInput.prefillContent } : {}),
     createdAt: nodeInput.createdAt ?? Date.now(),
     summarySnapshot: parentSnapshot,
     ...(nodeInput.documentReads ? { documentReads: nodeInput.documentReads } : {}),
@@ -253,7 +269,7 @@ export function conversationLocalVersion(conversation: CharacterConversation): s
 }
 
 export function turnMessages(nodes: TurnNode[]): LlmMessage[] {
-  return nodes.map(({ role, content }) => ({ role, content }));
+  return excludeRefusedTurns(nodes).map(({ role, content }) => ({ role, content }));
 }
 
 const DEFAULT_CHARACTER_SYSTEM_PROMPT = [
@@ -283,13 +299,21 @@ export function creativeContext(
   entries: readonly [string, MarkdownVersion][],
   path: TurnNode[],
   input: string,
+  promptPackOptions?: PromptPackContextOptions,
 ): LlmMessage[] {
-  return [
-    { role: 'system', content: appendChangePrompt(prompt) },
-    ...documentMessages(entries),
-    ...turnMessages(path),
-    { role: 'user', content: input },
-  ];
+  const effectivePromptPack = resolvePromptPackContext(promptPackOptions);
+  const basePrompt = appendChangePrompt(prompt);
+  const messages: LlmMessage[] = effectivePromptPack.enabled
+    ? buildPromptPackAnchorMessages(basePrompt, effectivePromptPack)
+    : [{ role: 'system', content: basePrompt }];
+  messages.push(...documentMessages(entries), ...turnMessages(path));
+  const tail = promptPackTailMessage(
+    effectivePromptPack,
+    promptPackOptions?.includePromptPackTail ?? false,
+  );
+  if (tail) messages.push(tail);
+  messages.push({ role: 'user', content: input });
+  return messages;
 }
 
 export function characterContext(
@@ -298,6 +322,7 @@ export function characterContext(
   conversation: CharacterConversation,
   input: string,
   budgetOverrides?: Partial<ContextBudgetConfig>,
+  promptPackOptions?: PromptPackContextOptions,
 ) {
   const publicVersion = documentVersion(global);
   const persona = documentVersion(character.document, conversation.characterVersion);
@@ -313,6 +338,16 @@ export function characterContext(
     targetParentId: conversation.activeLeafNodeId,
     userInput: input || '按当前人设和情境自然开场，由你先说第一句。',
     budgetOverrides,
+    ...(promptPackOptions?.promptPackLibrary
+      ? { promptPackLibrary: promptPackOptions.promptPackLibrary }
+      : {}),
+    ...(promptPackOptions?.generationPreference
+      ? { generationPreference: promptPackOptions.generationPreference }
+      : { generationPreference: character.generationPreference }),
+    ...(promptPackOptions?.promptPack !== undefined ? { promptPack: promptPackOptions.promptPack } : {}),
+    ...(promptPackOptions?.includePromptPackTail !== undefined
+      ? { includePromptPackTail: promptPackOptions.includePromptPackTail }
+      : {}),
   });
   return {
     messages: assembled.messages,
@@ -332,6 +367,12 @@ export interface WorkContextOptions {
   bodyWindowMaxChars?: number;
   budgetOverrides?: Partial<ContextBudgetConfig>;
   targetParentId?: string | null;
+  promptPackOptions?: PromptPackContextOptions;
+  promptPackLibrary?: PromptPackLibrary;
+  generationPreference?: GenerationPreference;
+  promptPack?: PromptPackContextOptions['promptPack'];
+  includePromptPackTail?: boolean;
+  includeTail?: boolean;
 }
 
 /**
@@ -360,6 +401,27 @@ export function workContext(
     targetParentId,
     userInput: input,
     budgetOverrides: options.budgetOverrides,
+    ...(options.promptPackLibrary
+      ? { promptPackLibrary: options.promptPackLibrary }
+      : options.promptPackOptions?.promptPackLibrary
+        ? { promptPackLibrary: options.promptPackOptions.promptPackLibrary }
+        : {}),
+    ...(options.generationPreference
+      ? { generationPreference: options.generationPreference }
+      : options.promptPackOptions?.generationPreference
+        ? { generationPreference: options.promptPackOptions.generationPreference }
+        : { generationPreference: work.generationPreference }),
+    ...(options.promptPack !== undefined
+      ? { promptPack: options.promptPack }
+      : options.promptPackOptions?.promptPack !== undefined
+        ? { promptPack: options.promptPackOptions.promptPack }
+        : {}),
+    ...(options.includePromptPackTail !== undefined
+      ? { includePromptPackTail: options.includePromptPackTail }
+      : options.promptPackOptions?.includePromptPackTail !== undefined
+        ? { includePromptPackTail: options.promptPackOptions.includePromptPackTail }
+        : {}),
+    ...(options.includeTail !== undefined ? { includeTail: options.includeTail } : {}),
   });
   return {
     messages: assembled.messages,
@@ -376,6 +438,101 @@ export interface CreativeSummaryOptions {
   targetLeafId?: string | null;
   budget?: Partial<ContextBudgetConfig>;
   signal?: AbortSignalLike;
+}
+
+/**
+ * Captures the exact node path that a background summary was generated from.
+ * Sibling branches are intentionally excluded.
+ */
+export function summaryTargetBranchFingerprint(
+  nodes: Record<string, TurnNode>,
+  targetLeafId: string | null,
+): string | null {
+  if (!targetLeafId || !Object.hasOwn(nodes, targetLeafId)) return null;
+  const branch = getActiveBranchNodes({ nodes, activeLeafNodeId: targetLeafId }, targetLeafId);
+  if (branch.length === 0 || branch[branch.length - 1]?.id !== targetLeafId) return null;
+  return JSON.stringify(
+    branch.map((node) => [
+      node.id,
+      node.parentId,
+      node.role,
+      node.content,
+      node.diagnostics?.sourceStatus ?? null,
+      node.summarySnapshot.content,
+      node.summarySnapshot.coveredUpToNodeId,
+      node.summarySnapshot.summarizedTurnCount,
+    ]),
+  );
+}
+
+export function isSummaryTargetUnchanged(
+  expectedBranchFingerprint: string | null,
+  liveNodes: Record<string, TurnNode>,
+  targetLeafId: string | null,
+): boolean {
+  return expectedBranchFingerprint !== null &&
+    summaryTargetBranchFingerprint(liveNodes, targetLeafId) === expectedBranchFingerprint;
+}
+
+export function mergeWorkSummaryResult(
+  liveWork: DraftWork,
+  summarizedWork: DraftWork,
+  targetLeafId: string,
+  expectedBranchFingerprint: string | null,
+): DraftWork | null {
+  const liveTree = getWorkDiscussionTree(liveWork);
+  const updatedLeaf = summarizedWork.discussionNodes?.[targetLeafId];
+  if (
+    !updatedLeaf ||
+    updatedLeaf.id !== targetLeafId ||
+    !isSummaryTargetUnchanged(expectedBranchFingerprint, liveTree.nodes, targetLeafId)
+  ) {
+    return null;
+  }
+
+  const nextNodes = {
+    ...liveTree.nodes,
+    [targetLeafId]: {
+      ...liveTree.nodes[targetLeafId],
+      summarySnapshot: updatedLeaf.summarySnapshot,
+    },
+  };
+  return {
+    ...liveWork,
+    discussionNodes: nextNodes,
+    activeDiscussionLeafId: liveTree.activeLeafNodeId,
+    discussion: getActiveBranchNodes(
+      { nodes: nextNodes, activeLeafNodeId: liveTree.activeLeafNodeId },
+      liveTree.activeLeafNodeId,
+    ),
+  };
+}
+
+export function mergeCharacterSummaryResult(
+  liveConversation: CharacterConversation,
+  summarizedConversation: CharacterConversation,
+  targetLeafId: string,
+  expectedBranchFingerprint: string | null,
+): CharacterConversation | null {
+  const updatedLeaf = summarizedConversation.nodes[targetLeafId];
+  if (
+    !updatedLeaf ||
+    updatedLeaf.id !== targetLeafId ||
+    !isSummaryTargetUnchanged(expectedBranchFingerprint, liveConversation.nodes, targetLeafId)
+  ) {
+    return null;
+  }
+
+  return {
+    ...liveConversation,
+    nodes: {
+      ...liveConversation.nodes,
+      [targetLeafId]: {
+        ...liveConversation.nodes[targetLeafId],
+        summarySnapshot: updatedLeaf.summarySnapshot,
+      },
+    },
+  };
 }
 
 export async function summarizeWorkDiscussion(
@@ -515,37 +672,30 @@ export async function streamCreativeReply(
   config: ModelConfig,
   messages: LlmMessage[],
   callbacks: TurnCallbacks = {},
+  refusalOptions?: RefusalStreamIntegrationOptions,
 ) {
-  let raw = '';
-  let reasoningContent = '';
-  let finishReason: string | null | undefined;
-  let visible = '';
   const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
-  for await (const delta of transport.streamChat({
-    baseUrl: config.baseUrl,
-    apiKey: config.apiKey,
-    model: config.model,
-    reasoningEffort,
+  const result = await streamWithRefusalHandling({
+    transport,
+    config,
     messages,
-    signal: callbacks.signal,
-  })) {
-    if (delta.finishReason != null) finishReason = delta.finishReason;
-    if (delta.reasoningDelta && reasoningEffort !== 'none') {
-      reasoningContent += delta.reasoningDelta;
-      callbacks.onReasoningDelta?.(delta.reasoningDelta);
-    }
-    if (!delta.contentDelta) continue;
-    raw += delta.contentDelta;
-    const next = visibleReplyPrefix(raw);
-    if (next.length > visible.length) callbacks.onContentDelta?.(next.slice(visible.length));
-    visible = next;
-  }
+    callbacks,
+    mode: refusalOptions?.mode ?? 'writing',
+    ...(refusalOptions?.promptPackOptions ? { promptPackOptions: refusalOptions.promptPackOptions } : {}),
+    ...(refusalOptions?.prefixContent ? { prefixContent: refusalOptions.prefixContent } : {}),
+    ...(refusalOptions?.characterName ? { characterName: refusalOptions.characterName } : {}),
+    ...(refusalOptions?.onDiagnostic ? { onDiagnostic: refusalOptions.onDiagnostic } : {}),
+    toVisibleContent: visibleReplyPrefix,
+  });
   if (callbacks.signal?.aborted) throw new Error('生成已取消。');
-  if (finishReason !== 'stop') {
+  const isRefusalResult =
+    result.diagnostics?.sourceStatus === 'REFUSAL' ||
+    result.diagnostics?.refusalRoute === 'partial_refused';
+  if (result.finishReason !== 'stop' && !isRefusalResult) {
     transport.recordMarkdownProposal?.('incomplete');
     throw new Error('回复未完成，请重试。');
   }
-  const parsed = parseProposalReply(raw, { finishReason });
+  const parsed = parseProposalReply(result.content, { finishReason: result.finishReason });
   const legacyProposalStatus: MarkdownProposalStatus = parsed.proposals.length > 0
     ? 'recognized'
     : parsed.proposalStatus === 'needs_review'
@@ -563,7 +713,9 @@ export async function streamCreativeReply(
     proposal: parsed.proposal,
     proposals: parsed.proposals,
     unparsedBlocks: parsed.unparsedBlocks,
-    reasoningContent,
+    reasoningContent: result.reasoningContent,
+    ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+    ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
     model: config.model,
     reasoningEffort,
   };

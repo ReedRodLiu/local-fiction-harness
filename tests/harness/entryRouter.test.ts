@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BUILTIN_NARRATIVE_PROMPT_PACK,
+  CHANGE_PROMPT,
   EMPTY_SUMMARY_SNAPSHOT,
+  ENTRY_ROUTE_SYSTEM_PROMPT,
+  buildEntryRouteMessages,
   characterContext,
   classifyEntryHeuristic,
   convertActiveAssetMode,
@@ -18,6 +22,7 @@ import {
   routeEntryMessage,
   storyExportMarkdown,
   visibleEntryRoutePrefix,
+  type LlmStreamRequest,
   type LlmTransport,
   type ModelConfig,
   type TurnNode,
@@ -86,6 +91,93 @@ describe('V0.2 entryRouter & unified mode helpers', () => {
     expect(classifyEntryHeuristic('我想创建一个温柔毒舌的猫系角色聊天')).toBe('character');
     expect(classifyEntryHeuristic('帮我开一个修仙世界观的文游')).toBe('story');
     expect(classifyEntryHeuristic('我想写一篇同人小说大纲')).toBe('writing');
+  });
+
+  it('excludes refused turns from fallback setting and heuristic classification', () => {
+    const canary = 'REFUSED_USER_CANARY';
+    const history: TurnNode[] = [
+      {
+        id: 'u-refused',
+        parentId: null,
+        role: 'user',
+        content: `${canary} 我想写一篇同人小说大纲`,
+        createdAt: 1,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+      {
+        id: 'a-refused',
+        parentId: 'u-refused',
+        role: 'assistant',
+        content: '抱歉，我不能帮你写这段内容。',
+        diagnostics: { sourceStatus: 'REFUSAL', refusalRoute: 'retry' },
+        createdAt: 2,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+    ];
+
+    const parsed = parseEntryRouteReply(
+      '好的，我们从这里开始。',
+      '帮我开一个修仙世界观的文游',
+      history,
+    );
+
+    expect(parsed.mode).toBe('story');
+    expect(parsed.settingMarkdown).toContain('帮我开一个修仙世界观的文游');
+    expect(parsed.settingMarkdown).not.toContain(canary);
+    expect(parsed.settingMarkdown).not.toContain('同人小说大纲');
+  });
+
+  it('uses cleaned history for routeEntryMessage prefix and fallback classification', async () => {
+    const canary = 'REFUSED_USER_CANARY';
+    const history: TurnNode[] = [
+      {
+        id: 'u-refused',
+        parentId: null,
+        role: 'user',
+        content: `${canary} 我想写一篇同人小说大纲`,
+        createdAt: 1,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+      {
+        id: 'a-refused',
+        parentId: 'u-refused',
+        role: 'assistant',
+        content: '抱歉，我不能帮你写这段内容。',
+        diagnostics: { sourceStatus: 'REFUSAL', refusalRoute: 'retry' },
+        createdAt: 2,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+    ];
+    let request: LlmStreamRequest | undefined;
+    const transport: LlmTransport = {
+      async *streamChat(nextRequest) {
+        request = nextRequest;
+        yield { contentDelta: '好的，我们从这里开始。' };
+        yield { finishReason: 'stop' };
+      },
+    };
+
+    const routed = await routeEntryMessage(
+      '帮我开一个修仙世界观的文游',
+      history,
+      transport,
+      testConfig,
+      {},
+      '',
+      {
+        promptPackLibrary: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+          activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+        },
+        generationPreference: { prefixCompletion: 'always' },
+      },
+    );
+
+    expect(request?.prefixCompletion?.content).toBe('```lfh-route\nmode: story\n');
+    expect(routed.mode).toBe('story');
+    expect(routed.settingMarkdown).toContain('帮我开一个修仙世界观的文游');
+    expect(routed.settingMarkdown).not.toContain(canary);
+    expect(routed.settingMarkdown).not.toContain('同人小说大纲');
   });
 
   it('detects explicit mode-switch commands without hijacking normal character creation', () => {
@@ -262,5 +354,53 @@ describe('V0.2 entryRouter & unified mode helpers', () => {
     expect(ctx.messages[0].content).toContain('你是该角色本人');
     expect(ctx.messages[1].content).toContain('我的记忆');
     expect(ctx.messages[2].content).toContain('角色设定');
+  });
+
+  it('respects refusalOptions.prefixContent and omits pack-only CHANGE_PROMPT divergence in buildEntryRouteMessages', async () => {
+    const packMessages = buildEntryRouteMessages('开一个雾港文游', [], '记忆', {
+      promptPackLibrary: {
+        packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+        activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+      },
+    });
+    const systemText = packMessages.map((message) => message.content).join('\n');
+    expect(systemText).toContain(ENTRY_ROUTE_SYSTEM_PROMPT);
+    expect(systemText).not.toContain(CHANGE_PROMPT);
+
+    let capturedRequest: LlmStreamRequest | undefined;
+    const transport: LlmTransport = {
+      async *streamChat(nextRequest) {
+        capturedRequest = nextRequest;
+        yield {
+          contentDelta: '```lfh-route\nmode: writing\ntitle: 自定义前缀\n---\n## 设定\n雨夜。\n```\n正文开始。',
+        };
+        yield { finishReason: 'stop' };
+      },
+    };
+
+    const customPrefill = '```lfh-route\nmode: writing\n';
+    const result = await routeEntryMessage(
+      '我想写个故事',
+      [],
+      transport,
+      testConfig,
+      {},
+      '',
+      undefined,
+      {
+        prefixContent: customPrefill,
+        promptPackOptions: {
+          promptPackLibrary: {
+            packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+            activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+          },
+          generationPreference: { prefixCompletion: 'always' },
+        },
+      },
+    );
+
+    expect(capturedRequest?.prefixCompletion?.content).toBe(customPrefill);
+    expect(result.mode).toBe('writing');
+    expect(result.prefillContent).toBe(customPrefill);
   });
 });

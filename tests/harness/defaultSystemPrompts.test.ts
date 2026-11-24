@@ -59,8 +59,11 @@ describe('Issue #105 default anti-DS-ism system prompts & precedence', () => {
     expect(anchor).toContain('「当前设定」');
     expect(countOccurrences(anchor, CHANGE_PROMPT)).toBe(1);
     expect(anchor).toContain('冷雨不停的港口小镇');
-    expect(context.messages[0].content).toBe(anchor);
+    expect(context.messages[0].content).toBe(
+      buildSystemAnchorPrompt(story, story.activeLeafNodeId, undefined, false),
+    );
     expect(context.messages[1].content).toContain('我的记忆');
+    expect(context.messages[2].content).toContain('冷雨不停的港口小镇');
   });
 
   it('builds 角色互动 system prompt with natural voice, anti-DS-ism guardrails, and setting precedence', () => {

@@ -5,11 +5,21 @@ import {
   documentProgress,
   documentVersion,
   legacyStoryMarkdown,
+  replaceDocumentProgress,
   storyDocumentState,
+  writeDocument,
   type MarkdownVersion,
 } from './markdownDocuments.ts';
+import {
+  buildPromptPackAnchorMessages,
+  promptPackTailMessage,
+  resolvePromptPackContext,
+  type PromptPackContextOptions,
+  type PromptPackLibrary,
+} from './promptPack.ts';
 import type {
   AbortSignalLike,
+  GenerationPreference,
   LlmMessage,
   LlmTransport,
   ModelConfig,
@@ -114,6 +124,41 @@ export function getUncoveredNodes(
   return branchNodes.slice(idx + 1);
 }
 
+/**
+ * Drops a refused assistant turn and its directly paired user turn from model
+ * history. The nodes remain in the persisted tree and visible timeline.
+ */
+export function excludeRefusedTurns(nodes: readonly TurnNode[]): TurnNode[] {
+  const refusedAssistants = nodes.filter(
+    (node) => node.role === 'assistant' && node.diagnostics?.sourceStatus === 'REFUSAL',
+  );
+  if (refusedAssistants.length === 0) return [...nodes];
+  const pairedUserIds = new Set(
+    refusedAssistants
+      .map((node) => node.parentId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  return nodes.filter(
+    (node) =>
+      !(node.role === 'assistant' && node.diagnostics?.sourceStatus === 'REFUSAL') &&
+      !(node.role === 'user' && pairedUserIds.has(node.id)),
+  );
+}
+
+/** Swaps the visible node content and its preserved first-pass refusal text. */
+export function restoreRefusalOriginalContent(node: TurnNode): TurnNode {
+  const recovered = node.diagnostics?.recoveredFromText;
+  if (recovered === undefined) return node;
+  return {
+    ...node,
+    content: recovered,
+    diagnostics: {
+      ...node.diagnostics,
+      recoveredFromText: node.content,
+    },
+  };
+}
+
 const DEFAULT_STORY_SYSTEM_PROMPT = [
   '你是文游的叙事者，也是在场的世界与众人。保持角色与设定一致，用具体场景、感官细节、动作与对话推进剧情，而非跳出戏外做总结或解说。',
   '禁止跳出叙事分析局势、评价玩家选择、写主题升华式结语、代写或劫持玩家的行动与内心决定，也不要在正文中用“1/2/3”列举下一步菜单。',
@@ -122,16 +167,24 @@ const DEFAULT_STORY_SYSTEM_PROMPT = [
   '若「我的记忆」或「当前设定」中明确指定了文风、人称、格式或叙事偏好，以用户设定为准。',
 ].join('\n');
 
-export function buildSystemAnchorPrompt(story: Story, nodeId = story.activeLeafNodeId, selected?: MarkdownVersion): string {
+export function buildSystemAnchorPrompt(
+  story: Story,
+  nodeId = story.activeLeafNodeId,
+  selected?: MarkdownVersion,
+  includeSetting = true,
+): string {
   const markdown = selected?.markdown ?? (story.documents
     ? documentVersion(story.documents.container, storyDocumentState({ ...story, documents: story.documents }, nodeId,
       nodeId === story.activeLeafNodeId).container).markdown
     : legacyStoryMarkdown(story));
-  return [
+  const basePrompt = [
     DEFAULT_STORY_SYSTEM_PROMPT,
     CHANGE_PROMPT,
-    markdown && `以下是当前故事 Markdown。\n\n${markdown}`,
-  ].filter(Boolean).join('\n\n');
+  ].join('\n\n');
+  if (!includeSetting) return basePrompt;
+  return [basePrompt, markdown && `以下是当前故事 Markdown。\n\n${markdown}`]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 export const SETUP_NODE_PLACEHOLDER =
@@ -243,14 +296,42 @@ export function assembleThreeZoneContext(
   userInput?: string,
   budgetOverrides?: Partial<ContextBudgetConfig>,
   requireHistory = false,
-  requestDocuments?: { publicVersion?: MarkdownVersion; container: MarkdownVersion; local: MarkdownVersion; snapshot: PlotSummarySnapshot },
+  requestDocuments?: {
+    publicVersion?: MarkdownVersion;
+    container: MarkdownVersion;
+    local: MarkdownVersion;
+    snapshot: PlotSummarySnapshot;
+    promptPackLibrary?: PromptPackLibrary;
+    generationPreference?: GenerationPreference;
+    promptPack?: PromptPackContextOptions['promptPack'];
+    includePromptPackTail?: boolean;
+    includeTail?: boolean;
+  },
+  promptPackOptions?: PromptPackContextOptions,
 ): ThreeZoneContextResult {
   const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...budgetOverrides };
-  const anchorText = buildSystemAnchorPrompt(story, targetParentId, requestDocuments?.container);
+  const resolvedPromptPackOptions: PromptPackContextOptions = {
+    ...(requestDocuments?.promptPackLibrary ? { promptPackLibrary: requestDocuments.promptPackLibrary } : {}),
+    ...(requestDocuments?.generationPreference ? { generationPreference: requestDocuments.generationPreference } : {}),
+    ...(requestDocuments?.promptPack !== undefined ? { promptPack: requestDocuments.promptPack } : {}),
+    ...(requestDocuments?.includePromptPackTail !== undefined
+      ? { includePromptPackTail: requestDocuments.includePromptPackTail }
+      : requestDocuments?.includeTail !== undefined
+        ? { includePromptPackTail: requestDocuments.includeTail }
+        : {}),
+    ...promptPackOptions,
+  };
+  const effectivePromptPack = resolvePromptPackContext(resolvedPromptPackOptions);
+  const anchorText = buildSystemAnchorPrompt(
+    story,
+    targetParentId,
+    requestDocuments?.container,
+    false,
+  );
   const setupFilter = getSetupNodeFilter(story, targetParentId, requestDocuments?.container);
   const snapshot = requestDocuments?.snapshot ?? getActiveSummarySnapshot(story, targetParentId);
   const branchNodes = getActiveBranchNodes(story, targetParentId);
-  const uncovered = getUncoveredNodes(branchNodes, snapshot.coveredUpToNodeId);
+  const uncovered = excludeRefusedTurns(getUncoveredNodes(branchNodes, snapshot.coveredUpToNodeId));
   const trimmedInput = userInput?.trim() ?? '';
   const historyChars = sumNodeChars(uncovered, setupFilter);
   if (requireHistory && historyChars > budget.recentMaxChars && uncovered.length > 2) {
@@ -263,7 +344,23 @@ export function assembleThreeZoneContext(
   const readDocs = requestDocuments?.publicVersion
     ? documentMessages([['我的记忆', requestDocuments.publicVersion]])
     : [];
-  const messages: LlmMessage[] = [{ role: 'system', content: anchorText }, ...readDocs];
+  const settingMarkdown = requestDocuments?.container?.markdown ?? (story.documents
+    ? documentVersion(
+        story.documents.container,
+        storyDocumentState({ ...story, documents: story.documents }, targetParentId, targetParentId === story.activeLeafNodeId).container,
+      ).markdown
+    : legacyStoryMarkdown(story));
+  const settingMessage = settingMarkdown.trim()
+    ? { role: 'system' as const, content: `以下是当前故事 Markdown。\n\n${settingMarkdown}` }
+    : null;
+  const anchorMessages = effectivePromptPack.enabled
+    ? [
+        ...buildPromptPackAnchorMessages(anchorText, effectivePromptPack),
+        ...readDocs,
+        ...(settingMessage ? [settingMessage] : []),
+      ]
+    : [{ role: 'system' as const, content: anchorText }, ...readDocs, ...(settingMessage ? [settingMessage] : [])];
+  const messages: LlmMessage[] = [...anchorMessages];
   let summaryChars = 0;
 
   if (requestDocuments?.local?.markdown.trim()) {
@@ -286,16 +383,24 @@ export function assembleThreeZoneContext(
     });
   }
 
+  const tail = promptPackTailMessage(
+    effectivePromptPack,
+    resolvedPromptPackOptions.includePromptPackTail ?? false,
+  );
+  if (tail) messages.push(tail);
+
   if (trimmedInput) {
     recentChars += trimmedInput.length;
     messages.push({ role: 'user', content: trimmedInput });
   }
 
-  const totalChars = anchorText.length + readDocs.reduce((sum, doc) => sum + doc.content.length, 0) + summaryChars + recentChars;
+  const anchorChars = anchorMessages.reduce((sum, message) => sum + message.content.length, 0) +
+    (tail?.content.length ?? 0);
+  const totalChars = anchorChars + summaryChars + recentChars;
   return {
     messages,
     metrics: {
-      anchorChars: anchorText.length,
+      anchorChars,
       summaryChars,
       recentChars,
       recentNodeCount: recentNodes.length,
@@ -313,6 +418,7 @@ export function selectNodesToSummarize(
   budgetOverrides?: Partial<ContextBudgetConfig>,
   filter?: SetupNodeFilter,
 ): TurnNode[] {
+  uncoveredNodes = excludeRefusedTurns(uncoveredNodes);
   const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...budgetOverrides };
   const maxNodes = Math.max(MIN_RECENT_NODES_PER_TURN, budget.recentMaxNodes);
   const totalChars = sumNodeChars(uncoveredNodes, filter);
@@ -347,7 +453,7 @@ export function buildSummaryCompressionMessages(
   filter?: SetupNodeFilter,
   maxPreviousSummaryChars = DEFAULT_CONTEXT_BUDGET.summaryBatchMaxChars,
 ): LlmMessage[] {
-  const turnsText = nodesToFold
+  const turnsText = excludeRefusedTurns(nodesToFold)
     .map(
       (n) =>
         `[${n.role === 'user' ? '玩家' : '叙事'}]: ${getEffectiveNodeContent(n, filter)}`,
@@ -378,6 +484,97 @@ export function buildSummaryCompressionMessages(
 export interface TurnTreeState {
   nodes: Record<string, TurnNode>;
   activeLeafNodeId: string | null;
+}
+
+function collectNodeSubtreeIds(
+  nodes: Readonly<Record<string, TurnNode>>,
+  targetNodeId: string,
+): Set<string> {
+  if (!Object.hasOwn(nodes, targetNodeId)) {
+    throw new Error(`目标节点 ${targetNodeId} 不存在。`);
+  }
+
+  const childrenByParent = new Map<string, string[]>();
+  for (const node of Object.values(nodes)) {
+    if (node.parentId) {
+      const children = childrenByParent.get(node.parentId) ?? [];
+      children.push(node.id);
+      childrenByParent.set(node.parentId, children);
+    }
+  }
+
+  const affectedIds = new Set([targetNodeId]);
+  const pendingIds = [targetNodeId];
+  while (pendingIds.length > 0) {
+    const parentId = pendingIds.pop()!;
+    for (const childId of childrenByParent.get(parentId) ?? []) {
+      if (!affectedIds.has(childId)) {
+        affectedIds.add(childId);
+        pendingIds.push(childId);
+      }
+    }
+  }
+  return affectedIds;
+}
+
+/**
+ * Clears summary snapshots for a changed node and every descendant. Sibling
+ * branches keep their summaries because their covered history is unchanged.
+ */
+export function invalidateSummarySnapshotsFromNode(
+  nodes: Readonly<Record<string, TurnNode>>,
+  targetNodeId: string,
+): Record<string, TurnNode> {
+  const affectedIds = collectNodeSubtreeIds(nodes, targetNodeId);
+
+  return Object.fromEntries(
+    Object.entries(nodes).map(([nodeId, node]) => [
+      nodeId,
+      affectedIds.has(nodeId) ? { ...node, summarySnapshot: EMPTY_SUMMARY_SNAPSHOT } : node,
+    ]),
+  );
+}
+
+/**
+ * Clears both rolled summaries and their document-backed progress for a changed
+ * Story subtree. Other branches keep their document pointers and global heads.
+ */
+export function invalidateStorySummarySnapshotsFromNode(story: Story, targetNodeId: string): Story {
+  const nextNodes = invalidateSummarySnapshotsFromNode(story.nodes, targetNodeId);
+  if (!story.documents) return { ...story, nodes: nextNodes };
+
+  const documents = story.documents;
+  const scoped = { ...story, documents } as Story & { documents: NonNullable<Story['documents']> };
+  const affectedIds = collectNodeSubtreeIds(story.nodes, targetNodeId);
+  const clearedVersionBySource = new Map<string, string>();
+  const edits = { ...documents.edits };
+  let local = documents.local;
+
+  for (const nodeId of affectedIds) {
+    const state = storyDocumentState(scoped, nodeId, true);
+    const source = documentVersion(documents.local, state.local);
+    const clearedMarkdown = replaceDocumentProgress(source.markdown, '');
+    let localVersionId = source.id;
+    if (clearedMarkdown !== source.markdown) {
+      localVersionId = clearedVersionBySource.get(source.id) ?? '';
+      if (!localVersionId) {
+        local = writeDocument(local, source.id, clearedMarkdown, 'automatic');
+        localVersionId = local.head;
+        clearedVersionBySource.set(source.id, localVersionId);
+      }
+      edits[nodeId] = localVersionId;
+    }
+    nextNodes[nodeId] = {
+      ...nextNodes[nodeId],
+      documents: { container: state.container, local: localVersionId },
+    };
+  }
+
+  return {
+    ...story,
+    nodes: nextNodes,
+    documents: { ...documents, local: { ...local, head: documents.local.head }, edits },
+  };
 }
 
 /**
@@ -430,6 +627,11 @@ export interface CreativeThreeZoneContextInput {
   targetParentId: string | null;
   userInput?: string;
   budgetOverrides?: Partial<ContextBudgetConfig>;
+  promptPackLibrary?: PromptPackLibrary;
+  generationPreference?: GenerationPreference;
+  promptPack?: PromptPackContextOptions['promptPack'];
+  includePromptPackTail?: boolean;
+  includeTail?: boolean;
 }
 
 /**
@@ -440,8 +642,18 @@ export function assembleCreativeThreeZoneContext(
   input: CreativeThreeZoneContextInput,
 ): ThreeZoneContextResult {
   const budget: ContextBudgetConfig = { ...DEFAULT_CONTEXT_BUDGET, ...input.budgetOverrides };
+  const promptPackOptions: PromptPackContextOptions = {
+    ...(input.promptPackLibrary ? { promptPackLibrary: input.promptPackLibrary } : {}),
+    ...(input.generationPreference ? { generationPreference: input.generationPreference } : {}),
+    ...(input.promptPack !== undefined ? { promptPack: input.promptPack } : {}),
+    ...(input.includePromptPackTail !== undefined ? { includePromptPackTail: input.includePromptPackTail } : {}),
+    ...(input.includeTail !== undefined ? { includeTail: input.includeTail } : {}),
+  };
+  const effectivePromptPack = resolvePromptPackContext(promptPackOptions);
   const anchorMessages: LlmMessage[] = [
-    { role: 'system', content: input.systemPrompt },
+    ...(effectivePromptPack.enabled
+      ? buildPromptPackAnchorMessages(input.systemPrompt, effectivePromptPack)
+      : [{ role: 'system' as const, content: input.systemPrompt }]),
     ...documentMessages(input.documents ?? []),
   ];
   const manuscript = input.manuscriptWindow?.trim();
@@ -457,7 +669,7 @@ export function assembleCreativeThreeZoneContext(
     { nodes: input.nodes, activeLeafNodeId: input.targetParentId },
     input.targetParentId,
   );
-  const uncovered = getUncoveredNodes(branchNodes, snapshot.coveredUpToNodeId);
+  const uncovered = excludeRefusedTurns(getUncoveredNodes(branchNodes, snapshot.coveredUpToNodeId));
   const trimmedInput = input.userInput?.trim() ?? '';
   const recentNodes = trimRecentWindow(uncovered, budget, trimmedInput.length);
 
@@ -487,12 +699,19 @@ export function assembleCreativeThreeZoneContext(
     });
   }
 
+  const tail = promptPackTailMessage(
+    effectivePromptPack,
+    input.includePromptPackTail ?? input.includeTail ?? false,
+  );
+  if (tail) messages.push(tail);
+
   if (trimmedInput) {
     recentChars += trimmedInput.length;
     messages.push({ role: 'user', content: trimmedInput });
   }
 
-  const anchorChars = anchorMessages.reduce((sum, msg) => sum + msg.content.length, 0);
+  const anchorChars = anchorMessages.reduce((sum, msg) => sum + msg.content.length, 0) +
+    (tail?.content.length ?? 0);
   const totalChars = anchorChars + summaryChars + recentChars;
   return {
     messages,
@@ -511,6 +730,7 @@ function takeCreativeSummaryBatch(
   maxNodes: number,
   maxChars: number,
 ): TurnNode[] {
+  toSummarize = excludeRefusedTurns(toSummarize);
   let end = 0;
   let batchChars = 0;
   for (const node of toSummarize) {

@@ -9,7 +9,73 @@ import type {
 } from '../harness/index.ts';
 import { MessageContent } from './MessageContent.tsx';
 import { ProposalCard } from './ProposalCard.tsx';
+import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { formatDiagnosticTags } from './StoryTree.tsx';
+
+export interface TurnRefusalNoticesProps {
+  node: TurnNode;
+  isBusy: boolean;
+  onRestoreRefusalOriginal?: (nodeId: string) => void | Promise<void>;
+  onContinuePartialRefusal?: (nodeId: string) => void | Promise<void>;
+}
+
+/**
+ * Renders refusal-recovery restore and partial-refusal continuation notices for an
+ * assistant turn using the shared `BannerAlert` primitive.
+ */
+export function TurnRefusalNotices({
+  node,
+  isBusy,
+  onRestoreRefusalOriginal,
+  onContinuePartialRefusal,
+}: TurnRefusalNoticesProps) {
+  const recoveredRefusal =
+    node.role === 'assistant' &&
+    node.diagnostics?.sourceStatus !== 'REFUSAL' &&
+    Boolean(node.diagnostics?.recoveredFromText) &&
+    (node.diagnostics?.refusalRoute === 'retry' || node.diagnostics?.refusalRoute === 'retry-skeleton');
+  const partialRefusal =
+    node.role === 'assistant' && node.diagnostics?.refusalRoute === 'partial_refused';
+
+  if (!recoveredRefusal && !partialRefusal) return null;
+
+  return (
+    <>
+      {recoveredRefusal && (
+        <div className="turn-refusal-recovered" data-testid="turn-refusal-recovered-badge">
+          <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
+          <span>已自动重拟（消耗双倍 Token）</span>
+          <span aria-hidden="true">·</span>
+          <button
+            type="button"
+            className="btn turn-refusal-link"
+            data-testid="turn-refusal-restore-original"
+            disabled={isBusy}
+            onClick={() => void onRestoreRefusalOriginal?.(node.id)}
+          >
+            恢复首次原稿
+          </button>
+        </div>
+      )}
+      {partialRefusal && (
+        <BannerAlert tone="warning" testId="turn-partial-refusal-banner">
+          <div className="turn-partial-refusal">
+            <span>模型似乎略过了部分具体描写 · 继续追要（将消耗一次新请求）</span>
+            <button
+              type="button"
+              className="btn turn-refusal-link"
+              data-testid="turn-partial-refusal-continue"
+              disabled={isBusy}
+              onClick={() => void onContinuePartialRefusal?.(node.id)}
+            >
+              继续追要
+            </button>
+          </div>
+        </BannerAlert>
+      )}
+    </>
+  );
+}
 
 export interface ResolvedProposalTargetState {
   currentMarkdown: string;
@@ -44,6 +110,8 @@ interface TurnCardProps {
   onRevertProposal?: (nodeId: string, proposal: TurnProposalRecord) => void | Promise<void>;
   onOpenProposalEditor?: (proposal: TurnProposalRecord) => void;
   onAskAiReorganizeProposal?: (proposal: TurnProposalRecord) => void;
+  onRestoreRefusalOriginal?: (nodeId: string) => void | Promise<void>;
+  onContinuePartialRefusal?: (nodeId: string) => void | Promise<void>;
   afterAssistantContent?: ReactNode;
 }
 
@@ -74,6 +142,8 @@ export function TurnCard({
   onRevertProposal,
   onOpenProposalEditor,
   onAskAiReorganizeProposal,
+  onRestoreRefusalOriginal,
+  onContinuePartialRefusal,
   afterAssistantContent,
 }: TurnCardProps) {
   const [historyActionsOpen, setHistoryActionsOpen] = useState(false);
@@ -330,6 +400,12 @@ export function TurnCard({
                         })}
                       </div>
                     )}
+                    <TurnRefusalNotices
+                      node={node}
+                      isBusy={isBusy}
+                      onRestoreRefusalOriginal={onRestoreRefusalOriginal}
+                      onContinuePartialRefusal={onContinuePartialRefusal}
+                    />
                     {afterAssistantContent}
                     {contentActions}
                   </>

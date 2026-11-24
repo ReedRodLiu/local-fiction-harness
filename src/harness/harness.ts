@@ -1,4 +1,5 @@
 import { createDefaultId } from './id.ts';
+import { recordRefusalDiagnostic, type DiagnosticCollector } from './diagnostics.ts';
 import { createBackgroundModelConfig, normalizeReasoningEffort } from './keyConfig.ts';
 import {
   buildTurnProposalRecords,
@@ -34,12 +35,18 @@ import {
   type SetupNodeFilter,
   type ThreeZoneContextResult,
 } from './context.ts';
+import { buildPromptPackContextOptions, type PromptPackLibrary } from './promptPack.ts';
+import {
+  streamWithRefusalHandling,
+  type RefusalStreamIntegrationOptions,
+} from './refusalWrapper.ts';
 import type {
   AbortSignalLike,
   DocumentRead,
   LlmMessage,
   LlmTransport,
   ModelConfig,
+  NodeDiagnostics,
   PlotSummarySnapshot,
   Story,
   StoryBlueprint,
@@ -57,6 +64,9 @@ export interface FictionHarnessDeps {
   loadPublicDocument?: () => Promise<MarkdownDocument | undefined>;
   now?: () => number;
   createId?: () => string;
+  promptPackLibrary?: PromptPackLibrary;
+  getPromptPackLibrary?: () => PromptPackLibrary | undefined;
+  diagnostics?: DiagnosticCollector;
 }
 
 export interface CreateStoryInput {
@@ -190,6 +200,7 @@ function splitSummaryText(text: string, maxChars: number): string[] {
 export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
   const now = deps.now ?? (() => Date.now());
   const createId = deps.createId ?? createDefaultId;
+  const resolvePromptPackLibrary = () => deps.getPromptPackLibrary?.() ?? deps.promptPackLibrary;
 
   const createStoryRecord = (input: CreateStoryInput): Story => {
     const timestamp = now();
@@ -255,14 +266,38 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     messages: LlmMessage[],
     callbacks?: TurnCallbacks,
     markdownReply = false,
-  ): Promise<{ content: string; reasoningContent: string; finishReason?: string | null }> => {
+    refusalOptions?: RefusalStreamIntegrationOptions,
+  ): Promise<{
+    content: string;
+    reasoningContent: string;
+    finishReason?: string | null;
+    diagnostics?: NodeDiagnostics;
+    prefillContent?: string;
+  }> => {
+    throwIfAborted(callbacks?.signal);
+    if (refusalOptions) {
+      const onDiagnostic = refusalOptions.onDiagnostic ?? (deps.diagnostics
+        ? (event) => recordRefusalDiagnostic(deps.diagnostics!, event)
+        : undefined);
+      const result = await streamWithRefusalHandling({
+        ...refusalOptions,
+        transport: deps.transport,
+        config,
+        messages,
+        callbacks,
+        ...(onDiagnostic ? { onDiagnostic } : {}),
+        toVisibleContent: markdownReply ? visibleReplyPrefix : (raw) => raw,
+      });
+      throwIfAborted(callbacks?.signal);
+      return result;
+    }
+
     let content = '';
     let reasoningContent = '';
     let finishReason: string | null | undefined;
     let shownChars = 0;
     const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
 
-    throwIfAborted(callbacks?.signal);
     for await (const delta of deps.transport.streamChat({
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
@@ -473,6 +508,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     content: string;
     turnSummary?: string;
     reasoningContent: string;
+    diagnostics?: NodeDiagnostics;
+    prefillContent?: string;
     extraNodes: Record<string, TurnNode>;
     rootNodeIds: string[];
     config: ModelConfig;
@@ -487,6 +524,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       content: opts.content,
       ...(opts.turnSummary ? { turnSummary: opts.turnSummary } : {}),
       ...(opts.reasoningContent ? { reasoningContent: opts.reasoningContent } : {}),
+      ...(opts.prefillContent ? { prefillContent: opts.prefillContent } : {}),
+      ...(opts.diagnostics ? { diagnostics: opts.diagnostics } : {}),
       model: opts.config.model,
       reasoningEffort,
       createdAt: assistantCreatedAt,
@@ -567,10 +606,18 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       trimmedInput,
       deps.contextBudget,
       true,
-      prepared.request,
+      {
+        ...prepared.request,
+        ...buildPromptPackContextOptions(resolvePromptPackLibrary(), workingStory.generationPreference),
+      },
     );
 
-    const result = await streamText(config, messages, callbacks, true);
+    const result = await streamText(config, messages, callbacks, true, {
+      mode: 'story',
+      promptPackOptions: {
+        ...buildPromptPackContextOptions(resolvePromptPackLibrary(), workingStory.generationPreference),
+      },
+    });
     const parsed = parseProposalReply(result.content, { finishReason: result.finishReason });
     const legacyProposalStatus = parsed.proposals.length > 0
       ? 'recognized'
@@ -608,6 +655,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       content: parsed.content || '请核对下方的修改建议。',
       ...(parsed.turnSummary ? { turnSummary: parsed.turnSummary } : {}),
       reasoningContent: result.reasoningContent,
+      ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+      ...(result.prefillContent ? { prefillContent: result.prefillContent } : {}),
       documentState: prepared.state,
       reads: prepared.reads,
       proposal: result.finishReason === 'stop' ? parsed.proposal : undefined,
@@ -767,7 +816,15 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       targetParentId = story.activeLeafNodeId,
       userInput?: string,
     ): ThreeZoneContextResult {
-      return assembleThreeZoneContext(story, targetParentId, userInput, deps.contextBudget);
+      return assembleThreeZoneContext(
+        story,
+        targetParentId,
+        userInput,
+        deps.contextBudget,
+        false,
+        undefined,
+        buildPromptPackContextOptions(resolvePromptPackLibrary(), story.generationPreference),
+      );
     },
 
     async extractStoryBlueprint(
@@ -849,9 +906,17 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         userNode.content,
         deps.contextBudget,
         true,
-        prepared.request,
+        {
+          ...prepared.request,
+          ...buildPromptPackContextOptions(resolvePromptPackLibrary(), workingStory.generationPreference),
+        },
       );
-      const result = await streamText(config, messages, callbacks, true);
+      const result = await streamText(config, messages, callbacks, true, {
+        mode: 'story',
+        promptPackOptions: {
+          ...buildPromptPackContextOptions(resolvePromptPackLibrary(), workingStory.generationPreference),
+        },
+      });
       const parsed = parseProposalReply(result.content, { finishReason: result.finishReason });
       const legacyProposalStatus = parsed.proposals.length > 0
         ? 'recognized'
@@ -879,6 +944,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         content: parsed.content || '请核对下方的修改建议。',
         ...(parsed.turnSummary ? { turnSummary: parsed.turnSummary } : {}),
         reasoningContent: result.reasoningContent,
+        ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+        ...(result.prefillContent ? { prefillContent: result.prefillContent } : {}),
         documentState: prepared.state,
         reads: prepared.reads,
         proposal: result.finishReason === 'stop' ? parsed.proposal : undefined,

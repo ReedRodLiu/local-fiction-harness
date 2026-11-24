@@ -1,5 +1,5 @@
 import { createDefaultBlueprint } from './blueprint.ts';
-import { EMPTY_SUMMARY_SNAPSHOT, getActiveBranchNodes } from './context.ts';
+import { EMPTY_SUMMARY_SNAPSHOT, excludeRefusedTurns, getActiveBranchNodes } from './context.ts';
 import {
   getWorkActiveDiscussionNodes,
   newCharacter,
@@ -11,10 +11,19 @@ import {
 } from './creative.ts';
 import { createDefaultId } from './id.ts';
 import {
-  isOfficialDeepSeekModel,
-  isReasoningEffort,
+  normalizeGenerationPreference,
   normalizeReasoningEffort,
 } from './keyConfig.ts';
+import {
+  buildPromptPackAnchorMessages,
+  promptPackTailMessage,
+  resolvePromptPackContext,
+  type PromptPackContextOptions,
+} from './promptPack.ts';
+import {
+  streamWithRefusalHandling,
+  type RefusalStreamIntegrationOptions,
+} from './refusalWrapper.ts';
 import {
   CHANGE_PROMPT,
   documentVersion,
@@ -30,6 +39,7 @@ import type {
   LlmMessage,
   LlmTransport,
   ModelConfig,
+  NodeDiagnostics,
   ReasoningEffort,
   Story,
   TurnCallbacks,
@@ -52,6 +62,8 @@ export interface EntryRouteResult {
   proposals: ParsedProposal[];
   unparsedBlocks: UnparsedProposalBlock[];
   usedFallback: boolean;
+  diagnostics?: NodeDiagnostics;
+  prefillContent?: string;
 }
 
 export type ManuscriptReplyIntent =
@@ -274,6 +286,7 @@ export function parseEntryRouteReply(
   neutralHistory: readonly TurnNode[] = [],
   reasoningContent = '',
 ): EntryRouteResult {
+  const cleanedHistory = excludeRefusedTurns(neutralHistory);
   const { fence, outsideContent } = extractLeadingRouteFence(rawContent);
   const parsedProposals = parseProposalReply(outsideContent);
   const cleanedReply = parsedProposals.content.trim();
@@ -299,7 +312,7 @@ export function parseEntryRouteReply(
       const settingMarkdown =
         parsedMode === 'ambiguous'
           ? ''
-          : bodyMd || [...neutralHistory.filter((n) => n.role === 'user').map((n) => n.content), userInput].join('\n\n');
+          : bodyMd || [...cleanedHistory.filter((n) => n.role === 'user').map((n) => n.content), userInput].join('\n\n');
       return {
         mode: parsedMode,
         title,
@@ -315,14 +328,14 @@ export function parseEntryRouteReply(
     }
   }
 
-  const mode = classifyEntryHeuristic(userInput, neutralHistory);
+  const mode = classifyEntryHeuristic(userInput, cleanedHistory);
   const fallbackTitle =
     mode === 'story' ? '新故事' : mode === 'writing' ? '未命名作品' : mode === 'character' ? '未命名角色' : '新对话';
   const title = deriveEntryTitle(userInput, fallbackTitle);
   const settingMarkdown =
     mode === 'ambiguous'
       ? ''
-      : [...neutralHistory.filter((n) => n.role === 'user').map((n) => n.content), userInput]
+      : [...cleanedHistory.filter((n) => n.role === 'user').map((n) => n.content), userInput]
           .filter(Boolean)
           .join('\n\n');
 
@@ -344,17 +357,27 @@ export function buildEntryRouteMessages(
   userInput: string,
   neutralHistory: readonly TurnNode[] = [],
   publicMemoryMarkdown = '',
+  promptPackOptions?: PromptPackContextOptions,
 ): LlmMessage[] {
-  const messages: LlmMessage[] = [{ role: 'system', content: ENTRY_ROUTE_SYSTEM_PROMPT }];
+  const effectivePromptPack = resolvePromptPackContext(promptPackOptions);
+  const messages: LlmMessage[] = buildPromptPackAnchorMessages(
+    ENTRY_ROUTE_SYSTEM_PROMPT,
+    effectivePromptPack,
+  );
   if (publicMemoryMarkdown.trim()) {
     messages.push({
       role: 'system',
       content: `以下是作为资料使用的「我的记忆」Markdown。\n\n${publicMemoryMarkdown}`,
     });
   }
-  for (const node of neutralHistory) {
+  for (const node of excludeRefusedTurns(neutralHistory)) {
     messages.push({ role: node.role, content: node.content });
   }
+  const tail = promptPackTailMessage(
+    effectivePromptPack,
+    promptPackOptions?.includePromptPackTail ?? false,
+  );
+  if (tail) messages.push(tail);
   messages.push({ role: 'user', content: userInput });
   return messages;
 }
@@ -366,69 +389,54 @@ export async function routeEntryMessage(
   config: ModelConfig,
   callbacks: TurnCallbacks = {},
   publicMemoryMarkdown = '',
+  promptPackOptions?: PromptPackContextOptions,
+  refusalOptions?: Omit<RefusalStreamIntegrationOptions, 'mode'> & {
+    mode?: RefusalStreamIntegrationOptions['mode'];
+  },
 ): Promise<EntryRouteResult> {
-  const messages = buildEntryRouteMessages(userInput, neutralHistory, publicMemoryMarkdown);
-  let raw = '';
-  let reasoningContent = '';
-  let finishReason: string | null | undefined;
-  let shown = '';
+  const effectivePromptPackOptions = refusalOptions?.promptPackOptions ?? promptPackOptions;
+  const cleanedHistory = excludeRefusedTurns(neutralHistory);
+  const messages = buildEntryRouteMessages(
+    userInput,
+    cleanedHistory,
+    publicMemoryMarkdown,
+    effectivePromptPackOptions,
+  );
   const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
-
-  for await (const delta of transport.streamChat({
-    baseUrl: config.baseUrl,
-    apiKey: config.apiKey,
-    model: config.model,
-    reasoningEffort,
+  const heuristicMode = classifyEntryHeuristic(userInput, cleanedHistory);
+  const routePrefillMode = heuristicMode === 'ambiguous' ? 'story' : heuristicMode;
+  const result = await streamWithRefusalHandling({
+    transport,
+    config,
     messages,
-    signal: callbacks.signal,
-  })) {
-    if (callbacks.signal?.aborted) {
-      const abortErr = new Error('操作已中止。');
-      abortErr.name = 'AbortError';
-      throw abortErr;
-    }
-    if (delta.finishReason != null) finishReason = delta.finishReason;
-    if (delta.reasoningDelta && reasoningEffort !== 'none') {
-      reasoningContent += delta.reasoningDelta;
-      callbacks.onReasoningDelta?.(delta.reasoningDelta);
-    }
-    if (!delta.contentDelta) continue;
-    raw += delta.contentDelta;
-    const nextVisible = visibleEntryRoutePrefix(raw);
-    if (nextVisible.length > shown.length) {
-      callbacks.onContentDelta?.(nextVisible.slice(shown.length));
-      shown = nextVisible;
-    }
-  }
+    callbacks,
+    mode: refusalOptions?.mode ?? routePrefillMode,
+    ...(effectivePromptPackOptions ? { promptPackOptions: effectivePromptPackOptions } : {}),
+    prefixContent: refusalOptions?.prefixContent ?? `\`\`\`lfh-route\nmode: ${routePrefillMode}\n`,
+    ...(refusalOptions?.characterName ? { characterName: refusalOptions.characterName } : {}),
+    ...(refusalOptions?.onDiagnostic ? { onDiagnostic: refusalOptions.onDiagnostic } : {}),
+    toVisibleContent: visibleEntryRoutePrefix,
+  });
 
   if (callbacks.signal?.aborted) {
     const abortErr = new Error('操作已中止。');
     abortErr.name = 'AbortError';
     throw abortErr;
   }
-  if (finishReason !== 'stop' && !raw.trim()) {
+  if (result.finishReason !== 'stop' && !result.content.trim()) {
     throw new Error('回复未完成，请重试。');
   }
   return {
-    ...parseEntryRouteReply(raw, userInput, neutralHistory, reasoningContent),
+    ...parseEntryRouteReply(result.content, userInput, cleanedHistory, result.reasoningContent),
+    ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+    ...(result.prefillContent ? { prefillContent: result.prefillContent } : {}),
     model: config.model,
     reasoningEffort,
   };
 }
 
-function normalizeGenerationPreference(
-  pref?: GenerationPreference,
-): GenerationPreference | undefined {
-  if (!pref) return undefined;
-  const out: GenerationPreference = {};
-  if (isOfficialDeepSeekModel(pref.model)) {
-    out.model = pref.model;
-  }
-  if (isReasoningEffort(pref.reasoningEffort)) {
-    out.reasoningEffort = pref.reasoningEffort;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
+
+export { normalizeGenerationPreference } from './keyConfig.ts';
 
 /**
  * Materializes neutral (unpersisted) or existing turns + setting Markdown into a persisted target mode asset.

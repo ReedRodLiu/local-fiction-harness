@@ -28,6 +28,7 @@ export interface AndroidRuntimeOptions {
   secretStore?: SecretStore;
   backupExporter?: BackupExporter;
   diagnosticsStorage?: KeyValueStorage;
+  promptPackStorage?: KeyValueStorage;
 }
 
 function resolveBrowserLocalStorage(): KeyValueStorage | undefined {
@@ -38,6 +39,19 @@ function resolveBrowserLocalStorage(): KeyValueStorage | undefined {
   }
 }
 
+function createMemoryKeyValueStorage(): KeyValueStorage {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      values.set(key, value);
+    },
+    removeItem: (key) => {
+      values.delete(key);
+    },
+  };
+}
+
 /**
  * Creates the Android PlatformRuntime adapter wired exclusively to native Capacitor bridges:
  * chunked SSE streaming, native HTTPS ZIP download, Keystore-encrypted SecretStore, app-private StoryStorage, and native BackupExporter.
@@ -45,6 +59,8 @@ function resolveBrowserLocalStorage(): KeyValueStorage | undefined {
 export function createAndroidPlatformRuntime(
   options: AndroidRuntimeOptions = {},
 ): PlatformRuntime {
+  const promptPackStorage =
+    options.promptPackStorage ?? resolveBrowserLocalStorage() ?? createMemoryKeyValueStorage();
   const diagnostics = createDiagnosticCollector({
     platform: 'android',
     storage: options.diagnosticsStorage ?? resolveBrowserLocalStorage(),
@@ -52,6 +68,7 @@ export function createAndroidPlatformRuntime(
   return {
     platform: 'android',
     diagnostics,
+    promptPackStorage,
     transport: createDiagnosticTransport(
       options.transport ?? createCapacitorSseTransport(),
       diagnostics,
