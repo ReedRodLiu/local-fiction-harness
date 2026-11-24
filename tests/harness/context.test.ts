@@ -10,6 +10,7 @@ import {
   buildEntryRouteMessages,
   characterContext,
   createDefaultBlueprint,
+  invalidateSummarySnapshotsFromNode,
   newCharacter,
   newConversation,
   newDocument,
@@ -17,6 +18,7 @@ import {
   workContext,
   type PromptPackLibrary,
   type Story,
+  type TurnNode,
 } from '../../src/harness/index.ts';
 
 function version(markdown: string) {
@@ -272,5 +274,81 @@ describe('Prompt Pack three-zone physical assembly', () => {
     );
     expect(entry.at(-2)?.content).toBe('PACK_TAIL');
     expect(entry.at(-1)).toEqual({ role: 'user', content: '欢迎输入' });
+  });
+
+  it('invalidates changed history and descendant summaries for all three creative modes without touching siblings', () => {
+    const nodes: Record<string, TurnNode> = {
+      root: {
+        id: 'root', parentId: null, role: 'user', content: '[root]', createdAt: 1,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+      target: {
+        id: 'target', parentId: 'root', role: 'assistant', content: '[target-old]', createdAt: 2,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+      nextUser: {
+        id: 'nextUser', parentId: 'target', role: 'user', content: '[next-user]', createdAt: 3,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+      activeLeaf: {
+        id: 'activeLeaf', parentId: 'nextUser', role: 'assistant', content: '[active-leaf]', createdAt: 4,
+        summarySnapshot: {
+          content: 'STALE_ACTIVE_SUMMARY',
+          coveredUpToNodeId: 'target',
+          summarizedTurnCount: 3,
+        },
+      },
+      siblingLeaf: {
+        id: 'siblingLeaf', parentId: 'root', role: 'assistant', content: '[sibling-leaf]', createdAt: 5,
+        summarySnapshot: {
+          content: 'SIBLING_SUMMARY',
+          coveredUpToNodeId: 'siblingLeaf',
+          summarizedTurnCount: 1,
+        },
+      },
+    };
+    const replacedNodes: Record<string, TurnNode> = {
+      ...nodes,
+      target: { ...nodes.target, content: '[target-new]' },
+    };
+    const buildContexts = {
+      story: (candidate: Record<string, TurnNode>) => assembleThreeZoneContext({
+        ...makeStory(),
+        nodes: candidate,
+        rootNodeIds: ['root'],
+        activeLeafNodeId: 'activeLeaf',
+      }, 'activeLeaf', '继续'),
+      writing: (candidate: Record<string, TurnNode>) => {
+        const work = {
+          ...newWork('测试作品'),
+          discussionNodes: candidate,
+          activeDiscussionLeafId: 'activeLeaf',
+        };
+        return workContext(newDocument(''), work, '继续');
+      },
+      character: (candidate: Record<string, TurnNode>) => {
+        const character = newCharacter('角色', '角色设定');
+        const conversation = {
+          ...newConversation(character),
+          nodes: candidate,
+          activeLeafNodeId: 'activeLeaf',
+        };
+        return characterContext(newDocument(''), character, conversation, '继续');
+      },
+    };
+
+    for (const buildContext of Object.values(buildContexts)) {
+      const staleContext = JSON.stringify(buildContext(replacedNodes).messages);
+      expect(staleContext).toContain('STALE_ACTIVE_SUMMARY');
+      expect(staleContext).not.toContain('[target-new]');
+
+      const invalidated = invalidateSummarySnapshotsFromNode(replacedNodes, 'target');
+      const refreshedContext = JSON.stringify(buildContext(invalidated).messages);
+      expect(refreshedContext).toContain('[target-new]');
+      expect(refreshedContext).not.toContain('STALE_ACTIVE_SUMMARY');
+      expect(invalidated.siblingLeaf.summarySnapshot).toEqual(nodes.siblingLeaf.summarySnapshot);
+    }
+
+    expect(replacedNodes.activeLeaf.summarySnapshot.content).toBe('STALE_ACTIVE_SUMMARY');
   });
 });

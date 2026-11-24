@@ -24,6 +24,7 @@ import {
   getActiveSummarySnapshot,
   getSiblingBranchInfo,
   importDeepSeekSessions,
+  invalidateSummarySnapshotsFromNode,
   isDefaultPromptPackLibrary,
   isAbortError,
   loadPromptPackLibrary,
@@ -1202,9 +1203,6 @@ export function App({ runtime }: AppProps) {
           if (continued.finishReason !== 'stop') {
             throw new Error('追要回复未完成，请重试。');
           }
-          if (continued.content.trim() === node.content.trim()) {
-            throw new Error('模型没有返回可追加的正文。');
-          }
           const nextNode = finalizePrefixContinuation(node, continued, {
             mode: 'story',
             baseVersions: {
@@ -1213,9 +1211,13 @@ export function App({ runtime }: AppProps) {
               note: requestDocuments?.local.id,
             },
           });
+          const nodes = invalidateSummarySnapshotsFromNode(
+            { ...latest.nodes, [node.id]: nextNode },
+            node.id,
+          );
           const saved = await harness.saveStory({
             ...latest,
-            nodes: { ...latest.nodes, [node.id]: nextNode },
+            nodes,
             updatedAt: Math.max(Date.now(), latest.updatedAt + 1),
           });
           return { userNode: parent, assistantNode: nextNode, story: saved };

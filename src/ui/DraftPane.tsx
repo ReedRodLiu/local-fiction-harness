@@ -17,6 +17,7 @@ import {
   getTurnTreeSummarySnapshot,
   getWorkActiveDiscussionNodes,
   getWorkDiscussionTree,
+  invalidateSummarySnapshotsFromNode,
   normalizeProposalTarget,
   normalizeReasoningEffort,
   parseManuscriptAssistantReply,
@@ -822,7 +823,6 @@ export function DraftPane(props: DraftPaneProps) {
         },
       });
       if (continued.finishReason !== 'stop') throw new Error('追要回复未完成，请重试。');
-      if (continued.content.trim() === node.content.trim()) throw new Error('模型没有返回可追加的正文。');
       const nextNode = finalizePrefixContinuation(node, continued, {
         mode: 'writing',
         baseVersions: {
@@ -834,7 +834,10 @@ export function DraftPane(props: DraftPaneProps) {
       await save((nowState) =>
         updateWork(nowState, work.id, (latest) => {
           const latestTree = getWorkDiscussionTree(latest);
-          const nodes = { ...latestTree.nodes, [nodeId]: nextNode };
+          const nodes = invalidateSummarySnapshotsFromNode(
+            { ...latestTree.nodes, [nodeId]: nextNode },
+            nodeId,
+          );
           return {
             ...latest,
             discussionNodes: nodes,

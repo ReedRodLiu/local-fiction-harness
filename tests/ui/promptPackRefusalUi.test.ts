@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
   BUILTIN_NARRATIVE_PROMPT_PACK,
+  assembleThreeZoneContext,
   createDefaultPromptPackLibrary,
   createPromptPack,
   createDefaultBlueprint,
@@ -203,6 +204,62 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     expect(result.finishReason).toBe('stop');
   });
 
+  it.each([
+    {
+      name: 'echoed prefix with only an lfh-summary block',
+      content: '已经写出的正文。\n\n```lfh-summary\n没有新增正文。\n```',
+    },
+    {
+      name: 'empty body',
+      content: '',
+    },
+  ])('rejects $name and keeps the partial-refusal retry entry available', ({ content }) => {
+    const node = makeNode({ diagnostics: { refusalRoute: 'partial_refused' } });
+    const before = structuredClone(node);
+
+    expect(() => finalizePrefixContinuation(node, {
+      content,
+      reasoningContent: '',
+      finishReason: 'stop',
+    }, { mode: 'story' })).toThrow('模型没有返回可追加的正文。');
+
+    expect(node).toEqual(before);
+    const markup = renderToStaticMarkup(createElement(TurnCard, {
+      node,
+      isActiveLeaf: true,
+      isLatestTurn: true,
+      isSetupNode: false,
+      turnNumber: 1,
+      isBusy: false,
+      isStreaming: false,
+      siblings: { siblings: [node], prevSiblingId: null, nextSiblingId: null, currentIndex: 0, total: 1 },
+      onSwitchBranch: vi.fn(),
+      onRewindToNode: vi.fn(),
+      onContinuePartialRefusal: vi.fn(),
+    }));
+    expect(markup).toContain('data-testid="turn-partial-refusal-continue"');
+  });
+
+  it('accepts a proposal-only continuation while preserving the original body', () => {
+    const node = makeNode({ diagnostics: { refusalRoute: 'partial_refused' } });
+    const finalized = finalizePrefixContinuation(node, {
+      content: [
+        '```lfh-proposal',
+        'target: note',
+        'op: append',
+        'summary: 记录追加线索',
+        '---',
+        '- 新线索',
+        '```',
+      ].join('\n'),
+      reasoningContent: '',
+      finishReason: 'stop',
+    }, { mode: 'story' });
+
+    expect(finalized.content).toBe(node.content);
+    expect(finalized.proposals).toHaveLength(1);
+  });
+
   it('parses prefix continuation protocols, strips fences, and merges new proposal records', () => {
     const node = makeNode({
       turnSummary: '此前摘要。',
@@ -287,7 +344,9 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
   });
 
   it('keeps partial refusal content and the recoverable continue route after prefix continuation', () => {
-    const node = makeNode({ diagnostics: { refusalRoute: 'partial_refused' } });
+    const node = makeNode({
+      diagnostics: { sourceStatus: 'REFUSAL', refusalRoute: 'partial_refused' },
+    });
     const finalized = finalizePrefixContinuation(
       node,
       {
@@ -303,6 +362,28 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
       refusalRoute: 'partial_refused',
     });
     expect(finalized.diagnostics?.sourceStatus).toBeUndefined();
+  });
+
+  it('clears a legacy REFUSAL status when a continuation passes and keeps the node in context', () => {
+    const node = makeNode({
+      diagnostics: { sourceStatus: 'REFUSAL', refusalRoute: 'partial_refused' },
+    });
+    const finalized = finalizePrefixContinuation(node, {
+      content: `${node.content}\n\n她握紧门把手，走进雨里。`,
+      reasoningContent: '',
+      finishReason: 'stop',
+    }, { mode: 'story' });
+
+    expect(finalized.diagnostics).toMatchObject({ refusalRoute: 'pass' });
+    expect(finalized.diagnostics?.sourceStatus).toBeUndefined();
+    const story = makeStory(finalized);
+    expect(excludeRefusedTurns([story.nodes['user-1'], finalized])).toEqual([
+      story.nodes['user-1'],
+      finalized,
+    ]);
+
+    const context = assembleThreeZoneContext(story, finalized.id, '继续');
+    expect(context.messages.map((message) => message.content).join('\n')).toContain('她握紧门把手');
   });
 
   it('keeps partial-refused nodes in context while excluding thin refusal nodes', () => {
@@ -356,6 +437,8 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     for (const file of ['App.tsx', 'DraftPane.tsx', 'CharacterPane.tsx']) {
       const source = readFileSync(join(repoRoot, 'src/ui', file), 'utf8');
       expect(source).toContain('finalizePrefixContinuation');
+      expect(source).toContain('invalidateSummarySnapshotsFromNode');
+      expect(source).not.toContain('continued.content.trim() === node.content.trim()');
     }
   });
 

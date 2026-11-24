@@ -67,6 +67,10 @@ export function finalizePrefixContinuation(
     options.baseVersions,
     options.now,
   );
+  const visibleContent = parsed.content.trim();
+  if (newProposalRecords.length === 0 && (!visibleContent || visibleContent === node.content.trim())) {
+    throw new Error('模型没有返回可追加的正文。');
+  }
   const refusalVerdict = judgeRefusal(parsedContinuation.content);
   const refusalRoute = routeRefusal(
     parsedContinuation.content,
@@ -78,9 +82,10 @@ export function finalizePrefixContinuation(
   );
   const matchedRuleId = refusalVerdict?.ruleId ??
     (refusalRoute === 'retry-skeleton' ? 'skeleton-01' : undefined);
-  const marksRefusalSource = refusalRoute !== 'pass' && refusalRoute !== 'partial_refused';
+  const clearsLegacyRefusalSource = refusalRoute === 'pass' || refusalRoute === 'partial_refused';
+  const marksRefusalSource = !clearsLegacyRefusalSource;
   const existingDiagnostics = { ...node.diagnostics };
-  if (refusalRoute === 'partial_refused' && existingDiagnostics.sourceStatus === 'REFUSAL') {
+  if (clearsLegacyRefusalSource && existingDiagnostics.sourceStatus === 'REFUSAL') {
     delete existingDiagnostics.sourceStatus;
   }
   const diagnostics = {
@@ -93,7 +98,7 @@ export function finalizePrefixContinuation(
 
   return {
     ...node,
-    content: parsed.content,
+    content: visibleContent ? parsed.content : node.content,
     ...(parsedContinuation.turnSummary ? { turnSummary: parsedContinuation.turnSummary } : {}),
     ...(continued.reasoningContent ? { reasoningContent: continued.reasoningContent } : {}),
     diagnostics,

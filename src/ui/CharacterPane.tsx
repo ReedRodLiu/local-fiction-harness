@@ -14,6 +14,7 @@ import {
   formatTurnPreview,
   getActiveBranchNodes,
   getNodeSiblingBranchInfo,
+  invalidateSummarySnapshotsFromNode,
   newConversation,
   normalizeProposalTarget,
   resolveEffectiveModelConfig,
@@ -569,7 +570,6 @@ export function CharacterPane(props: CharacterPaneProps) {
         },
       });
       if (continued.finishReason !== 'stop') throw new Error('追要回复未完成，请重试。');
-      if (continued.content.trim() === node.content.trim()) throw new Error('模型没有返回可追加的正文。');
       const nextNode = finalizePrefixContinuation(node, continued, {
         mode: 'character',
         baseVersions: {
@@ -580,10 +580,13 @@ export function CharacterPane(props: CharacterPaneProps) {
       });
       await save((workspaceState) =>
         updateCharacter(workspaceState, current.id, (latest) =>
-          updateConversation(latest, target.id, (live) => ({
-            ...live,
-            nodes: { ...live.nodes, [nodeId]: nextNode },
-          })),
+          updateConversation(latest, target.id, (live) => {
+            const nodes = invalidateSummarySnapshotsFromNode(
+              { ...live.nodes, [nodeId]: nextNode },
+              nodeId,
+            );
+            return { ...live, nodes };
+          }),
         ),
       );
     });

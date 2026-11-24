@@ -486,6 +486,47 @@ export interface TurnTreeState {
 }
 
 /**
+ * Clears summary snapshots for a changed node and every descendant. Sibling
+ * branches keep their summaries because their covered history is unchanged.
+ */
+export function invalidateSummarySnapshotsFromNode(
+  nodes: Readonly<Record<string, TurnNode>>,
+  targetNodeId: string,
+): Record<string, TurnNode> {
+  if (!Object.hasOwn(nodes, targetNodeId)) {
+    throw new Error(`目标节点 ${targetNodeId} 不存在。`);
+  }
+
+  const childrenByParent = new Map<string, string[]>();
+  for (const node of Object.values(nodes)) {
+    if (node.parentId) {
+      const children = childrenByParent.get(node.parentId) ?? [];
+      children.push(node.id);
+      childrenByParent.set(node.parentId, children);
+    }
+  }
+
+  const affectedIds = new Set([targetNodeId]);
+  const pendingIds = [targetNodeId];
+  while (pendingIds.length > 0) {
+    const parentId = pendingIds.pop()!;
+    for (const childId of childrenByParent.get(parentId) ?? []) {
+      if (!affectedIds.has(childId)) {
+        affectedIds.add(childId);
+        pendingIds.push(childId);
+      }
+    }
+  }
+
+  return Object.fromEntries(
+    Object.entries(nodes).map(([nodeId, node]) => [
+      nodeId,
+      affectedIds.has(nodeId) ? { ...node, summarySnapshot: EMPTY_SUMMARY_SNAPSHOT } : node,
+    ]),
+  );
+}
+
+/**
  * Appends a TurnNode into a branch tree and activates it as the new leaf.
  */
 export function appendTurnNodeToTree(tree: TurnTreeState, node: TurnNode): TurnTreeState {
