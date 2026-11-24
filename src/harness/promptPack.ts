@@ -44,6 +44,10 @@ export interface PromptPack {
 export interface PromptPackLibrary {
   packs: PromptPack[];
   activePackId: string | null;
+  /** Global prefix-completion default used when an item does not override it. */
+  defaultPrefixCompletion?: PrefixCompletionMode;
+  /** When enabled, the active pack tail is appended to every foreground request. */
+  includeTail?: boolean;
 }
 
 export interface PromptPackValidationResult {
@@ -264,6 +268,8 @@ export function createDefaultPromptPackLibrary(): PromptPackLibrary {
   return {
     packs: [builtinClone()],
     activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+    defaultPrefixCompletion: 'on_retry',
+    includeTail: false,
   };
 }
 
@@ -329,10 +335,39 @@ export function validatePromptPackLibrary(raw: unknown): PromptPackLibrary {
       ? raw.activePackId
       : (() => { throw new Error('提示词包库 activePackId 必须为字符串或 null。'); })();
   const activePack = activePackId ? packs.find((pack) => pack.id === activePackId) : undefined;
+  if (
+    raw.defaultPrefixCompletion !== undefined &&
+    raw.defaultPrefixCompletion !== 'off' &&
+    raw.defaultPrefixCompletion !== 'on_retry' &&
+    raw.defaultPrefixCompletion !== 'always'
+  ) {
+    throw new Error('提示词包库 defaultPrefixCompletion 无效。');
+  }
+  if (raw.includeTail !== undefined && typeof raw.includeTail !== 'boolean') {
+    throw new Error('提示词包库 includeTail 必须为布尔值。');
+  }
   return {
     packs,
     activePackId: activePack && activePack.enabled !== false ? activePack.id : null,
+    defaultPrefixCompletion: raw.defaultPrefixCompletion ?? 'on_retry',
+    includeTail: raw.includeTail ?? false,
   };
+}
+
+/** Returns whether the library still has the untouched built-in defaults. */
+export function isDefaultPromptPackLibrary(library: PromptPackLibrary): boolean {
+  const normalized = validatePromptPackLibrary(library);
+  const [onlyPack] = normalized.packs;
+  return (
+    normalized.packs.length === 1 &&
+    normalized.activePackId === BUILTIN_NARRATIVE_PROMPT_PACK.id &&
+    normalized.defaultPrefixCompletion === 'on_retry' &&
+    normalized.includeTail === false &&
+    onlyPack?.id === BUILTIN_NARRATIVE_PROMPT_PACK.id &&
+    onlyPack.enabled !== false &&
+    onlyPack.readOnly === true &&
+    onlyPack.source === 'builtin'
+  );
 }
 
 function mutationResult(library: PromptPackLibrary, warning?: string): PromptPackMutationResult {
@@ -365,6 +400,7 @@ export function addPromptPack(library: PromptPackLibrary, pack: PromptPack): Pro
     throw new Error(`提示词包 id 已存在：${normalized.id}。`);
   }
   return validatePromptPackLibrary({
+    ...library,
     packs: [...library.packs, normalized],
     activePackId: library.activePackId,
   });
@@ -380,7 +416,7 @@ export function updatePromptPack(library: PromptPackLibrary, pack: PromptPack): 
   assertValidPromptPack(next);
   const packs = [...library.packs];
   packs[index] = next;
-  return validatePromptPackLibrary({ packs, activePackId: library.activePackId });
+  return validatePromptPackLibrary({ ...library, packs, activePackId: library.activePackId });
 }
 
 export function removePromptPack(library: PromptPackLibrary, id: string): PromptPackLibrary {
@@ -389,6 +425,7 @@ export function removePromptPack(library: PromptPackLibrary, id: string): Prompt
   }
   if (!library.packs.some((pack) => pack.id === id)) throw new Error(`提示词包不存在：${id}。`);
   return validatePromptPackLibrary({
+    ...library,
     packs: library.packs.filter((pack) => pack.id !== id),
     activePackId: library.activePackId === id ? null : library.activePackId,
   });
@@ -413,6 +450,7 @@ export function setPromptPackEnabled(
     item.id === id ? { ...item, enabled } : item,
   );
   return validatePromptPackLibrary({
+    ...library,
     packs,
     activePackId: enabled ? library.activePackId : library.activePackId === id ? null : library.activePackId,
   });
@@ -470,7 +508,7 @@ export function resolveEffectivePromptPack(
     override?.prefixCompletion === 'on_retry' ||
     override?.prefixCompletion === 'always'
     ? override.prefixCompletion
-    : 'on_retry';
+    : library.defaultPrefixCompletion ?? 'on_retry';
   return {
     enabled: true,
     pack: clonePromptPack(pack),
@@ -506,6 +544,17 @@ export function resolvePromptPackContext(options?: PromptPackContextOptions): Ef
   const explicit = resolveExplicitPromptPack(options?.promptPack);
   if (explicit) return explicit;
   return resolveEffectivePromptPack(options?.promptPackLibrary, options?.generationPreference);
+}
+
+export function buildPromptPackContextOptions(
+  library: PromptPackLibrary | undefined,
+  generationPreference?: GenerationPreference,
+): PromptPackContextOptions {
+  return {
+    ...(library ? { promptPackLibrary: library } : {}),
+    ...(generationPreference ? { generationPreference } : {}),
+    ...(library ? { includePromptPackTail: library.includeTail ?? false } : {}),
+  };
 }
 
 export function buildPromptPackAnchorMessages(

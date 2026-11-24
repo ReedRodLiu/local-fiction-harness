@@ -5,10 +5,13 @@ import {
   assembleCreativeThreeZoneContext,
   characterContext,
   createFictionHarness,
+  mergeCharacterSummaryResult,
+  mergeWorkSummaryResult,
   newCharacter,
   newConversation,
   newDocument,
   newWork,
+  summaryTargetBranchFingerprint,
   summarizeCharacterConversation,
   summarizeCreativeTurnNodes,
   summarizeStoryBranchSilent,
@@ -64,6 +67,141 @@ function makeTurnChain(
 }
 
 describe('All-mode TurnNode trees & silent background rolling summary', () => {
+  it('rejects a completed background work summary when an ancestor changed in flight', async () => {
+    const chain = makeTurnChain('stale', 4, 60);
+    const work = {
+      ...newWork('摘要并发测试'),
+      discussionNodes: chain.nodes,
+      activeDiscussionLeafId: chain.leafId,
+    };
+    const expectedBranchFingerprint = summaryTargetBranchFingerprint(chain.nodes, chain.leafId);
+    let release!: () => void;
+    let markStarted!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    let firstCall = true;
+    const transport: LlmTransport = {
+      async *streamChat() {
+        if (firstCall) {
+          firstCall = false;
+          markStarted();
+          await released;
+        }
+        yield { contentDelta: '基于旧祖先正文生成的摘要', finishReason: 'stop' };
+      },
+    };
+
+    const pending = summarizeWorkDiscussion(work, transport, modelConfig, {
+      targetLeafId: chain.leafId,
+      budget: { recentMaxNodes: 2, recentMaxChars: 0 },
+    });
+    await started;
+
+    const changedAncestorId = chain.nodeIds[0]!;
+    const latest = {
+      ...work,
+      discussionNodes: {
+        ...chain.nodes,
+        [changedAncestorId]: {
+          ...chain.nodes[changedAncestorId]!,
+          content: '祖先节点在摘要期间追要后的新正文',
+        },
+      },
+    };
+    release();
+    const summarized = await pending;
+
+    expect(summarized.updated).toBe(true);
+    expect(mergeWorkSummaryResult(
+      latest,
+      summarized.work,
+      chain.leafId,
+      expectedBranchFingerprint,
+    )).toBeNull();
+  });
+
+  it('merges a completed background character summary when only a sibling changed', async () => {
+    const chain = makeTurnChain('accept', 4, 60);
+    const character = newCharacter('江澄', '克制而敏锐。');
+    const conversation = {
+      ...newConversation(character),
+      nodes: chain.nodes,
+      activeLeafNodeId: chain.leafId,
+    };
+    const expectedBranchFingerprint = summaryTargetBranchFingerprint(chain.nodes, chain.leafId);
+    let release!: () => void;
+    let markStarted!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    let firstCall = true;
+    const transport: LlmTransport = {
+      async *streamChat() {
+        if (firstCall) {
+          firstCall = false;
+          markStarted();
+          await released;
+        }
+        yield { contentDelta: '目标分支未变的正常摘要', finishReason: 'stop' };
+      },
+    };
+
+    const pending = summarizeCharacterConversation(conversation, transport, modelConfig, {
+      targetLeafId: chain.leafId,
+      budget: { recentMaxNodes: 2, recentMaxChars: 0 },
+    });
+    await started;
+    const siblingId = 'unrelated-sibling';
+    const latest = {
+      ...conversation,
+      nodes: {
+        ...chain.nodes,
+        [siblingId]: {
+          id: siblingId,
+          parentId: chain.nodeIds[1]!,
+          role: 'user' as const,
+          content: '这条无关 sibling 在摘要期间发生变化',
+          createdAt: 1000,
+          summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        },
+      },
+    };
+    release();
+    const summarized = await pending;
+
+    const merged = mergeCharacterSummaryResult(
+      latest,
+      summarized.conversation,
+      chain.leafId,
+      expectedBranchFingerprint,
+    );
+    expect(merged).not.toBeNull();
+    expect(merged!.nodes[chain.leafId]!.summarySnapshot.content).toBe('目标分支未变的正常摘要');
+    expect(merged!.nodes[siblingId]!.content).toBe('这条无关 sibling 在摘要期间发生变化');
+  });
+
+  it('persists refusal diagnostics and prefix prefill metadata on appended assistant nodes', () => {
+    const appended = appendWorkDiscussionTurn(newWork('诊断保存测试'), {
+      role: 'assistant',
+      content: '重拟后的正文。',
+      diagnostics: {
+        refusalRoute: 'retry',
+        recoveredFromText: '抱歉，我不能继续。',
+        retriedWithPrefix: true,
+      },
+      prefillContent: '她抬起眼，',
+    });
+
+    expect(appended.node.diagnostics).toMatchObject({
+      refusalRoute: 'retry',
+      recoveredFromText: '抱歉，我不能继续。',
+    });
+    expect(appended.node.prefillContent).toBe('她抬起眼，');
+    expect(appended.work.discussionNodes?.[appended.node.id]).toMatchObject({
+      diagnostics: appended.node.diagnostics,
+      prefillContent: '她抬起眼，',
+    });
+  });
+
   it('compresses long 写故事 discussion silently in background and isolates sibling branches', async () => {
     let work = newWork('长河夜行', '# 作品设定\n\n民国悬疑短篇');
     work.body = '第一章：码头的雾比往年更浓。';

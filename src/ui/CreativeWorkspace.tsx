@@ -2,6 +2,7 @@ import type {
   CreativeWorkspaceState,
   ModelConfig,
   PlatformRuntime,
+  PromptPackLibrary,
   StageAssetMode,
 } from '../harness/index.ts';
 import { CharacterPane } from './CharacterPane.tsx';
@@ -15,6 +16,7 @@ interface Props {
   mode: 'writing' | 'character';
   workspace: CreativeWorkspaceState;
   defaultConfig?: ModelConfig;
+  promptPackLibrary?: PromptPackLibrary;
   ready: boolean;
   storageError: string;
   save: SaveWorkspace;

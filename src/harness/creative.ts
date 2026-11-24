@@ -205,6 +205,8 @@ export function appendWorkDiscussionTurn(
     reasoningContent?: string;
     model?: string;
     reasoningEffort?: ReasoningEffort;
+    diagnostics?: TurnNode['diagnostics'];
+    prefillContent?: string;
     parentId?: string | null;
     id?: string;
     createdAt?: number;
@@ -228,6 +230,8 @@ export function appendWorkDiscussionTurn(
     ...(nodeInput.reasoningContent ? { reasoningContent: nodeInput.reasoningContent } : {}),
     ...(nodeInput.model ? { model: nodeInput.model } : {}),
     ...(nodeInput.reasoningEffort ? { reasoningEffort: nodeInput.reasoningEffort } : {}),
+    ...(nodeInput.diagnostics ? { diagnostics: nodeInput.diagnostics } : {}),
+    ...(nodeInput.prefillContent !== undefined ? { prefillContent: nodeInput.prefillContent } : {}),
     createdAt: nodeInput.createdAt ?? Date.now(),
     summarySnapshot: parentSnapshot,
     ...(nodeInput.documentReads ? { documentReads: nodeInput.documentReads } : {}),
@@ -439,6 +443,101 @@ export interface CreativeSummaryOptions {
   targetLeafId?: string | null;
   budget?: Partial<ContextBudgetConfig>;
   signal?: AbortSignalLike;
+}
+
+/**
+ * Captures the exact node path that a background summary was generated from.
+ * Sibling branches are intentionally excluded.
+ */
+export function summaryTargetBranchFingerprint(
+  nodes: Record<string, TurnNode>,
+  targetLeafId: string | null,
+): string | null {
+  if (!targetLeafId || !Object.hasOwn(nodes, targetLeafId)) return null;
+  const branch = getActiveBranchNodes({ nodes, activeLeafNodeId: targetLeafId }, targetLeafId);
+  if (branch.length === 0 || branch[branch.length - 1]?.id !== targetLeafId) return null;
+  return JSON.stringify(
+    branch.map((node) => [
+      node.id,
+      node.parentId,
+      node.role,
+      node.content,
+      node.diagnostics?.sourceStatus ?? null,
+      node.summarySnapshot.content,
+      node.summarySnapshot.coveredUpToNodeId,
+      node.summarySnapshot.summarizedTurnCount,
+    ]),
+  );
+}
+
+export function isSummaryTargetUnchanged(
+  expectedBranchFingerprint: string | null,
+  liveNodes: Record<string, TurnNode>,
+  targetLeafId: string | null,
+): boolean {
+  return expectedBranchFingerprint !== null &&
+    summaryTargetBranchFingerprint(liveNodes, targetLeafId) === expectedBranchFingerprint;
+}
+
+export function mergeWorkSummaryResult(
+  liveWork: DraftWork,
+  summarizedWork: DraftWork,
+  targetLeafId: string,
+  expectedBranchFingerprint: string | null,
+): DraftWork | null {
+  const liveTree = getWorkDiscussionTree(liveWork);
+  const updatedLeaf = summarizedWork.discussionNodes?.[targetLeafId];
+  if (
+    !updatedLeaf ||
+    updatedLeaf.id !== targetLeafId ||
+    !isSummaryTargetUnchanged(expectedBranchFingerprint, liveTree.nodes, targetLeafId)
+  ) {
+    return null;
+  }
+
+  const nextNodes = {
+    ...liveTree.nodes,
+    [targetLeafId]: {
+      ...liveTree.nodes[targetLeafId],
+      summarySnapshot: updatedLeaf.summarySnapshot,
+    },
+  };
+  return {
+    ...liveWork,
+    discussionNodes: nextNodes,
+    activeDiscussionLeafId: liveTree.activeLeafNodeId,
+    discussion: getActiveBranchNodes(
+      { nodes: nextNodes, activeLeafNodeId: liveTree.activeLeafNodeId },
+      liveTree.activeLeafNodeId,
+    ),
+  };
+}
+
+export function mergeCharacterSummaryResult(
+  liveConversation: CharacterConversation,
+  summarizedConversation: CharacterConversation,
+  targetLeafId: string,
+  expectedBranchFingerprint: string | null,
+): CharacterConversation | null {
+  const updatedLeaf = summarizedConversation.nodes[targetLeafId];
+  if (
+    !updatedLeaf ||
+    updatedLeaf.id !== targetLeafId ||
+    !isSummaryTargetUnchanged(expectedBranchFingerprint, liveConversation.nodes, targetLeafId)
+  ) {
+    return null;
+  }
+
+  return {
+    ...liveConversation,
+    nodes: {
+      ...liveConversation.nodes,
+      [targetLeafId]: {
+        ...liveConversation.nodes[targetLeafId],
+        summarySnapshot: updatedLeaf.summarySnapshot,
+      },
+    },
+  };
 }
 
 export async function summarizeWorkDiscussion(

@@ -159,7 +159,10 @@ export async function verifyThreeModes(browser, port, helpers) {
     await page.route('**/chat/completions', async (route) => {
       const messages = route.request().postDataJSON().messages;
       requests.push(messages);
-      const sys = messages[0]?.content ?? '';
+      const sys = messages
+        .filter((message) => message.role === 'system')
+        .map((message) => message.content)
+        .join('\n');
       const input = messages.at(-1)?.content ?? '';
 
       if (sys.includes('自然语言第一入口助手')) {

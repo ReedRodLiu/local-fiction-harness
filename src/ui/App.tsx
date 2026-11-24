@@ -3,6 +3,8 @@ import { ArrowUp, FilePlus2, PenLine, Plus, Sparkles, Square } from 'lucide-reac
 import {
   DEFAULT_MODEL_CONFIG,
   EMPTY_SUMMARY_SNAPSHOT,
+  assembleThreeZoneContext,
+  buildPromptPackContextOptions,
   buildTurnProposalRecords,
   computeActiveReviewState,
   conversationExport,
@@ -17,11 +19,15 @@ import {
   editStoryDocument,
   emptyWorkspace,
   exportFolioBackupV3,
+  exportPromptPackMarkdown,
   getActiveBranchNodes,
   getActiveSummarySnapshot,
   getSiblingBranchInfo,
   importDeepSeekSessions,
+  invalidateStorySummarySnapshotsFromNode,
+  isDefaultPromptPackLibrary,
   isAbortError,
+  loadPromptPackLibrary,
   materializeAssetFromNodes,
   mergeRestoredBackup,
   migrateStoryDocuments,
@@ -35,7 +41,9 @@ import {
   parseAndValidateFolioBackup,
   projectStoryTreeSpine,
   resolveEffectiveModelConfig,
+  restoreRefusalOriginalContent,
   routeEntryMessage,
+  savePromptPackLibrary,
   storyDocumentState,
   storyExportMarkdown,
   writeDocument,
@@ -46,6 +54,9 @@ import {
   type ModelConfig,
   type OfficialDeepSeekModel,
   type PlatformRuntime,
+  type PrefixCompletionMode,
+  type PromptPack,
+  type PromptPackLibrary,
   type ReasoningEffort,
   type ScriptTurnRange,
   type StageAssetMode,
@@ -81,6 +92,10 @@ import { TopBar } from './TopBar.tsx';
 import { TurnCard, type ResolvedProposalTargetState } from './TurnCard.tsx';
 import { WelcomeView } from './WelcomeView.tsx';
 import { setCrashDiagnosticBundleBuilder } from './crashDiagnosticContext.ts';
+import {
+  finalizePrefixContinuation,
+  streamPrefixContinuation,
+} from './refusalContinuation.ts';
 import type { DisplayFontSize, DisplayThemePreference } from './displayPreferences.ts';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
 import {
@@ -191,6 +206,13 @@ export function App({ runtime }: AppProps) {
   } | null>(null);
   const { asyncError, dismissAsyncError } = useAppAsyncError();
 
+  const [promptPackLibrary, setPromptPackLibraryState] = useState<PromptPackLibrary>(() =>
+    loadPromptPackLibrary(window.localStorage),
+  );
+  const setPromptPackLibrary = useCallback((next: PromptPackLibrary) => {
+    const saved = savePromptPackLibrary(window.localStorage, next);
+    setPromptPackLibraryState(saved);
+  }, []);
   const configStore = useMemo(
     () => createAsyncModelConfigStore(runtime.secretStore),
     [runtime],
@@ -201,8 +223,9 @@ export function App({ runtime }: AppProps) {
         transport: runtime.transport,
         storage: runtime.storyStorage,
         loadPublicDocument: async () => (await runtime.creativeStorage?.load())?.publicDocument ?? emptyWorkspace().publicDocument,
+        promptPackLibrary,
       }),
-    [runtime],
+    [promptPackLibrary, runtime],
   );
 
   const [config, setConfig] = useState<ModelConfig>(() => {
@@ -251,6 +274,7 @@ export function App({ runtime }: AppProps) {
   const [isBranchSwitching, setIsBranchSwitching] = useState(false);
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamContent, setStreamContent] = useState('');
+  const [refusalRetrying, setRefusalRetrying] = useState(false);
   const [streamingNodeId, setStreamingNodeId] = useState<string | null>(null);
   const [reasoningDurations, setReasoningDurations] = useState<Record<string, number>>({});
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -407,6 +431,7 @@ export function App({ runtime }: AppProps) {
     setIsStreaming(false);
     setStreamReasoning('');
     setStreamContent('');
+    setRefusalRetrying(false);
     setStreamingNodeId(null);
   }, []);
 
@@ -670,6 +695,7 @@ export function App({ runtime }: AppProps) {
     scene: 'story',
     active: isStreaming && !isWelcome && !streamContent.trim(),
   });
+  const activeWaitingPhrase = refusalRetrying ? '正在重新构思落笔…' : storyWaitingPhrase;
 
   const autoScroll = useAutoScrollTimeline({
     contextKey: isWelcome ? 'welcome-neutral' : story.id,
@@ -720,6 +746,13 @@ export function App({ runtime }: AppProps) {
             setStreamContent((prev) => prev + delta);
           }
         },
+        onRefusalRetry: () => {
+          if (!isStale()) {
+            setRefusalRetrying(true);
+            setStreamReasoning('');
+            setStreamContent('');
+          }
+        },
       });
       if (isStale()) {
         return;
@@ -738,6 +771,7 @@ export function App({ runtime }: AppProps) {
       if (!isStale()) {
         setStreamReasoning('');
         setStreamContent('');
+        setRefusalRetrying(false);
       }
     } catch (err) {
       if (suppressedAbortRef.current.has(controller) || storyOpSeqRef.current !== storySeqAtStart) {
@@ -754,6 +788,7 @@ export function App({ runtime }: AppProps) {
         abortRef.current = null;
         setIsStreaming(false);
         setStreamingNodeId(null);
+        setRefusalRetrying(false);
       }
     }
   };
@@ -1098,6 +1133,98 @@ export function App({ runtime }: AppProps) {
     );
   };
 
+  const handleRestoreRefusalOriginal = (nodeId: string) =>
+    runStoryTransition(async () => {
+      const latest = storyRef.current ?? story;
+      const node = latest.nodes[nodeId];
+      if (!node || node.role !== 'assistant') throw new Error('拒答节点不存在。');
+      const restored = restoreRefusalOriginalContent(node);
+      if (restored === node) throw new Error('没有可恢复的首次原稿。');
+      return harness.saveStory({
+        ...latest,
+        nodes: { ...latest.nodes, [nodeId]: restored },
+        updatedAt: Math.max(Date.now(), latest.updatedAt + 1),
+      });
+    }, '恢复首次原稿失败。');
+
+  const handleContinuePartialRefusal = (nodeId: string) => {
+    if (branchSwitchBusyRef.current || abortRef.current || isStreaming || isSummarizing) return;
+    withCredentials(
+      '继续追要半拒绝内容',
+      (activeCfg) => {
+        void runStreamingExecution(async (callbacks) => {
+          const latest = storyRef.current ?? story;
+          const node = latest.nodes[nodeId];
+          if (!node || node.role !== 'assistant' || !node.parentId) {
+            throw new Error('半拒绝节点不存在或缺少关联玩家输入。');
+          }
+          const parent = latest.nodes[node.parentId];
+          if (!parent || parent.role !== 'user') throw new Error('半拒绝节点缺少关联玩家输入。');
+          const effectiveConfig = resolveEffectiveModelConfig(activeCfg, latest.generationPreference);
+          const promptPackOptions = buildPromptPackContextOptions(
+            promptPackLibrary,
+            latest.generationPreference,
+          );
+          let requestDocuments:
+            | {
+                publicVersion: ReturnType<typeof documentVersion>;
+                container: ReturnType<typeof documentVersion>;
+                local: ReturnType<typeof documentVersion>;
+                snapshot: ReturnType<typeof getActiveSummarySnapshot>;
+              }
+            | undefined;
+          if (latest.documents) {
+            const state = storyDocumentState({ ...latest, documents: latest.documents }, node.parentId, false);
+            requestDocuments = {
+              publicVersion: documentVersion(creative.workspace.publicDocument),
+              container: documentVersion(latest.documents.container, state.container),
+              local: documentVersion(latest.documents.local, state.local),
+              snapshot: getActiveSummarySnapshot(latest, node.parentId),
+            };
+          }
+          const { messages } = assembleThreeZoneContext(
+            latest,
+            node.parentId,
+            undefined,
+            undefined,
+            true,
+            requestDocuments,
+            promptPackOptions,
+          );
+          const continued = await streamPrefixContinuation({
+            transport: runtime.transport,
+            config: effectiveConfig,
+            messages,
+            prefixContent: node.content,
+            signal: callbacks.signal,
+            onReasoningDelta: callbacks.onReasoningDelta,
+            onContentDelta: callbacks.onContentDelta,
+          });
+          if (continued.finishReason !== 'stop') {
+            throw new Error('追要回复未完成，请重试。');
+          }
+          const nextNode = finalizePrefixContinuation(node, continued, {
+            mode: 'story',
+            baseVersions: {
+              setting: requestDocuments?.container.id,
+              memory: requestDocuments?.publicVersion.id,
+              note: requestDocuments?.local.id,
+            },
+          });
+          const updated = invalidateStorySummarySnapshotsFromNode(
+            { ...latest, nodes: { ...latest.nodes, [node.id]: nextNode } },
+            node.id,
+          );
+          const saved = await harness.saveStory({
+            ...updated,
+            updatedAt: Math.max(Date.now(), latest.updatedAt + 1),
+          });
+          return { userNode: parent, assistantNode: nextNode, story: saved };
+        });
+      },
+    );
+  };
+
   const handleSwitchBranch = async (targetNodeId: string) => {
     if (branchSwitchBusyRef.current || abortRef.current || isStreaming || isSummarizing) return;
     branchSwitchBusyRef.current = true;
@@ -1186,10 +1313,12 @@ export function App({ runtime }: AppProps) {
       setIsStreaming(true);
       setStreamContent('');
       setStreamReasoning('');
+      setRefusalRetrying(false);
       setErrorMsg(null);
       setInput('');
 
       const effectiveWelcomeCfg = resolveEffectiveModelConfig(activeCfg, prefAtSubmit);
+      const welcomePromptPackOptions = buildPromptPackContextOptions(promptPackLibrary, prefAtSubmit);
       const publicMem = documentVersion(creative.workspace.publicDocument).markdown;
       void routeEntryMessage(
         trimmed,
@@ -1204,8 +1333,16 @@ export function App({ runtime }: AppProps) {
           onContentDelta: (delta) => {
             if (!controller.signal.aborted) setStreamContent((prev) => prev + delta);
           },
+          onRefusalRetry: () => {
+            if (!controller.signal.aborted) {
+              setRefusalRetrying(true);
+              setStreamReasoning('');
+              setStreamContent('');
+            }
+          },
         },
         publicMem,
+        welcomePromptPackOptions,
       )
         .then(async (routed) => {
           if (controller.signal.aborted || !isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) {
@@ -1237,6 +1374,8 @@ export function App({ runtime }: AppProps) {
             createdAt: now + 1,
             summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
             ...(proposalRecords.length > 0 ? { proposals: proposalRecords } : {}),
+            ...(routed.diagnostics ? { diagnostics: routed.diagnostics } : {}),
+            ...(routed.prefillContent !== undefined ? { prefillContent: routed.prefillContent } : {}),
           };
 
           if (routed.mode === 'ambiguous') {
@@ -1306,6 +1445,7 @@ export function App({ runtime }: AppProps) {
           setIsStreaming(false);
           setStreamContent('');
           setStreamReasoning('');
+          setRefusalRetrying(false);
         });
     });
   };
@@ -1540,6 +1680,16 @@ export function App({ runtime }: AppProps) {
     }
   };
 
+  const handleExportPromptPack = async (pack: PromptPack) => {
+    if (!runtime.backupExporter.exportMarkdown) {
+      throw new Error('当前设备暂不支持导出 Markdown。');
+    }
+    const markdown = exportPromptPackMarkdown(pack);
+    const fileName = `${pack.title.replace(/[\/:*?"<>|]+/g, '_').trim() || 'prompt-pack'}.md`;
+    await runtime.backupExporter.exportMarkdown(fileName, markdown);
+    setStatusNotice(`已导出提示词包「${pack.title}」。`);
+  };
+
   const handleExportFullBackup = async () => {
     setErrorMsg(null);
     try {
@@ -1554,6 +1704,7 @@ export function App({ runtime }: AppProps) {
           themePreference: displayPreferences.theme,
           fontSize: displayPreferences.fontSize,
         },
+        promptPacks: promptPackLibrary,
       });
       const dateTag = new Date().toISOString().slice(0, 10);
       await runtime.backupExporter.exportJsonFile(`folio-backup-${dateTag}.folio.json`, json);
@@ -1594,6 +1745,7 @@ export function App({ runtime }: AppProps) {
             themePreference: displayPreferences.theme,
             fontSize: displayPreferences.fontSize,
           },
+          promptPacks: promptPackLibrary,
         },
         incoming,
       );
@@ -1602,6 +1754,9 @@ export function App({ runtime }: AppProps) {
         await harness.saveStory(s);
       }
       await creative.save(() => merged.workspace);
+      if (merged.promptPacks) {
+        setPromptPackLibrary(merged.promptPacks);
+      }
       if (incoming.displayPreferences?.themePreference) {
         const pref = incoming.displayPreferences.themePreference as DisplayThemePreference;
         if (pref === 'system' || pref === 'light' || pref === 'dark' || pref === 'warm') {
@@ -2105,15 +2260,18 @@ export function App({ runtime }: AppProps) {
     stories.length > 0 ||
     creative.workspace.works.length > 0 ||
     creative.workspace.characters.length > 0 ||
-    Boolean(documentVersion(creative.workspace.publicDocument).markdown.trim());
+    Boolean(documentVersion(creative.workspace.publicDocument).markdown.trim()) ||
+    !isDefaultPromptPackLibrary(promptPackLibrary);
 
-  const backupSummaryText = `包含 ${stories.length} 个故事、${creative.workspace.works.length} 部作品、${creative.workspace.characters.length} 位角色与我的记忆（不含 API Key）`;
+  const backupSummaryText = `包含 ${stories.length} 个故事、${creative.workspace.works.length} 部作品、${creative.workspace.characters.length} 位角色、${promptPackLibrary.packs.length} 个提示词包与我的记忆（不含 API Key）`;
 
   const effectiveComposerConfig = isWelcome
     ? resolveEffectiveModelConfig(config, pendingWelcomePref)
     : resolveEffectiveModelConfig(config, story.generationPreference);
 
-  const handleStoryGenerationPreferenceChange = (patch: Partial<GenerationPreference>) => {
+  const handleStoryGenerationPreferenceChange = (
+    patch: Parameters<typeof mergeGenerationPreference>[1],
+  ) => {
     if (isStreaming || creating || branchSwitchBusyRef.current) return;
     const current = storyRef.current;
     if (!current) return;
@@ -2152,6 +2310,28 @@ export function App({ runtime }: AppProps) {
       setPendingWelcomePref((prev) => mergeGenerationPreference(prev, { reasoningEffort }));
     } else {
       handleStoryGenerationPreferenceChange({ reasoningEffort });
+    }
+  };
+
+  const handlePromptPackModeChange = (
+    mode: GenerationPreference['promptPackMode'] | 'inherit',
+  ) => {
+    if (isStreaming || creating) return;
+    const patch = { promptPackMode: mode === 'inherit' ? null : mode };
+    if (isWelcome) {
+      setPendingWelcomePref((prev) => mergeGenerationPreference(prev, patch));
+    } else {
+      handleStoryGenerationPreferenceChange(patch);
+    }
+  };
+
+  const handlePrefixCompletionChange = (mode: PrefixCompletionMode | 'inherit') => {
+    if (isStreaming || creating) return;
+    const patch = { prefixCompletion: mode === 'inherit' ? null : mode };
+    if (isWelcome) {
+      setPendingWelcomePref((prev) => mergeGenerationPreference(prev, patch));
+    } else {
+      handleStoryGenerationPreferenceChange(patch);
     }
   };
 
@@ -2315,6 +2495,9 @@ export function App({ runtime }: AppProps) {
               onDefaultModelChange={(model) => updateConfig({ ...config, model })}
               onDefaultReasoningEffortChange={(reasoningEffort) =>
                 updateConfig({ ...config, reasoningEffort })}
+              promptPackLibrary={promptPackLibrary}
+              onPromptPackLibraryChange={setPromptPackLibrary}
+              onExportPromptPack={handleExportPromptPack}
             />
           ) : creativePage ? (
             <>
@@ -2323,6 +2506,7 @@ export function App({ runtime }: AppProps) {
                 mode={creativePage}
                 workspace={creative.workspace}
                 defaultConfig={config}
+                promptPackLibrary={promptPackLibrary}
                 ready={creative.ready}
                 storageError={creative.error}
                 save={creative.save}
@@ -2450,6 +2634,8 @@ export function App({ runtime }: AppProps) {
                         onAskAiReorganizeProposal={(p) =>
                           sendAction(`我刚刚调整了设定，请结合最新内容重新整理这条建议：${p.summary}`)
                         }
+                        onRestoreRefusalOriginal={(nodeId) => void handleRestoreRefusalOriginal(nodeId)}
+                        onContinuePartialRefusal={(nodeId) => void handleContinuePartialRefusal(nodeId)}
                       />
                     );
                   })}
@@ -2460,7 +2646,7 @@ export function App({ runtime }: AppProps) {
                         <details className="reasoning-details" data-testid="reasoning-details" open>
                           <summary data-testid="reasoning-toggle">
                             <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
-                            <span>{storyWaitingPhrase}</span>
+                            <span>{activeWaitingPhrase}</span>
                           </summary>
                           <div className="reasoning-content">{streamReasoning}</div>
                         </details>
@@ -2468,7 +2654,7 @@ export function App({ runtime }: AppProps) {
                       {streamContent ? (
                         <MessageContent content={streamContent} mode="story" />
                       ) : (
-                        <div className="turn-body">{storyWaitingPhrase}</div>
+                        <div className="turn-body">{activeWaitingPhrase}</div>
                       )}
                     </article>
                   )}
@@ -2568,6 +2754,17 @@ export function App({ runtime }: AppProps) {
                   disabled={isStreaming || creating}
                   onModelChange={handleComposerModelChange}
                   onReasoningEffortChange={handleComposerReasoningChange}
+                  promptPackLibrary={promptPackLibrary}
+                  promptPackMode={
+                    (isWelcome ? pendingWelcomePref : story.generationPreference)?.promptPackMode ??
+                    'inherit'
+                  }
+                  prefixCompletion={
+                    (isWelcome ? pendingWelcomePref : story.generationPreference)?.prefixCompletion ??
+                    'inherit'
+                  }
+                  onPromptPackModeChange={handlePromptPackModeChange}
+                  onPrefixCompletionChange={handlePrefixCompletionChange}
                   leadingSlot={isWelcome ? (
                     <div className="composer-plus-wrap">
                       <button

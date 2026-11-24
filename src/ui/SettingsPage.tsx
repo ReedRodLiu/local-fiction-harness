@@ -8,8 +8,11 @@ import {
   maskApiKey,
   normalizeOfficialDeepSeekModel,
   normalizeReasoningEffort,
+  createDefaultPromptPackLibrary,
   type ModelConfig,
   type OfficialDeepSeekModel,
+  type PromptPack,
+  type PromptPackLibrary,
   type ReasoningEffort,
 } from '../harness/index.ts';
 import {
@@ -17,6 +20,7 @@ import {
   type DisplayFontSize,
   type DisplayThemePreference,
 } from './displayPreferences.ts';
+import { PromptPackSheet } from './PromptPackSheet.tsx';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
 import type { SettingsBalanceState } from './useDeepSeekBalance.ts';
@@ -48,6 +52,9 @@ export interface SettingsPageProps {
   onFontSizeChange: (fontSize: DisplayFontSize) => void;
   onDefaultModelChange?: (model: OfficialDeepSeekModel) => void;
   onDefaultReasoningEffortChange?: (effort: ReasoningEffort) => void;
+  promptPackLibrary?: PromptPackLibrary;
+  onPromptPackLibraryChange?: (library: PromptPackLibrary) => void;
+  onExportPromptPack?: (pack: PromptPack) => void | Promise<void>;
 }
 
 const MODEL_OPTIONS: Array<{
@@ -123,6 +130,9 @@ export function SettingsPage({
   onFontSizeChange,
   onDefaultModelChange,
   onDefaultReasoningEffortChange,
+  promptPackLibrary = createDefaultPromptPackLibrary(),
+  onPromptPackLibraryChange = () => undefined,
+  onExportPromptPack = () => undefined,
 }: SettingsPageProps) {
   const backupInputRef = useRef<HTMLInputElement>(null);
   const [storageStatus, setStorageStatus] = useState('正在读取本地占用…');
@@ -427,9 +437,15 @@ export function SettingsPage({
         </button>
       </InsetGroup>
 
+      <PromptPackSheet
+        library={promptPackLibrary}
+        onChange={onPromptPackLibraryChange}
+        onExport={onExportPromptPack}
+      />
+
       <InsetGroup
         title="全量数据备份与恢复"
-        description="导出全部文游、写故事、角色互动、我的记忆与显示偏好；支持从 .folio.json 或旧版 .lfh.json 恢复。"
+        description="导出全部文游、写故事、角色互动、我的记忆、提示词包与显示偏好；支持从 .folio.json 或旧版 .lfh.json 恢复。"
         testId="settings-backup-group"
       >
         <div className="settings-data-row">
