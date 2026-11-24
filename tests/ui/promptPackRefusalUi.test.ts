@@ -434,12 +434,19 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
   });
 
   it('keeps all three manual continuation callers on the shared finalization path', () => {
-    for (const file of ['App.tsx', 'DraftPane.tsx', 'CharacterPane.tsx']) {
+    for (const file of ['DraftPane.tsx', 'CharacterPane.tsx']) {
       const source = readFileSync(join(repoRoot, 'src/ui', file), 'utf8');
       expect(source).toContain('finalizePrefixContinuation');
       expect(source).toContain('invalidateSummarySnapshotsFromNode');
+      expect(source).toContain('isSummaryTargetUnchanged');
+      expect(source).toContain('isSummaryTargetUnchanged(expectedLeaf, live');
       expect(source).not.toContain('continued.content.trim() === node.content.trim()');
     }
+    const appSource = readFileSync(join(repoRoot, 'src/ui', 'App.tsx'), 'utf8');
+    expect(appSource).toContain('finalizePrefixContinuation');
+    expect(appSource).toContain('invalidateStorySummarySnapshotsFromNode');
+    expect(appSource).not.toContain('invalidateSummarySnapshotsFromNode');
+    expect(appSource).not.toContain('continued.content.trim() === node.content.trim()');
   });
 
   it('does not reset unsaved prompt-pack drafts when global settings change', () => {

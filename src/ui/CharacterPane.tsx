@@ -15,6 +15,7 @@ import {
   getActiveBranchNodes,
   getNodeSiblingBranchInfo,
   invalidateSummarySnapshotsFromNode,
+  isSummaryTargetUnchanged,
   newConversation,
   normalizeProposalTarget,
   resolveEffectiveModelConfig,
@@ -217,6 +218,7 @@ export function CharacterPane(props: CharacterPaneProps) {
     config: Parameters<typeof summarizeCharacterConversation>[2],
     targetLeafId: string | null,
   ) => {
+    const expectedLeaf = targetLeafId ? targetConv.nodes[targetLeafId] : undefined;
     void summarizeCharacterConversation(targetConv, runtime.transport, config, { targetLeafId })
       .then(async (res) => {
         try {
@@ -238,7 +240,7 @@ export function CharacterPane(props: CharacterPaneProps) {
           updateCharacter(state, targetCharacterId, (current) =>
             updateConversation(current, targetConv.id, (live) => {
               const updatedLeaf = res.conversation.nodes[targetLeafId];
-              if (!updatedLeaf || !live.nodes[targetLeafId]) return live;
+              if (!updatedLeaf || !isSummaryTargetUnchanged(expectedLeaf, live.nodes[targetLeafId])) return live;
               return {
                 ...live,
                 nodes: {

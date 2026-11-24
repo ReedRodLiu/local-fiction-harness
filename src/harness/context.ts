@@ -5,7 +5,9 @@ import {
   documentProgress,
   documentVersion,
   legacyStoryMarkdown,
+  replaceDocumentProgress,
   storyDocumentState,
+  writeDocument,
   type MarkdownVersion,
 } from './markdownDocuments.ts';
 import {
@@ -485,14 +487,10 @@ export interface TurnTreeState {
   activeLeafNodeId: string | null;
 }
 
-/**
- * Clears summary snapshots for a changed node and every descendant. Sibling
- * branches keep their summaries because their covered history is unchanged.
- */
-export function invalidateSummarySnapshotsFromNode(
+function collectNodeSubtreeIds(
   nodes: Readonly<Record<string, TurnNode>>,
   targetNodeId: string,
-): Record<string, TurnNode> {
+): Set<string> {
   if (!Object.hasOwn(nodes, targetNodeId)) {
     throw new Error(`目标节点 ${targetNodeId} 不存在。`);
   }
@@ -517,6 +515,18 @@ export function invalidateSummarySnapshotsFromNode(
       }
     }
   }
+  return affectedIds;
+}
+
+/**
+ * Clears summary snapshots for a changed node and every descendant. Sibling
+ * branches keep their summaries because their covered history is unchanged.
+ */
+export function invalidateSummarySnapshotsFromNode(
+  nodes: Readonly<Record<string, TurnNode>>,
+  targetNodeId: string,
+): Record<string, TurnNode> {
+  const affectedIds = collectNodeSubtreeIds(nodes, targetNodeId);
 
   return Object.fromEntries(
     Object.entries(nodes).map(([nodeId, node]) => [
@@ -524,6 +534,48 @@ export function invalidateSummarySnapshotsFromNode(
       affectedIds.has(nodeId) ? { ...node, summarySnapshot: EMPTY_SUMMARY_SNAPSHOT } : node,
     ]),
   );
+}
+
+/**
+ * Clears both rolled summaries and their document-backed progress for a changed
+ * Story subtree. Other branches keep their document pointers and global heads.
+ */
+export function invalidateStorySummarySnapshotsFromNode(story: Story, targetNodeId: string): Story {
+  const nextNodes = invalidateSummarySnapshotsFromNode(story.nodes, targetNodeId);
+  if (!story.documents) return { ...story, nodes: nextNodes };
+
+  const documents = story.documents;
+  const scoped = { ...story, documents } as Story & { documents: NonNullable<Story['documents']> };
+  const affectedIds = collectNodeSubtreeIds(story.nodes, targetNodeId);
+  const clearedVersionBySource = new Map<string, string>();
+  const edits = { ...documents.edits };
+  let local = documents.local;
+
+  for (const nodeId of affectedIds) {
+    const state = storyDocumentState(scoped, nodeId, true);
+    const source = documentVersion(documents.local, state.local);
+    const clearedMarkdown = replaceDocumentProgress(source.markdown, '');
+    let localVersionId = source.id;
+    if (clearedMarkdown !== source.markdown) {
+      localVersionId = clearedVersionBySource.get(source.id) ?? '';
+      if (!localVersionId) {
+        local = writeDocument(local, source.id, clearedMarkdown, 'automatic');
+        localVersionId = local.head;
+        clearedVersionBySource.set(source.id, localVersionId);
+      }
+      edits[nodeId] = localVersionId;
+    }
+    nextNodes[nodeId] = {
+      ...nextNodes[nodeId],
+      documents: { container: state.container, local: localVersionId },
+    };
+  }
+
+  return {
+    ...story,
+    nodes: nextNodes,
+    documents: { ...documents, local: { ...local, head: documents.local.head }, edits },
+  };
 }
 
 /**

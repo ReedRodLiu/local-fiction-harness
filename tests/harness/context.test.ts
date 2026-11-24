@@ -10,13 +10,20 @@ import {
   buildEntryRouteMessages,
   characterContext,
   createDefaultBlueprint,
+  createFictionHarness,
+  documentVersion,
+  getActiveSummarySnapshot,
+  invalidateStorySummarySnapshotsFromNode,
   invalidateSummarySnapshotsFromNode,
   newCharacter,
   newConversation,
   newDocument,
   newWork,
+  writeDocument,
   workContext,
   type PromptPackLibrary,
+  type LlmStreamRequest,
+  type ModelConfig,
   type Story,
   type TurnNode,
 } from '../../src/harness/index.ts';
@@ -350,5 +357,129 @@ describe('Prompt Pack three-zone physical assembly', () => {
     }
 
     expect(replacedNodes.activeLeaf.summarySnapshot.content).toBe('STALE_ACTIVE_SUMMARY');
+  });
+
+  it('clears document progress on the changed story subtree so replaced history enters context', async () => {
+    const rootLocal = newDocument('', 'user', 'local-original');
+    const withTargetProgress = writeDocument(
+      rootLocal,
+      'local-original',
+      '## 当前进度\n\nSTALE_TARGET_PROGRESS\n\n## 目标备忘\n\n保留目标备忘',
+      'automatic',
+      'local-target',
+    );
+    const withActiveProgress = writeDocument(
+      withTargetProgress,
+      'local-target',
+      '## 当前进度\n\nSTALE_ACTIVE_PROGRESS\n\n## 关系记录\n\n保留用户关系记录',
+      'automatic',
+      'local-active',
+    );
+    const withSiblingProgress = writeDocument(
+      withActiveProgress,
+      'local-active',
+      '## 当前进度\n\nSIBLING_PROGRESS',
+      'automatic',
+      'local-sibling',
+    );
+    const local = { ...withSiblingProgress, head: 'local-original' };
+    const container = newDocument('当前设定', 'user', 'container-original');
+
+    const nodes: Record<string, TurnNode> = {
+      root: {
+        id: 'root', parentId: null, role: 'user', content: '[root]', createdAt: 1,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+      target: {
+        id: 'target', parentId: 'root', role: 'assistant', content: '[target-old]', createdAt: 2,
+        summarySnapshot: {
+          content: 'STALE_TARGET_SUMMARY', coveredUpToNodeId: 'root', summarizedTurnCount: 1,
+        },
+        documents: { container: 'container-original', local: 'local-target' },
+      },
+      nextUser: {
+        id: 'nextUser', parentId: 'target', role: 'user', content: '[next-user]', createdAt: 3,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+      },
+      activeLeaf: {
+        id: 'activeLeaf', parentId: 'nextUser', role: 'assistant', content: '[active-leaf]', createdAt: 4,
+        summarySnapshot: {
+          content: 'STALE_ACTIVE_SUMMARY', coveredUpToNodeId: 'target', summarizedTurnCount: 3,
+        },
+        documents: { container: 'container-original', local: 'local-target' },
+      },
+      siblingLeaf: {
+        id: 'siblingLeaf', parentId: 'root', role: 'assistant', content: '[sibling-leaf]', createdAt: 5,
+        summarySnapshot: {
+          content: 'SIBLING_SUMMARY', coveredUpToNodeId: 'siblingLeaf', summarizedTurnCount: 1,
+        },
+        documents: { container: 'container-original', local: 'local-sibling' },
+      },
+    };
+    const story: Story = {
+      ...makeStory(),
+      nodes,
+      rootNodeIds: ['root'],
+      activeLeafNodeId: 'activeLeaf',
+      documents: {
+        container,
+        local,
+        edits: { activeLeaf: 'local-active', siblingLeaf: 'local-sibling' },
+      },
+    };
+    const replaced: Story = {
+      ...story,
+      nodes: { ...story.nodes, target: { ...story.nodes.target, content: '[target-new]' } },
+    };
+
+    const staleContext = JSON.stringify(assembleThreeZoneContext(replaced, 'activeLeaf', '继续').messages);
+    expect(staleContext).toContain('STALE_ACTIVE_PROGRESS');
+    expect(staleContext).not.toContain('[target-new]');
+
+    const refreshed = invalidateStorySummarySnapshotsFromNode(replaced, 'target');
+    expect(refreshed.activeLeafNodeId).toBe('activeLeaf');
+    expect(refreshed.nodes.nextUser.parentId).toBe('target');
+    expect(refreshed.nodes.activeLeaf.parentId).toBe('nextUser');
+    expect(refreshed.nodes.activeLeaf.summarySnapshot).toEqual(EMPTY_SUMMARY_SNAPSHOT);
+    expect(getActiveSummarySnapshot(refreshed, 'activeLeaf')).toEqual(EMPTY_SUMMARY_SNAPSHOT);
+    expect(refreshed.documents?.local.head).toBe('local-original');
+    expect(refreshed.nodes.siblingLeaf.summarySnapshot).toEqual(nodes.siblingLeaf.summarySnapshot);
+    expect(refreshed.nodes.siblingLeaf.documents).toEqual(nodes.siblingLeaf.documents);
+    expect(refreshed.documents?.edits.siblingLeaf).toBe('local-sibling');
+    expect(getActiveSummarySnapshot(refreshed, 'siblingLeaf').content).toBe('SIBLING_PROGRESS');
+
+    const activeLocalId = refreshed.documents?.edits.activeLeaf;
+    expect(activeLocalId).toBeDefined();
+    expect(activeLocalId).not.toBe('local-active');
+    expect(refreshed.nodes.activeLeaf.documents?.local).toBe(activeLocalId);
+    const activeLocal = documentVersion(refreshed.documents!.local, activeLocalId).markdown;
+    expect(activeLocal).toContain('保留用户关系记录');
+    expect(activeLocal).not.toContain('STALE_ACTIVE_PROGRESS');
+    expect(refreshed.nodes.target.documents?.local).not.toBe('local-target');
+    expect(documentVersion(refreshed.documents!.local, refreshed.nodes.target.documents!.local).markdown)
+      .toContain('保留目标备忘');
+
+    const refreshedContext = JSON.stringify(assembleThreeZoneContext(refreshed, 'activeLeaf', '继续').messages);
+    expect(refreshedContext).toContain('[target-new]');
+    expect(refreshedContext).not.toContain('STALE_ACTIVE_PROGRESS');
+    expect(refreshedContext).not.toContain('STALE_ACTIVE_SUMMARY');
+
+    const requests: LlmStreamRequest[] = [];
+    const config: ModelConfig = {
+      apiKey: 'test-key', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', memoryOnly: true,
+    };
+    const harness = createFictionHarness({
+      transport: {
+        async *streamChat(request) {
+          requests.push(request);
+          yield { contentDelta: '模型继续叙事。', finishReason: 'stop' };
+        },
+      },
+    });
+    await harness.runTurn(refreshed, '继续', config);
+    const preparedContext = JSON.stringify(requests[0]?.messages);
+    expect(preparedContext).toContain('[target-new]');
+    expect(preparedContext).not.toContain('STALE_ACTIVE_PROGRESS');
+    expect(preparedContext).not.toContain('STALE_ACTIVE_SUMMARY');
   });
 });

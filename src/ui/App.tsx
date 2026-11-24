@@ -24,7 +24,7 @@ import {
   getActiveSummarySnapshot,
   getSiblingBranchInfo,
   importDeepSeekSessions,
-  invalidateSummarySnapshotsFromNode,
+  invalidateStorySummarySnapshotsFromNode,
   isDefaultPromptPackLibrary,
   isAbortError,
   loadPromptPackLibrary,
@@ -1211,13 +1211,12 @@ export function App({ runtime }: AppProps) {
               note: requestDocuments?.local.id,
             },
           });
-          const nodes = invalidateSummarySnapshotsFromNode(
-            { ...latest.nodes, [node.id]: nextNode },
+          const updated = invalidateStorySummarySnapshotsFromNode(
+            { ...latest, nodes: { ...latest.nodes, [node.id]: nextNode } },
             node.id,
           );
           const saved = await harness.saveStory({
-            ...latest,
-            nodes,
+            ...updated,
             updatedAt: Math.max(Date.now(), latest.updatedAt + 1),
           });
           return { userNode: parent, assistantNode: nextNode, story: saved };

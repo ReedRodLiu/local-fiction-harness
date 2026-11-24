@@ -5,6 +5,7 @@ import {
   assembleCreativeThreeZoneContext,
   characterContext,
   createFictionHarness,
+  isSummaryTargetUnchanged,
   newCharacter,
   newConversation,
   newDocument,
@@ -64,6 +65,22 @@ function makeTurnChain(
 }
 
 describe('All-mode TurnNode trees & silent background rolling summary', () => {
+  it('rejects a background summary when the target turn changed after it started', () => {
+    const started: TurnNode = {
+      id: 'leaf',
+      parentId: 'parent',
+      role: 'assistant',
+      content: '摘要开始时的旧正文',
+      createdAt: 1,
+      summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+    };
+
+    expect(isSummaryTargetUnchanged(started, { ...started })).toBe(true);
+    expect(isSummaryTargetUnchanged(started, { ...started, content: '追要后的新正文' })).toBe(false);
+    expect(isSummaryTargetUnchanged(started, { ...started, parentId: 'other-parent' })).toBe(false);
+    expect(isSummaryTargetUnchanged(started, undefined)).toBe(false);
+  });
+
   it('persists refusal diagnostics and prefix prefill metadata on appended assistant nodes', () => {
     const appended = appendWorkDiscussionTurn(newWork('诊断保存测试'), {
       role: 'assistant',

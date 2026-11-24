@@ -18,6 +18,7 @@ import {
   getWorkActiveDiscussionNodes,
   getWorkDiscussionTree,
   invalidateSummarySnapshotsFromNode,
+  isSummaryTargetUnchanged,
   normalizeProposalTarget,
   normalizeReasoningEffort,
   parseManuscriptAssistantReply,
@@ -263,6 +264,7 @@ export function DraftPane(props: DraftPaneProps) {
   }
 
   const runSilentSummary = (targetWork: DraftWork, config: Parameters<typeof summarizeWorkDiscussion>[2], targetLeafId: string | null) => {
+    const expectedLeaf = targetLeafId ? getWorkDiscussionTree(targetWork).nodes[targetLeafId] : undefined;
     void summarizeWorkDiscussion(targetWork, runtime.transport, config, { targetLeafId })
       .then(async (res) => {
         try {
@@ -284,7 +286,8 @@ export function DraftPane(props: DraftPaneProps) {
           updateWork(state, targetWork.id, (live) => {
             const liveTree = getWorkDiscussionTree(live);
             const updatedLeaf = targetLeafId ? res.work.discussionNodes?.[targetLeafId] : undefined;
-            if (!targetLeafId || !updatedLeaf || !liveTree.nodes[targetLeafId]) return live;
+            if (!targetLeafId || !updatedLeaf ||
+              !isSummaryTargetUnchanged(expectedLeaf, liveTree.nodes[targetLeafId])) return live;
             const nextNodes = {
               ...liveTree.nodes,
               [targetLeafId]: {

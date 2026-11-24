@@ -445,6 +445,18 @@ export interface CreativeSummaryOptions {
   signal?: AbortSignalLike;
 }
 
+export function isSummaryTargetUnchanged(
+  expected: TurnNode | undefined,
+  live: TurnNode | undefined,
+): boolean {
+  return Boolean(
+    expected && live &&
+    expected.id === live.id &&
+    expected.parentId === live.parentId &&
+    expected.content === live.content,
+  );
+}
+
 export async function summarizeWorkDiscussion(
   work: DraftWork,
   transport: LlmTransport,
