@@ -90,15 +90,12 @@ function positions(messages: readonly { content: string }[], markers: string[]):
 }
 
 describe('Prompt Pack three-zone physical assembly', () => {
-  it('includes the current setting when a prompt pack is enabled unless includeSetting is false', () => {
-    const withSetting = buildSystemAnchorPrompt(makeStory(), 'assistant', undefined, {
-      promptPackLibrary: library,
-    });
+  it('includes the current setting unless includeSetting is false', () => {
+    const withSetting = buildSystemAnchorPrompt(makeStory(), 'assistant', undefined);
     const withoutSetting = buildSystemAnchorPrompt(
       makeStory(),
       'assistant',
       undefined,
-      { promptPackLibrary: library },
       false,
     );
 
@@ -270,7 +267,7 @@ describe('Prompt Pack three-zone physical assembly', () => {
     });
     expect(entry[0].content).toBe('PACK_HEAD');
     expect(entry[1].content).toContain(ENTRY_ROUTE_SYSTEM_PROMPT);
-    expect(entry[1].content).toContain(CHANGE_PROMPT);
+    expect(entry[1].content).not.toContain(CHANGE_PROMPT);
     expect(entry[1].content).toContain(PROMPT_PACK_SEMANTIC_PRIORITY);
     expect(entry[1].content).toContain('lfh-route');
     expect(entry[1].content).toContain('entryRouter');

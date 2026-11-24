@@ -309,7 +309,7 @@ export function creativeContext(
   messages.push(...documentMessages(entries), ...turnMessages(path));
   const tail = promptPackTailMessage(
     effectivePromptPack,
-    promptPackOptions?.includePromptPackTail ?? promptPackOptions?.includeTail ?? false,
+    promptPackOptions?.includePromptPackTail ?? false,
   );
   if (tail) messages.push(tail);
   messages.push({ role: 'user', content: input });
@@ -348,7 +348,6 @@ export function characterContext(
     ...(promptPackOptions?.includePromptPackTail !== undefined
       ? { includePromptPackTail: promptPackOptions.includePromptPackTail }
       : {}),
-    ...(promptPackOptions?.includeTail !== undefined ? { includeTail: promptPackOptions.includeTail } : {}),
   });
   return {
     messages: assembled.messages,
@@ -422,11 +421,7 @@ export function workContext(
       : options.promptPackOptions?.includePromptPackTail !== undefined
         ? { includePromptPackTail: options.promptPackOptions.includePromptPackTail }
         : {}),
-    ...(options.includeTail !== undefined
-      ? { includeTail: options.includeTail }
-      : options.promptPackOptions?.includeTail !== undefined
-        ? { includeTail: options.promptPackOptions.includeTail }
-        : {}),
+    ...(options.includeTail !== undefined ? { includeTail: options.includeTail } : {}),
   });
   return {
     messages: assembled.messages,

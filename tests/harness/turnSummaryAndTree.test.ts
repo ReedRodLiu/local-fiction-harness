@@ -147,6 +147,15 @@ describe('Issue #104 shared plain-text sanitizer & summary-first previews', () =
     expect(longUser).not.toContain('**');
 
     expect(toCompactPreview('```lfh-choices\n1. A\n2. B\n```', 40)).toBe('（空内容）');
+
+    expect(
+      formatTurnPreview({
+        role: 'assistant',
+        turnSummary: '不应展示的旧摘要。',
+        content: '（本轮生成未通过模型的安全策略，已自动隔离。）',
+        diagnostics: { sourceStatus: 'REFUSAL', refusalRoute: 'refused_exhausted' },
+      }),
+    ).not.toContain('不应展示的旧摘要');
   });
 
   it('extracts and strips lfh-summary alongside lfh-proposal and lfh-choices without creating needs_review', () => {

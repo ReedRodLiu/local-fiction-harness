@@ -171,7 +171,6 @@ export function buildSystemAnchorPrompt(
   story: Story,
   nodeId = story.activeLeafNodeId,
   selected?: MarkdownVersion,
-  promptPack?: PromptPackContextOptions,
   includeSetting = true,
 ): string {
   const markdown = selected?.markdown ?? (story.documents
@@ -317,8 +316,9 @@ export function assembleThreeZoneContext(
     ...(requestDocuments?.promptPack !== undefined ? { promptPack: requestDocuments.promptPack } : {}),
     ...(requestDocuments?.includePromptPackTail !== undefined
       ? { includePromptPackTail: requestDocuments.includePromptPackTail }
-      : {}),
-    ...(requestDocuments?.includeTail !== undefined ? { includeTail: requestDocuments.includeTail } : {}),
+      : requestDocuments?.includeTail !== undefined
+        ? { includePromptPackTail: requestDocuments.includeTail }
+        : {}),
     ...promptPackOptions,
   };
   const effectivePromptPack = resolvePromptPackContext(resolvedPromptPackOptions);
@@ -326,7 +326,6 @@ export function assembleThreeZoneContext(
     story,
     targetParentId,
     requestDocuments?.container,
-    resolvedPromptPackOptions,
     false,
   );
   const setupFilter = getSetupNodeFilter(story, targetParentId, requestDocuments?.container);
@@ -386,7 +385,7 @@ export function assembleThreeZoneContext(
 
   const tail = promptPackTailMessage(
     effectivePromptPack,
-    resolvedPromptPackOptions.includePromptPackTail ?? resolvedPromptPackOptions.includeTail ?? false,
+    resolvedPromptPackOptions.includePromptPackTail ?? false,
   );
   if (tail) messages.push(tail);
 
