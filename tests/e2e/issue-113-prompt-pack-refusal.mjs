@@ -19,6 +19,7 @@ const PACK_TAIL = 'ISSUE133_PACK_TAIL_CANARY：紧接当前场景继续写。';
 const RECOVERED_REPLY = '雨停之后，巷口的灯一盏盏亮起来，她把伞递到你手里，示意你继续往里走。\n\n```lfh-summary\n雨势渐停，两人沿巷继续前行。\n```';
 const PARTIAL_REPLY = '雨声压低了屋檐，她把杯子推到你面前，目光停了一瞬。抱歉，我不能继续写更具体的内容。\n\n```lfh-summary\n雨夜对话继续推进，气氛变得紧张。\n```';
 const CONTINUATION = '\n\n门轴轻响，她先一步走进里屋，桌上的灯把两个人的影子拉得很长。';
+const WRITING_RECOVERED_REPLY = '她把雨衣挂在门后，指尖沿着旧稿纸的折痕慢慢抚平，重新落下一行字。\n\n```lfh-summary\n写故事模式重试后继续构思。\n```';
 
 function jsonDelta(content, finishReason = null) {
   return {
@@ -31,6 +32,14 @@ function jsonDelta(content, finishReason = null) {
 
 function countOccurrences(text, needle) {
   return text.split(needle).length - 1;
+}
+
+function createGate() {
+  let release;
+  const promise = new Promise((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
 }
 
 async function assertNoHorizontalOverflow(page, label) {
@@ -54,10 +63,18 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
   const context = await newOfflineContext(browser, port, { acceptDownloads: true });
   const page = await context.newPage();
   const refusalAttempts = new Map();
+  const recoverTrace = [];
+  const creativeRecoverTrace = [];
+  let partialContinueAttempt = 0;
   let stableRequests = 0;
   let betaRequests = 0;
   let lastStableBody = null;
   let lastBetaBody = null;
+
+  const recoverRetryArrived = createGate();
+  const recoverRetryRelease = createGate();
+  const creativeRetryArrived = createGate();
+  const creativeRetryRelease = createGate();
 
   try {
     await mockSuccessfulKeyVerification(page);
@@ -77,10 +94,14 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
       if (isBeta) lastBetaBody = body;
 
       if (lastAssistant.includes('雨声压低了屋檐')) {
+        partialContinueAttempt += 1;
+        const nextText = partialContinueAttempt === 1
+          ? `${lastAssistant}\n\n抱歉，我不能继续写这段内容。`
+          : `${lastAssistant}${CONTINUATION}`;
         await route.fulfill({
           status: 200,
           contentType: 'text/event-stream',
-          body: sseResponse([jsonDelta(`${lastAssistant}${CONTINUATION}`, 'stop')]),
+          body: sseResponse([jsonDelta(nextText, 'stop')]),
         });
         return;
       }
@@ -88,11 +109,51 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
       if (lastUser.includes('短拒答恢复测试')) {
         const attempt = (refusalAttempts.get('recover') || 0) + 1;
         refusalAttempts.set('recover', attempt);
-        const content = attempt === 1 ? '抱歉，我不能帮你写这段内容。' : RECOVERED_REPLY;
+        recoverTrace.push({
+          attempt,
+          isBeta,
+          hasPrefix: Boolean(last?.prefix),
+        });
+        if (attempt === 1) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body: sseResponse([jsonDelta('抱歉，我不能帮你写这段内容。', 'stop')]),
+          });
+          return;
+        }
+        recoverRetryArrived.release();
+        await recoverRetryRelease.promise;
         await route.fulfill({
           status: 200,
           contentType: 'text/event-stream',
-          body: sseResponse([jsonDelta(content, 'stop')]),
+          body: sseResponse([jsonDelta(RECOVERED_REPLY, 'stop')]),
+        });
+        return;
+      }
+
+      if (lastUser.includes('写故事模式拒答恢复测试')) {
+        const attempt = (refusalAttempts.get('writing_recover') || 0) + 1;
+        refusalAttempts.set('writing_recover', attempt);
+        creativeRecoverTrace.push({
+          attempt,
+          isBeta,
+          hasPrefix: Boolean(last?.prefix),
+        });
+        if (attempt === 1) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body: sseResponse([jsonDelta('抱歉，我不能帮你写这段内容。', 'stop')]),
+          });
+          return;
+        }
+        creativeRetryArrived.release();
+        await creativeRetryRelease.promise;
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: sseResponse([jsonDelta(WRITING_RECOVERED_REPLY, 'stop')]),
         });
         return;
       }
@@ -160,6 +221,11 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
     if (!(await promptSection.textContent()).includes('叙事提示词包与拒答治理')) {
       throw new Error('Prompt pack settings section title missing.');
     }
+    const disclaimerClass = await promptSection.getByTestId('prompt-pack-disclaimer').getAttribute('class');
+    if (!disclaimerClass?.includes('banner-alert-warning')) {
+      throw new Error(`Expected BannerAlert warning on prompt-pack-disclaimer, got: ${disclaimerClass}`);
+    }
+
     await promptSection.getByTestId('prompt-pack-import-input').setInputFiles({
       name: 'issue133-unmarked.md',
       mimeType: 'text/markdown',
@@ -174,8 +240,47 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
     await promptSection.getByTestId('prompt-pack-slot-tail').fill(PACK_TAIL);
     await promptSection.getByTestId('prompt-pack-save').click();
     await promptSection.getByTestId('prompt-pack-tail-always').check();
-    await promptSection.getByTestId('prompt-pack-global-prefix').selectOption('always');
 
+    const defaultPrefix = await promptSection.getByTestId('prompt-pack-global-prefix').inputValue();
+    if (defaultPrefix !== 'on_retry') {
+      throw new Error(`Expected default global prefix mode on_retry, got: ${defaultPrefix}`);
+    }
+
+    // Verify disabling preserves selected pack + unsaved drafts, uses compliant wording,
+    // and re-enabling restores the previously selected pack rather than forcing builtin.
+    const unsavedDraft = `${PACK_HEAD}\n未保存草稿验证`;
+    await headSlot.fill(unsavedDraft);
+    await promptSection.getByTestId('prompt-pack-enable-toggle').click();
+    const disabledSectionText = await promptSection.textContent();
+    if (
+      !disabledSectionText?.includes('默认提示词包已停用') ||
+      !disabledSectionText?.includes('已停用默认提示词包。') ||
+      disabledSectionText.includes('全局提示词')
+    ) {
+      throw new Error(`Prompt pack disabled copy failed glossary check: ${disabledSectionText}`);
+    }
+    if ((await headSlot.inputValue()) !== unsavedDraft) {
+      throw new Error('Disabling prompt pack reset unsaved head draft.');
+    }
+    await promptSection.getByTestId('prompt-pack-enable-toggle').click();
+    const reenabledStatus = await promptSection.getByTestId('prompt-pack-status').textContent();
+    if (!reenabledStatus?.includes('已启用「issue133-unmarked」')) {
+      throw new Error(`Re-enabling prompt pack did not restore previously selected pack: ${reenabledStatus}`);
+    }
+    if ((await headSlot.inputValue()) !== unsavedDraft) {
+      throw new Error('Re-enabling prompt pack reset unsaved head draft.');
+    }
+
+    // > 12000 char soft warning keeps save enabled
+    await headSlot.fill('甲'.repeat(12001));
+    if (!(await promptSection.getByTestId('prompt-pack-budget').textContent()).includes('已超过 12000 字软提示')) {
+      throw new Error('Prompt pack > 12000 char soft warning did not render.');
+    }
+    if (await promptSection.getByTestId('prompt-pack-save').isDisabled()) {
+      throw new Error('Prompt pack save was unexpectedly disabled on > 12000 char soft warning.');
+    }
+
+    // > 24000 char hard limit blocks save
     await headSlot.fill('甲'.repeat(24001));
     if (!(await promptSection.getByTestId('prompt-pack-save').isDisabled())) {
       throw new Error('Prompt pack save stayed enabled after the head hard limit was exceeded.');
@@ -204,41 +309,128 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
       throw new Error('Story-level prompt-pack off override still sent the imported pack head.');
     }
 
+    // Keep default on_retry mode for 短拒答恢复测试
     await promptPackSelect.selectOption({ label: 'issue133-unmarked' });
-    await prefixSelect.selectOption('always');
+    await prefixSelect.selectOption('inherit');
+    await page.evaluate(() => {
+      window.__lfhRefusalFlashed = false;
+      const root = document.querySelector('[data-testid="story-timeline"]') || document.body;
+      const observer = new MutationObserver(() => {
+        if (root.textContent?.includes('抱歉，我不能帮你写这段内容。')) {
+          window.__lfhRefusalFlashed = true;
+        }
+      });
+      observer.observe(root, { childList: true, subtree: true, characterData: true });
+      window.__lfhRefusalObserver = observer;
+    });
+
     await page.fill('#turn-input', '短拒答恢复测试');
     await page.getByRole('button', { name: '发送行动' }).click();
+
+    await recoverRetryArrived.promise;
+    if (recoverTrace.length < 2) {
+      throw new Error(`Expected 2 attempts for 短拒答恢复测试, got ${recoverTrace.length}`);
+    }
+    if (recoverTrace[0].isBeta || recoverTrace[0].hasPrefix) {
+      throw new Error(`First attempt should hit stable /chat/completions without prefix, got: ${JSON.stringify(recoverTrace[0])}`);
+    }
+    if (!recoverTrace[1].isBeta || !recoverTrace[1].hasPrefix) {
+      throw new Error(`Retry attempt should hit /beta/chat/completions with prefix: true, got: ${JSON.stringify(recoverTrace[1])}`);
+    }
+
+    await page.getByTestId('story-timeline').getByText('正在重新构思落笔…').waitFor();
+    const flashedDuringWindow = await page.evaluate(() => {
+      window.__lfhRefusalObserver?.disconnect();
+      return window.__lfhRefusalFlashed;
+    });
+    if (flashedDuringWindow || (await page.getByTestId('story-timeline').getByText('抱歉，我不能帮你写这段内容。').count()) > 0) {
+      throw new Error('First-pass refusal text flashed during the 120-char observation window.');
+    }
+
+    recoverRetryRelease.release();
     await page.getByTestId('turn-refusal-recovered-badge').waitFor();
+    await page.getByTestId('turn-assistant').last().getByText('雨停之后，巷口的灯一盏盏亮起来').waitFor();
     await page.getByTestId('turn-refusal-restore-original').click();
-    await page.getByText('抱歉，我不能帮你写这段内容。').waitFor();
-    await page.getByTestId('turn-refusal-restore-original').click();
-    await page.getByText('雨停之后，巷口的灯一盏盏亮起来').waitFor();
+    await page.getByTestId('turn-assistant').last().getByText('抱歉，我不能帮你写这段内容。').waitFor();
+
+    // Verify restored original refusal text persists across page reload
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.getByRole('heading', { name: '雨夜提示词包测试' }).waitFor();
+    await page.getByTestId('story-timeline').getByText('抱歉，我不能帮你写这段内容。').waitFor();
 
     await page.fill('#turn-input', '耗尽测试');
     await page.getByRole('button', { name: '发送行动' }).click();
     await page.getByTestId('turn-assistant').last().getByText('本轮生成未通过模型的安全策略').waitFor();
     await page.getByTestId('open-story-tree').click();
-    await page.getByTestId('story-tree-diag-refusal').waitFor();
+    const refusalDiag = page.getByTestId('story-tree-diag-refusal');
+    await refusalDiag.waitFor();
+    if ((await refusalDiag.count()) !== 1) {
+      throw new Error(`Expected 1 story-tree-diag-refusal before expanding span, got ${await refusalDiag.count()}`);
+    }
+    const refusalSpan = page.getByTestId('story-tree-span').filter({ has: refusalDiag }).first();
+    await refusalSpan.getByTestId('story-tree-span-toggle').click();
+    await refusalSpan.getByTestId('story-tree-span-preview').waitFor();
+    if ((await page.getByTestId('story-tree-diag-refusal').count()) !== 1) {
+      throw new Error(`Expanded span emitted duplicate story-tree-diag-refusal (${await page.getByTestId('story-tree-diag-refusal').count()})`);
+    }
     await page.keyboard.press('Escape');
 
     await page.fill('#turn-input', '半拒绝追要测试');
     await page.getByRole('button', { name: '发送行动' }).click();
-    await page.getByTestId('turn-partial-refusal-banner').waitFor();
-    if (!(await page.getByTestId('turn-assistant').last().textContent()).includes('雨声压低了屋檐')) {
+    const partialTurn = page.getByTestId('turn-assistant').last();
+    await partialTurn.getByTestId('turn-partial-refusal-banner').waitFor();
+    if (!(await partialTurn.textContent()).includes('雨声压低了屋檐')) {
       throw new Error('Partial refusal did not preserve delivered prose.');
     }
-    await page.getByTestId('turn-partial-refusal-continue').click();
+
+    // Failed partial_refused continuation must preserve original prose without false recovered badge
+    await partialTurn.getByTestId('turn-partial-refusal-continue').click();
+    await page.getByText('追要未获得新的有效正文，已保留原有内容，请稍后再试。').waitFor();
+    if (!(await partialTurn.textContent()).includes('雨声压低了屋檐')) {
+      throw new Error('Failed partial-refusal continuation lost original prose.');
+    }
+    if ((await partialTurn.getByTestId('turn-refusal-recovered-badge').count()) !== 0) {
+      throw new Error('Failed partial-refusal continuation emitted a false recovered badge.');
+    }
+    await partialTurn.getByTestId('turn-partial-refusal-continue').waitFor();
+
+    // Second continuation succeeds
+    await partialTurn.getByTestId('turn-partial-refusal-continue').click();
     await page.getByText('门轴轻响，她先一步走进里屋').waitFor();
-    if (await page.getByTestId('turn-partial-refusal-banner').isVisible().catch(() => false)) {
+    await page.waitForFunction(() => !document.querySelector('[aria-label="停止生成"]'));
+    if (await partialTurn.getByTestId('turn-partial-refusal-banner').isVisible().catch(() => false)) {
       throw new Error('Partial-refusal banner remained after a successful continuation.');
     }
 
-    if (stableRequests < 2 || betaRequests < 4) {
+    // Validate Writing mode refusal retry end-to-end (useCreativeReply 5th-arg refusalOptions fix)
+    await page.getByTestId('topbar-mode-switcher').click();
+    await page.getByTestId('topbar-mode-option-writing').click();
+    const writingPage = page.getByTestId('writing-page');
+    await writingPage.waitFor();
+    await writingPage.locator('#writing-discussion-input').fill('写故事模式拒答恢复测试');
+    await writingPage.getByRole('button', { name: '发送', exact: true }).click();
+    await creativeRetryArrived.promise;
+    if (creativeRecoverTrace.length < 2 || creativeRecoverTrace[0].isBeta || !creativeRecoverTrace[1].isBeta || !creativeRecoverTrace[1].hasPrefix) {
+      throw new Error(`Writing mode refusal retry trace invalid: ${JSON.stringify(creativeRecoverTrace)}`);
+    }
+    await writingPage.getByText('正在重新构思落笔…').waitFor();
+    if ((await writingPage.locator('.turn-streaming').getByText('抱歉，我不能帮你写这段内容。').count()) > 0) {
+      throw new Error('Writing mode flashed first-pass refusal text during the observation window.');
+    }
+    creativeRetryRelease.release();
+    await writingPage.getByTestId('turn-assistant').last().getByTestId('turn-refusal-recovered-badge').waitFor();
+    await writingPage.getByTestId('turn-assistant').last().getByText('她把雨衣挂在门后').waitFor();
+
+    if (stableRequests < 3 || betaRequests < 5) {
       throw new Error(`Expected stable and /beta requests, got stable=${stableRequests}, beta=${betaRequests}`);
     }
     if (!lastBetaBody?.messages?.at(-1)?.prefix) {
       throw new Error('The last /beta request did not end with an assistant prefix message.');
     }
+
+    await openSettings(page);
+    await page.getByTestId('settings-page').getByTestId('prompt-pack-global-prefix').selectOption('always');
+    await closeSettings(page);
 
     const themeIds = ['light', 'dark', 'warm'];
     for (const theme of themeIds) {

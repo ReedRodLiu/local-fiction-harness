@@ -100,6 +100,7 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     expect(markup).toContain('data-testid="prompt-pack-tail-always"');
     expect(markup).toContain('data-testid="prompt-pack-global-prefix"');
     expect(markup).toContain('data-testid="prompt-pack-disclaimer"');
+    expect(markup).toContain('banner-alert-warning');
     expect(markup).toContain('24000');
     expect(markup).toContain('6000');
     expect(markup).toContain('2000');
@@ -108,6 +109,20 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     expect(markup.indexOf('data-testid="prompt-pack-disclaimer"')).toBeLessThan(
       markup.indexOf('class="prompt-pack-import-block"'),
     );
+
+    const disabledMarkup = renderToStaticMarkup(createElement(PromptPackSheet, {
+      library: { ...library, activePackId: null },
+      onChange: vi.fn(),
+      onExport: vi.fn(),
+    }));
+    expect(disabledMarkup).toContain('默认提示词包已停用');
+    expect(disabledMarkup).not.toContain('全局提示词');
+
+    const sheetSource = readFileSync(join(repoRoot, 'src/ui/PromptPackSheet.tsx'), 'utf8');
+    const cssSource = readFileSync(join(repoRoot, 'src/ui/styles/prompt-pack.css'), 'utf8');
+    expect(sheetSource).not.toContain('全局提示词');
+    expect(sheetSource).toContain('<BannerAlert tone="warning" testId="prompt-pack-disclaimer">');
+    expect(cssSource).not.toContain('.prompt-pack-disclaimer');
   });
 
   it('renders story-level prompt-pack and prefix selectors next to the existing generation controls', () => {
@@ -554,10 +569,12 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     expect(appSource).not.toContain('continued.content.trim() === node.content.trim()');
   });
 
-  it('does not reset unsaved prompt-pack drafts when global settings change', () => {
+  it('preserves selected pack and unsaved drafts on disable/enable while syncing external persisted updates', () => {
     const source = readFileSync(join(repoRoot, 'src/ui/PromptPackSheet.tsx'), 'utf8');
-    expect(source).toContain('}, [selected.id]);');
-    expect(source).not.toContain('}, [selected.id, selected.title, selected.slots]);');
+    expect(source).toContain('selected.updatedAt');
+    expect(source).toContain('selected.slots.head');
+    expect(source).not.toContain('setSelectedId(activePack.id)');
+    expect(source).toContain('library.packs.find((pack) => pack.id === selected.id)');
   });
 
   it('wires prompt-pack backup export, restore persistence, and summary text through App', () => {
@@ -605,14 +622,21 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     expect(isDefaultPromptPackLibrary({ ...defaults, activePackId: null })).toBe(false);
   });
 
-  it('keeps CONTENT_FILTER copy separate and exposes a stable REFUSAL tree diagnostic', () => {
+  it('keeps CONTENT_FILTER copy separate and exposes a stable REFUSAL tree diagnostic without duplicate span testIds', () => {
     const refusal = makeNode({ diagnostics: { sourceStatus: 'REFUSAL', refusalRoute: 'refused_exhausted' } });
     const story = makeStory(refusal);
     const markup = renderToStaticMarkup(createElement(StoryTree, { story }));
 
     expect(markup).toContain('本轮触发拒答，已从上下文隔离');
     expect(markup).toContain('data-testid="story-tree-diag-refusal"');
+    expect(markup.match(/data-testid="story-tree-diag-refusal"/g)?.length).toBe(1);
     expect(markup).not.toContain('这条历史消息在原平台未完整生成');
+
+    const treeSource = readFileSync(join(repoRoot, 'src/ui/StoryTree.tsx'), 'utf8');
+    expect(treeSource.match(/getActiveBranchNodes\(/g)?.length).toBe(1);
+    const expandedStart = treeSource.indexOf('expandedNodes.map(');
+    const expandedEnd = treeSource.indexOf('</ol>', expandedStart);
+    expect(treeSource.slice(expandedStart, expandedEnd)).not.toContain('story-tree-diag-refusal');
   });
 
   it('forwards refusalOptions as the 5th argument in useCreativeReply for character and writing modes', async () => {
