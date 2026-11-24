@@ -9,6 +9,7 @@ import {
   createDefaultPromptPackLibrary,
   createPromptPack,
   createDefaultBlueprint,
+  excludeRefusedTurns,
   isDefaultPromptPackLibrary,
   type Story,
   type TurnNode,
@@ -299,8 +300,55 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
 
     expect(finalized.content).toContain('她按住门把手');
     expect(finalized.diagnostics).toMatchObject({
-      sourceStatus: 'REFUSAL',
       refusalRoute: 'partial_refused',
+    });
+    expect(finalized.diagnostics?.sourceStatus).toBeUndefined();
+  });
+
+  it('keeps partial-refused nodes in context while excluding thin refusal nodes', () => {
+    const partialNode = finalizePrefixContinuation(
+      makeNode({ id: 'partial-assistant', parentId: 'partial-user', diagnostics: { refusalRoute: 'partial_refused' } }),
+      {
+        content: '已经写出的正文。\n\n她按住门把手，低声说：“抱歉，我不能继续写这段内容。”',
+        reasoningContent: '',
+        finishReason: 'stop',
+      },
+      { mode: 'story' },
+    );
+    const thinNode = finalizePrefixContinuation(
+      makeNode({ id: 'thin-assistant', parentId: 'thin-user', diagnostics: { refusalRoute: 'partial_refused' } }),
+      {
+        content: '已经写出的正文。\n\n抱歉，我不能继续写这段内容。',
+        reasoningContent: '',
+        finishReason: 'stop',
+      },
+      { mode: 'story' },
+    );
+    const nodes = [
+      {
+        id: 'partial-user',
+        parentId: null,
+        role: 'user' as const,
+        content: '半拒绝追问',
+        createdAt: 1,
+        summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+      },
+      partialNode,
+      {
+        id: 'thin-user',
+        parentId: null,
+        role: 'user' as const,
+        content: '薄拒答追问',
+        createdAt: 3,
+        summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+      },
+      thinNode,
+    ];
+
+    expect(excludeRefusedTurns(nodes)).toEqual([nodes[0], partialNode]);
+    expect(thinNode.diagnostics).toMatchObject({
+      sourceStatus: 'REFUSAL',
+      refusalRoute: 'retry',
     });
   });
 

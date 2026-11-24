@@ -78,15 +78,16 @@ export function finalizePrefixContinuation(
   );
   const matchedRuleId = refusalVerdict?.ruleId ??
     (refusalRoute === 'retry-skeleton' ? 'skeleton-01' : undefined);
+  const marksRefusalSource = refusalRoute !== 'pass' && refusalRoute !== 'partial_refused';
+  const existingDiagnostics = { ...node.diagnostics };
+  if (refusalRoute === 'partial_refused' && existingDiagnostics.sourceStatus === 'REFUSAL') {
+    delete existingDiagnostics.sourceStatus;
+  }
   const diagnostics = {
-    ...node.diagnostics,
+    ...existingDiagnostics,
     refusalRoute,
-    ...(refusalRoute !== 'pass'
-      ? {
-          sourceStatus: 'REFUSAL' as const,
-          ...(matchedRuleId ? { matchedRuleId } : {}),
-        }
-      : {}),
+    ...(marksRefusalSource ? { sourceStatus: 'REFUSAL' as const } : {}),
+    ...(matchedRuleId ? { matchedRuleId } : {}),
   };
   const proposals = [...(node.proposals ?? []), ...newProposalRecords];
 
