@@ -239,6 +239,46 @@ export interface BinaryDownloader {
   ): Promise<BinaryDownloadResult>;
 }
 
+export interface AppUpdateReleaseInfo {
+  version: string;
+  tagName: string;
+  title: string;
+  notes: string;
+  publishedAt?: string;
+  releasePageUrl: string;
+  apkName: string;
+  apkUrl: string;
+  expectedSha256?: string;
+}
+
+export interface AppUpdateDownloadProgress {
+  downloadedBytes: number;
+  totalBytes?: number;
+}
+
+export interface AppUpdateDownloadedApk {
+  fileName: string;
+  version: string;
+  sha256: string;
+  sizeBytes: number;
+  reusedCache?: boolean;
+}
+
+export interface AppUpdater {
+  checkLatestRelease(signal?: AbortSignalLike): Promise<AppUpdateReleaseInfo | null>;
+  downloadAndVerifyApk(
+    release: AppUpdateReleaseInfo,
+    onProgress?: (progress: AppUpdateDownloadProgress) => void,
+    signal?: AbortSignalLike,
+  ): Promise<AppUpdateDownloadedApk>;
+  canRequestPackageInstalls(): Promise<boolean>;
+  openInstallPermissionSettings(): Promise<void>;
+  installDownloadedApk(version: string): Promise<void>;
+  cleanupStaleApks(keepVersion?: string): Promise<void>;
+  openExternalUrl(url: string): Promise<void>;
+  subscribeAppResumed?(listener: () => void): () => void;
+}
+
 export interface PlatformRuntime {
   platform: 'web' | 'android';
   diagnostics: DiagnosticCollector;
@@ -250,6 +290,7 @@ export interface PlatformRuntime {
   backupExporter: BackupExporter;
   supportsMemoryOnlySession: boolean;
   creativeStorage?: CreativeStorage;
+  appUpdater?: AppUpdater;
 }
 
 export interface TurnCallbacks {

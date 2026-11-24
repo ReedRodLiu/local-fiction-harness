@@ -35,6 +35,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativeSsePlugin.class);
         registerPlugin(NativeBinaryPlugin.class);
         registerPlugin(NativeVaultPlugin.class);
+        registerPlugin(NativeUpdaterPlugin.class);
         super.onCreate(savedInstanceState);
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override

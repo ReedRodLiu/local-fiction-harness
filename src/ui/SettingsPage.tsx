@@ -23,6 +23,7 @@ import {
 import { PromptPackSheet } from './PromptPackSheet.tsx';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
+import type { AppUpdaterController } from './useAppUpdater.ts';
 import type { SettingsBalanceState } from './useDeepSeekBalance.ts';
 
 export interface SettingsPageProps {
@@ -55,6 +56,7 @@ export interface SettingsPageProps {
   promptPackLibrary?: PromptPackLibrary;
   onPromptPackLibraryChange?: (library: PromptPackLibrary) => void;
   onExportPromptPack?: (pack: PromptPack) => void | Promise<void>;
+  appUpdater?: AppUpdaterController;
 }
 
 const MODEL_OPTIONS: Array<{
@@ -133,6 +135,7 @@ export function SettingsPage({
   promptPackLibrary = createDefaultPromptPackLibrary(),
   onPromptPackLibraryChange = () => undefined,
   onExportPromptPack = () => undefined,
+  appUpdater,
 }: SettingsPageProps) {
   const backupInputRef = useRef<HTMLInputElement>(null);
   const [storageStatus, setStorageStatus] = useState('正在读取本地占用…');
@@ -484,6 +487,99 @@ export function SettingsPage({
           <FileUp size={18} strokeWidth={1.75} /> 从备份恢复
         </button>
       </InsetGroup>
+
+      {appUpdater?.enabled && (
+        <InsetGroup
+          title="应用更新"
+          description="从官方 Gitee 仓库检查 Folio Android 正式版更新，并在应用内完成校验安装。"
+          testId="settings-update-group"
+        >
+          <div className="settings-update-card" data-testid="settings-update-card">
+            <div className="settings-update-row">
+              <div className="settings-update-summary">
+                <strong>当前版本 Folio v{appVersion}</strong>
+                <span data-testid="settings-update-status">
+                  {appUpdater.checkStatus === 'checking'
+                    ? '正在检查更新…'
+                    : appUpdater.availableRelease
+                      ? `发现新版本 v${appUpdater.availableRelease.version}`
+                      : appUpdater.checkStatus === 'up_to_date'
+                        ? '当前已是最新版本'
+                        : appUpdater.checkStatus === 'error'
+                          ? '检查更新失败'
+                          : '点击右侧按钮检查是否有可用更新'}
+                </span>
+              </div>
+              {appUpdater.availableRelease && (
+                <span className="settings-update-badge" data-testid="settings-update-available-badge">
+                  v{appUpdater.availableRelease.version} 可用
+                </span>
+              )}
+            </div>
+
+            {appUpdater.checkStatus === 'error' && appUpdater.checkError && (
+              <p className="settings-update-error" role="status" data-testid="settings-update-error">
+                {appUpdater.checkError}
+              </p>
+            )}
+
+            <div className="settings-update-actions">
+              <button
+                type="button"
+                className="btn"
+                data-testid="check-app-update-btn"
+                disabled={appUpdater.checkStatus === 'checking'}
+                onClick={() => void appUpdater.checkForUpdatesManual()}
+              >
+                <RefreshCw
+                  size={16}
+                  strokeWidth={1.75}
+                  className={appUpdater.checkStatus === 'checking' ? 'settings-balance-spin' : undefined}
+                  aria-hidden="true"
+                />
+                <span>{appUpdater.checkStatus === 'checking' ? '检查中…' : '检查更新'}</span>
+              </button>
+
+              {appUpdater.availableRelease && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  data-testid="open-available-update-btn"
+                  onClick={appUpdater.openUpdateModal}
+                >
+                  <Download size={16} strokeWidth={1.75} aria-hidden="true" />
+                  <span>查看 v{appUpdater.availableRelease.version} 更新</span>
+                </button>
+              )}
+
+              {appUpdater.checkStatus === 'error' && (
+                <button
+                  type="button"
+                  className="btn"
+                  data-testid="settings-update-browser-btn"
+                  onClick={() => void appUpdater.openReleaseInBrowser()}
+                >
+                  <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
+                  <span>打开发布页</span>
+                </button>
+              )}
+            </div>
+
+            <label className="settings-update-toggle">
+              <div className="settings-update-toggle-text">
+                <strong>启动时自动检查更新</strong>
+                <span>每 24 小时最多检查一次 Gitee 正式版，不收集设备信息。</span>
+              </div>
+              <input
+                type="checkbox"
+                data-testid="auto-check-update-toggle"
+                checked={appUpdater.autoCheckEnabled}
+                onChange={(event) => appUpdater.setAutoCheckEnabled(event.target.checked)}
+              />
+            </label>
+          </div>
+        </InsetGroup>
+      )}
 
       <InsetGroup
         title="问题反馈与日志"

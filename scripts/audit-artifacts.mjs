@@ -6,6 +6,7 @@ import { unzipSync, strFromU8 } from 'fflate';
 const MAX_APK_BYTES = 20 * 1024 * 1024;
 const ALLOWED_PERMISSIONS = new Set([
   'android.permission.INTERNET',
+  'android.permission.REQUEST_INSTALL_PACKAGES',
   'io.localfiction.harness.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION',
 ]);
 const FORBIDDEN_ASSET_MARKERS = [

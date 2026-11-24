@@ -2,6 +2,7 @@ import {
   createDiagnosticCollector,
   createDiagnosticStoryStorage,
   createDiagnosticTransport,
+  type AppUpdater,
   type BackupExporter,
   type BinaryDownloader,
   type CreativeStorage,
@@ -13,6 +14,7 @@ import {
 } from '../harness/index.ts';
 import { createCapacitorBinaryDownloader } from './capacitorBinaryDownloader.ts';
 import { createCapacitorSseTransport } from './capacitorSseTransport.ts';
+import { createCapacitorAppUpdater } from './capacitorUpdater.ts';
 import {
   createAndroidBackupExporter,
   createAndroidCreativeStorage,
@@ -29,6 +31,7 @@ export interface AndroidRuntimeOptions {
   backupExporter?: BackupExporter;
   diagnosticsStorage?: KeyValueStorage;
   promptPackStorage?: KeyValueStorage;
+  appUpdater?: AppUpdater;
 }
 
 function resolveBrowserLocalStorage(): KeyValueStorage | undefined {
@@ -82,5 +85,6 @@ export function createAndroidPlatformRuntime(
     creativeStorage: options.creativeStorage ?? createAndroidCreativeStorage(),
     backupExporter: options.backupExporter ?? createAndroidBackupExporter(),
     supportsMemoryOnlySession: true,
+    appUpdater: options.appUpdater ?? createCapacitorAppUpdater(),
   };
 }

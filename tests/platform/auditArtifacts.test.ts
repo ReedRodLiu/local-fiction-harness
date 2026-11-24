@@ -6,6 +6,10 @@ import {
   auditTextAssets,
   extractEnvSecretValues,
 } from '../../scripts/audit-artifacts.mjs';
+import {
+  extractAndroidVersionName,
+  verifyVersionSync,
+} from '../../scripts/check-version-sync.mjs';
 
 describe('Offline artifact & minimal-permission audit', () => {
   it('extracts only secret/key/token/password values from .env.local content', () => {
@@ -21,11 +25,12 @@ describe('Offline artifact & minimal-permission audit', () => {
     expect(secrets).toEqual(['sk-test-secret-123456']);
   });
 
-  it('allows minimal INTERNET manifest and rejects extra permissions or allowBackup=true', () => {
+  it('allows minimal INTERNET and REQUEST_INSTALL_PACKAGES manifest and rejects extra permissions or allowBackup=true', () => {
     const cleanManifest = `
       <manifest xmlns:android="http://schemas.android.com/apk/res/android">
         <application android:allowBackup="false"></application>
         <uses-permission android:name="android.permission.INTERNET" />
+        <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
       </manifest>
     `;
     expect(() => auditManifestXml(cleanManifest)).not.toThrow();
@@ -98,5 +103,12 @@ describe('Offline artifact & minimal-permission audit', () => {
       'assets/bin/sh': strToU8('#!/bin/sh'),
     });
     expect(() => auditApkArchive(shellApk, [])).toThrow(/bin\/sh/);
+  });
+
+  it('extracts Android versionName and verifies package.json <-> build.gradle version sync', () => {
+    expect(extractAndroidVersionName('versionCode 3\nversionName "0.3.0"\n')).toBe('0.3.0');
+    expect(extractAndroidVersionName("versionName '1.2.3'")).toBe('1.2.3');
+    const sync = verifyVersionSync(process.cwd());
+    expect(sync.packageVersion).toBe(sync.androidVersionName);
   });
 });

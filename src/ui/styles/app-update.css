@@ -1,0 +1,255 @@
+.settings-update-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.settings-update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-update-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-update-summary strong {
+  font-size: 13px;
+}
+
+.settings-update-summary span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.settings-update-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent-fiction-soft);
+  color: var(--accent-fiction);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.settings-update-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border-hairline);
+  cursor: pointer;
+}
+
+.settings-update-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-update-toggle-text strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-update-toggle-text span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.settings-update-toggle input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  accent-color: var(--accent-fiction);
+  cursor: pointer;
+}
+
+.settings-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-update-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--status-danger-soft);
+  color: var(--status-danger);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.app-update-modal {
+  max-width: 460px;
+}
+
+.app-update-version-meta {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.app-update-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-update-notes {
+  max-height: 200px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.app-update-backup-callout {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-canvas);
+}
+
+.app-update-backup-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.app-update-backup-copy svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.app-update-backup-status {
+  margin: 0;
+  color: var(--status-ok);
+  font-size: 12px;
+}
+
+.app-update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app-update-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.app-update-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--bg-surface-hover);
+}
+
+.app-update-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-fiction);
+  transition: width 160ms linear;
+}
+
+.app-update-progress-track span.is-indeterminate {
+  width: 38%;
+  animation: app-update-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes app-update-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(280%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-update-progress-track span.is-indeterminate {
+    animation: none;
+    width: 100%;
+  }
+}
+
+.app-update-permission-body,
+.app-update-error-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.app-update-permission-body p,
+.app-update-error-body p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.app-update-error-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.app-update-footer {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.app-update-skip-btn {
+  margin-inline-end: auto;
+}
+
+@media (max-width: 440px) {
+  .settings-update-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .app-update-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .app-update-skip-btn {
+    margin-inline-end: 0;
+  }
+}

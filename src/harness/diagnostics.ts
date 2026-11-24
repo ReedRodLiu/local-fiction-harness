@@ -44,6 +44,8 @@ const STACK_MODULES = new Set([
   'useManuscriptAutosave.ts', 'useAutoScrollTimeline.ts', 'useDeepSeekBalance.ts', 'CompanionSheet.tsx',
   'markdownDocuments.ts', 'storyStorage.ts', 'storySkeleton.ts', 'context.ts',
   'branches.ts', 'storyTree.ts',
+  // Android in-app update modules
+  'appUpdate.ts', 'capacitorUpdater.ts', 'useAppUpdater.ts', 'AppUpdateModal.tsx',
 ]);
 
 const OFFICIAL_MODEL_HOSTS = new Set([
@@ -145,6 +147,15 @@ const DIAGNOSTIC_ACTIONS = new Set([
   'refusal_retry_exhausted',
   'refusal_partial_delivered',
   'refusal_original_restored',
+  // Android in-app updates (zero-content status/outcome only)
+  'update_check_done',
+  'update_check_failed',
+  'update_download_done',
+  'update_download_failed',
+  'update_verify_failed',
+  'update_install_permission_needed',
+  'update_install_launched',
+  'update_install_failed',
   'other',
 ]);
 const REFUSAL_DIAGNOSTIC_ACTIONS = new Set([
@@ -192,6 +203,7 @@ const SAFE_NUMERIC_METRICS = new Set([
   'hydratedCount',
   'migratedCount',
   'retryCount',
+  'updateBytes',
 ]);
 const SAFE_ENUM_METRICS: Record<string, ReadonlySet<string>> = {
   target: new Set([
@@ -220,6 +232,15 @@ const SAFE_ENUM_METRICS: Record<string, ReadonlySet<string>> = {
   reasoningEffort: new Set(['none', 'low', 'high', 'max']),
   prefixMode: new Set(['off', 'on_retry', 'always']),
   refusalRoute: new Set(['pass', 'retry', 'retry-skeleton', 'partial_refused', 'refused_exhausted']),
+  updateOutcome: new Set([
+    'up_to_date',
+    'available',
+    'skipped',
+    'cached',
+    'downloaded',
+    'installed',
+    'browser_fallback',
+  ]),
 };
 const SAFE_REASON_CODE_UPPER_ALLOWLIST = new Set([
   'TIMEOUT',
@@ -229,6 +250,11 @@ const SAFE_REASON_CODE_UPPER_ALLOWLIST = new Set([
   'NETWORK_ERROR',
   'QUOTA_EXCEEDED',
   'PATCH_CONFLICT',
+  'SHA256_MISMATCH',
+  'SIGNATURE_MISMATCH',
+  'PACKAGE_MISMATCH',
+  'PERMISSION_DENIED',
+  'RATE_LIMITED',
 ]);
 const SAFE_SNAKE_CODE_REGEX = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 const CREDENTIAL_PREFIX_REGEX = /^(?:sk|rk|pk|key|token|secret|password|bearer|authorization)[_-]/i;

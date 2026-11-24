@@ -27,3 +27,4 @@ export * from './promptPack.ts';
 export * from './refusalPatterns.ts';
 export * from './thinDelivery.ts';
 export * from './refusalWrapper.ts';
+export * from './appUpdate.ts';

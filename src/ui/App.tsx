@@ -78,6 +78,7 @@ import {
   type DevTestConfigResponse,
 } from '../platform/runtime.ts';
 import { useAppAsyncError } from './AppErrorBoundary.tsx';
+import { AppUpdateModal } from './AppUpdateModal.tsx';
 import { CompanionSheet } from './CompanionSheet.tsx';
 import { CreativeWorkspace } from './CreativeWorkspace.tsx';
 import { DeepSeekSetupWizard } from './DeepSeekSetupWizard.tsx';
@@ -112,6 +113,7 @@ import {
 import { mergeBranchRenameResult } from './storyConcurrency.ts';
 import { toErrorMessage } from './textHelpers.ts';
 import { useAppOverlayHistory } from './useAppOverlayHistory.ts';
+import { useAppUpdater } from './useAppUpdater.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
 import { useCreativeWorkspace } from './useCreativeWorkspace.ts';
 import { useDeepSeekBalance } from './useDeepSeekBalance.ts';
@@ -295,6 +297,10 @@ export function App({ runtime }: AppProps) {
     setThemePreference,
     setDisplayFontSize,
   } = useDisplayPreferences();
+  const appUpdater = useAppUpdater({
+    runtime,
+    currentVersion: APP_VERSION,
+  });
   const overlayReturnFocusRef = useRef<HTMLElement | null>(null);
   const wizardReturnFocusRef = useRef<HTMLElement | null>(null);
   const wizardCloseReasonRef = useRef<'success' | 'cancel' | null>(null);
@@ -710,7 +716,7 @@ export function App({ runtime }: AppProps) {
     activeLeafKey: isWelcome ? String(neutralTurns.length) : story.activeLeafNodeId,
     turnCount: isWelcome ? neutralTurns.length : activeNodes.length,
     isStreaming,
-    streamPulse: `${streamContent.length}:${streamReasoning.length}`,
+    streamPulse: `${streamContent.length}:${streamReasoning.length}:${errorMsg ?? ''}:${createdAssetNotice?.id ?? ''}`,
     paused: showImport || showSettings || Boolean(creativePage),
   });
 
@@ -1806,8 +1812,10 @@ export function App({ runtime }: AppProps) {
         // Ignore diagnostics failure.
       }
       setStatusNotice('已导出全量工作区备份 (.folio.json)。');
+      return true;
     } catch (err) {
       setErrorMsg(toErrorMessage(err, '导出全量备份失败。'));
+      return false;
     }
   };
 
@@ -2586,6 +2594,7 @@ export function App({ runtime }: AppProps) {
               promptPackLibrary={promptPackLibrary}
               onPromptPackLibraryChange={setPromptPackLibrary}
               onExportPromptPack={handleExportPromptPack}
+              appUpdater={appUpdater}
             />
           ) : creativePage ? (
             <>
@@ -2765,47 +2774,54 @@ export function App({ runtime }: AppProps) {
                 </div>
               )}
 
-              <form className="composer composer-double-row" data-testid="stage-composer" onSubmit={handleSubmit}>
-                <div className="composer-notices">
-                  {errorMsg && !showSettings && !showImport && !isWelcome && (
-                    <BannerAlert
-                      tone="danger"
-                      testId="main-error-banner"
-                      action={{
-                        label: '导出日志',
-                        onClick: () => openDiagnostics('error_banner'),
-                      }}
-                    >
-                      <span>{errorMsg}</span>
-                    </BannerAlert>
-                  )}
-                  {createdAssetNotice && (
-                    <div className="manuscript-undo-toast" role="status">
-                      <span>{createdAssetNotice.label}</span>
+              <div className="composer-dock">
+                {((errorMsg && !showSettings && !showImport && !isWelcome) || createdAssetNotice) && (
+                  <div className="composer-flow-notices">
+                    {errorMsg && !showSettings && !showImport && !isWelcome && (
+                      <BannerAlert
+                        tone="danger"
+                        testId="main-error-banner"
+                        action={{
+                          label: '导出日志',
+                          onClick: () => openDiagnostics('error_banner'),
+                        }}
+                        onDismiss={() => setErrorMsg(null)}
+                      >
+                        <span>{errorMsg}</span>
+                      </BannerAlert>
+                    )}
+                    {createdAssetNotice && (
+                      <div className="manuscript-undo-toast" role="status">
+                        <span>{createdAssetNotice.label}</span>
+                        <button
+                          type="button"
+                          className="text-action"
+                          onClick={() => {
+                            const { kind, id } = createdAssetNotice;
+                            setCreatedAssetNotice(null);
+                            void changeCreativeItem(kind === 'character' ? 'character' : 'writing', id, 'select');
+                          }}
+                        >
+                          去看看
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <form className="composer composer-double-row" data-testid="stage-composer" onSubmit={handleSubmit}>
+                  <div className="composer-notices">
+                    {autoScroll.showScrollToBottom && (
                       <button
                         type="button"
-                        className="text-action"
-                        onClick={() => {
-                          const { kind, id } = createdAssetNotice;
-                          setCreatedAssetNotice(null);
-                          void changeCreativeItem(kind === 'character' ? 'character' : 'writing', id, 'select');
-                        }}
+                        className="scroll-to-bottom"
+                        data-testid="scroll-to-bottom"
+                        onClick={autoScroll.scrollToBottom}
                       >
-                        去看看
+                        回到底部 ↓
                       </button>
-                    </div>
-                  )}
-                  {autoScroll.showScrollToBottom && (
-                    <button
-                      type="button"
-                      className="scroll-to-bottom"
-                      data-testid="scroll-to-bottom"
-                      onClick={autoScroll.scrollToBottom}
-                    >
-                      回到底部 ↓
-                    </button>
-                  )}
-                </div>
+                    )}
+                  </div>
 
                 <label className="visually-hidden" htmlFor="turn-input">
                   {isWelcome ? '说说你想写什么、玩什么或聊什么' : '输入你的行动或对话'}
@@ -2945,7 +2961,8 @@ export function App({ runtime }: AppProps) {
                     </div>
                   )}
                 />
-              </form>
+                </form>
+              </div>
             </>
           )}
 
@@ -3018,6 +3035,11 @@ export function App({ runtime }: AppProps) {
         onClose={() => setStoryTreeOpen(false)}
       />
       <DocumentDialog edit={documentEdit} onClose={() => setDocumentEdit(null)} />
+      <AppUpdateModal
+        updater={appUpdater}
+        canExportBackup={canExportFullBackup}
+        onExportBackup={handleExportFullBackup}
+      />
     </div>
   );
 }
