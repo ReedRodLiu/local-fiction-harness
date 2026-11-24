@@ -7,6 +7,7 @@ import {
   createDiagnosticTransport,
   createFictionHarness,
   createInMemoryStoryStorage,
+  recordRefusalOriginalRestoredDiagnostic,
   sanitizeDiagnosticText,
   sanitizeEndpointProfile,
   scanDeepSeekExportZip,
@@ -731,6 +732,28 @@ describe('Spec #26 Slice 2: DeepSeek structure radar & breadcrumb wrappers', () 
     ]) {
       expect(json).not.toContain(canary);
     }
+  });
+
+  it('records original-refusal restoration using only safe node diagnostic metrics', () => {
+    const collector = createDiagnosticCollector({ platform: 'web' });
+    const nodeDiagnostics = {
+      sourceStatus: 'REFUSAL' as const,
+      refusalRoute: 'refused_exhausted' as const,
+      matchedRuleId: 'L1-02',
+      retriedWithPrefix: true,
+      recoveredFromText: 'RESTORED_BODY_CANARY',
+    };
+
+    recordRefusalOriginalRestoredDiagnostic(collector, nodeDiagnostics);
+
+    const bundle = collector.buildBundle({ baseUrl: '', model: '', memoryOnly: true });
+    const event = bundle.events.find((item) => item.action === 'refusal_original_restored');
+    expect(event?.meta).toEqual({
+      refusalRoute: 'refused_exhausted',
+      matchedRuleId: 'L1-02',
+      retryCount: 1,
+    });
+    expect(JSON.stringify(bundle)).not.toContain('RESTORED_BODY_CANARY');
   });
 
 });

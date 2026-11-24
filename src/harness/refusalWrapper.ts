@@ -50,7 +50,7 @@ export interface RefusalDiagnosticMetrics {
 
 export interface RefusalDiagnosticEvent {
   action: RefusalDiagnosticAction;
-  metrics: RefusalDiagnosticMetrics;
+  metrics: Partial<RefusalDiagnosticMetrics>;
 }
 
 export type RefusalStreamIntegrationOptions = Omit<

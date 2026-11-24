@@ -92,6 +92,9 @@ describe('PlatformRuntime detection & Web adapter', () => {
 
     expect(runtime.platform).toBe('web');
     expect(runtime.supportsMemoryOnlySession).toBe(true);
+    expect(runtime.promptPackStorage).toBe(kv);
+    runtime.promptPackStorage.setItem('prompt-packs', 'stored');
+    expect(kv.getItem('prompt-packs')).toBe('stored');
 
     await runtime.secretStore.saveApiKey('sk-web-123');
     expect(await runtime.secretStore.loadApiKey()).toBe('sk-web-123');
@@ -129,6 +132,7 @@ describe('PlatformRuntime detection & Web adapter', () => {
 
     const runtime = createPlatformRuntime({ fetchImpl: vi.fn() });
     expect(runtime.platform).toBe('web');
+    expect(runtime.promptPackStorage).toBe(kv);
 
     await runtime.backupExporter.exportJsonFile('story.lfh.json', '{"schemaVersion":1}');
     expect(anchor.href).toBe('blob:test-backup');

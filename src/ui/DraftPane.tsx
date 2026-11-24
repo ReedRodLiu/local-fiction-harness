@@ -23,6 +23,8 @@ import {
   normalizeReasoningEffort,
   parseManuscriptAssistantReply,
   parseProposalReply,
+  recordRefusalDiagnostic,
+  recordRefusalOriginalRestoredDiagnostic,
   referenceDocument,
   resolveEffectiveModelConfig,
   restoreRefusalOriginalContent,
@@ -341,7 +343,11 @@ export function DraftPane(props: DraftPaneProps) {
       const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
       const result = await request(ctx.messages, {
         config: effectiveConfig,
-        refusalOptions: { mode: 'writing', promptPackOptions },
+        refusalOptions: {
+          mode: 'writing',
+          promptPackOptions,
+          onDiagnostic: (event) => recordRefusalDiagnostic(runtime.diagnostics, event),
+        },
       });
       if (signal.aborted) return;
 
@@ -720,7 +726,11 @@ export function DraftPane(props: DraftPaneProps) {
       const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
       const result = await request(ctx.messages, {
         config: effectiveConfig,
-        refusalOptions: { mode: 'writing', promptPackOptions },
+        refusalOptions: {
+          mode: 'writing',
+          promptPackOptions,
+          onDiagnostic: (event) => recordRefusalDiagnostic(runtime.diagnostics, event),
+        },
       });
       if (signal.aborted) return;
       const publicDoc = documentVersion(state.publicDocument);
@@ -763,6 +773,8 @@ export function DraftPane(props: DraftPaneProps) {
 
   const restoreDiscussionRefusalOriginal = async (nodeId: string) => {
     try {
+      let didRestore = false;
+      let refusalDiagnostics: TurnNode['diagnostics'];
       await save((state) =>
         updateWork(state, work.id, (live) => {
           const tree = getWorkDiscussionTree(live);
@@ -770,6 +782,8 @@ export function DraftPane(props: DraftPaneProps) {
           if (!node || node.role !== 'assistant') return live;
           const restored = restoreRefusalOriginalContent(node);
           if (restored === node) return live;
+          didRestore = true;
+          refusalDiagnostics = node.diagnostics;
           const nodes = { ...tree.nodes, [nodeId]: restored };
           return {
             ...live,
@@ -781,6 +795,9 @@ export function DraftPane(props: DraftPaneProps) {
           };
         }),
       );
+      if (didRestore) {
+        recordRefusalOriginalRestoredDiagnostic(runtime.diagnostics, refusalDiagnostics);
+      }
     } catch (err) {
       reply.fail(err);
     }

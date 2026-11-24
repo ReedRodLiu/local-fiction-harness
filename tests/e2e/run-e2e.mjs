@@ -2045,6 +2045,21 @@ function contrastRatio(foreground, background) {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
+async function waitForThemeOptionStylesToSettle(page, theme) {
+  await page.waitForFunction(async (expectedTheme) => {
+    const root = document.documentElement;
+    const option = document.querySelector('[data-testid="theme-option-warm"]');
+    if (root.dataset.theme !== expectedTheme || !option) return false;
+    const readColors = () => {
+      const style = getComputedStyle(option);
+      return `${style.backgroundColor}|${style.color}`;
+    };
+    const before = readColors();
+    await new Promise((resolve) => window.setTimeout(resolve, 180));
+    return root.dataset.theme === expectedTheme && readColors() === before;
+  }, theme);
+}
+
 async function verifyDisplayPreferenceMatrix(page, port) {
   await page.route(`http://localhost:${port}/__dev_test_config`, (route) =>
     route.fulfill({
@@ -2107,6 +2122,7 @@ async function verifyDisplayPreferenceMatrix(page, port) {
     ]) {
       await page.setViewportSize(viewport);
       await settings.getByTestId(`theme-option-${theme}`).click();
+      await waitForThemeOptionStylesToSettle(page, theme);
       await settings.getByTestId(`theme-option-${theme}`).scrollIntoViewIfNeeded();
       const layout = await settings.evaluate((element) => {
         const root = document.documentElement;
