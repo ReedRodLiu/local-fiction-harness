@@ -65,6 +65,7 @@ export interface FictionHarnessDeps {
   now?: () => number;
   createId?: () => string;
   promptPackLibrary?: PromptPackLibrary;
+  getPromptPackLibrary?: () => PromptPackLibrary | undefined;
   diagnostics?: DiagnosticCollector;
 }
 
@@ -199,6 +200,7 @@ function splitSummaryText(text: string, maxChars: number): string[] {
 export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
   const now = deps.now ?? (() => Date.now());
   const createId = deps.createId ?? createDefaultId;
+  const resolvePromptPackLibrary = () => deps.getPromptPackLibrary?.() ?? deps.promptPackLibrary;
 
   const createStoryRecord = (input: CreateStoryInput): Story => {
     const timestamp = now();
@@ -606,14 +608,14 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       true,
       {
         ...prepared.request,
-        ...buildPromptPackContextOptions(deps.promptPackLibrary, workingStory.generationPreference),
+        ...buildPromptPackContextOptions(resolvePromptPackLibrary(), workingStory.generationPreference),
       },
     );
 
     const result = await streamText(config, messages, callbacks, true, {
       mode: 'story',
       promptPackOptions: {
-        ...buildPromptPackContextOptions(deps.promptPackLibrary, workingStory.generationPreference),
+        ...buildPromptPackContextOptions(resolvePromptPackLibrary(), workingStory.generationPreference),
       },
     });
     const parsed = parseProposalReply(result.content, { finishReason: result.finishReason });
@@ -821,7 +823,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         deps.contextBudget,
         false,
         undefined,
-        buildPromptPackContextOptions(deps.promptPackLibrary, story.generationPreference),
+        buildPromptPackContextOptions(resolvePromptPackLibrary(), story.generationPreference),
       );
     },
 
@@ -906,13 +908,13 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         true,
         {
           ...prepared.request,
-          ...buildPromptPackContextOptions(deps.promptPackLibrary, workingStory.generationPreference),
+          ...buildPromptPackContextOptions(resolvePromptPackLibrary(), workingStory.generationPreference),
         },
       );
       const result = await streamText(config, messages, callbacks, true, {
         mode: 'story',
         promptPackOptions: {
-          ...buildPromptPackContextOptions(deps.promptPackLibrary, workingStory.generationPreference),
+          ...buildPromptPackContextOptions(resolvePromptPackLibrary(), workingStory.generationPreference),
         },
       });
       const parsed = parseProposalReply(result.content, { finishReason: result.finishReason });

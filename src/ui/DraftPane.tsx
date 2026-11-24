@@ -27,7 +27,6 @@ import {
   recordRefusalOriginalRestoredDiagnostic,
   referenceDocument,
   resolveEffectiveModelConfig,
-  restoreRefusalOriginalContent,
   streamWithRefusalHandling,
   summaryTargetBranchFingerprint,
   summarizeWorkDiscussion,
@@ -52,7 +51,7 @@ import { GenerationControls, mergeGenerationPreference } from './GenerationContr
 import { MarkdownView } from './MarkdownView.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { ProposalCard } from './ProposalCard.tsx';
-import { TurnCard, type ResolvedProposalTargetState } from './TurnCard.tsx';
+import { TurnCard, TurnRefusalNotices, type ResolvedProposalTargetState } from './TurnCard.tsx';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
@@ -65,6 +64,7 @@ import {
 } from './proposalActions.ts';
 import {
   finalizePrefixContinuation,
+  restoreTurnNodeRefusalOriginal,
   streamPrefixContinuation,
 } from './refusalContinuation.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
@@ -131,7 +131,7 @@ export function DraftPane(props: DraftPaneProps) {
     suggestion: WritingSuggestion;
     target: WritingSuggestion;
   } | null>(null);
-  const [manuscriptChatAnswer, setManuscriptChatAnswer] = useState<string | null>(null);
+  const [manuscriptChatNodeId, setManuscriptChatNodeId] = useState<string | null>(null);
   const [manuscriptProposalRef, setManuscriptProposalRef] = useState<{
     nodeId: string;
     proposalId: string;
@@ -232,6 +232,9 @@ export function DraftPane(props: DraftPaneProps) {
   const activeManuscriptProposal = manuscriptProposalNode?.proposals?.find(
     (p) => p.id === manuscriptProposalRef?.proposalId,
   );
+  const manuscriptChatNode = manuscriptChatNodeId
+    ? discussionTree.nodes[manuscriptChatNodeId]
+    : undefined;
 
   function editSetting(proposalBody?: string) {
     const base = documentVersion(work.document);
@@ -416,7 +419,7 @@ export function DraftPane(props: DraftPaneProps) {
     setFocusedSuggestionId(null);
     setSelectedSuggestion(null);
     setHasCardSelection(false);
-    setManuscriptChatAnswer(null);
+    setManuscriptChatNodeId(null);
     setManuscriptProposalRef(null);
 
     const { start, end } = selection.current;
@@ -454,6 +457,7 @@ export function DraftPane(props: DraftPaneProps) {
         messages: ctx.messages,
         mode: 'writing',
         promptPackOptions,
+        onDiagnostic: (event) => recordRefusalDiagnostic(runtime.diagnostics, event),
         callbacks: {
           signal,
           onReasoningDelta: appendReasoning,
@@ -470,7 +474,10 @@ export function DraftPane(props: DraftPaneProps) {
         toVisibleContent: (value) => visibleReplyPrefix(visibleManuscriptReplyPrefix(value)),
       });
       if (signal.aborted) return;
-      if (result.finishReason !== 'stop') {
+      const isRefusalResult =
+        result.diagnostics?.sourceStatus === 'REFUSAL' ||
+        result.diagnostics?.refusalRoute === 'partial_refused';
+      if (result.finishReason !== 'stop' && !isRefusalResult) {
         throw new Error('回复未完成，请重试。');
       }
       const raw = result.content;
@@ -587,7 +594,7 @@ export function DraftPane(props: DraftPaneProps) {
       );
       if (!signal.aborted) {
         setManuscriptInput('');
-        setManuscriptChatAnswer(routed.content);
+        setManuscriptChatNodeId(chatAssistantId || null);
         if (updatedWork && chatAssistantId) {
           runSilentSummary(updatedWork, effectiveConfig, chatAssistantId);
         }
@@ -778,18 +785,15 @@ export function DraftPane(props: DraftPaneProps) {
       await save((state) =>
         updateWork(state, work.id, (live) => {
           const tree = getWorkDiscussionTree(live);
-          const node = tree.nodes[nodeId];
-          if (!node || node.role !== 'assistant') return live;
-          const restored = restoreRefusalOriginalContent(node);
-          if (restored === node) return live;
+          const result = restoreTurnNodeRefusalOriginal(tree.nodes, nodeId);
+          if (!result) return live;
           didRestore = true;
-          refusalDiagnostics = node.diagnostics;
-          const nodes = { ...tree.nodes, [nodeId]: restored };
+          refusalDiagnostics = result.previousDiagnostics;
           return {
             ...live,
-            discussionNodes: nodes,
+            discussionNodes: result.nodes,
             discussion: getActiveBranchNodes(
-              { nodes, activeLeafNodeId: tree.activeLeafNodeId },
+              { nodes: result.nodes, activeLeafNodeId: tree.activeLeafNodeId },
               tree.activeLeafNodeId,
             ),
           };
@@ -1461,10 +1465,16 @@ export function DraftPane(props: DraftPaneProps) {
                   onRevert={(p) => handleRevertProposal(manuscriptProposalNode.id, p)}
                   onOpenEditor={handleOpenProposalEditor}
                 />
+                <TurnRefusalNotices
+                  node={manuscriptProposalNode}
+                  isBusy={reply.busy}
+                  onRestoreRefusalOriginal={(id) => void restoreDiscussionRefusalOriginal(id)}
+                  onContinuePartialRefusal={continuePartialDiscussion}
+                />
               </div>
             )}
 
-            {manuscriptChatAnswer && (
+            {manuscriptChatNode && (
               <section
                 className="writing-suggestion-card"
                 data-testid="manuscript-chat-answer"
@@ -1476,21 +1486,27 @@ export function DraftPane(props: DraftPaneProps) {
                     type="button"
                     className="icon-button writing-suggestion-dismiss"
                     aria-label="关闭答复"
-                    onClick={() => setManuscriptChatAnswer(null)}
+                    onClick={() => setManuscriptChatNodeId(null)}
                   >
                     <X size={16} strokeWidth={1.75} aria-hidden="true" />
                   </button>
                 </div>
                 <div className="writing-suggestion-body">
-                  <MarkdownView content={manuscriptChatAnswer} mode="writing" />
+                  <MarkdownView content={manuscriptChatNode.content} mode="writing" />
                 </div>
+                <TurnRefusalNotices
+                  node={manuscriptChatNode}
+                  isBusy={reply.busy}
+                  onRestoreRefusalOriginal={(id) => void restoreDiscussionRefusalOriginal(id)}
+                  onContinuePartialRefusal={continuePartialDiscussion}
+                />
                 {props.onSwitchToChat && (
                   <div className="writing-suggestion-actions">
                     <button
                       type="button"
                       className="btn btn-sm"
                       onClick={() => {
-                        setManuscriptChatAnswer(null);
+                        setManuscriptChatNodeId(null);
                         props.onSwitchToChat?.();
                       }}
                     >

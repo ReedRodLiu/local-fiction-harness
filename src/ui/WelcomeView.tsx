@@ -1,6 +1,7 @@
 import { Sparkles } from 'lucide-react';
 import type { Story, TurnNode } from '../harness/index.ts';
 import { MessageContent } from './MessageContent.tsx';
+import { TurnRefusalNotices } from './TurnCard.tsx';
 import { useRotatingWaitingPhrase } from './waitingPhrases.ts';
 
 export interface RecentCreativeEntry {
@@ -17,7 +18,10 @@ export interface WelcomeViewProps {
   isStreaming: boolean;
   streamContent: string;
   streamReasoning: string;
+  refusalRetrying?: boolean;
   onSelectStory: (id: string) => void;
+  onRestoreRefusalOriginal?: (nodeId: string) => void | Promise<void>;
+  onContinuePartialRefusal?: (nodeId: string) => void | Promise<void>;
 }
 
 export function WelcomeView({
@@ -27,15 +31,19 @@ export function WelcomeView({
   isStreaming,
   streamContent,
   streamReasoning,
+  refusalRetrying = false,
   onSelectStory,
+  onRestoreRefusalOriginal,
+  onContinuePartialRefusal,
 }: WelcomeViewProps) {
   const recentStories = [...stories].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3);
   const hasAnyItems = recentStories.length > 0 || recentCreative.length > 0;
   const inNeutralChat = neutralTurns.length > 0 || isStreaming;
   const waitingPhrase = useRotatingWaitingPhrase({
     scene: 'welcome',
-    active: isStreaming && !streamContent.trim(),
+    active: isStreaming && !streamContent.trim() && !refusalRetrying,
   });
+  const activeWaitingPhrase = refusalRetrying ? '正在重新构思落笔…' : waitingPhrase;
 
   if (inNeutralChat) {
     return (
@@ -69,7 +77,18 @@ export function WelcomeView({
                   </div>
                 </div>
               ) : (
-                <MessageContent content={node.content} mode="writing" />
+                <MessageContent
+                  content={node.content}
+                  mode="writing"
+                  afterContent={(
+                    <TurnRefusalNotices
+                      node={node}
+                      isBusy={isStreaming}
+                      onRestoreRefusalOriginal={onRestoreRefusalOriginal}
+                      onContinuePartialRefusal={onContinuePartialRefusal}
+                    />
+                  )}
+                />
               )}
             </div>
           </article>
@@ -81,7 +100,7 @@ export function WelcomeView({
               <details className="reasoning-details" data-testid="reasoning-details" open>
                 <summary data-testid="reasoning-toggle">
                   <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
-                  <span>{waitingPhrase}</span>
+                  <span>{activeWaitingPhrase}</span>
                 </summary>
                 <div className="reasoning-content">{streamReasoning}</div>
               </details>
@@ -89,7 +108,7 @@ export function WelcomeView({
             {streamContent ? (
               <MessageContent content={streamContent} mode="writing" />
             ) : (
-              <div className="turn-body">{waitingPhrase}</div>
+              <div className="turn-body">{activeWaitingPhrase}</div>
             )}
           </article>
         )}

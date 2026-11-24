@@ -3,7 +3,7 @@ import { ArrowUp, FilePlus2, PenLine, Plus, Sparkles, Square } from 'lucide-reac
 import {
   DEFAULT_MODEL_CONFIG,
   EMPTY_SUMMARY_SNAPSHOT,
-  assembleThreeZoneContext,
+  buildEntryRouteMessages,
   buildPromptPackContextOptions,
   buildTurnProposalRecords,
   computeActiveReviewState,
@@ -43,7 +43,6 @@ import {
   recordRefusalDiagnostic,
   recordRefusalOriginalRestoredDiagnostic,
   resolveEffectiveModelConfig,
-  restoreRefusalOriginalContent,
   routeEntryMessage,
   savePromptPackLibrary,
   storyDocumentState,
@@ -96,6 +95,9 @@ import { WelcomeView } from './WelcomeView.tsx';
 import { setCrashDiagnosticBundleBuilder } from './crashDiagnosticContext.ts';
 import {
   finalizePrefixContinuation,
+  prepareStoryContinuationContext,
+  restoreStoryRefusalOriginal,
+  restoreTurnNodeRefusalOriginal,
   streamPrefixContinuation,
 } from './refusalContinuation.ts';
 import type { DisplayFontSize, DisplayThemePreference } from './displayPreferences.ts';
@@ -211,8 +213,11 @@ export function App({ runtime }: AppProps) {
   const [promptPackLibrary, setPromptPackLibraryState] = useState<PromptPackLibrary>(() =>
     loadPromptPackLibrary(runtime.promptPackStorage),
   );
+  const promptPackLibraryRef = useRef(promptPackLibrary);
+  promptPackLibraryRef.current = promptPackLibrary;
   const setPromptPackLibrary = useCallback((next: PromptPackLibrary) => {
     const saved = savePromptPackLibrary(runtime.promptPackStorage, next);
+    promptPackLibraryRef.current = saved;
     setPromptPackLibraryState(saved);
   }, [runtime]);
   const configStore = useMemo(
@@ -226,9 +231,9 @@ export function App({ runtime }: AppProps) {
         storage: runtime.storyStorage,
         diagnostics: runtime.diagnostics,
         loadPublicDocument: async () => (await runtime.creativeStorage?.load())?.publicDocument ?? emptyWorkspace().publicDocument,
-        promptPackLibrary,
+        getPromptPackLibrary: () => promptPackLibraryRef.current,
       }),
-    [promptPackLibrary, runtime],
+    [runtime],
   );
 
   const [config, setConfig] = useState<ModelConfig>(() => {
@@ -1141,16 +1146,116 @@ export function App({ runtime }: AppProps) {
       const latest = storyRef.current ?? story;
       const node = latest.nodes[nodeId];
       if (!node || node.role !== 'assistant') throw new Error('拒答节点不存在。');
-      const restored = restoreRefusalOriginalContent(node);
-      if (restored === node) throw new Error('没有可恢复的首次原稿。');
+      const result = restoreStoryRefusalOriginal(latest, nodeId);
+      if (!result) throw new Error('没有可恢复的首次原稿。');
       const saved = await harness.saveStory({
-        ...latest,
-        nodes: { ...latest.nodes, [nodeId]: restored },
+        ...result.story,
         updatedAt: Math.max(Date.now(), latest.updatedAt + 1),
       });
       recordRefusalOriginalRestoredDiagnostic(runtime.diagnostics, node.diagnostics);
       return saved;
     }, '恢复首次原稿失败。');
+
+  const handleRestoreNeutralRefusalOriginal = (nodeId: string) => {
+    const nodeMap = Object.fromEntries(neutralTurns.map((t) => [t.id, t]));
+    const result = restoreTurnNodeRefusalOriginal(nodeMap, nodeId);
+    if (!result) {
+      setErrorMsg('没有可恢复的首次原稿。');
+      return;
+    }
+    setNeutralTurns((prev) => prev.map((t) => (t.id === nodeId ? result.restored : t)));
+    recordRefusalOriginalRestoredDiagnostic(runtime.diagnostics, result.previousDiagnostics);
+  };
+
+  const handleContinueNeutralPartialRefusal = (nodeId: string) => {
+    if (creationPending.current || abortRef.current || isStreaming) return;
+    const nodeIndex = neutralTurns.findIndex((t) => t.id === nodeId);
+    const node = nodeIndex >= 0 ? neutralTurns[nodeIndex] : undefined;
+    if (!node || node.role !== 'assistant' || !node.parentId) {
+      setErrorMsg('半拒绝节点不存在或缺少关联输入。');
+      return;
+    }
+    const parentIndex = neutralTurns.findIndex((t) => t.id === node.parentId);
+    const parent = parentIndex >= 0 ? neutralTurns[parentIndex] : undefined;
+    if (!parent || parent.role !== 'user') {
+      setErrorMsg('半拒绝节点缺少关联输入。');
+      return;
+    }
+    withCredentials('继续追要半拒绝内容', (activeCfg) => {
+      if (creationPending.current || abortRef.current || isStreaming) return;
+      const storySeqAtStart = ++storyOpSeqRef.current;
+      const overlaySeqAtStart = overlayNavigationSeqRef.current;
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setIsStreaming(true);
+      setStreamContent('');
+      setStreamReasoning('');
+      setRefusalRetrying(false);
+      setErrorMsg(null);
+
+      const effectiveCfg = resolveEffectiveModelConfig(activeCfg, pendingWelcomePref);
+      const welcomePromptPackOptions = buildPromptPackContextOptions(
+        promptPackLibraryRef.current,
+        pendingWelcomePref,
+      );
+      const publicMem = documentVersion(creative.workspace.publicDocument).markdown;
+      const priorHistory = neutralTurns.slice(0, Math.max(0, parentIndex));
+      const messages = buildEntryRouteMessages(
+        parent.content,
+        priorHistory,
+        publicMem,
+        welcomePromptPackOptions,
+      );
+      let appended = '';
+      void streamPrefixContinuation({
+        transport: runtime.transport,
+        config: effectiveCfg,
+        messages,
+        prefixContent: node.content,
+        signal: controller.signal,
+        onReasoningDelta: (delta) => {
+          if (!controller.signal.aborted && isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) {
+            setStreamReasoning((prev) => prev + delta);
+          }
+        },
+        onContentDelta: (delta) => {
+          if (!controller.signal.aborted && isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) {
+            appended += delta;
+            setStreamContent(`${node.content}${appended}`);
+          }
+        },
+      })
+        .then((continued) => {
+          if (controller.signal.aborted || !isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) {
+            return;
+          }
+          if (continued.finishReason !== 'stop') {
+            throw new Error('追要回复未完成，请重试。');
+          }
+          const nextNode = finalizePrefixContinuation(node, continued, { mode: 'writing' });
+          setNeutralTurns((prev) => prev.map((t) => (t.id === node.id ? nextNode : t)));
+        })
+        .catch((err) => {
+          if (suppressedAbortRef.current.has(controller) || !isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) {
+            return;
+          }
+          if (isAbortError(err)) {
+            setErrorMsg('已中止本次追要。');
+          } else {
+            setErrorMsg(toErrorMessage(err, '继续追要失败，请重试。'));
+          }
+        })
+        .finally(() => {
+          if (abortRef.current === controller) {
+            abortRef.current = null;
+            setIsStreaming(false);
+            setStreamContent('');
+            setStreamReasoning('');
+            setRefusalRetrying(false);
+          }
+        });
+    });
+  };
 
   const handleContinuePartialRefusal = (nodeId: string) => {
     if (branchSwitchBusyRef.current || abortRef.current || isStreaming || isSummarizing) return;
@@ -1159,43 +1264,22 @@ export function App({ runtime }: AppProps) {
       (activeCfg) => {
         void runStreamingExecution(async (callbacks) => {
           const latest = storyRef.current ?? story;
-          const node = latest.nodes[nodeId];
-          if (!node || node.role !== 'assistant' || !node.parentId) {
-            throw new Error('半拒绝节点不存在或缺少关联玩家输入。');
-          }
-          const parent = latest.nodes[node.parentId];
-          if (!parent || parent.role !== 'user') throw new Error('半拒绝节点缺少关联玩家输入。');
           const effectiveConfig = resolveEffectiveModelConfig(activeCfg, latest.generationPreference);
-          const promptPackOptions = buildPromptPackContextOptions(
-            promptPackLibrary,
-            latest.generationPreference,
-          );
-          let requestDocuments:
-            | {
-                publicVersion: ReturnType<typeof documentVersion>;
-                container: ReturnType<typeof documentVersion>;
-                local: ReturnType<typeof documentVersion>;
-                snapshot: ReturnType<typeof getActiveSummarySnapshot>;
-              }
-            | undefined;
-          if (latest.documents) {
-            const state = storyDocumentState({ ...latest, documents: latest.documents }, node.parentId, false);
-            requestDocuments = {
-              publicVersion: documentVersion(creative.workspace.publicDocument),
-              container: documentVersion(latest.documents.container, state.container),
-              local: documentVersion(latest.documents.local, state.local),
-              snapshot: getActiveSummarySnapshot(latest, node.parentId),
-            };
-          }
-          const { messages } = assembleThreeZoneContext(
-            latest,
-            node.parentId,
-            undefined,
-            undefined,
-            true,
-            requestDocuments,
-            promptPackOptions,
-          );
+          const {
+            workingStory,
+            node,
+            parent,
+            messages,
+            baseVersions,
+          } = await prepareStoryContinuationContext({
+            story: latest,
+            nodeId,
+            config: effectiveConfig,
+            promptPackLibrary: promptPackLibraryRef.current,
+            publicDocument: creative.workspace.publicDocument,
+            calculateBranchSummary: harness.calculateActiveBranchSummary,
+            signal: callbacks.signal,
+          });
           const continued = await streamPrefixContinuation({
             transport: runtime.transport,
             config: effectiveConfig,
@@ -1210,14 +1294,10 @@ export function App({ runtime }: AppProps) {
           }
           const nextNode = finalizePrefixContinuation(node, continued, {
             mode: 'story',
-            baseVersions: {
-              setting: requestDocuments?.container.id,
-              memory: requestDocuments?.publicVersion.id,
-              note: requestDocuments?.local.id,
-            },
+            baseVersions,
           });
           const updated = invalidateStorySummarySnapshotsFromNode(
-            { ...latest, nodes: { ...latest.nodes, [node.id]: nextNode } },
+            { ...workingStory, nodes: { ...workingStory.nodes, [node.id]: nextNode } },
             node.id,
           );
           const saved = await harness.saveStory({
@@ -2574,7 +2654,10 @@ export function App({ runtime }: AppProps) {
                   isStreaming={isStreaming}
                   streamContent={streamContent}
                   streamReasoning={streamReasoning}
+                  refusalRetrying={refusalRetrying}
                   onSelectStory={(id) => void handleSelectStory(id)}
+                  onRestoreRefusalOriginal={handleRestoreNeutralRefusalOriginal}
+                  onContinuePartialRefusal={handleContinueNeutralPartialRefusal}
                 />
               ) : (
                 <section className="timeline" data-testid="story-timeline" aria-label="故事对话记录">
