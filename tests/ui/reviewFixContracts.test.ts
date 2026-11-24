@@ -171,4 +171,19 @@ describe('UI review fix contracts', () => {
     expect(app).not.toContain('applyDisplayPreferences(');
     expect(app).not.toContain('useWebHistoryLayer(');
   });
+
+  it('keeps CharacterPane regeneration on the accepted public research reference', () => {
+    const characterPane = readSource('src/ui/CharacterPane.tsx');
+    const regenerateSource = characterPane.slice(
+      characterPane.indexOf('const regenerateNode ='),
+      characterPane.indexOf('const effectiveGenerationConfig'),
+    );
+
+    expect(regenerateSource).toContain('resolvePublicResearchForTurn');
+    expect(regenerateSource).toContain('preferred: node.publicResearch');
+    expect(regenerateSource).toContain('research.reference ?? undefined');
+    expect(regenerateSource).toContain('...(research.reference ? { publicResearch: research.reference } : {})');
+    expect(regenerateSource).toContain('...(research.failure ? { publicResearchFailure: research.failure } : {})');
+    expect(regenerateSource).toContain('preferredResearch: node.publicResearch');
+  });
 });

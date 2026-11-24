@@ -55,6 +55,87 @@ describe('Slice 1: OpenAI SSE streaming & reasoning separation', () => {
     expect(finishReason).toBe('stop');
   });
 
+  it('surfaces DeepSeek cache usage from the final stream chunk and requests usage with a bounded output length', async () => {
+    const transport = createOpenAiTransport(async (_url, init) => {
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      expect(body.stream_options).toEqual({ include_usage: true });
+      expect(body.max_tokens).toBe(512);
+      const payload = new TextEncoder().encode([
+        'data: {"choices":[{"delta":{"content":"铜钥匙还在。"},"finish_reason":"stop"}]}\n\n',
+        'data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":18,"total_tokens":138,"prompt_cache_hit_tokens":100,"prompt_cache_miss_tokens":20,"completion_tokens_details":{"reasoning_tokens":7}}}\n\n',
+        'data: [DONE]\n\n',
+      ].join(''));
+      let read = false;
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+        body: {
+          getReader: () => ({
+            async read() {
+              if (read) return { done: true };
+              read = true;
+              return { done: false, value: payload };
+            },
+            releaseLock() {},
+          }),
+        },
+      };
+    });
+
+    const deltas = [];
+    for await (const delta of transport.streamChat({
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'test-key',
+      model: 'deepseek-flash',
+      messages: [{ role: 'user', content: '钥匙呢' }],
+      includeUsage: true,
+      maxOutputTokens: 512,
+    })) {
+      deltas.push(delta);
+    }
+
+    expect(deltas).toEqual([
+      { contentDelta: '铜钥匙还在。', reasoningDelta: undefined, finishReason: 'stop' },
+      {
+        contentDelta: undefined,
+        reasoningDelta: undefined,
+        finishReason: undefined,
+        usage: {
+          promptTokens: 120,
+          completionTokens: 18,
+          totalTokens: 138,
+          promptCacheHitTokens: 100,
+          promptCacheMissTokens: 20,
+          completionTokensDetails: { reasoningTokens: 7 },
+        },
+      },
+    ]);
+  });
+
+  it('preserves partial generic SSE usage metadata so experiment accounting can reject it', async () => {
+    async function* chunks(): AsyncIterable<string> {
+      yield 'data: {"choices":[],"usage":{"prompt_cache_hit_tokens":8,"completion_tokens":3}}\n\n';
+    }
+
+    const deltas = [];
+    for await (const delta of parseOpenAiSseStream(chunks())) deltas.push(delta);
+
+    expect(deltas).toEqual([{
+      contentDelta: undefined,
+      reasoningDelta: undefined,
+      finishReason: undefined,
+      usage: {
+        promptTokens: undefined,
+        completionTokens: 3,
+        totalTokens: undefined,
+        promptCacheHitTokens: 8,
+        promptCacheMissTokens: undefined,
+      },
+    }]);
+  });
+
   it('throws descriptive error when OpenAI transport receives non-2xx HTTP response', async () => {
     const transport = createOpenAiTransport(async () => ({
       ok: false,

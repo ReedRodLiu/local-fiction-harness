@@ -17,6 +17,7 @@ import {
   type PromptPackContextOptions,
   type PromptPackLibrary,
 } from './promptPack.ts';
+import { publicResearchContextMessage, type PublicResearchReference } from './publicResearch.ts';
 import type {
   AbortSignalLike,
   GenerationPreference,
@@ -306,6 +307,7 @@ export function assembleThreeZoneContext(
     promptPack?: PromptPackContextOptions['promptPack'];
     includePromptPackTail?: boolean;
     includeTail?: boolean;
+    publicResearch?: PublicResearchReference;
   },
   promptPackOptions?: PromptPackContextOptions,
 ): ThreeZoneContextResult {
@@ -353,13 +355,22 @@ export function assembleThreeZoneContext(
   const settingMessage = settingMarkdown.trim()
     ? { role: 'system' as const, content: `以下是当前故事 Markdown。\n\n${settingMarkdown}` }
     : null;
+  const researchMessage = requestDocuments?.publicResearch
+    ? publicResearchContextMessage(requestDocuments.publicResearch)
+    : undefined;
   const anchorMessages = effectivePromptPack.enabled
     ? [
         ...buildPromptPackAnchorMessages(anchorText, effectivePromptPack),
         ...readDocs,
         ...(settingMessage ? [settingMessage] : []),
+        ...(researchMessage ? [researchMessage] : []),
       ]
-    : [{ role: 'system' as const, content: anchorText }, ...readDocs, ...(settingMessage ? [settingMessage] : [])];
+    : [
+        { role: 'system' as const, content: anchorText },
+        ...readDocs,
+        ...(settingMessage ? [settingMessage] : []),
+        ...(researchMessage ? [researchMessage] : []),
+      ];
   const messages: LlmMessage[] = [...anchorMessages];
   let summaryChars = 0;
 
@@ -632,6 +643,7 @@ export interface CreativeThreeZoneContextInput {
   promptPack?: PromptPackContextOptions['promptPack'];
   includePromptPackTail?: boolean;
   includeTail?: boolean;
+  publicResearch?: PublicResearchReference;
 }
 
 /**
@@ -656,6 +668,10 @@ export function assembleCreativeThreeZoneContext(
       : [{ role: 'system' as const, content: input.systemPrompt }]),
     ...documentMessages(input.documents ?? []),
   ];
+  const researchMessage = input.publicResearch ? publicResearchContextMessage(input.publicResearch) : undefined;
+  if (researchMessage) {
+    anchorMessages.push(researchMessage);
+  }
   const manuscript = input.manuscriptWindow?.trim();
   if (manuscript) {
     anchorMessages.push({

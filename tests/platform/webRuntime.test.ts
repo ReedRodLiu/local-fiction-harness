@@ -95,6 +95,7 @@ describe('PlatformRuntime detection & Web adapter', () => {
     expect(runtime.promptPackStorage).toBe(kv);
     runtime.promptPackStorage.setItem('prompt-packs', 'stored');
     expect(kv.getItem('prompt-packs')).toBe('stored');
+    expect(runtime.publicResearch).toBeTruthy();
 
     await runtime.secretStore.saveApiKey('sk-web-123');
     expect(await runtime.secretStore.loadApiKey()).toBe('sk-web-123');

@@ -25,6 +25,88 @@ const proposalV2 = ({ target, op = 'full', summary, name, body }) => [
   fence,
 ].join('\n');
 
+const sevenColumnTable = [
+  '| 姓名 | 外貌 | 性格 | 身份 | 能力 | 主要事件 | 备注 |',
+  '| --- | --- | --- | --- | --- | --- | --- |',
+  '| 沈砚秋 | 眉骨有一道旧伤，左眼在阴天会轻微发红 | 寡言但判断很快，遇到陌生人的承诺总会先记下来 | 南巡营旧档管理员，如今负责遗失行李的登记与归还 | 能凭脚步声分辨来客是否走过月台尽头的碎石路 | 曾在雪夜打开停运多年的候车室，并独自守到天亮 | 随身带着一枚没有编号的铜钥匙 |',
+].join('\n');
+
+const sevenColumnSettingMarkdown = [
+  '## 作品设定',
+  '',
+  '废弃的纸月车站收到一件无人承认的行李。',
+  '',
+  sevenColumnTable,
+].join('\n');
+
+const sevenColumnMessageMarkdown = [
+  '废弃的纸月车站收到一件无人承认的行李。',
+  '',
+  '### 人物表速览',
+  '',
+  sevenColumnTable,
+  '',
+  '### 常规表',
+  '',
+  '| 项目 | 内容 |',
+  '| --- | --- |',
+  '| 状态 | 可读 |',
+].join('\n');
+
+async function assertReadableSevenColumnTable(scope, label, { checkEditEntry = false } = {}) {
+  const wrap = scope.locator('.md-table-wrap').first();
+  await wrap.waitFor();
+  const metrics = await wrap.evaluate((element) => {
+    const sheet = element.closest('dialog');
+    const headers = [...element.querySelectorAll('th')].map((cell) => cell.getBoundingClientRect());
+    const cells = [...element.querySelectorAll('td')].map((cell) => cell.getBoundingClientRect());
+    return {
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      wrapperWidth: element.clientWidth,
+      wrapperScrollWidth: element.scrollWidth,
+      overflowX: getComputedStyle(element).overflowX,
+      headerWidths: headers.map((rect) => rect.width),
+      cellWidths: cells.map((rect) => rect.width),
+      sheetLeft: sheet?.getBoundingClientRect().left ?? 0,
+      sheetRight: sheet?.getBoundingClientRect().right ?? 0,
+    };
+  });
+
+  assert.equal(metrics.documentWidth, metrics.viewportWidth, `${label}: page overflowed at ${metrics.viewportWidth}px`);
+  assert.ok(metrics.sheetLeft >= -1, `${label}: dialog started outside the viewport`);
+  assert.ok(metrics.sheetRight <= metrics.viewportWidth + 1, `${label}: dialog exceeded the viewport`);
+  assert.match(metrics.overflowX, /auto|scroll/, `${label}: table wrapper must own horizontal scrolling`);
+  assert.ok(metrics.wrapperScrollWidth > metrics.wrapperWidth,
+    `${label}: seven-column table did not overflow inside its wrapper (${JSON.stringify(metrics)})`);
+  assert.ok(Math.min(...metrics.headerWidths) >= 70, `${label}: a header column became unreadably narrow`);
+  assert.ok(Math.min(...metrics.cellWidths) >= 70, `${label}: a data column became unreadably narrow`);
+
+  await wrap.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+  const lastHeader = await wrap.locator('th').last().boundingBox();
+  const wrapperBox = await wrap.boundingBox();
+  assert.ok(lastHeader && wrapperBox, `${label}: missing table geometry`);
+  assert.ok(lastHeader.x >= wrapperBox.x - 1, `${label}: last column could not be scrolled into view`);
+  assert.ok(lastHeader.x + lastHeader.width <= wrapperBox.x + wrapperBox.width + 1,
+    `${label}: last column remained clipped after scrolling`);
+
+  if (checkEditEntry) {
+    const editEntry = scope.getByTestId('edit-writing-setting-btn');
+    await editEntry.scrollIntoViewIfNeeded();
+    assert.equal(await editEntry.isVisible(), true, `${label}: edit entry became inaccessible`);
+  }
+}
+
+async function assertNormalWidthTable(scope, label) {
+  const wrap = scope.locator('.md-table-wrap').last();
+  const layout = await wrap.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  assert.ok(layout.scrollWidth <= layout.clientWidth + 1,
+    `${label}: normal-width table unexpectedly scrolled horizontally (${JSON.stringify(layout)})`);
+}
+
 export async function verifyInactiveStoryReload(browser, port, helpers) {
   const {
     newOfflineContext,
@@ -181,8 +263,8 @@ export async function verifyThreeModes(browser, port, helpers) {
           content = routeReply({
             mode: 'writing',
             title: '纸月车站',
-            settingMarkdown: '## 作品设定\n废弃的纸月车站收到一件无人承认的行李。',
-            body: '废弃车站收到一件无人承认的行李。',
+            settingMarkdown: sevenColumnSettingMarkdown,
+            body: sevenColumnMessageMarkdown,
           });
         } else if (input.includes('岑灯')) {
           content = routeReply({
@@ -342,7 +424,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     assert.equal(await page.inputValue('#turn-input'), '还是帮我写一个叫纸月车站的小说大纲吧');
     await button('发送行动').click();
     await writing.waitFor();
-    await writing.getByTestId('writing-discussion-timeline').getByText('废弃车站收到一件无人承认的行李。', { exact: true }).waitFor();
+    await writing.getByTestId('writing-discussion-timeline').getByText('废弃的纸月车站收到一件无人承认的行李。', { exact: true }).waitFor();
     await page.getByTestId('app-topbar').getByRole('heading', { name: '纸月车站', exact: true }).waitFor();
     // Neutral turns carried into materialized work without duplicating messages
     assert.equal(await writing.getByTestId('user-bubble').filter({ hasText: '你好，我有点犹豫写什么好' }).count(), 1);
@@ -387,16 +469,46 @@ export async function verifyThreeModes(browser, port, helpers) {
     await settingProposal.getByText('已撤销').waitFor();
 
     // Open 2-tab companion sheet & edit setting via DocumentDialog
+    await page.setViewportSize({ width: 390, height: 844 });
+    const messageTable = writing.getByTestId('turn-body').filter({ hasText: '人物表速览' }).first();
+    await assertReadableSevenColumnTable(messageTable, 'ordinary message table');
+    await assertNormalWidthTable(messageTable, 'normal message table at 390px');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await assertNormalWidthTable(messageTable, 'normal message table on desktop');
+
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.getByTestId('open-companion-sheet').click();
     const writingSheet = page.getByTestId('writing-companion-sheet');
     await writingSheet.waitFor();
     assert.equal(await writingSheet.getByRole('tab').count(), 2);
     await writingSheet.getByTestId('writing-tab-documents').click();
     await writingSheet.getByTestId('branch-note-details').waitFor();
+
+    for (const width of [360, 376, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await assertReadableSevenColumnTable(writingSheet, `companion setting at ${width}px`, { checkEditEntry: true });
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await assertReadableSevenColumnTable(writingSheet, 'companion setting on desktop', { checkEditEntry: true });
+
     await writingSheet.getByTestId('edit-writing-setting-btn').click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await dialog.getByRole('tab', { name: '预览' }).click();
+    await assertReadableSevenColumnTable(dialog, 'editing preview');
+    await dialog.getByRole('tab', { name: '编辑' }).click();
     await dialog.getByRole('textbox').fill('## 作品设定\n失物招领员认出了自己的旧行李。');
     await dialog.getByRole('button', { name: '确认保存' }).click();
     await dialog.waitFor({ state: 'hidden' });
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await writingSheet.getByTestId('edit-writing-setting-btn').click();
+    await dialog.getByText('历史版本', { exact: true }).click();
+    await dialog.locator('.local-document-history').last().getByRole('button', { name: '查看并恢复此版' }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await assertReadableSevenColumnTable(dialog, 'historical setting preview');
+    await dialog.getByRole('button', { name: '取消' }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    await page.setViewportSize({ width: 1280, height: 800 });
     await page.goBack();
     await writingSheet.waitFor({ state: 'hidden' });
 

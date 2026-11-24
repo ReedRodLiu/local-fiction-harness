@@ -1,6 +1,7 @@
 import { createDefaultBlueprint } from './blueprint.ts';
 import { EMPTY_SUMMARY_SNAPSHOT, excludeRefusedTurns, getActiveBranchNodes } from './context.ts';
 import {
+  conversationLocalVersion,
   getWorkActiveDiscussionNodes,
   newCharacter,
   newConversation,
@@ -10,6 +11,13 @@ import {
   type LocalCharacter,
 } from './creative.ts';
 import { createDefaultId } from './id.ts';
+import {
+  publicResearchContextMessage,
+  resolvePublicResearchForTurn,
+  type PublicResearchFailure,
+  type PublicResearchProvider,
+  type PublicResearchReference,
+} from './publicResearch.ts';
 import {
   normalizeGenerationPreference,
   normalizeReasoningEffort,
@@ -31,6 +39,7 @@ import {
   parseProposalReply,
   storyDocumentState,
   visibleReplyPrefix,
+  type MarkdownDocument,
   type ParsedProposal,
   type UnparsedProposalBlock,
 } from './markdownDocuments.ts';
@@ -64,6 +73,9 @@ export interface EntryRouteResult {
   usedFallback: boolean;
   diagnostics?: NodeDiagnostics;
   prefillContent?: string;
+  publicResearch?: PublicResearchReference;
+  publicResearchFailure?: PublicResearchFailure;
+  publicResearchSettingKey?: string;
 }
 
 export type ManuscriptReplyIntent =
@@ -137,18 +149,65 @@ export function deriveEntryTitle(input: string, fallback = '未命名创作'): s
  * Recognizes explicit in-chat commands asking to convert the current session to another mode.
  */
 export function detectNaturalModeSwitchIntent(input: string): StageAssetMode | null {
-  const normalized = input.replace(/\s+/g, '').trim();
+  const normalized = input
+    .replace(/\s+/g, '')
+    .replace(/[。！？!?]+$/u, '')
+    .replace(/[，,]谢谢$/u, '')
+    .trim();
   if (!normalized || normalized.length > 48) return null;
+
+  const requestPrefix =
+    '(?:(?:现在|立刻|马上)?(?:(?:请|麻烦)(?:帮我|帮忙)?|我想|我希望|我要|帮我|帮忙)?)';
+  const modeReference = '(?:当前(?:的)?|这个)?(?:(?:App|应用)(?:的)?)?模式';
+  const switchObject = `(?:(?:把|将)?(?:它|${modeReference}))?`;
+  const suffix = '(?:吧|呀|啊)?';
+  const allModeTargets = '(文游|互动故事|互动小说|写故事|写小说|小说|角色互动|角色聊天|对戏)';
+  const namedModeTargets = '(文游|互动故事|互动小说|写故事|写小说|角色互动|角色聊天|对戏)';
+
+  const clearSwitchPattern = new RegExp(
+    `^${requestPrefix}${switchObject}(?:切换到|切换成|切换为|切回|转去)(?:「)?${allModeTargets}(?:」)?(?:模式)?${suffix}$`,
+    'u',
+  );
+  const namedConversionPattern = new RegExp(
+    `^${requestPrefix}${switchObject}(?:转成|转为|改成|改为|换成|变成)(?:「)?${namedModeTargets}(?:」)?(?:模式)?${suffix}$`,
+    'u',
+  );
+  const genericConversionWithModeObjectPattern = new RegExp(
+    `^${requestPrefix}(?:(?:把|将)?${modeReference})(?:转成|转为|改成|改为|换成|变成)(?:「)?小说(?:」)?(?:模式)?${suffix}$`,
+    'u',
+  );
+  const genericConversionWithModeSuffixPattern = new RegExp(
+    `^${requestPrefix}${switchObject}(?:转成|转为|改成|改为|换成|变成)(?:「)?小说(?:」)?模式${suffix}$`,
+    'u',
+  );
   const switchMatch =
-    /(?:转成|转为|切换成|切换到|切换为|改成|改为|换成|转去|切回|变成)(?:「)?(文游|互动故事|互动小说|写故事|写小说|小说|角色互动|角色聊天|对戏)(?:」)?/.exec(
-      normalized,
-    );
+    clearSwitchPattern.exec(normalized) ??
+    namedConversionPattern.exec(normalized) ??
+    genericConversionWithModeObjectPattern.exec(normalized) ??
+    genericConversionWithModeSuffixPattern.exec(normalized);
   if (!switchMatch) return null;
-  const target = switchMatch[1];
+  const target = switchMatch[1] ?? '小说';
   if (target === '文游' || target === '互动故事' || target === '互动小说') return 'story';
   if (target === '写故事' || target === '写小说' || target === '小说') return 'writing';
   return 'character';
 }
+
+function hasAffirmedIntent(text: string, pattern: RegExp): boolean {
+  const matcher = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+  const negatedBefore = /(?:不要|不是|并非|而非|无需|不必|禁止|不能|不用|不想|勿|别(?:再|把|将|写成|写|做成|做|用|按|转|设|当作|当成|来|搞|弄)?$)/u;
+  const rejectedAfter = /^\s*(?:(?:先)?不做(?:了)?|不要(?:了)?|不用(?:了)?|取消(?:了)?|停止|算了)(?:[啊呀啦嘛吧])?\s*$/u;
+  for (const clause of text.split(/[\n，,。！？!?；;]+/u)) {
+    for (const match of clause.matchAll(matcher)) {
+      const prefix = clause.slice(0, match.index);
+      const localPrefix = prefix.split(/(?:而是|而要|但是|不过|然而|但|而|却)/u).at(-1) ?? prefix;
+      const suffix = clause.slice(match.index + match[0].length);
+      if (!negatedBefore.test(localPrefix) && !rejectedAfter.test(suffix)) return true;
+    }
+  }
+  return false;
+}
+
+const WRITING_INTENT_PATTERN = /(?:写故事|写小说|同人|大纲|写正文|开书|小说草稿|稿纸|写一篇|(?:按|以|用).{0,4}小说(?:来|写|创作))/u;
 
 /**
  * Heuristic fallback classifier when LLM output does not include an `lfh-route` metadata block.
@@ -163,13 +222,16 @@ export function classifyEntryHeuristic(
   const combined = [...history.map((n) => n.content), userInput].join('\n').trim();
   if (!combined) return 'ambiguous';
 
-  if (/(?:角色人设|角色设定|角色互动|角色聊天|扮演对戏|(?:创建|建|找|来)一个?.{0,16}角色|和.{1,16}聊天|^名称[：:]|^姓名[：:])/m.test(combined)) {
-    return 'character';
-  }
-  if (/(?:写故事|写小说|同人|大纲|写正文|开书|小说草稿|稿纸|写一篇)/.test(combined)) {
+  if (hasAffirmedIntent(userInput, WRITING_INTENT_PATTERN) && !hasExplicitStageIntent(userInput)) {
     return 'writing';
   }
-  if (/(?:文游|跑团|第一幕|状态栏|规则|世界观|主角|开局|剧情推进|冒险|攻略)/.test(combined)) {
+  if (hasAffirmedIntent(combined, /(?:角色人设|角色设定|角色互动|角色聊天|扮演对戏|(?:创建|建|找|来)一个?.{0,16}角色|和.{1,16}聊天|^名称[：:]|^姓名[：:])/mu)) {
+    return 'character';
+  }
+  if (hasAffirmedIntent(combined, WRITING_INTENT_PATTERN)) {
+    return 'writing';
+  }
+  if (hasAffirmedIntent(combined, /(?:文游|跑团|第一幕|状态栏|规则|世界观|主角|开局|剧情推进|冒险|攻略)/u)) {
     return 'story';
   }
 
@@ -353,12 +415,25 @@ export function parseEntryRouteReply(
   };
 }
 
+function isEntryPublicResearchReference(
+  value: PromptPackContextOptions | PublicResearchReference | undefined,
+): value is PublicResearchReference {
+  return Boolean(value && 'identityKey' in value && 'summary' in value);
+}
+
 export function buildEntryRouteMessages(
   userInput: string,
   neutralHistory: readonly TurnNode[] = [],
   publicMemoryMarkdown = '',
-  promptPackOptions?: PromptPackContextOptions,
+  promptPackOrResearch?: PromptPackContextOptions | PublicResearchReference,
+  publicResearchArg?: PublicResearchReference,
 ): LlmMessage[] {
+  const promptPackOptions = isEntryPublicResearchReference(promptPackOrResearch)
+    ? undefined
+    : promptPackOrResearch;
+  const publicResearch = isEntryPublicResearchReference(promptPackOrResearch)
+    ? promptPackOrResearch
+    : publicResearchArg;
   const effectivePromptPack = resolvePromptPackContext(promptPackOptions);
   const messages: LlmMessage[] = buildPromptPackAnchorMessages(
     ENTRY_ROUTE_SYSTEM_PROMPT,
@@ -369,6 +444,9 @@ export function buildEntryRouteMessages(
       role: 'system',
       content: `以下是作为资料使用的「我的记忆」Markdown。\n\n${publicMemoryMarkdown}`,
     });
+  }
+  if (publicResearch) {
+    messages.push(publicResearchContextMessage(publicResearch));
   }
   for (const node of excludeRefusedTurns(neutralHistory)) {
     messages.push({ role: node.role, content: node.content });
@@ -382,6 +460,40 @@ export function buildEntryRouteMessages(
   return messages;
 }
 
+export interface EntryRouteOptions {
+  publicResearch?: PublicResearchProvider;
+}
+
+const ENTRY_RESEARCH_HISTORY_MAX_USER_TURNS = 12;
+const ENTRY_RESEARCH_HISTORY_MAX_CHARS = 6000;
+
+function recentUserEntryHistory(history: readonly TurnNode[]): TurnNode[] {
+  const recent: TurnNode[] = [];
+  let remainingChars = ENTRY_RESEARCH_HISTORY_MAX_CHARS;
+  const userTurns = history
+    .filter((item) => item.role === 'user')
+    .slice(-ENTRY_RESEARCH_HISTORY_MAX_USER_TURNS);
+  for (const node of userTurns.reverse()) {
+    if (remainingChars <= 0) break;
+    const content = node.content.slice(-remainingChars);
+    if (!content.trim()) continue;
+    recent.unshift({ ...node, content });
+    remainingChars -= content.length;
+  }
+  return recent;
+}
+
+function hasExplicitStageIntent(userInput: string): boolean {
+  return hasAffirmedIntent(
+    userInput,
+    /(?:文游|跑团|互动叙事|互动故事|互动小说|角色互动|角色聊天|扮演对戏|直接.{0,16}(?:对话|对戏|互动))/iu,
+  );
+}
+
+export type EntryRouteRefusalOptions = Omit<RefusalStreamIntegrationOptions, 'mode'> & {
+  mode?: RefusalStreamIntegrationOptions['mode'];
+};
+
 export async function routeEntryMessage(
   userInput: string,
   neutralHistory: readonly TurnNode[],
@@ -389,32 +501,54 @@ export async function routeEntryMessage(
   config: ModelConfig,
   callbacks: TurnCallbacks = {},
   publicMemoryMarkdown = '',
-  promptPackOptions?: PromptPackContextOptions,
-  refusalOptions?: Omit<RefusalStreamIntegrationOptions, 'mode'> & {
-    mode?: RefusalStreamIntegrationOptions['mode'];
-  },
+  promptPackOrOptions?: PromptPackContextOptions | (PromptPackContextOptions & EntryRouteOptions),
+  refusalOrOptions?: EntryRouteRefusalOptions & EntryRouteOptions,
+  extraOptions?: EntryRouteOptions,
 ): Promise<EntryRouteResult> {
-  const effectivePromptPackOptions = refusalOptions?.promptPackOptions ?? promptPackOptions;
   const cleanedHistory = excludeRefusedTurns(neutralHistory);
+  const recentUserHistory = recentUserEntryHistory(cleanedHistory);
+  const heuristicMode = classifyEntryHeuristic(userInput, recentUserHistory);
+  const canResolveResearch = heuristicMode !== 'ambiguous' &&
+    (heuristicMode !== 'writing' || hasExplicitStageIntent(userInput));
+  const publicResearchProvider =
+    extraOptions?.publicResearch ??
+    refusalOrOptions?.publicResearch ??
+    (promptPackOrOptions && 'publicResearch' in promptPackOrOptions
+      ? promptPackOrOptions.publicResearch
+      : undefined);
+  const publicResearch = !canResolveResearch
+    ? { reference: null }
+    : await resolvePublicResearchForTurn({
+        provider: publicResearchProvider,
+        nodes: Object.fromEntries(recentUserHistory.map((node) => [node.id, node])),
+        parentId: recentUserHistory.at(-1)?.id ?? null,
+        settingMarkdown: [...recentUserHistory.map((node) => node.content), userInput]
+          .filter(Boolean)
+          .join('\n\n'),
+        userInput,
+        config,
+        signal: callbacks.signal,
+      });
+  const effectivePromptPackOptions = refusalOrOptions?.promptPackOptions ?? promptPackOrOptions;
   const messages = buildEntryRouteMessages(
     userInput,
     cleanedHistory,
     publicMemoryMarkdown,
     effectivePromptPackOptions,
+    publicResearch.reference ?? undefined,
   );
   const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
-  const heuristicMode = classifyEntryHeuristic(userInput, cleanedHistory);
   const routePrefillMode = heuristicMode === 'ambiguous' ? 'story' : heuristicMode;
   const result = await streamWithRefusalHandling({
     transport,
     config,
     messages,
     callbacks,
-    mode: refusalOptions?.mode ?? routePrefillMode,
+    mode: refusalOrOptions?.mode ?? routePrefillMode,
     ...(effectivePromptPackOptions ? { promptPackOptions: effectivePromptPackOptions } : {}),
-    prefixContent: refusalOptions?.prefixContent ?? `\`\`\`lfh-route\nmode: ${routePrefillMode}\n`,
-    ...(refusalOptions?.characterName ? { characterName: refusalOptions.characterName } : {}),
-    ...(refusalOptions?.onDiagnostic ? { onDiagnostic: refusalOptions.onDiagnostic } : {}),
+    prefixContent: refusalOrOptions?.prefixContent ?? `\`\`\`lfh-route\nmode: ${routePrefillMode}\n`,
+    ...(refusalOrOptions?.characterName ? { characterName: refusalOrOptions.characterName } : {}),
+    ...(refusalOrOptions?.onDiagnostic ? { onDiagnostic: refusalOrOptions.onDiagnostic } : {}),
     toVisibleContent: visibleEntryRoutePrefix,
   });
 
@@ -426,17 +560,127 @@ export async function routeEntryMessage(
   if (result.finishReason !== 'stop' && !result.content.trim()) {
     throw new Error('回复未完成，请重试。');
   }
+  const parsed = parseEntryRouteReply(result.content, userInput, cleanedHistory, result.reasoningContent);
+  const retainsPublicResearch = parsed.mode === 'story' || parsed.mode === 'character';
   return {
-    ...parseEntryRouteReply(result.content, userInput, cleanedHistory, result.reasoningContent),
+    ...parsed,
     ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
     ...(result.prefillContent ? { prefillContent: result.prefillContent } : {}),
     model: config.model,
     reasoningEffort,
+    ...(retainsPublicResearch && publicResearch.reference ? { publicResearch: publicResearch.reference } : {}),
+    ...(retainsPublicResearch && publicResearch.failure ? { publicResearchFailure: publicResearch.failure } : {}),
+    ...(retainsPublicResearch && publicResearch.settingKey
+      ? { publicResearchSettingKey: publicResearch.settingKey }
+      : {}),
   };
 }
 
 
 export { normalizeGenerationPreference } from './keyConfig.ts';
+
+interface ActiveDocumentSource {
+  document: MarkdownDocument;
+  edits?: Record<string, string>;
+  activeVersion?: string;
+}
+
+interface MaterializeSourceDocuments {
+  container?: ActiveDocumentSource;
+  local?: ActiveDocumentSource;
+}
+
+interface PreparedActiveDocument {
+  document: MarkdownDocument;
+  versionsByNode: Map<string, string>;
+  edits: Record<string, string>;
+}
+
+function prepareActiveDocument(
+  source: ActiveDocumentSource | undefined,
+  turns: readonly TurnNode[],
+  scope: 'container' | 'local',
+  fallbackMarkdown: string,
+): PreparedActiveDocument {
+  if (!source) {
+    return { document: newDocument(fallbackMarkdown, 'migration'), versionsByNode: new Map(), edits: {} };
+  }
+
+  const hasVersion = (version: string | null | undefined): version is string =>
+    typeof version === 'string' && Object.hasOwn(source.document.versions, version);
+  const activeNodeIds = new Set(turns.map((turn) => turn.id));
+  const edits: Record<string, string> = {};
+  for (const [anchor, revision] of Object.entries(source.edits ?? {})) {
+    if ((anchor === '' || activeNodeIds.has(anchor)) && hasVersion(revision)) {
+      edits[anchor] = revision;
+    }
+  }
+
+  const versionsByNode = new Map<string, string>();
+  for (const turn of turns) {
+    const version = hasVersion(turn.documents?.[scope])
+      ? turn.documents![scope]
+      : edits[turn.id];
+    if (version && hasVersion(version)) versionsByNode.set(turn.id, version);
+  }
+
+  const activeTurnId = turns.at(-1)?.id;
+  const activeVersion = [
+    source.activeVersion,
+    activeTurnId ? edits[activeTurnId] : undefined,
+    activeTurnId ? versionsByNode.get(activeTurnId) : undefined,
+    source.document.head,
+  ].find(hasVersion);
+  if (!activeVersion) {
+    return { document: newDocument(fallbackMarkdown, 'migration'), versionsByNode: new Map(), edits: {} };
+  }
+
+  if (activeTurnId) {
+    const nodeVersion = versionsByNode.get(activeTurnId);
+    if (!nodeVersion) {
+      versionsByNode.set(activeTurnId, activeVersion);
+    } else if (nodeVersion !== activeVersion && !edits[activeTurnId]) {
+      edits[activeTurnId] = activeVersion;
+    }
+  }
+
+  const versions: MarkdownDocument['versions'] = {};
+  const copied = new Set<string>();
+  const copyLineage = (versionId: string | null | undefined) => {
+    if (!hasVersion(versionId) || copied.has(versionId)) return;
+    copied.add(versionId);
+    const version = source.document.versions[versionId];
+    const previous = hasVersion(version.previous) ? version.previous : null;
+    versions[versionId] = { ...version, previous };
+    copyLineage(previous);
+  };
+
+  for (const versionId of versionsByNode.values()) copyLineage(versionId);
+  for (const versionId of Object.values(edits)) copyLineage(versionId);
+  copyLineage(activeVersion);
+
+  return {
+    document: { head: activeVersion, versions },
+    versionsByNode,
+    edits,
+  };
+}
+
+function remapDocumentEditAnchors(
+  edits: Record<string, string>,
+  idMap: ReadonlyMap<string, string>,
+): Record<string, string> {
+  const remapped: Record<string, string> = {};
+  for (const [anchor, revision] of Object.entries(edits)) {
+    if (anchor === '') {
+      remapped[''] = revision;
+      continue;
+    }
+    const nextAnchor = idMap.get(anchor);
+    if (nextAnchor) remapped[nextAnchor] = revision;
+  }
+  return remapped;
+}
 
 /**
  * Materializes neutral (unpersisted) or existing turns + setting Markdown into a persisted target mode asset.
@@ -445,6 +689,8 @@ export function materializeAssetFromNodes(opts: {
   targetMode: StageAssetMode;
   title: string;
   settingMarkdown: string;
+  localMarkdown?: string;
+  sourceDocuments?: MaterializeSourceDocuments;
   turns: readonly TurnNode[];
   body?: string;
   characterName?: string;
@@ -482,8 +728,20 @@ export function materializeAssetFromNodes(opts: {
 
   if (opts.targetMode === 'story') {
     const storyId = createId();
-    const containerDoc = newDocument(opts.settingMarkdown, 'user', 'story-original');
-    const localDoc = newDocument('', 'migration', 'path-original');
+    const containerMapping = prepareActiveDocument(
+      opts.sourceDocuments?.container,
+      opts.turns,
+      'container',
+      opts.settingMarkdown,
+    );
+    const localMapping = prepareActiveDocument(
+      opts.sourceDocuments?.local,
+      opts.turns,
+      'local',
+      opts.localMarkdown ?? '',
+    );
+    const containerEdits = remapDocumentEditAnchors(containerMapping.edits, idMap);
+    const localEdits = remapDocumentEditAnchors(localMapping.edits, idMap);
     const rootNodeIds = clonedNodes.filter((n) => n.parentId === null).map((n) => n.id);
     const story: Story = {
       id: storyId,
@@ -494,15 +752,25 @@ export function materializeAssetFromNodes(opts: {
       rawScript: '',
       blueprint: createDefaultBlueprint(opts.title.trim() || '新故事'),
       documents: {
-        container: containerDoc,
-        local: localDoc,
-        edits: {},
+        container: containerMapping.document,
+        local: localMapping.document,
+        edits: localEdits,
+        ...(Object.keys(containerEdits).length > 0 ? { containerEdits } : {}),
       },
       nodes: Object.fromEntries(
-        clonedNodes.map((n) => [
-          n.id,
-          { ...n, documents: { container: containerDoc.head, local: localDoc.head } },
-        ]),
+        clonedNodes.map((node, index) => {
+          const sourceNode = opts.turns[index];
+          return [
+            node.id,
+            {
+              ...node,
+              documents: {
+                container: containerMapping.versionsByNode.get(sourceNode.id) ?? containerMapping.document.head,
+                local: localMapping.versionsByNode.get(sourceNode.id) ?? localMapping.document.head,
+              },
+            },
+          ];
+        }),
       ),
       rootNodeIds,
       activeLeafNodeId: leafId,
@@ -528,8 +796,39 @@ export function materializeAssetFromNodes(opts: {
 
   const charName = opts.characterName?.trim() || opts.title.trim() || '未命名角色';
   const baseChar = newCharacter(charName, opts.settingMarkdown);
-  const conv = newConversation(baseChar, 'personal', '', clonedNodes[0]?.content.slice(0, 20));
-  conv.nodes = nodeMap;
+  const containerMapping = prepareActiveDocument(
+    opts.sourceDocuments?.container,
+    opts.turns,
+    'container',
+    opts.settingMarkdown,
+  );
+  const localMapping = prepareActiveDocument(
+    opts.sourceDocuments?.local,
+    opts.turns,
+    'local',
+    opts.localMarkdown ?? '',
+  );
+  baseChar.document = containerMapping.document;
+  const conv = newConversation(baseChar, 'personal', opts.localMarkdown ?? '', clonedNodes[0]?.content.slice(0, 20));
+  conv.document = localMapping.document;
+  conv.edits = remapDocumentEditAnchors(localMapping.edits, idMap);
+  conv.characterVersion = baseChar.document.head;
+  conv.nodes = Object.fromEntries(
+    clonedNodes.map((node, index) => {
+      const sourceNode = opts.turns[index];
+      return [
+        node.id,
+        {
+          ...nodeMap[node.id],
+          documents: {
+            container: containerMapping.edits[sourceNode.id] ??
+              containerMapping.versionsByNode.get(sourceNode.id) ?? containerMapping.document.head,
+            local: localMapping.versionsByNode.get(sourceNode.id) ?? localMapping.document.head,
+          },
+        },
+      ];
+    }),
+  );
   conv.activeLeafNodeId = leafId;
   const character: LocalCharacter = {
     ...baseChar,
@@ -556,6 +855,8 @@ export function convertActiveAssetMode(opts: {
 }): { story?: Story; work?: DraftWork; character?: LocalCharacter } {
   let title = '未命名创作';
   let settingMarkdown = '';
+  let localMarkdown = '';
+  let sourceDocuments: MaterializeSourceDocuments | undefined;
   let turns: TurnNode[] = [];
   let body = '';
   let generationPreference: GenerationPreference | undefined;
@@ -567,6 +868,19 @@ export function convertActiveAssetMode(opts: {
       const scoped = { ...opts.story, documents: opts.story.documents };
       const state = storyDocumentState(scoped, opts.story.activeLeafNodeId, true);
       settingMarkdown = documentVersion(scoped.documents.container, state.container).markdown;
+      localMarkdown = documentVersion(scoped.documents.local, state.local).markdown;
+      sourceDocuments = {
+        container: {
+          document: scoped.documents.container,
+          edits: scoped.documents.containerEdits,
+          activeVersion: state.container,
+        },
+        local: {
+          document: scoped.documents.local,
+          edits: scoped.documents.edits,
+          activeVersion: state.local,
+        },
+      };
     } else {
       settingMarkdown = opts.story.rawScript;
     }
@@ -583,12 +897,28 @@ export function convertActiveAssetMode(opts: {
     settingMarkdown = documentVersion(opts.character.document).markdown;
     const conv = opts.character.conversations.find((c) => c.id === opts.character!.activeConversationId);
     turns = conv ? getActiveBranchNodes(conv) : [];
+    localMarkdown = conv ? documentVersion(conv.document, conversationLocalVersion(conv)).markdown : '';
+    sourceDocuments = {
+      container: {
+        document: opts.character.document,
+        activeVersion: opts.character.document.head,
+      },
+      ...(conv ? {
+        local: {
+          document: conv.document,
+          edits: conv.edits,
+          activeVersion: conversationLocalVersion(conv),
+        },
+      } : {}),
+    };
   }
 
   return materializeAssetFromNodes({
     targetMode: opts.toMode,
     title,
     settingMarkdown,
+    localMarkdown,
+    sourceDocuments,
     turns,
     body,
     characterName: opts.toMode === 'character' ? title : undefined,

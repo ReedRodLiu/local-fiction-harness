@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   BUILTIN_NARRATIVE_PROMPT_PACK,
   EMPTY_SUMMARY_SNAPSHOT,
+  characterContext,
+  conversationLocalVersion,
   createDefaultBlueprint,
   detectBackupSchemaVersion,
   documentVersion,
@@ -467,5 +469,106 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     );
     expect(builtin?.enabled).toBe(false);
     expect(merged.promptPacks?.activePackId).toBeNull();
+  });
+
+  it('imports a recoverable dangling conversation characterVersion and keeps continuation readable', () => {
+    const character = newCharacter('谢知微', 'PROFILE-HEAD');
+    const conversation = newConversation(character, 'personal', '## 当前进度\n\n仍可继续。');
+    conversation.characterVersion = 'missing-profile-version';
+    conversation.nodes = {
+      c1: {
+        id: 'c1',
+        parentId: null,
+        role: 'assistant',
+        content: '档案仍在。',
+        createdAt: 100,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        documents: { container: character.document.head, local: conversation.document.head },
+      },
+    };
+    conversation.activeLeafNodeId = 'c1';
+    character.conversations = [conversation];
+    character.activeConversationId = conversation.id;
+
+    const backup = JSON.parse(exportFolioBackupV3({
+      stories: [],
+      workspace: {
+        revision: 1,
+        publicDocument: newDocument('', 'user', 'public-original'),
+        works: [],
+        characters: [character],
+        activeCharacterId: character.id,
+      },
+    }));
+    backup.workspace.characters[0].conversations[0].characterVersion = 'missing-profile-version';
+
+    const parsed = parseAndValidateFolioBackup(JSON.stringify(backup));
+    const loadedCharacter = parsed.workspace.characters[0];
+    const loaded = loadedCharacter.conversations[0];
+    const context = characterContext(newDocument(''), loadedCharacter, loaded, '继续');
+
+    expect(loaded.characterVersion).toBe(character.document.head);
+    expect(context.messages.map((message) => message.content).join('\n')).toContain('PROFILE-HEAD');
+
+    const invalidType = structuredClone(backup);
+    invalidType.workspace.characters[0].conversations[0].characterVersion = 42;
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(invalidType))).toThrow(/characterVersion/);
+
+    const emptyVersion = structuredClone(backup);
+    emptyVersion.workspace.characters[0].conversations[0].characterVersion = '   ';
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(emptyVersion))).toThrow(/characterVersion/);
+  });
+
+  it('repairs a saved character edit override that points to a missing note version', () => {
+    const character = newCharacter('谢知微', '# 角色设定\n\n冷静的档案修复师');
+    const conversation = newConversation(character, 'personal', '## 当前进度\n\n仍可读取的有效分支笔记');
+    conversation.nodes = {
+      c1: {
+        id: 'c1',
+        parentId: null,
+        role: 'assistant',
+        content: '旧胶片里还有一段没看完。',
+        createdAt: 100,
+        summarySnapshot: EMPTY_SUMMARY_SNAPSHOT,
+        documents: {
+          container: character.document.head,
+          local: conversation.document.head,
+        },
+      },
+    };
+    conversation.activeLeafNodeId = 'c1';
+    conversation.edits = { c1: 'missing-local-version' };
+    character.conversations = [conversation];
+    character.activeConversationId = conversation.id;
+
+    const backup = JSON.parse(exportFolioBackupV3({
+      stories: [],
+      workspace: {
+        revision: 1,
+        publicDocument: newDocument('', 'user', 'public-original'),
+        works: [],
+        characters: [character],
+        activeCharacterId: character.id,
+      },
+    }));
+    backup.workspace.characters[0].conversations[0].edits.c1 = 'missing-local-version';
+
+    const parsed = parseAndValidateFolioBackup(JSON.stringify(backup));
+    const loaded = parsed.workspace.characters[0].conversations[0];
+    expect(loaded.edits).toEqual({});
+    expect(loaded.nodes.c1.documents?.local).toBe(conversation.document.head);
+    expect(documentVersion(loaded.document, conversationLocalVersion(loaded)).markdown).toContain(
+      '仍可读取的有效分支笔记',
+    );
+
+    const invalidAnchor = structuredClone(backup);
+    invalidAnchor.workspace.characters[0].conversations[0].edits = {
+      'missing-node': 'missing-local-version',
+    };
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(invalidAnchor))).toThrow(/版本引用无效/);
+
+    const invalidRevisionType = structuredClone(backup);
+    invalidRevisionType.workspace.characters[0].conversations[0].edits.c1 = 42;
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(invalidRevisionType))).toThrow(/版本引用无效/);
   });
 });

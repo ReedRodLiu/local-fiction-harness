@@ -39,6 +39,7 @@ import {
   streamWithRefusalHandling,
   type RefusalStreamIntegrationOptions,
 } from './refusalWrapper.ts';
+import type { PublicResearchReference } from './publicResearch.ts';
 import type {
   AbortSignalLike,
   DocumentRead,
@@ -316,14 +317,27 @@ export function creativeContext(
   return messages;
 }
 
+function isPublicResearchReference(
+  value: PromptPackContextOptions | PublicResearchReference | undefined,
+): value is PublicResearchReference {
+  return Boolean(value && 'identityKey' in value && 'summary' in value);
+}
+
 export function characterContext(
   global: MarkdownDocument,
   character: LocalCharacter,
   conversation: CharacterConversation,
   input: string,
   budgetOverrides?: Partial<ContextBudgetConfig>,
-  promptPackOptions?: PromptPackContextOptions,
+  promptPackOrResearch?: PromptPackContextOptions | PublicResearchReference,
+  publicResearchArg?: PublicResearchReference,
 ) {
+  const promptPackOptions = isPublicResearchReference(promptPackOrResearch)
+    ? undefined
+    : promptPackOrResearch;
+  const publicResearch = isPublicResearchReference(promptPackOrResearch)
+    ? promptPackOrResearch
+    : publicResearchArg;
   const publicVersion = documentVersion(global);
   const persona = documentVersion(character.document, conversation.characterVersion);
   const local = documentVersion(conversation.document, conversationLocalVersion(conversation));
@@ -335,6 +349,7 @@ export function characterContext(
     ],
     localDocument: local,
     nodes: conversation.nodes,
+    ...(publicResearch ? { publicResearch } : {}),
     targetParentId: conversation.activeLeafNodeId,
     userInput: input || '按当前人设和情境自然开场，由你先说第一句。',
     budgetOverrides,

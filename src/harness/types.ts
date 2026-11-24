@@ -1,6 +1,11 @@
 import type { MarkdownProposal, MarkdownProposalStatus, StoryDocumentState, StoryDocuments } from './markdownDocuments.ts';
 import type { CreativeStorage } from './creative.ts';
 import type { DiagnosticCollector } from './diagnostics.ts';
+import type {
+  PublicResearchFailure,
+  PublicResearchProvider,
+  PublicResearchReference,
+} from './publicResearch.ts';
 
 export interface StoryBlueprint {
   title: string;
@@ -117,6 +122,9 @@ export interface TurnNode {
   documentReads?: DocumentRead[];
   attachmentIds?: string[];
   proposals?: TurnProposalRecord[];
+  publicResearch?: PublicResearchReference;
+  publicResearchFailure?: PublicResearchFailure;
+  publicResearchSettingKey?: string;
 }
 
 export interface Story {
@@ -150,6 +158,18 @@ export interface LlmStreamDelta {
   contentDelta?: string;
   reasoningDelta?: string;
   finishReason?: string | null;
+  usage?: LlmUsage;
+}
+
+export interface LlmUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  promptCacheHitTokens?: number;
+  promptCacheMissTokens?: number;
+  completionTokensDetails?: {
+    reasoningTokens?: number;
+  };
 }
 
 export interface AbortSignalLike {
@@ -168,6 +188,8 @@ export interface LlmStreamRequest {
   reasoningEffort?: ReasoningEffort;
   thinking?: DeepSeekThinkingParam;
   reasoning_effort?: ReasoningEffort;
+  includeUsage?: boolean;
+  maxOutputTokens?: number;
   signal?: AbortSignalLike;
 }
 
@@ -284,6 +306,7 @@ export interface PlatformRuntime {
   diagnostics: DiagnosticCollector;
   promptPackStorage: KeyValueStorage;
   transport: LlmTransport;
+  publicResearch?: PublicResearchProvider;
   binaryDownloader: BinaryDownloader;
   storyStorage: StoryStorage;
   secretStore: SecretStore;

@@ -2,6 +2,7 @@ import { createDefaultBlueprint } from './blueprint.ts';
 import { isOfficialDeepSeekModel, isPrefixCompletionMode, isReasoningEffort } from './keyConfig.ts';
 import { documentVersion, migrateStoryDocuments, replaceDocumentProgress, validateDocumentReads, validateMarkdownDocument, writeDocument, type StoryDocuments } from './markdownDocuments.ts';
 import { createDefaultId } from './id.ts';
+import { validatePublicResearchFailure, validatePublicResearchReference } from './publicResearch.ts';
 import type {
   ActiveStorySelection,
   GenerationPreference,
@@ -370,6 +371,17 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
   const attachmentIds = entry.attachmentIds === undefined ? undefined : assertStringArray(entry.attachmentIds, 'node.attachmentIds');
   const reads = validateDocumentReads(entry.documentReads);
   const proposals = validateProposals(entry.proposals, entry.id);
+  const publicResearch = validatePublicResearchReference(entry.publicResearch);
+  const publicResearchFailure = validatePublicResearchFailure(entry.publicResearchFailure);
+  const publicResearchSettingKey = entry.publicResearchSettingKey;
+  if (
+    publicResearchSettingKey !== undefined &&
+    (typeof publicResearchSettingKey !== 'string' ||
+      !publicResearchSettingKey.trim() ||
+      publicResearchSettingKey.length > 4096)
+  ) {
+    throw new Error(`备份中的节点 ${expectedId ?? entry.id} 的公开资料缓存归属无效。`);
+  }
   const documents = entry.documents;
   if (documents !== undefined && (!isRecord(documents) ||
     typeof documents.local !== 'string' || typeof documents.container !== 'string')) {
@@ -397,6 +409,9 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
     ...(documents && isRecord(documents) ? { documents: { local: documents.local as string, container: documents.container as string } } : {}),
     ...(reads ? { documentReads: reads } : {}),
     ...(proposals ? { proposals } : {}),
+    ...(publicResearch ? { publicResearch } : {}),
+    ...(publicResearchFailure ? { publicResearchFailure } : {}),
+    ...(publicResearchSettingKey ? { publicResearchSettingKey: publicResearchSettingKey.trim() } : {}),
   };
 }
 

@@ -1,4 +1,5 @@
 import {
+  createDeepSeekPublicResearchProvider,
   createDiagnosticCollector,
   createDiagnosticStoryStorage,
   createDiagnosticTransport,
@@ -7,8 +8,10 @@ import {
   type BinaryDownloader,
   type CreativeStorage,
   type KeyValueStorage,
+  type FetchLike,
   type LlmTransport,
   type PlatformRuntime,
+  type PublicResearchProvider,
   type SecretStore,
   type StoryStorage,
 } from '../harness/index.ts';
@@ -31,6 +34,7 @@ export interface AndroidRuntimeOptions {
   backupExporter?: BackupExporter;
   diagnosticsStorage?: KeyValueStorage;
   promptPackStorage?: KeyValueStorage;
+  publicResearch?: PublicResearchProvider;
   appUpdater?: AppUpdater;
 }
 
@@ -68,14 +72,20 @@ export function createAndroidPlatformRuntime(
     platform: 'android',
     storage: options.diagnosticsStorage ?? resolveBrowserLocalStorage(),
   });
+  const transport = createDiagnosticTransport(
+    options.transport ?? createCapacitorSseTransport(),
+    diagnostics,
+  );
+  const webFetch = (globalThis as { fetch?: FetchLike }).fetch;
   return {
     platform: 'android',
     diagnostics,
     promptPackStorage,
-    transport: createDiagnosticTransport(
-      options.transport ?? createCapacitorSseTransport(),
-      diagnostics,
-    ),
+    transport,
+    publicResearch: options.publicResearch ?? (webFetch ? createDeepSeekPublicResearchProvider({
+      fetcher: webFetch,
+      transport,
+    }) : undefined),
     binaryDownloader: options.binaryDownloader ?? createCapacitorBinaryDownloader(),
     storyStorage: createDiagnosticStoryStorage(
       options.storyStorage ?? createAndroidStoryStorage(),
