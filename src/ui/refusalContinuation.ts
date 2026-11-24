@@ -1,9 +1,15 @@
 import {
+  buildTurnProposalRecords,
+  judgeRefusal,
   normalizeReasoningEffort,
+  parseProposalReply,
+  routeRefusal,
   type AbortSignalLike,
+  type DeliveryMode,
   type LlmMessage,
   type LlmTransport,
   type ModelConfig,
+  type TurnNode,
 } from '../harness/index.ts';
 
 export interface PrefixContinuationOptions {
@@ -20,6 +26,78 @@ export interface PrefixContinuationResult {
   content: string;
   reasoningContent: string;
   finishReason?: string | null;
+}
+
+export interface PrefixContinuationFinalizeOptions {
+  mode: DeliveryMode;
+  baseVersions?: { setting?: string; memory?: string; note?: string; manuscript?: string };
+  now?: number;
+}
+
+function containsContinuationProtocol(raw: string, parsed: ReturnType<typeof parseProposalReply>): boolean {
+  return (
+    /(^|\n)[ \t]*`{3,}[ \t]*lfh-(?:summary|proposal|change)\b/m.test(raw) ||
+    Boolean(parsed.turnSummary) ||
+    parsed.proposals.length > 0 ||
+    parsed.unparsedBlocks.length > 0
+  );
+}
+
+/**
+ * Parses the complete prefix response and its newly appended suffix, then
+ * applies only the suffix's protocol records and refusal diagnostics to the
+ * existing turn node.
+ */
+export function finalizePrefixContinuation(
+  node: TurnNode,
+  continued: PrefixContinuationResult,
+  options: PrefixContinuationFinalizeOptions,
+): TurnNode {
+  const parsed = parseProposalReply(continued.content, {
+    finishReason: continued.finishReason,
+  });
+  const rawContinuation = continued.content.startsWith(node.content)
+    ? continued.content.slice(node.content.length)
+    : continued.content;
+  const parsedContinuation = parseProposalReply(rawContinuation, {
+    finishReason: continued.finishReason,
+  });
+  const newProposalRecords = buildTurnProposalRecords(
+    parsedContinuation,
+    options.baseVersions,
+    options.now,
+  );
+  const refusalVerdict = judgeRefusal(parsedContinuation.content);
+  const refusalRoute = routeRefusal(
+    parsedContinuation.content,
+    refusalVerdict !== null,
+    {
+      mode: options.mode,
+      hasProtocolArtifacts: containsContinuationProtocol(rawContinuation, parsedContinuation),
+    },
+  );
+  const matchedRuleId = refusalVerdict?.ruleId ??
+    (refusalRoute === 'retry-skeleton' ? 'skeleton-01' : undefined);
+  const diagnostics = {
+    ...node.diagnostics,
+    refusalRoute,
+    ...(refusalRoute !== 'pass'
+      ? {
+          sourceStatus: 'REFUSAL' as const,
+          ...(matchedRuleId ? { matchedRuleId } : {}),
+        }
+      : {}),
+  };
+  const proposals = [...(node.proposals ?? []), ...newProposalRecords];
+
+  return {
+    ...node,
+    content: parsed.content,
+    ...(parsedContinuation.turnSummary ? { turnSummary: parsedContinuation.turnSummary } : {}),
+    ...(continued.reasoningContent ? { reasoningContent: continued.reasoningContent } : {}),
+    diagnostics,
+    ...(proposals.length > 0 ? { proposals } : {}),
+  };
 }
 
 /**

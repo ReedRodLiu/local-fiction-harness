@@ -91,7 +91,10 @@ import { TopBar } from './TopBar.tsx';
 import { TurnCard, type ResolvedProposalTargetState } from './TurnCard.tsx';
 import { WelcomeView } from './WelcomeView.tsx';
 import { setCrashDiagnosticBundleBuilder } from './crashDiagnosticContext.ts';
-import { streamPrefixContinuation } from './refusalContinuation.ts';
+import {
+  finalizePrefixContinuation,
+  streamPrefixContinuation,
+} from './refusalContinuation.ts';
 import type { DisplayFontSize, DisplayThemePreference } from './displayPreferences.ts';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
 import {
@@ -1202,15 +1205,14 @@ export function App({ runtime }: AppProps) {
           if (continued.content.trim() === node.content.trim()) {
             throw new Error('模型没有返回可追加的正文。');
           }
-          const nextNode: TurnNode = {
-            ...node,
-            content: continued.content,
-            ...(continued.reasoningContent ? { reasoningContent: continued.reasoningContent } : {}),
-            diagnostics: {
-              ...node.diagnostics,
-              refusalRoute: 'pass',
+          const nextNode = finalizePrefixContinuation(node, continued, {
+            mode: 'story',
+            baseVersions: {
+              setting: requestDocuments?.container.id,
+              memory: requestDocuments?.publicVersion.id,
+              note: requestDocuments?.local.id,
             },
-          };
+          });
           const saved = await harness.saveStory({
             ...latest,
             nodes: { ...latest.nodes, [node.id]: nextNode },

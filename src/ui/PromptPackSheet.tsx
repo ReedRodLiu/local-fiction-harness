@@ -106,7 +106,7 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
   useEffect(() => {
     setTitleDraft(selected.title);
     setSlotsDraft(selected.slots);
-  }, [selected.id, selected.title, selected.slots]);
+  }, [selected.id]);
 
   const applyLibrary = (next: PromptPackLibrary, message: string) => {
     setError('');

@@ -15,7 +15,10 @@ import {
 } from '../../src/harness/index.ts';
 import { GenerationControls } from '../../src/ui/GenerationControls.tsx';
 import { PromptPackSheet } from '../../src/ui/PromptPackSheet.tsx';
-import { streamPrefixContinuation } from '../../src/ui/refusalContinuation.ts';
+import {
+  finalizePrefixContinuation,
+  streamPrefixContinuation,
+} from '../../src/ui/refusalContinuation.ts';
 import { StoryTree } from '../../src/ui/StoryTree.tsx';
 import { TurnCard } from '../../src/ui/TurnCard.tsx';
 
@@ -197,6 +200,121 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     expect(visible.join('')).toBe('，新增段落。');
     expect(result.content).toBe('原有正文，新增段落。');
     expect(result.finishReason).toBe('stop');
+  });
+
+  it('parses prefix continuation protocols, strips fences, and merges new proposal records', () => {
+    const node = makeNode({
+      turnSummary: '此前摘要。',
+      proposals: [{
+        id: 'existing-proposal',
+        target: 'setting',
+        op: 'append',
+        summary: '既有提案',
+        status: 'pending',
+        body: '- 既有内容',
+      }],
+    });
+    const finalized = finalizePrefixContinuation(
+      node,
+      {
+        content: [
+          node.content,
+          '',
+          '新增正文。',
+          '',
+          '```lfh-summary',
+          '新增剧情摘要。',
+          '```',
+          '',
+          '```lfh-proposal',
+          'target: setting',
+          'op: append',
+          'summary: 记录新增线索',
+          '---',
+          '- 新线索',
+          '```',
+          '',
+          '```lfh-proposal',
+          'target: note',
+          'op: append',
+          'summary: 半截局部笔记',
+          '---',
+          '- 未闭合内容',
+        ].join('\n'),
+        reasoningContent: '继续推理。',
+        finishReason: 'stop',
+      },
+      { mode: 'story', baseVersions: { setting: 'setting-v2' }, now: 123 },
+    );
+
+    expect(finalized.content).toBe(`${node.content}\n\n新增正文。`);
+    expect(finalized.content).not.toContain('lfh-summary');
+    expect(finalized.turnSummary).toBe('新增剧情摘要。');
+    expect(finalized.reasoningContent).toBe('继续推理。');
+    expect(finalized.proposals).toHaveLength(3);
+    expect(finalized.proposals?.[0]).toMatchObject({ id: 'existing-proposal' });
+    expect(finalized.proposals?.[1]).toMatchObject({
+      target: 'setting',
+      status: 'pending',
+      baseVersionId: 'setting-v2',
+    });
+    expect(finalized.proposals?.[2]).toMatchObject({
+      target: 'note',
+      status: 'needs_review',
+      reason: 'unclosed_fence',
+    });
+  });
+
+  it('preserves a thin second refusal as REFUSAL instead of marking the continuation pass', () => {
+    const node = makeNode({ diagnostics: { refusalRoute: 'partial_refused' } });
+    const finalized = finalizePrefixContinuation(
+      node,
+      {
+        content: `${node.content}\n\n抱歉，我不能继续写这段内容。`,
+        reasoningContent: '',
+        finishReason: 'stop',
+      },
+      { mode: 'story' },
+    );
+
+    expect(finalized.content).toContain('抱歉，我不能继续写这段内容。');
+    expect(finalized.diagnostics).toMatchObject({
+      sourceStatus: 'REFUSAL',
+      refusalRoute: 'retry',
+    });
+    expect(finalized.diagnostics?.refusalRoute).not.toBe('pass');
+  });
+
+  it('keeps partial refusal content and the recoverable continue route after prefix continuation', () => {
+    const node = makeNode({ diagnostics: { refusalRoute: 'partial_refused' } });
+    const finalized = finalizePrefixContinuation(
+      node,
+      {
+        content: `${node.content}\n\n她按住门把手，低声说：“抱歉，我不能继续写这段内容。”`,
+        reasoningContent: '',
+        finishReason: 'stop',
+      },
+      { mode: 'story' },
+    );
+
+    expect(finalized.content).toContain('她按住门把手');
+    expect(finalized.diagnostics).toMatchObject({
+      sourceStatus: 'REFUSAL',
+      refusalRoute: 'partial_refused',
+    });
+  });
+
+  it('keeps all three manual continuation callers on the shared finalization path', () => {
+    for (const file of ['App.tsx', 'DraftPane.tsx', 'CharacterPane.tsx']) {
+      const source = readFileSync(join(repoRoot, 'src/ui', file), 'utf8');
+      expect(source).toContain('finalizePrefixContinuation');
+    }
+  });
+
+  it('does not reset unsaved prompt-pack drafts when global settings change', () => {
+    const source = readFileSync(join(repoRoot, 'src/ui/PromptPackSheet.tsx'), 'utf8');
+    expect(source).toContain('}, [selected.id]);');
+    expect(source).not.toContain('}, [selected.id, selected.title, selected.slots]);');
   });
 
   it('wires prompt-pack backup export, restore persistence, and summary text through App', () => {

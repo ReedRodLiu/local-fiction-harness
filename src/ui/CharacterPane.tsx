@@ -48,7 +48,10 @@ import {
   revertDocumentToVersion,
   updateTurnNodeProposal,
 } from './proposalActions.ts';
-import { streamPrefixContinuation } from './refusalContinuation.ts';
+import {
+  finalizePrefixContinuation,
+  streamPrefixContinuation,
+} from './refusalContinuation.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
 import type { SaveWorkspace } from './useCreativeWorkspace.ts';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
@@ -567,12 +570,14 @@ export function CharacterPane(props: CharacterPaneProps) {
       });
       if (continued.finishReason !== 'stop') throw new Error('追要回复未完成，请重试。');
       if (continued.content.trim() === node.content.trim()) throw new Error('模型没有返回可追加的正文。');
-      const nextNode: TurnNode = {
-        ...node,
-        content: continued.content,
-        ...(continued.reasoningContent ? { reasoningContent: continued.reasoningContent } : {}),
-        diagnostics: { ...node.diagnostics, refusalRoute: 'pass' },
-      };
+      const nextNode = finalizePrefixContinuation(node, continued, {
+        mode: 'character',
+        baseVersions: {
+          setting: documentVersion(current.document, target.characterVersion).id,
+          memory: documentVersion(state.publicDocument).id,
+          note: documentVersion(target.document, ctx.localVersion).id,
+        },
+      });
       await save((workspaceState) =>
         updateCharacter(workspaceState, current.id, (latest) =>
           updateConversation(latest, target.id, (live) => ({

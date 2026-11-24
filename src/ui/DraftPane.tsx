@@ -58,7 +58,10 @@ import {
   revertDocumentToVersion,
   updateTurnNodeProposal,
 } from './proposalActions.ts';
-import { streamPrefixContinuation } from './refusalContinuation.ts';
+import {
+  finalizePrefixContinuation,
+  streamPrefixContinuation,
+} from './refusalContinuation.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
 import type { SaveWorkspace } from './useCreativeWorkspace.ts';
 import { formatManuscriptStatusText, useManuscriptAutosave } from './useManuscriptAutosave.ts';
@@ -820,12 +823,14 @@ export function DraftPane(props: DraftPaneProps) {
       });
       if (continued.finishReason !== 'stop') throw new Error('追要回复未完成，请重试。');
       if (continued.content.trim() === node.content.trim()) throw new Error('模型没有返回可追加的正文。');
-      const nextNode: TurnNode = {
-        ...node,
-        content: continued.content,
-        ...(continued.reasoningContent ? { reasoningContent: continued.reasoningContent } : {}),
-        diagnostics: { ...node.diagnostics, refusalRoute: 'pass' },
-      };
+      const nextNode = finalizePrefixContinuation(node, continued, {
+        mode: 'writing',
+        baseVersions: {
+          setting: documentVersion(live.document).id,
+          memory: documentVersion(state.publicDocument).id,
+          manuscript: String(live.bodyRevision),
+        },
+      });
       await save((nowState) =>
         updateWork(nowState, work.id, (latest) => {
           const latestTree = getWorkDiscussionTree(latest);
