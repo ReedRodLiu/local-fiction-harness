@@ -309,6 +309,68 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     expect(merged.workspace.characters[0].generationPreference?.promptPackMode).toBe(importedPack!.id);
   });
 
+  it('restores incoming prompt-pack global state when the local library is untouched defaults', () => {
+    const incomingPack = {
+      id: 'incoming-pack',
+      title: '备份叙事包',
+      slots: { head: '备份头部', mid: '备份中段', tail: '备份尾部' },
+    };
+    const merged = mergeRestoredBackup(
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        promptPacks: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+          activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+          defaultPrefixCompletion: 'on_retry',
+          includeTail: false,
+        },
+      },
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        promptPacks: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK, incomingPack],
+          activePackId: incomingPack.id,
+          defaultPrefixCompletion: 'always',
+          includeTail: true,
+        },
+      },
+    );
+
+    expect(merged.promptPacks?.activePackId).toBe(incomingPack.id);
+    expect(merged.promptPacks?.defaultPrefixCompletion).toBe('always');
+    expect(merged.promptPacks?.includeTail).toBe(true);
+  });
+
+  it('keeps modified local prompt-pack global state ahead of incoming defaults', () => {
+    const local = {
+      packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+      activePackId: null,
+      defaultPrefixCompletion: 'off' as const,
+      includeTail: true,
+    };
+    const merged = mergeRestoredBackup(
+      { stories: [], workspace: emptyWorkspace(), promptPacks: local },
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        promptPacks: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+          activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+          defaultPrefixCompletion: 'always',
+          includeTail: false,
+        },
+      },
+    );
+
+    expect(merged.promptPacks).toMatchObject({
+      activePackId: null,
+      defaultPrefixCompletion: 'off',
+      includeTail: true,
+    });
+  });
+
   it('detects schema versions and rejects invalid TurnProposalRecord entries in backups', () => {
     const v3Json = exportFolioBackupV3({
       stories: [makeSampleStory()],

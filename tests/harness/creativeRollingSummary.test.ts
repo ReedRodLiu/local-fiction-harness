@@ -64,6 +64,29 @@ function makeTurnChain(
 }
 
 describe('All-mode TurnNode trees & silent background rolling summary', () => {
+  it('persists refusal diagnostics and prefix prefill metadata on appended assistant nodes', () => {
+    const appended = appendWorkDiscussionTurn(newWork('诊断保存测试'), {
+      role: 'assistant',
+      content: '重拟后的正文。',
+      diagnostics: {
+        refusalRoute: 'retry',
+        recoveredFromText: '抱歉，我不能继续。',
+        retriedWithPrefix: true,
+      },
+      prefillContent: '她抬起眼，',
+    });
+
+    expect(appended.node.diagnostics).toMatchObject({
+      refusalRoute: 'retry',
+      recoveredFromText: '抱歉，我不能继续。',
+    });
+    expect(appended.node.prefillContent).toBe('她抬起眼，');
+    expect(appended.work.discussionNodes?.[appended.node.id]).toMatchObject({
+      diagnostics: appended.node.diagnostics,
+      prefillContent: '她抬起眼，',
+    });
+  });
+
   it('compresses long 写故事 discussion silently in background and isolates sibling branches', async () => {
     let work = newWork('长河夜行', '# 作品设定\n\n民国悬疑短篇');
     work.body = '第一章：码头的雾比往年更浓。';

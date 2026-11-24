@@ -24,6 +24,7 @@ import {
   getActiveSummarySnapshot,
   getSiblingBranchInfo,
   importDeepSeekSessions,
+  isDefaultPromptPackLibrary,
   isAbortError,
   loadPromptPackLibrary,
   materializeAssetFromNodes,
@@ -2257,7 +2258,7 @@ export function App({ runtime }: AppProps) {
     creative.workspace.works.length > 0 ||
     creative.workspace.characters.length > 0 ||
     Boolean(documentVersion(creative.workspace.publicDocument).markdown.trim()) ||
-    promptPackLibrary.packs.some((pack) => pack.readOnly !== true);
+    !isDefaultPromptPackLibrary(promptPackLibrary);
 
   const backupSummaryText = `包含 ${stories.length} 个故事、${creative.workspace.works.length} 部作品、${creative.workspace.characters.length} 位角色、${promptPackLibrary.packs.length} 个提示词包与我的记忆（不含 API Key）`;
 

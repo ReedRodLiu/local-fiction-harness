@@ -17,6 +17,7 @@ import {
 import { migrateStoryToV02, migrateWorkspaceToV02 } from './migration.ts';
 import {
   BUILTIN_NARRATIVE_PROMPT_PACK,
+  isDefaultPromptPackLibrary,
   validatePromptPackLibrary,
   type PromptPack,
   type PromptPackLibrary,
@@ -541,6 +542,7 @@ function mergePromptPackLibraries(
 
   const current = validatePromptPackLibrary(existing);
   const restored = validatePromptPackLibrary(incoming);
+  const currentHasCustomState = !isDefaultPromptPackLibrary(current);
   const usedIds = new Set(current.packs.map((pack) => pack.id));
   const idRemap = new Map<string, string>();
   const packs: PromptPack[] = current.packs.map((pack) => cloneJson(pack));
@@ -561,12 +563,25 @@ function mergePromptPackLibraries(
     packs.push(nextPack);
   }
 
+  const incomingActivePackId = restored.activePackId === null
+    ? null
+    : idRemap.get(restored.activePackId) ?? restored.activePackId;
+  const activePackId = currentHasCustomState
+    ? current.activePackId
+    : incomingActivePackId && packs.some(
+        (pack) => pack.id === incomingActivePackId && pack.enabled !== false,
+      )
+      ? incomingActivePackId
+      : null;
+
   return {
     library: validatePromptPackLibrary({
       packs,
-      activePackId: current.activePackId,
-      defaultPrefixCompletion: current.defaultPrefixCompletion,
-      includeTail: current.includeTail,
+      activePackId,
+      defaultPrefixCompletion: currentHasCustomState
+        ? current.defaultPrefixCompletion
+        : restored.defaultPrefixCompletion,
+      includeTail: currentHasCustomState ? current.includeTail : restored.includeTail,
     }),
     idRemap,
   };

@@ -128,6 +128,7 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
       config: ModelConfig,
       setStreamText: (next: string) => void,
       appendReasoning: (delta: string) => void,
+      onRefusalRetry: () => void,
     ) => Promise<void>,
   ) {
     requestModel(label, (config) => {
@@ -139,6 +140,13 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
       setOutput('');
       setReasoning('');
       setRefusalRetrying(false);
+      const handleRefusalRetry = () => {
+        if (!controller.signal.aborted) {
+          setRefusalRetrying(true);
+          setOutput('');
+          setReasoning('');
+        }
+      };
       void run(
         (messages, options) =>
           streamCreativeReply(runtime.transport, options?.config ?? config, messages, {
@@ -153,13 +161,7 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
                 else setOutput((text) => text + delta);
               }
             },
-            onRefusalRetry: () => {
-              if (!controller.signal.aborted) {
-                setRefusalRetrying(true);
-                setOutput('');
-                setReasoning('');
-              }
-            },
+            onRefusalRetry: handleRefusalRetry,
           }),
         controller.signal,
         config,
@@ -169,6 +171,7 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
         (delta) => {
           if (!controller.signal.aborted) setReasoning((text) => text + delta);
         },
+        handleRefusalRetry,
       )
         .catch((err) => {
           if (!controller.signal.aborted) setError(toErrorMessage(err, '生成失败，请重试。'));

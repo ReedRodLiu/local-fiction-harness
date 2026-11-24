@@ -309,6 +309,10 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
         </button>
       </div>
 
+      <p className="prompt-pack-disclaimer" data-testid="prompt-pack-disclaimer">
+        {PROMPT_PACK_DISCLAIMER}
+      </p>
+
       <div className="prompt-pack-import-block">
         <input
           ref={importInputRef}
@@ -346,10 +350,6 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
           导入粘贴内容
         </button>
       </div>
-
-      <p className="prompt-pack-disclaimer" data-testid="prompt-pack-disclaimer">
-        {PROMPT_PACK_DISCLAIMER}
-      </p>
 
       <div className="prompt-pack-editor-head">
         <label>

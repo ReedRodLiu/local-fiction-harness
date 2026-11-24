@@ -375,6 +375,8 @@ export function DraftPane(props: DraftPaneProps) {
             reasoningContent: result.reasoningContent || undefined,
             model: result.model,
             reasoningEffort: result.reasoningEffort,
+            ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+            ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
             parentId: userId,
             documentReads: ctx.reads,
             proposals: proposalRecords.length > 0 ? proposalRecords : undefined,
@@ -413,7 +415,7 @@ export function DraftPane(props: DraftPaneProps) {
     setManuscriptProposalRef(null);
 
     const { start, end } = selection.current;
-    reply.start('写作协作请求', async (request, signal, config, setStreamText, appendReasoning) => {
+    reply.start('写作协作请求', async (request, signal, config, setStreamText, appendReasoning, onRefusalRetry) => {
       const { state, live } = await currentWork();
       if (signal.aborted) return;
 
@@ -457,6 +459,7 @@ export function DraftPane(props: DraftPaneProps) {
           onRefusalRetry: () => {
             visibleStream = '';
             setStreamText('');
+            onRefusalRetry();
           },
         },
         toVisibleContent: (value) => visibleReplyPrefix(visibleManuscriptReplyPrefix(value)),
@@ -498,6 +501,8 @@ export function DraftPane(props: DraftPaneProps) {
               reasoningContent: reasoningContent || undefined,
               model: effectiveConfig.model,
               reasoningEffort,
+              ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+              ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
               parentId: u.node.id,
               documentReads: ctx.reads,
               proposals: [synthesizedRecord],
@@ -532,6 +537,8 @@ export function DraftPane(props: DraftPaneProps) {
               reasoningContent: reasoningContent || undefined,
               model: effectiveConfig.model,
               reasoningEffort,
+              ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+              ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
               parentId: u.node.id,
               documentReads: ctx.reads,
               proposals: proposalRecords,
@@ -563,6 +570,8 @@ export function DraftPane(props: DraftPaneProps) {
             reasoningContent: reasoningContent || undefined,
             model: effectiveConfig.model,
             reasoningEffort,
+            ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+            ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
             parentId: u.node.id,
             documentReads: ctx.reads,
           });
@@ -732,6 +741,8 @@ export function DraftPane(props: DraftPaneProps) {
             reasoningContent: result.reasoningContent || undefined,
             model: result.model,
             reasoningEffort: result.reasoningEffort,
+            ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+            ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
             parentId: userNode.id,
             documentReads: ctx.reads,
             proposals: proposalRecords.length > 0 ? proposalRecords : undefined,
@@ -1262,7 +1273,7 @@ export function DraftPane(props: DraftPaneProps) {
                 {reply.output ? (
                   <MessageContent content={reply.output} mode="writing" />
                 ) : (
-                  <div className="turn-body">{writingWaitingPhrase}</div>
+                  <div className="turn-body">{activeWritingWaitingPhrase}</div>
                 )}
               </article>
             )}

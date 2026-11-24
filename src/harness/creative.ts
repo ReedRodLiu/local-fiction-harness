@@ -205,6 +205,8 @@ export function appendWorkDiscussionTurn(
     reasoningContent?: string;
     model?: string;
     reasoningEffort?: ReasoningEffort;
+    diagnostics?: TurnNode['diagnostics'];
+    prefillContent?: string;
     parentId?: string | null;
     id?: string;
     createdAt?: number;
@@ -228,6 +230,8 @@ export function appendWorkDiscussionTurn(
     ...(nodeInput.reasoningContent ? { reasoningContent: nodeInput.reasoningContent } : {}),
     ...(nodeInput.model ? { model: nodeInput.model } : {}),
     ...(nodeInput.reasoningEffort ? { reasoningEffort: nodeInput.reasoningEffort } : {}),
+    ...(nodeInput.diagnostics ? { diagnostics: nodeInput.diagnostics } : {}),
+    ...(nodeInput.prefillContent !== undefined ? { prefillContent: nodeInput.prefillContent } : {}),
     createdAt: nodeInput.createdAt ?? Date.now(),
     summarySnapshot: parentSnapshot,
     ...(nodeInput.documentReads ? { documentReads: nodeInput.documentReads } : {}),

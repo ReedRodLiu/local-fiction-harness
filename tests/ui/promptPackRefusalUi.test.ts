@@ -9,6 +9,7 @@ import {
   createDefaultPromptPackLibrary,
   createPromptPack,
   createDefaultBlueprint,
+  isDefaultPromptPackLibrary,
   type Story,
   type TurnNode,
 } from '../../src/harness/index.ts';
@@ -89,6 +90,9 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     expect(markup).toContain('2000');
     expect(markup).toContain('Folio 基础叙事骨架');
     expect(markup).toContain('提示词包在技术上作为系统提示词（System Prompt）');
+    expect(markup.indexOf('data-testid="prompt-pack-disclaimer"')).toBeLessThan(
+      markup.indexOf('class="prompt-pack-import-block"'),
+    );
   });
 
   it('renders story-level prompt-pack and prefix selectors next to the existing generation controls', () => {
@@ -201,6 +205,7 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     expect(appSource).toContain('setPromptPackLibrary(merged.promptPacks)');
     expect(appSource).toContain('个提示词包与我的记忆');
     expect(appSource).toContain('onPromptPackLibraryChange={setPromptPackLibrary}');
+    expect(appSource).toContain('!isDefaultPromptPackLibrary(promptPackLibrary)');
     const draftSource = readFileSync(join(repoRoot, 'src/ui/DraftPane.tsx'), 'utf8');
     const characterSource = readFileSync(join(repoRoot, 'src/ui/CharacterPane.tsx'), 'utf8');
     for (const source of [draftSource, characterSource]) {
@@ -210,6 +215,22 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
       expect(source).toContain('onRestoreRefusalOriginal');
       expect(source).toContain('onContinuePartialRefusal');
     }
+    expect(draftSource.match(/diagnostics: result\.diagnostics/g)?.length).toBe(5);
+    expect(draftSource.match(/prefillContent: result\.prefillContent/g)?.length).toBe(5);
+    expect(characterSource.match(/diagnostics: result\.diagnostics/g)?.length).toBe(2);
+    expect(characterSource.match(/prefillContent: result\.prefillContent/g)?.length).toBe(2);
+    expect(draftSource).toContain('const activeWritingWaitingPhrase = reply.refusalRetrying');
+    expect(draftSource).toContain('{activeWritingWaitingPhrase}</div>');
+    expect(draftSource).toContain('onRefusalRetry: () =>');
+    expect(draftSource).toContain('onRefusalRetry();');
+  });
+
+  it('marks built-in-only global prompt-pack changes as exportable state', () => {
+    const defaults = createDefaultPromptPackLibrary();
+    expect(isDefaultPromptPackLibrary(defaults)).toBe(true);
+    expect(isDefaultPromptPackLibrary({ ...defaults, defaultPrefixCompletion: 'always' })).toBe(false);
+    expect(isDefaultPromptPackLibrary({ ...defaults, includeTail: true })).toBe(false);
+    expect(isDefaultPromptPackLibrary({ ...defaults, activePackId: null })).toBe(false);
   });
 
   it('keeps CONTENT_FILTER copy separate and exposes a stable REFUSAL tree diagnostic', () => {

@@ -354,6 +354,22 @@ export function validatePromptPackLibrary(raw: unknown): PromptPackLibrary {
   };
 }
 
+/** Returns whether the library still has the untouched built-in defaults. */
+export function isDefaultPromptPackLibrary(library: PromptPackLibrary): boolean {
+  const normalized = validatePromptPackLibrary(library);
+  const [onlyPack] = normalized.packs;
+  return (
+    normalized.packs.length === 1 &&
+    normalized.activePackId === BUILTIN_NARRATIVE_PROMPT_PACK.id &&
+    normalized.defaultPrefixCompletion === 'on_retry' &&
+    normalized.includeTail === false &&
+    onlyPack?.id === BUILTIN_NARRATIVE_PROMPT_PACK.id &&
+    onlyPack.enabled !== false &&
+    onlyPack.readOnly === true &&
+    onlyPack.source === 'builtin'
+  );
+}
+
 function mutationResult(library: PromptPackLibrary, warning?: string): PromptPackMutationResult {
   return warning ? { ...library, warning } : { ...library };
 }
