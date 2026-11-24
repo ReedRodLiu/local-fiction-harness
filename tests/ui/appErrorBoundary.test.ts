@@ -11,6 +11,7 @@ function createStubRuntime(): PlatformRuntime {
   return {
     platform: 'web',
     diagnostics,
+    promptPackStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() },
     transport: {} as never,
     binaryDownloader: {} as never,
     storyStorage: {} as never,

@@ -18,6 +18,8 @@ import {
   mergeCharacterSummaryResult,
   newConversation,
   normalizeProposalTarget,
+  recordRefusalDiagnostic,
+  recordRefusalOriginalRestoredDiagnostic,
   resolveEffectiveModelConfig,
   restoreRefusalOriginalContent,
   summaryTargetBranchFingerprint,
@@ -298,6 +300,7 @@ export function CharacterPane(props: CharacterPaneProps) {
           mode: 'character',
           promptPackOptions,
           characterName: current.name,
+          onDiagnostic: (event) => recordRefusalDiagnostic(runtime.diagnostics, event),
         },
       });
       if (signal.aborted) return;
@@ -458,6 +461,7 @@ export function CharacterPane(props: CharacterPaneProps) {
           mode: 'character',
           promptPackOptions,
           characterName: current.name,
+          onDiagnostic: (event) => recordRefusalDiagnostic(runtime.diagnostics, event),
         },
       });
       if (signal.aborted) return;
@@ -516,6 +520,8 @@ export function CharacterPane(props: CharacterPaneProps) {
   const restoreCharacterRefusalOriginal = async (nodeId: string) => {
     if (!conversation) return;
     try {
+      let didRestore = false;
+      let refusalDiagnostics: TurnNode['diagnostics'];
       await save((state) =>
         updateCharacter(state, character.id, (live) =>
           updateConversation(live, conversation.id, (current) => {
@@ -523,10 +529,15 @@ export function CharacterPane(props: CharacterPaneProps) {
             if (!node || node.role !== 'assistant') return current;
             const restored = restoreRefusalOriginalContent(node);
             if (restored === node) return current;
+            didRestore = true;
+            refusalDiagnostics = node.diagnostics;
             return { ...current, nodes: { ...current.nodes, [nodeId]: restored } };
           }),
         ),
       );
+      if (didRestore) {
+        recordRefusalOriginalRestoredDiagnostic(runtime.diagnostics, refusalDiagnostics);
+      }
     } catch (err) {
       reply.fail(err);
     }

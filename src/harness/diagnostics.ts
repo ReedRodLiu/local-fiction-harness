@@ -3,7 +3,14 @@ import {
   normalizeReasoningEffort,
   sanitizeDiagnosticModelName,
 } from './keyConfig.ts';
-import type { KeyValueStorage, LlmTransport, ReasoningEffort, Story, StoryStorage } from './types.ts';
+import type {
+  KeyValueStorage,
+  LlmTransport,
+  NodeDiagnostics,
+  ReasoningEffort,
+  Story,
+  StoryStorage,
+} from './types.ts';
 import type { RefusalDiagnosticEvent } from './refusalWrapper.ts';
 import {
   buildRedactedStorySkeleton,
@@ -382,6 +389,24 @@ export function recordRefusalDiagnostic(
   } catch {
     // Diagnostics must never alter generation behavior.
   }
+}
+
+export function recordRefusalOriginalRestoredDiagnostic(
+  collector: DiagnosticCollector,
+  nodeDiagnostics?: Pick<NodeDiagnostics, 'refusalRoute' | 'retriedWithPrefix' | 'matchedRuleId'>,
+): void {
+  const route = nodeDiagnostics?.refusalRoute;
+  const retryCount = route
+    ? route === 'pass' ? 0 : 1
+    : nodeDiagnostics?.retriedWithPrefix ? 1 : undefined;
+  recordRefusalDiagnostic(collector, {
+    action: 'refusal_original_restored',
+    metrics: {
+      ...(route ? { refusalRoute: route } : {}),
+      ...(nodeDiagnostics?.matchedRuleId ? { matchedRuleId: nodeDiagnostics.matchedRuleId } : {}),
+      ...(retryCount !== undefined ? { retryCount } : {}),
+    },
+  });
 }
 
 export function formatDiagnosticBundleFileName(date: Date = new Date()): string {

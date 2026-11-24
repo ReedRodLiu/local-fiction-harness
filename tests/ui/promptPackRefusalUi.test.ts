@@ -459,6 +459,12 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
 
   it('wires prompt-pack backup export, restore persistence, and summary text through App', () => {
     const appSource = readFileSync(join(repoRoot, 'src/ui/App.tsx'), 'utf8');
+    expect(appSource).toContain('loadPromptPackLibrary(runtime.promptPackStorage)');
+    expect(appSource).toContain('savePromptPackLibrary(runtime.promptPackStorage, next)');
+    expect(appSource).not.toContain('window.localStorage');
+    expect(appSource).toContain('diagnostics: runtime.diagnostics');
+    expect(appSource).toContain('onDiagnostic: (event) => recordRefusalDiagnostic(runtime.diagnostics, event)');
+    expect(appSource.match(/recordRefusalOriginalRestoredDiagnostic\(runtime\.diagnostics, node\.diagnostics\)/g)?.length).toBe(1);
     expect(appSource).toContain('promptPacks: promptPackLibrary');
     expect(appSource).toContain('setPromptPackLibrary(merged.promptPacks)');
     expect(appSource).toContain('个提示词包与我的记忆');
@@ -472,6 +478,8 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
       expect(source).toContain('streamPrefixContinuation');
       expect(source).toContain('onRestoreRefusalOriginal');
       expect(source).toContain('onContinuePartialRefusal');
+      expect(source.match(/onDiagnostic: \(event\) => recordRefusalDiagnostic\(runtime\.diagnostics, event\)/g)?.length).toBe(2);
+      expect(source.match(/recordRefusalOriginalRestoredDiagnostic\(runtime\.diagnostics, refusalDiagnostics\)/g)?.length).toBe(1);
     }
     expect(draftSource.match(/diagnostics: result\.diagnostics/g)?.length).toBe(5);
     expect(draftSource.match(/prefillContent: result\.prefillContent/g)?.length).toBe(5);

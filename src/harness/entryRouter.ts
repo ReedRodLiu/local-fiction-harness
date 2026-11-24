@@ -390,7 +390,9 @@ export async function routeEntryMessage(
   callbacks: TurnCallbacks = {},
   publicMemoryMarkdown = '',
   promptPackOptions?: PromptPackContextOptions,
-  refusalOptions?: RefusalStreamIntegrationOptions,
+  refusalOptions?: Omit<RefusalStreamIntegrationOptions, 'mode'> & {
+    mode?: RefusalStreamIntegrationOptions['mode'];
+  },
 ): Promise<EntryRouteResult> {
   const effectivePromptPackOptions = refusalOptions?.promptPackOptions ?? promptPackOptions;
   const cleanedHistory = excludeRefusedTurns(neutralHistory);

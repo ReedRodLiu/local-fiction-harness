@@ -242,6 +242,7 @@ export interface BinaryDownloader {
 export interface PlatformRuntime {
   platform: 'web' | 'android';
   diagnostics: DiagnosticCollector;
+  promptPackStorage: KeyValueStorage;
   transport: LlmTransport;
   binaryDownloader: BinaryDownloader;
   storyStorage: StoryStorage;

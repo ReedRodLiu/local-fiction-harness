@@ -40,6 +40,8 @@ import {
   normalizeReasoningEffort,
   parseAndValidateFolioBackup,
   projectStoryTreeSpine,
+  recordRefusalDiagnostic,
+  recordRefusalOriginalRestoredDiagnostic,
   resolveEffectiveModelConfig,
   restoreRefusalOriginalContent,
   routeEntryMessage,
@@ -207,12 +209,12 @@ export function App({ runtime }: AppProps) {
   const { asyncError, dismissAsyncError } = useAppAsyncError();
 
   const [promptPackLibrary, setPromptPackLibraryState] = useState<PromptPackLibrary>(() =>
-    loadPromptPackLibrary(window.localStorage),
+    loadPromptPackLibrary(runtime.promptPackStorage),
   );
   const setPromptPackLibrary = useCallback((next: PromptPackLibrary) => {
-    const saved = savePromptPackLibrary(window.localStorage, next);
+    const saved = savePromptPackLibrary(runtime.promptPackStorage, next);
     setPromptPackLibraryState(saved);
-  }, []);
+  }, [runtime]);
   const configStore = useMemo(
     () => createAsyncModelConfigStore(runtime.secretStore),
     [runtime],
@@ -222,6 +224,7 @@ export function App({ runtime }: AppProps) {
       createFictionHarness({
         transport: runtime.transport,
         storage: runtime.storyStorage,
+        diagnostics: runtime.diagnostics,
         loadPublicDocument: async () => (await runtime.creativeStorage?.load())?.publicDocument ?? emptyWorkspace().publicDocument,
         promptPackLibrary,
       }),
@@ -1140,11 +1143,13 @@ export function App({ runtime }: AppProps) {
       if (!node || node.role !== 'assistant') throw new Error('拒答节点不存在。');
       const restored = restoreRefusalOriginalContent(node);
       if (restored === node) throw new Error('没有可恢复的首次原稿。');
-      return harness.saveStory({
+      const saved = await harness.saveStory({
         ...latest,
         nodes: { ...latest.nodes, [nodeId]: restored },
         updatedAt: Math.max(Date.now(), latest.updatedAt + 1),
       });
+      recordRefusalOriginalRestoredDiagnostic(runtime.diagnostics, node.diagnostics);
+      return saved;
     }, '恢复首次原稿失败。');
 
   const handleContinuePartialRefusal = (nodeId: string) => {
@@ -1343,6 +1348,9 @@ export function App({ runtime }: AppProps) {
         },
         publicMem,
         welcomePromptPackOptions,
+        {
+          onDiagnostic: (event) => recordRefusalDiagnostic(runtime.diagnostics, event),
+        },
       )
         .then(async (routed) => {
           if (controller.signal.aborted || !isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) {
