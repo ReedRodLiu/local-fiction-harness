@@ -437,4 +437,35 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     corrupted.stories[0]!.nodes.n2!.prefillContent = 42;
     expect(() => parseAndValidateFolioBackup(JSON.stringify(corrupted))).toThrow(/prefillContent/);
   });
+
+  it('preserves incoming built-in enabled: false state when the local prompt-pack library is untouched defaults', () => {
+    const merged = mergeRestoredBackup(
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        promptPacks: {
+          packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+          activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+          defaultPrefixCompletion: 'on_retry',
+          includeTail: false,
+        },
+      },
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        promptPacks: {
+          packs: [{ ...BUILTIN_NARRATIVE_PROMPT_PACK, enabled: false }],
+          activePackId: null,
+          defaultPrefixCompletion: 'on_retry',
+          includeTail: false,
+        },
+      },
+    );
+
+    const builtin = merged.promptPacks?.packs.find(
+      (pack) => pack.id === BUILTIN_NARRATIVE_PROMPT_PACK.id,
+    );
+    expect(builtin?.enabled).toBe(false);
+    expect(merged.promptPacks?.activePackId).toBeNull();
+  });
 });

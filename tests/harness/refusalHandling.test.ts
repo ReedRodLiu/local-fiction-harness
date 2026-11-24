@@ -12,6 +12,7 @@ import {
 import { DELIVERY_CASES, SKELETON_CASES } from './refusalCalibrationCases.ts';
 import {
   REFUSAL_EXHAUSTED_MESSAGE,
+  splitRefusalProtocolContent,
   streamWithRefusalHandling,
   type RefusalDiagnosticEvent,
   type RefusalHandlingOptions,
@@ -809,7 +810,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
       refusalRoute: 'partial_refused',
       recoveredFromText: firstRaw,
       retriedWithPrefix: true,
-      matchedRuleId: 'L1-02',
+      matchedRuleId: 'L1-06',
     });
     expect(actions).toEqual(['refusal_detected', 'refusal_partial_delivered']);
   });
@@ -1693,6 +1694,147 @@ describe('Spec #132 exhaustion isolation integration', () => {
     expect(transport.requests[1].messages).toContainEqual({
       role: 'system',
       content: '请直接续写当前场景，用具体动作、对白与感官细节自然推进。',
+    });
+  });
+
+  it('closes lfh-route and lfh-proposal fences on matching backticks so trailing refusals are detected', async () => {
+    const proposalWithRefusal = [
+      '```lfh-proposal',
+      'target: setting',
+      'op: append',
+      'summary: 补充线索',
+      '---',
+      '- 码头新增守夜人。',
+      '```',
+      '',
+      '抱歉，我不能帮你写这段内容。',
+    ].join('\n');
+
+    expect(splitRefusalProtocolContent(proposalWithRefusal)).toEqual({
+      body: '抱歉，我不能帮你写这段内容。',
+      hasProtocolArtifacts: true,
+    });
+
+    const routeWithRefusal = [
+      '```lfh-route',
+      'mode: story',
+      'title: 雾港',
+      '---',
+      '## 设定',
+      '雾港。',
+      '```',
+      '',
+      '这个请求我不会提供，请换一个话题。',
+    ].join('\n');
+
+    expect(splitRefusalProtocolContent(routeWithRefusal)).toEqual({
+      body: '这个请求我不会提供，请换一个话题。',
+      hasProtocolArtifacts: true,
+    });
+
+    const transport = scriptedTransport([
+      () => stream([{ contentDelta: proposalWithRefusal }, { finishReason: 'stop' }]),
+    ]);
+    const diagnostics: RefusalDiagnosticEvent[] = [];
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      onDiagnostic: (event) => diagnostics.push(event),
+    }));
+
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'partial_refused',
+      matchedRuleId: 'L1-02',
+    });
+    expect(diagnostics.map((event) => event.action)).toEqual(['refusal_partial_delivered']);
+  });
+
+  it('uses retry matchedRuleId when a retry ends in partial_refused', async () => {
+    const firstRefusal = '抱歉，我不能帮你写这段内容。';
+    const retryPartial = [
+      '```lfh-proposal',
+      'target: setting',
+      'op: append',
+      'summary: 补充线索',
+      '---',
+      '- 码头新增守夜人。',
+      '```',
+      '',
+      '这个请求我不会提供，请换一个话题。',
+    ].join('\n');
+    const transport = scriptedTransport([
+      () => stream([{ contentDelta: firstRefusal }, { finishReason: 'stop' }]),
+      () => stream([{ contentDelta: retryPartial }, { finishReason: 'stop' }]),
+    ]);
+    const diagnostics: RefusalDiagnosticEvent[] = [];
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      onDiagnostic: (event) => diagnostics.push(event),
+    }));
+
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'partial_refused',
+      recoveredFromText: firstRefusal,
+      matchedRuleId: 'L1-06',
+    });
+    expect(diagnostics.at(-1)).toMatchObject({
+      action: 'refusal_partial_delivered',
+      metrics: {
+        refusalRoute: 'partial_refused',
+        matchedRuleId: 'L1-06',
+        retryCount: 1,
+      },
+    });
+  });
+
+  it('keeps observation gate closed inside lfh-route prefill even when setting markdown exceeds 120 chars', async () => {
+    const prefill = '```lfh-route\nmode: story\n';
+    const chunk1 = `${prefill}title: 雾港长设定\n---\n## 设定\n${'雾港规则。'.repeat(30)}\n`;
+    const chunk2 = '```\n\n雾港第一幕从渡口灯光亮起。';
+    const deltasAtChunk1: string[] = [];
+    let chunkIndex = 0;
+    const transport: LlmTransport = {
+      async *streamChat() {
+        chunkIndex = 1;
+        yield { contentDelta: chunk1 };
+        expect(deltasAtChunk1).toEqual([]);
+        chunkIndex = 2;
+        yield { contentDelta: chunk2 };
+        yield { finishReason: 'stop' };
+      },
+    };
+
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      promptPackOptions: {
+        promptPackLibrary: library,
+        generationPreference: { prefixCompletion: 'always' },
+      },
+      prefixContent: prefill,
+      callbacks: {
+        onContentDelta: (delta) => {
+          if (chunkIndex === 1) deltasAtChunk1.push(delta);
+        },
+      },
+    }));
+
+    expect(deltasAtChunk1).toEqual([]);
+    expect(result.content).toBe(`${chunk1}${chunk2}`);
+
+    const prefilledPartial = [
+      prefill,
+      '```',
+      '抱歉，我不能帮你写这段内容。',
+    ].join('\n');
+    const partialTransport = scriptedTransport([
+      () => stream([{ contentDelta: prefilledPartial }, { finishReason: 'stop' }]),
+    ]);
+    const partialResult = await streamWithRefusalHandling(baseOptions(partialTransport, {
+      promptPackOptions: {
+        promptPackLibrary: library,
+        generationPreference: { prefixCompletion: 'always' },
+      },
+      prefixContent: prefill,
+    }));
+    expect(partialResult.diagnostics).toMatchObject({
+      refusalRoute: 'partial_refused',
+      matchedRuleId: 'L1-02',
     });
   });
 });

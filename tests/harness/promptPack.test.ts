@@ -156,6 +156,25 @@ describe('Prompt Pack storage and exchange formats', () => {
     expect(JSON.stringify(pack.slots)).not.toContain('不应导入');
   });
 
+  it('places standard SillyTavern main prompts with injection_position 0 and injection_depth 0 into head', () => {
+    const pack = importSillyTavernPresetJson(
+      JSON.stringify({
+        name: '标准 ST 预设',
+        prompts: [
+          { identifier: 'main', content: '标准主规则', injection_position: 0, injection_depth: 0 },
+          { identifier: 'mid', content: '相对位置中段', injection_position: 0, injection_depth: 1 },
+          { identifier: 'deep-pos1', content: '深层注入中段', injection_position: 1, injection_depth: 4 },
+          { identifier: 'tail-pos1', content: '绝对深度尾部', injection_position: 1, injection_depth: 0 },
+          { identifier: 'tail-undef', content: '无位置浅深度尾部', injection_depth: 2 },
+        ],
+      }),
+    );
+
+    expect(pack.slots.head).toBe('标准主规则');
+    expect(pack.slots.mid).toBe('相对位置中段\n\n深层注入中段');
+    expect(pack.slots.tail).toBe('绝对深度尾部\n\n无位置浅深度尾部');
+  });
+
   it('resolves global activation, per-entry off, and prefix defaults', () => {
     const custom = createPromptPack('custom', { head: '自定义', mid: '', tail: '' });
     const library: PromptPackLibrary = {

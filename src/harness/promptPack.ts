@@ -7,8 +7,6 @@ import type {
 } from './types.ts';
 
 export const PROMPT_PACK_STORAGE_KEY = 'lfh.prompt_packs.v1';
-export const PROMPT_PACKS_STORAGE_KEY = PROMPT_PACK_STORAGE_KEY;
-export const PROMPT_PACK_LIBRARY_STORAGE_KEY = PROMPT_PACK_STORAGE_KEY;
 
 export const PROMPT_PACK_LIMITS = {
   head: 24_000,
@@ -86,7 +84,6 @@ export interface PromptPackContextOptions {
   promptPack?: PromptPack | EffectivePromptPack | null;
   /** Tail is deliberately opt-in so normal turns retain a stable prefix. */
   includePromptPackTail?: boolean;
-  includeTail?: boolean;
 }
 
 export const PROMPT_PACK_SEMANTIC_PRIORITY =
@@ -634,7 +631,10 @@ export function importSillyTavernPresetJson(raw: string, title?: string): Prompt
     if (!isRecord(item) || item.enabled === false || containsExcludedSillyTavernPlaceholder(item)) continue;
     if (typeof item.content !== 'string' || !item.content.trim()) continue;
     const depth = typeof item.injection_depth === 'number' ? item.injection_depth : undefined;
-    if (depth !== undefined && depth <= 2) {
+    const isTailInjection =
+      (item.injection_position === 1 && depth !== undefined && depth <= 2) ||
+      (item.injection_position === undefined && depth !== undefined && depth > 0 && depth <= 2);
+    if (isTailInjection) {
       appendSlot(slots, 'tail', item.content);
     } else if (!headAssigned) {
       appendSlot(slots, 'head', item.content);

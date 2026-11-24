@@ -152,12 +152,15 @@ export function toCompactPreview(
  * prefers persisted `turnSummary` for AI turns, otherwise sanitizes Markdown & truncates cleanly.
  */
 export function formatTurnPreview(
-  node: Pick<TurnNode, 'role' | 'content' | 'turnSummary'>,
+  node: Pick<TurnNode, 'role' | 'content' | 'turnSummary' | 'diagnostics'>,
   options?: { aiMaxLen?: number; userMaxLen?: number; emptyFallback?: string },
 ): string {
   const emptyFallback = options?.emptyFallback ?? '（空内容）';
   if (node.role === 'assistant') {
-    const summary = node.turnSummary ? stripMarkdownToPlainText(node.turnSummary) : '';
+    const summary =
+      node.diagnostics?.sourceStatus === 'REFUSAL' || !node.turnSummary
+        ? ''
+        : stripMarkdownToPlainText(node.turnSummary);
     if (summary) return summary;
     return toCompactPreview(node.content, options?.aiMaxLen ?? AI_PREVIEW_MAX_CHARS, emptyFallback);
   }

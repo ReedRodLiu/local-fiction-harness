@@ -360,10 +360,10 @@ export function buildEntryRouteMessages(
   promptPackOptions?: PromptPackContextOptions,
 ): LlmMessage[] {
   const effectivePromptPack = resolvePromptPackContext(promptPackOptions);
-  const baseSystemPrompt = effectivePromptPack.enabled
-    ? `${ENTRY_ROUTE_SYSTEM_PROMPT}\n${CHANGE_PROMPT}`
-    : ENTRY_ROUTE_SYSTEM_PROMPT;
-  const messages: LlmMessage[] = buildPromptPackAnchorMessages(baseSystemPrompt, effectivePromptPack);
+  const messages: LlmMessage[] = buildPromptPackAnchorMessages(
+    ENTRY_ROUTE_SYSTEM_PROMPT,
+    effectivePromptPack,
+  );
   if (publicMemoryMarkdown.trim()) {
     messages.push({
       role: 'system',
@@ -375,7 +375,7 @@ export function buildEntryRouteMessages(
   }
   const tail = promptPackTailMessage(
     effectivePromptPack,
-    promptPackOptions?.includePromptPackTail ?? promptPackOptions?.includeTail ?? false,
+    promptPackOptions?.includePromptPackTail ?? false,
   );
   if (tail) messages.push(tail);
   messages.push({ role: 'user', content: userInput });
@@ -412,7 +412,7 @@ export async function routeEntryMessage(
     callbacks,
     mode: refusalOptions?.mode ?? routePrefillMode,
     ...(effectivePromptPackOptions ? { promptPackOptions: effectivePromptPackOptions } : {}),
-    prefixContent: `\`\`\`lfh-route\nmode: ${routePrefillMode}\n`,
+    prefixContent: refusalOptions?.prefixContent ?? `\`\`\`lfh-route\nmode: ${routePrefillMode}\n`,
     ...(refusalOptions?.characterName ? { characterName: refusalOptions.characterName } : {}),
     ...(refusalOptions?.onDiagnostic ? { onDiagnostic: refusalOptions.onDiagnostic } : {}),
     toVisibleContent: visibleEntryRoutePrefix,

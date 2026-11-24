@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   BUILTIN_NARRATIVE_PROMPT_PACK,
+  CHANGE_PROMPT,
   EMPTY_SUMMARY_SNAPSHOT,
+  ENTRY_ROUTE_SYSTEM_PROMPT,
+  buildEntryRouteMessages,
   characterContext,
   classifyEntryHeuristic,
   convertActiveAssetMode,
@@ -351,5 +354,53 @@ describe('V0.2 entryRouter & unified mode helpers', () => {
     expect(ctx.messages[0].content).toContain('你是该角色本人');
     expect(ctx.messages[1].content).toContain('我的记忆');
     expect(ctx.messages[2].content).toContain('角色设定');
+  });
+
+  it('respects refusalOptions.prefixContent and omits pack-only CHANGE_PROMPT divergence in buildEntryRouteMessages', async () => {
+    const packMessages = buildEntryRouteMessages('开一个雾港文游', [], '记忆', {
+      promptPackLibrary: {
+        packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+        activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+      },
+    });
+    const systemText = packMessages.map((message) => message.content).join('\n');
+    expect(systemText).toContain(ENTRY_ROUTE_SYSTEM_PROMPT);
+    expect(systemText).not.toContain(CHANGE_PROMPT);
+
+    let capturedRequest: LlmStreamRequest | undefined;
+    const transport: LlmTransport = {
+      async *streamChat(nextRequest) {
+        capturedRequest = nextRequest;
+        yield {
+          contentDelta: '```lfh-route\nmode: writing\ntitle: 自定义前缀\n---\n## 设定\n雨夜。\n```\n正文开始。',
+        };
+        yield { finishReason: 'stop' };
+      },
+    };
+
+    const customPrefill = '```lfh-route\nmode: writing\n';
+    const result = await routeEntryMessage(
+      '我想写个故事',
+      [],
+      transport,
+      testConfig,
+      {},
+      '',
+      undefined,
+      {
+        prefixContent: customPrefill,
+        promptPackOptions: {
+          promptPackLibrary: {
+            packs: [BUILTIN_NARRATIVE_PROMPT_PACK],
+            activePackId: BUILTIN_NARRATIVE_PROMPT_PACK.id,
+          },
+          generationPreference: { prefixCompletion: 'always' },
+        },
+      },
+    );
+
+    expect(capturedRequest?.prefixCompletion?.content).toBe(customPrefill);
+    expect(result.mode).toBe('writing');
+    expect(result.prefillContent).toBe(customPrefill);
   });
 });

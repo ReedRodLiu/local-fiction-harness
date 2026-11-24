@@ -547,6 +547,17 @@ function mergePromptPackLibraries(
   const idRemap = new Map<string, string>();
   const packs: PromptPack[] = current.packs.map((pack) => cloneJson(pack));
 
+  const incomingBuiltin = restored.packs.find(
+    (pack) => pack.id === BUILTIN_NARRATIVE_PROMPT_PACK.id,
+  );
+  if (!currentHasCustomState && incomingBuiltin?.enabled === false) {
+    for (let index = 0; index < packs.length; index += 1) {
+      if (packs[index]?.id === BUILTIN_NARRATIVE_PROMPT_PACK.id) {
+        packs[index] = { ...packs[index], enabled: false };
+      }
+    }
+  }
+
   for (const incomingPack of restored.packs) {
     if (incomingPack.id === BUILTIN_NARRATIVE_PROMPT_PACK.id) continue;
     let nextPack = cloneJson(incomingPack);

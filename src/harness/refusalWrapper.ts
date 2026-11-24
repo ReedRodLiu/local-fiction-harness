@@ -17,7 +17,6 @@ import {
   type RefusalRoute,
 } from './thinDelivery.ts';
 import type {
-  AbortSignalLike,
   LlmMessage,
   LlmStreamDelta,
   LlmStreamRequest,
@@ -101,7 +100,7 @@ type AttemptResult = {
 type AttemptOutcome = AttemptRefusal | AttemptResult;
 
 const PROTOCOL_FENCE_OPEN_RE =
-  /^[ \t]{0,3}`{3,}[ \t]*(lfh-(?:summary|proposal|change|choices|hud|route|manuscript-intent))\b/;
+  /^[ \t]{0,3}(`{3,})[ \t]*(lfh-(?:summary|proposal|change|choices|hud|route|manuscript-intent))\b/;
 
 /**
  * Removes complete or still-open lfh protocol fences before refusal detection.
@@ -139,48 +138,6 @@ export function splitRefusalProtocolContent(raw: string): {
     body: body.join('\n').trim(),
     hasProtocolArtifacts,
   };
-}
-
-function createInternalAbort(): { signal: AbortSignalLike; abort: () => void } {
-  const Controller = (globalThis as {
-    AbortController?: new () => {
-      signal: AbortSignalLike;
-      abort: () => void;
-    };
-  }).AbortController;
-  if (Controller) {
-    const controller = new Controller();
-    return { signal: controller.signal, abort: () => controller.abort() };
-  }
-  let aborted = false;
-  return {
-    signal: {
-      get aborted() {
-        return aborted;
-      },
-    },
-    abort: () => {
-      aborted = true;
-    },
-  };
-}
-
-function bindExternalAbort(
-  signal: AbortSignalLike | undefined,
-  abort: () => void,
-): () => void {
-  if (!signal) return () => {};
-  if (signal.aborted) {
-    abort();
-    return () => {};
-  }
-  const target = signal as AbortSignalLike & {
-    addEventListener?: (type: 'abort', listener: () => void, options?: { once?: boolean }) => void;
-    removeEventListener?: (type: 'abort', listener: () => void) => void;
-  };
-  if (!target.addEventListener) return () => {};
-  target.addEventListener('abort', abort, { once: true });
-  return () => target.removeEventListener?.('abort', abort);
 }
 
 function createAbortError(): Error {
@@ -327,15 +284,13 @@ async function runAttempt(
   const prefixContent = shouldPrefix ? prefillFor(options) : undefined;
   const retryTail = effective.slots.tail.trim() || REFUSAL_RETRY_TAIL;
   const messages = attempt === 'retry' ? withRetryTail(options.messages, retryTail) : options.messages;
-  const internalAbort = createInternalAbort();
-  const unbindExternalAbort = bindExternalAbort(options.callbacks?.signal, internalAbort.abort);
   const request: LlmStreamRequest = {
     baseUrl: options.config.baseUrl,
     apiKey: options.config.apiKey,
     model: options.config.model,
     reasoningEffort,
     messages,
-    signal: internalAbort.signal,
+    signal: options.callbacks?.signal,
     ...(prefixContent !== undefined ? { prefixCompletion: { content: prefixContent } } : {}),
   };
 
@@ -358,8 +313,11 @@ async function runAttempt(
     matchedRuleId?: string;
     bodyChars: number;
   } => {
-    const detectedContent = stripSentPrefix(raw, prefixContent);
-    const { body, hasProtocolArtifacts } = splitRefusalProtocolContent(detectedContent);
+    const { body: strippedBody, hasProtocolArtifacts } = splitRefusalProtocolContent(raw);
+    const narrativePrefix = prefixContent
+      ? splitRefusalProtocolContent(prefixContent).body
+      : undefined;
+    const body = stripSentPrefix(strippedBody, narrativePrefix).trim();
     const verdict = judgeRefusal(body);
     return {
       route: routeRefusal(body, Boolean(verdict), deliveryOptions(options.mode, hasProtocolArtifacts)),
@@ -452,8 +410,6 @@ async function runAttempt(
     }
     emitVisible();
     throw error;
-  } finally {
-    unbindExternalAbort();
   }
 }
 
@@ -478,20 +434,6 @@ export async function streamWithRefusalHandling(
 
   const first = await runAttempt(options, effective, 'first');
   if (first.kind === 'result') {
-    if (
-      first.diagnostics?.sourceStatus === 'REFUSAL' &&
-      (first.diagnostics.refusalRoute === 'retry' ||
-        first.diagnostics.refusalRoute === 'retry-skeleton')
-    ) {
-      emitDiagnostic(
-        options,
-        effective,
-        'refusal_detected',
-        first.diagnostics.refusalRoute,
-        0,
-        first.diagnostics.matchedRuleId,
-      );
-    }
     if (first.diagnostics?.refusalRoute === 'partial_refused') {
       emitDiagnostic(
         options,
@@ -553,11 +495,12 @@ export async function streamWithRefusalHandling(
   }
 
   if (retry.kind === 'result' && retry.diagnostics?.refusalRoute === 'partial_refused') {
+    const matchedRuleId = retry.diagnostics.matchedRuleId ?? first.matchedRuleId;
     const diagnostics: NodeDiagnostics = {
       refusalRoute: 'partial_refused',
       recoveredFromText: first.raw,
       retriedWithPrefix,
-      matchedRuleId: first.matchedRuleId,
+      matchedRuleId,
     };
     emitDiagnostic(
       options,
@@ -565,7 +508,7 @@ export async function streamWithRefusalHandling(
       'refusal_partial_delivered',
       'partial_refused',
       1,
-      first.matchedRuleId,
+      matchedRuleId,
     );
     throwIfAborted(options);
     return {
