@@ -40,6 +40,7 @@ import {
   type RefusalStreamIntegrationOptions,
 } from './refusalWrapper.ts';
 import type { PublicResearchReference } from './publicResearch.ts';
+import { mergeLlmUsage } from './usageSavings.ts';
 import type {
   AbortSignalLike,
   DocumentRead,
@@ -53,6 +54,7 @@ import type {
   TurnCallbacks,
   TurnNode,
   TurnProposalRecord,
+  TurnUsageTelemetry,
 } from './types.ts';
 
 export type InteractionMode = 'personal' | 'roleplay';
@@ -208,6 +210,7 @@ export function appendWorkDiscussionTurn(
     reasoningEffort?: ReasoningEffort;
     diagnostics?: TurnNode['diagnostics'];
     prefillContent?: string;
+    telemetry?: TurnUsageTelemetry;
     parentId?: string | null;
     id?: string;
     createdAt?: number;
@@ -233,6 +236,7 @@ export function appendWorkDiscussionTurn(
     ...(nodeInput.reasoningEffort ? { reasoningEffort: nodeInput.reasoningEffort } : {}),
     ...(nodeInput.diagnostics ? { diagnostics: nodeInput.diagnostics } : {}),
     ...(nodeInput.prefillContent !== undefined ? { prefillContent: nodeInput.prefillContent } : {}),
+    ...(nodeInput.telemetry ? { telemetry: nodeInput.telemetry } : {}),
     createdAt: nodeInput.createdAt ?? Date.now(),
     summarySnapshot: parentSnapshot,
     ...(nodeInput.documentReads ? { documentReads: nodeInput.documentReads } : {}),
@@ -489,6 +493,21 @@ export function isSummaryTargetUnchanged(
     summaryTargetBranchFingerprint(liveNodes, targetLeafId) === expectedBranchFingerprint;
 }
 
+function mergeSummaryLeafNode(liveNode: TurnNode, updatedLeaf: TurnNode): TurnNode {
+  const mergedSummaryUsage = updatedLeaf.telemetry?.summaryUsage
+    ? mergeLlmUsage(liveNode.telemetry?.summaryUsage, updatedLeaf.telemetry.summaryUsage)
+    : undefined;
+  const nextTelemetry =
+    liveNode.telemetry && mergedSummaryUsage
+      ? { ...liveNode.telemetry, summaryUsage: mergedSummaryUsage }
+      : liveNode.telemetry ?? updatedLeaf.telemetry;
+  return {
+    ...liveNode,
+    summarySnapshot: updatedLeaf.summarySnapshot,
+    ...(nextTelemetry ? { telemetry: nextTelemetry } : {}),
+  };
+}
+
 export function mergeWorkSummaryResult(
   liveWork: DraftWork,
   summarizedWork: DraftWork,
@@ -507,10 +526,7 @@ export function mergeWorkSummaryResult(
 
   const nextNodes = {
     ...liveTree.nodes,
-    [targetLeafId]: {
-      ...liveTree.nodes[targetLeafId],
-      summarySnapshot: updatedLeaf.summarySnapshot,
-    },
+    [targetLeafId]: mergeSummaryLeafNode(liveTree.nodes[targetLeafId], updatedLeaf),
   };
   return {
     ...liveWork,
@@ -542,10 +558,7 @@ export function mergeCharacterSummaryResult(
     ...liveConversation,
     nodes: {
       ...liveConversation.nodes,
-      [targetLeafId]: {
-        ...liveConversation.nodes[targetLeafId],
-        summarySnapshot: updatedLeaf.summarySnapshot,
-      },
+      [targetLeafId]: mergeSummaryLeafNode(liveConversation.nodes[targetLeafId], updatedLeaf),
     },
   };
 }
@@ -731,6 +744,7 @@ export async function streamCreativeReply(
     reasoningContent: result.reasoningContent,
     ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
     ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
+    ...(result.usage ? { usage: result.usage } : {}),
     model: config.model,
     reasoningEffort,
   };

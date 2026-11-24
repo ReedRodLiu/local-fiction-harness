@@ -8,6 +8,8 @@ export * from './scriptParser.ts';
 export * from './blueprint.ts';
 export * from './storyStorage.ts';
 export * from './context.ts';
+export * from './retrievableContext.ts';
+export * from './usageSavings.ts';
 export * from './messageFormat.ts';
 export * from './branches.ts';
 export * from './storyTree.ts';

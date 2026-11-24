@@ -18,11 +18,17 @@ import {
   type PromptPackLibrary,
 } from './promptPack.ts';
 import { publicResearchContextMessage, type PublicResearchReference } from './publicResearch.ts';
+import {
+  formatRetrievableContextMessage,
+  retrieveCoveredBranchContext,
+} from './retrievableContext.ts';
+import { mergeLlmUsage } from './usageSavings.ts';
 import type {
   AbortSignalLike,
   GenerationPreference,
   LlmMessage,
   LlmTransport,
+  LlmUsage,
   ModelConfig,
   PlotSummarySnapshot,
   Story,
@@ -49,8 +55,12 @@ export const DEFAULT_CONTEXT_BUDGET: ContextBudgetConfig = {
 export interface ThreeZoneMetrics {
   anchorChars: number;
   summaryChars: number;
+  retrievedChars?: number;
+  retrievedNodeCount?: number;
   recentChars: number;
   recentNodeCount: number;
+  compressedPromptChars?: number;
+  uncompressedPromptChars?: number;
   totalEstimatedTokens: number;
 }
 
@@ -308,6 +318,7 @@ export function assembleThreeZoneContext(
     includePromptPackTail?: boolean;
     includeTail?: boolean;
     publicResearch?: PublicResearchReference;
+    enableRetrievable?: boolean;
   },
   promptPackOptions?: PromptPackContextOptions,
 ): ThreeZoneContextResult {
@@ -384,6 +395,27 @@ export function assembleThreeZoneContext(
     messages.push({ role: 'system', content: summaryMsg });
   }
 
+  let retrievedChars = 0;
+  let retrievedNodeCount = 0;
+  if (requestDocuments?.enableRetrievable !== false && targetParentId && trimmedInput) {
+    const recentIds = new Set(recentNodes.map((node) => node.id));
+    const retrieval = retrieveCoveredBranchContext({
+      nodes: story.nodes,
+      targetParentId,
+      coveredUpToNodeId: snapshot.coveredUpToNodeId,
+      excludeNodeIds: recentIds,
+      excludeSetupIds: setupFilter.hasRawScript ? setupFilter.setupNodeIds : undefined,
+      query: trimmedInput,
+      formatContent: (node) => getEffectiveNodeContent(node, setupFilter),
+    });
+    const retrievedMessage = formatRetrievableContextMessage(retrieval.selected);
+    if (retrievedMessage) {
+      retrievedChars = retrievedMessage.content.length;
+      retrievedNodeCount = retrieval.selected.length;
+      messages.push(retrievedMessage);
+    }
+  }
+
   let recentChars = 0;
   for (const node of recentNodes) {
     const content = getEffectiveNodeContent(node, setupFilter);
@@ -407,15 +439,24 @@ export function assembleThreeZoneContext(
 
   const anchorChars = anchorMessages.reduce((sum, message) => sum + message.content.length, 0) +
     (tail?.content.length ?? 0);
-  const totalChars = anchorChars + summaryChars + recentChars;
+  const fullBranchChars = excludeRefusedTurns(branchNodes).reduce(
+    (sum, node) => sum + getEffectiveNodeContent(node, setupFilter).length,
+    0,
+  );
+  const compressedPromptChars = anchorChars + summaryChars + retrievedChars + recentChars;
+  const uncompressedPromptChars = anchorChars + fullBranchChars + trimmedInput.length;
   return {
     messages,
     metrics: {
       anchorChars,
       summaryChars,
+      retrievedChars,
+      retrievedNodeCount,
       recentChars,
       recentNodeCount: recentNodes.length,
-      totalEstimatedTokens: estimateTokensFromChars(totalChars),
+      compressedPromptChars,
+      uncompressedPromptChars,
+      totalEstimatedTokens: estimateTokensFromChars(compressedPromptChars),
     },
   };
 }
@@ -644,6 +685,7 @@ export interface CreativeThreeZoneContextInput {
   includePromptPackTail?: boolean;
   includeTail?: boolean;
   publicResearch?: PublicResearchReference;
+  enableRetrievable?: boolean;
 }
 
 /**
@@ -706,6 +748,25 @@ export function assembleCreativeThreeZoneContext(
     messages.push({ role: 'system', content: summaryMsg });
   }
 
+  let retrievedChars = 0;
+  let retrievedNodeCount = 0;
+  if (input.enableRetrievable !== false && input.targetParentId && trimmedInput) {
+    const recentIds = new Set(recentNodes.map((node) => node.id));
+    const retrieval = retrieveCoveredBranchContext({
+      nodes: input.nodes,
+      targetParentId: input.targetParentId,
+      coveredUpToNodeId: snapshot.coveredUpToNodeId,
+      excludeNodeIds: recentIds,
+      query: trimmedInput,
+    });
+    const retrievedMessage = formatRetrievableContextMessage(retrieval.selected);
+    if (retrievedMessage) {
+      retrievedChars = retrievedMessage.content.length;
+      retrievedNodeCount = retrieval.selected.length;
+      messages.push(retrievedMessage);
+    }
+  }
+
   let recentChars = 0;
   for (const node of recentNodes) {
     recentChars += node.content.length;
@@ -728,15 +789,24 @@ export function assembleCreativeThreeZoneContext(
 
   const anchorChars = anchorMessages.reduce((sum, msg) => sum + msg.content.length, 0) +
     (tail?.content.length ?? 0);
-  const totalChars = anchorChars + summaryChars + recentChars;
+  const fullBranchChars = excludeRefusedTurns(branchNodes).reduce(
+    (sum, node) => sum + node.content.length,
+    0,
+  );
+  const compressedPromptChars = anchorChars + summaryChars + retrievedChars + recentChars;
+  const uncompressedPromptChars = anchorChars + fullBranchChars + trimmedInput.length;
   return {
     messages,
     metrics: {
       anchorChars,
       summaryChars,
+      retrievedChars,
+      retrievedNodeCount,
       recentChars,
       recentNodeCount: recentNodes.length,
-      totalEstimatedTokens: estimateTokensFromChars(totalChars),
+      compressedPromptChars,
+      uncompressedPromptChars,
+      totalEstimatedTokens: estimateTokensFromChars(compressedPromptChars),
     },
   };
 }
@@ -795,6 +865,7 @@ export interface SummarizeCreativeTurnNodesResult {
   snapshot: PlotSummarySnapshot;
   updated: boolean;
   status: 'done' | 'skipped' | 'failed';
+  summaryUsage?: LlmUsage;
 }
 
 /**
@@ -819,6 +890,7 @@ export async function summarizeCreativeTurnNodes(
   let currentSnapshot = initialSnapshot;
   let hadFailure = false;
   let sawOverflow = false;
+  let accumulatedUsage: LlmUsage | undefined;
 
   const maxBatchNodes = Math.max(
     1,
@@ -841,10 +913,12 @@ export async function summarizeCreativeTurnNodes(
         model: bgConfig.model,
         reasoningEffort: bgConfig.reasoningEffort,
         messages: buildSummaryCompressionMessages(previousContent, batchNodes, undefined, maxBatchChars),
+        includeUsage: true,
         signal,
       })) {
         if (signal?.aborted) return null;
         if (delta.finishReason != null) finishReason = delta.finishReason;
+        if (delta.usage) accumulatedUsage = mergeLlmUsage(accumulatedUsage, delta.usage);
         if (delta.contentDelta) content += delta.contentDelta;
       }
       if (signal?.aborted || finishReason !== 'stop') return null;
@@ -904,20 +978,32 @@ export async function summarizeCreativeTurnNodes(
     currentSnapshot.coveredUpToNodeId !== initialSnapshot.coveredUpToNodeId ||
     currentSnapshot.summarizedTurnCount !== initialSnapshot.summarizedTurnCount;
 
-  const nextNodes = updated
-    ? {
-        ...nodes,
-        [targetLeafId]: {
-          ...nodes[targetLeafId],
-          summarySnapshot: currentSnapshot,
-        },
-      }
-    : nodes;
+  const targetNode = nodes[targetLeafId];
+  const mergedTelemetry =
+    accumulatedUsage && targetNode.telemetry
+      ? {
+          ...targetNode.telemetry,
+          summaryUsage: mergeLlmUsage(targetNode.telemetry.summaryUsage, accumulatedUsage),
+        }
+      : targetNode.telemetry;
+
+  const nextNodes =
+    updated || mergedTelemetry !== targetNode.telemetry
+      ? {
+          ...nodes,
+          [targetLeafId]: {
+            ...targetNode,
+            summarySnapshot: currentSnapshot,
+            ...(mergedTelemetry ? { telemetry: mergedTelemetry } : {}),
+          },
+        }
+      : nodes;
 
   return {
     nodes: nextNodes,
     snapshot: currentSnapshot,
     updated,
     status: hadFailure ? 'failed' : sawOverflow ? 'done' : 'skipped',
+    ...(accumulatedUsage ? { summaryUsage: accumulatedUsage } : {}),
   };
 }

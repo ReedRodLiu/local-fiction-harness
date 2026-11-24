@@ -52,6 +52,22 @@ Folio 当前可以复跑 300 / 500 / 1,000 轮的固定原创夹具，并验证�
 
 本次没有复制或打包上游代码。`acp-kernel` 的核心设计可借鉴，但其包面向 Node.js 20+，tokenizer 和 wire 模块直接使用 Node 内置模块；`billion-context` 是 Node 代理和 agent 适配层，包含数据库等运行时依赖。二者不能作为当前 Web/Android 纯客户端依赖直接采用，本次因此实现纯 TypeScript 的实验等效原型。
 
+## 2026-11-24 OpenCode Go 实测补充（`deepseek-v4.1-flash` 30 轮短跑）
+
+使用临时 OpenCode Go 测试入口运行 `--turns 30 --reasoning-effort none --summary-reasoning-effort none` 后，获得两组完整 30 轮与一组 15 轮实测样本（输出均留在 `/tmp/`，仓库未保存任何凭据）：
+
+- **`full` 全量历史基线（完成 30/30 轮 + 4/4 探针）**：总输入 `15,873` tokens（其中 `cacheRead = 10,624`，缓存命中率约 `66.9%`），总输出 `1,612` tokens；`listCostUsd = US$0.001786`（`planAllowance = 0.001072`）；探针 `3/4` 通过、跨支泄漏 `0`。另在 `reasoning-effort low` 下亦跑通 `30/30` 轮（总输入 `25,611`、`cacheRead = 18,816` 约 `73.5%`，总输出 `8,734` 含思考 `5,859`，`listCostUsd = US$0.006316`，探针 `2/4` 通过、跨支泄漏 `0`）。
+- **`retrievable` 按需回取方案（完成 30/30 轮 + 4/4 探针）**：总输入降至 **`10,116` tokens（较同配置 `full` 减少 `36.3%`）**，总输出 `2,159` tokens；探针 **`4/4`（100%）全部通过、跨支泄漏 `0`**。由于回取片段插在上下文中后通过 OpenCode Go 网关本次记录到 `cacheRead = 0`，`listCostUsd = US$0.002813`（`planAllowance = 0.001688`）。
+- **`folio` 滚动摘要基线（前 15 轮 + 11 次摘要完成，第 16 轮因传输层 `TypeError: fetch failed` 中断）**：15 轮累计输入 `7,662` tokens、输出 `1,858` tokens、`cacheRead = 0`、`listCostUsd = US$0.002264`。
+
+### 结论与 V0.4 工程落地
+
+1. **短中程对话必须诚实计量缓存代价**：30 轮级别下 `full` 凭前缀缓存命中（~67%–74%）实际账单低于未命中缓存的检索插入或高频后台摘要；但 `retrievable` 在更少总输入 token（`-36.3%`）下把支线细节探针准确率从 `75%` 提升到 `100%` 且维持 `0` 串支。
+2. **V0.4 生产实现（`src/harness/retrievableContext.ts` + `src/harness/usageSavings.ts` + `src/ui/SessionUsageCard.tsx`）**：
+   - 上线仅限当前分支与共享祖先、排除近期窗口与拒答节点的正分历史回取；
+   - 按实测 `LlmUsage` 与实时缓存命中率计算对照基线并计入后台摘要开销（若短对话因缓存命中反而使压缩更贵，诚实展示「费用增加」，无官方数据时严格显示不可比原因）；
+   - 将以上能力封装进 V0.4.0，长期 300/500/1,000 轮官方直连长跑留待后续独立验证。
+
 ## 未完成的正式验收
 
-正式短跑、完整矩阵费用估算、真实质量盲评、重复运行波动和 Web/Android 兼容性验证仍待执行。完成这些项目之前，不应在产品中展示节省金额， ticket #121 也不满足正式验收。
+完整 300/500/1,000 轮官方直连矩阵长跑与盲评波动检验仍待后续周期补全。

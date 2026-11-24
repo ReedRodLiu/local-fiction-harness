@@ -5,6 +5,7 @@ import {
   appendWorkDiscussionTurn,
   buildPromptPackContextOptions,
   buildTurnProposalRecords,
+  buildTurnUsageTelemetry,
   createDefaultId,
   detectNaturalModeSwitchIntent,
   documentLineage,
@@ -51,6 +52,7 @@ import { GenerationControls, mergeGenerationPreference } from './GenerationContr
 import { MarkdownView } from './MarkdownView.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { ProposalCard } from './ProposalCard.tsx';
+import { SessionUsageCard } from './SessionUsageCard.tsx';
 import { TurnCard, TurnRefusalNotices, type ResolvedProposalTargetState } from './TurnCard.tsx';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
@@ -385,6 +387,14 @@ export function DraftPane(props: DraftPaneProps) {
             reasoningEffort: result.reasoningEffort,
             ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
             ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
+            telemetry: buildTurnUsageTelemetry({
+              baseUrl: effectiveConfig.baseUrl,
+              model: result.model ?? effectiveConfig.model,
+              generationUsage: result.usage,
+              uncompressedPromptChars: ctx.metrics.uncompressedPromptChars,
+              compressedPromptChars: ctx.metrics.compressedPromptChars,
+              retrievedNodeCount: ctx.metrics.retrievedNodeCount,
+            }),
             parentId: userId,
             documentReads: ctx.reads,
             proposals: proposalRecords.length > 0 ? proposalRecords : undefined,
@@ -486,6 +496,14 @@ export function DraftPane(props: DraftPaneProps) {
       const routed = parseManuscriptAssistantReply(raw, input, reasoningContent);
       const publicDoc = documentVersion(state.publicDocument);
       const workDoc = documentVersion(live.document);
+      const telemetry = buildTurnUsageTelemetry({
+        baseUrl: effectiveConfig.baseUrl,
+        model: effectiveConfig.model,
+        generationUsage: result.usage,
+        uncompressedPromptChars: ctx.metrics.uncompressedPromptChars,
+        compressedPromptChars: ctx.metrics.compressedPromptChars,
+        retrievedNodeCount: ctx.metrics.retrievedNodeCount,
+      });
 
       if (routed.kind === 'suggestion') {
         const hasSelection = start < end && Boolean(selectedText);
@@ -515,6 +533,7 @@ export function DraftPane(props: DraftPaneProps) {
               reasoningEffort,
               ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
               ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
+              telemetry,
               parentId: u.node.id,
               documentReads: ctx.reads,
               proposals: [synthesizedRecord],
@@ -551,6 +570,7 @@ export function DraftPane(props: DraftPaneProps) {
               reasoningEffort,
               ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
               ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
+              telemetry,
               parentId: u.node.id,
               documentReads: ctx.reads,
               proposals: proposalRecords,
@@ -584,6 +604,7 @@ export function DraftPane(props: DraftPaneProps) {
             reasoningEffort,
             ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
             ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
+            telemetry,
             parentId: u.node.id,
             documentReads: ctx.reads,
           });
@@ -759,6 +780,14 @@ export function DraftPane(props: DraftPaneProps) {
             reasoningEffort: result.reasoningEffort,
             ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
             ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
+            telemetry: buildTurnUsageTelemetry({
+              baseUrl: effectiveConfig.baseUrl,
+              model: result.model ?? effectiveConfig.model,
+              generationUsage: result.usage,
+              uncompressedPromptChars: ctx.metrics.uncompressedPromptChars,
+              compressedPromptChars: ctx.metrics.compressedPromptChars,
+              retrievedNodeCount: ctx.metrics.retrievedNodeCount,
+            }),
             parentId: userNode.id,
             documentReads: ctx.reads,
             proposals: proposalRecords.length > 0 ? proposalRecords : undefined,
@@ -1866,6 +1895,8 @@ export function DraftPane(props: DraftPaneProps) {
                 </div>
                 {exported && <div className="status-text" role="status">已导出 Markdown。</div>}
               </InsetGroup>
+
+              <SessionUsageCard nodes={discussionNodes} />
 
               <details className="branch-note-details" data-testid="branch-note-details">
                 <summary>分支笔记</summary>

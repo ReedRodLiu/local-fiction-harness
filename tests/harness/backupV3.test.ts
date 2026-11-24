@@ -571,4 +571,44 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     invalidRevisionType.workspace.characters[0].conversations[0].edits.c1 = 42;
     expect(() => parseAndValidateFolioBackup(JSON.stringify(invalidRevisionType))).toThrow(/版本引用无效/);
   });
+
+  it('round-trips TurnNode.telemetry through .folio.json v3 and rejects invalid telemetry fields', () => {
+    const story = makeSampleStory('story-telemetry');
+    const telemetry = {
+      providerKind: 'deepseek-official' as const,
+      model: 'deepseek-flash',
+      generationUsage: {
+        promptTokens: 1200,
+        completionTokens: 320,
+        promptCacheHitTokens: 900,
+        promptCacheMissTokens: 300,
+        completionTokensDetails: { reasoningTokens: 80 },
+      },
+      summaryUsage: {
+        promptTokens: 400,
+        completionTokens: 60,
+        promptCacheHitTokens: 0,
+        promptCacheMissTokens: 400,
+      },
+      uncompressedPromptChars: 12000,
+      compressedPromptChars: 3500,
+      retrievedNodeCount: 2,
+    };
+    story.nodes.n2!.telemetry = telemetry;
+    const json = exportFolioBackupV3({
+      stories: [story],
+      workspace: emptyWorkspace(),
+    });
+
+    const parsed = parseAndValidateFolioBackup(json);
+    expect(parsed.stories[0]?.nodes.n2?.telemetry).toEqual(telemetry);
+
+    const badProvider = JSON.parse(json);
+    badProvider.stories[0].nodes.n2.telemetry.providerKind = 'unknown-host';
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(badProvider))).toThrow(/providerKind/);
+
+    const badTokens = JSON.parse(json);
+    badTokens.stories[0].nodes.n2.telemetry.generationUsage.promptTokens = -5;
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(badTokens))).toThrow(/promptTokens/);
+  });
 });

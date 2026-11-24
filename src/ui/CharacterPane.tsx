@@ -3,6 +3,7 @@ import { ArrowUp, ChevronRight, Download, Edit3, Plus, Sparkles, Square } from '
 import {
   buildPromptPackContextOptions,
   buildTurnProposalRecords,
+  buildTurnUsageTelemetry,
   characterContext,
   conversationExport,
   conversationLocalVersion,
@@ -43,6 +44,7 @@ import type { DocumentEdit } from './DocumentDialog.tsx';
 import { GenerationControls, mergeGenerationPreference } from './GenerationControls.tsx';
 import { MarkdownView } from './MarkdownView.tsx';
 import { MessageContent } from './MessageContent.tsx';
+import { SessionUsageCard } from './SessionUsageCard.tsx';
 import { TurnCard, type ResolvedProposalTargetState } from './TurnCard.tsx';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
@@ -349,6 +351,14 @@ export function CharacterPane(props: CharacterPaneProps) {
               throw new Error('对话位置已变化，请从当前记录重新发送。');
             }
             const docs = { container: target.characterVersion, local: ctx.localVersion };
+            const telemetry = buildTurnUsageTelemetry({
+              baseUrl: effectiveConfig.baseUrl,
+              model: result.model ?? effectiveConfig.model,
+              generationUsage: result.usage,
+              uncompressedPromptChars: ctx.metrics.uncompressedPromptChars,
+              compressedPromptChars: ctx.metrics.compressedPromptChars,
+              retrievedNodeCount: ctx.metrics.retrievedNodeCount,
+            });
             const user = trimmed ? { ...makeTurn('user', trimmed, expectedParent), documents: docs } : null;
             const assistant = {
               ...makeTurn(
@@ -362,6 +372,7 @@ export function CharacterPane(props: CharacterPaneProps) {
               reasoningEffort: result.reasoningEffort,
               ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
               ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
+              telemetry,
               documents: docs,
               documentReads: ctx.reads,
               ...(research.reference ? { publicResearch: research.reference } : {}),
@@ -530,6 +541,14 @@ export function CharacterPane(props: CharacterPaneProps) {
         updateCharacter(workspaceState, current.id, (latest) =>
           updateConversation(latest, target.id, (live) => {
             const docs = { container: target.characterVersion, local: ctx.localVersion };
+            const telemetry = buildTurnUsageTelemetry({
+              baseUrl: effectiveConfig.baseUrl,
+              model: result.model ?? effectiveConfig.model,
+              generationUsage: result.usage,
+              uncompressedPromptChars: ctx.metrics.uncompressedPromptChars,
+              compressedPromptChars: ctx.metrics.compressedPromptChars,
+              retrievedNodeCount: ctx.metrics.retrievedNodeCount,
+            });
             const assistant = {
               ...makeTurn(
                 'assistant',
@@ -542,6 +561,7 @@ export function CharacterPane(props: CharacterPaneProps) {
               reasoningEffort: result.reasoningEffort,
               ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
               ...(result.prefillContent !== undefined ? { prefillContent: result.prefillContent } : {}),
+              telemetry,
               documents: docs,
               documentReads: ctx.reads,
               ...(research.reference ? { publicResearch: research.reference } : {}),
@@ -1321,7 +1341,9 @@ export function CharacterPane(props: CharacterPaneProps) {
               </InsetGroup>
 
               {conversation && (
-                <details className="branch-note-details" data-testid="branch-note-details">
+                <>
+                  <SessionUsageCard nodes={getActiveBranchNodes(conversation)} />
+                  <details className="branch-note-details" data-testid="branch-note-details">
                   <summary>分支笔记</summary>
                   <div className="branch-note-body">
                     <MarkdownView
@@ -1338,6 +1360,7 @@ export function CharacterPane(props: CharacterPaneProps) {
                     </button>
                   </div>
                 </details>
+                </>
               )}
             </div>
           </section>

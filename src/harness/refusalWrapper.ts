@@ -16,11 +16,13 @@ import {
   type DeliveryMode,
   type RefusalRoute,
 } from './thinDelivery.ts';
+import { mergeLlmUsage } from './usageSavings.ts';
 import type {
   LlmMessage,
   LlmStreamDelta,
   LlmStreamRequest,
   LlmTransport,
+  LlmUsage,
   ModelConfig,
   NodeDiagnostics,
   TurnCallbacks,
@@ -76,6 +78,7 @@ export interface RefusalHandlingResult {
   content: string;
   reasoningContent: string;
   finishReason?: string | null;
+  usage?: LlmUsage;
   diagnostics?: NodeDiagnostics;
   prefillContent?: string;
 }
@@ -86,6 +89,7 @@ type AttemptRefusal = {
   raw: string;
   reasoningContent: string;
   matchedRuleId: string;
+  usage?: LlmUsage;
 };
 
 type AttemptResult = {
@@ -93,6 +97,7 @@ type AttemptResult = {
   raw: string;
   reasoningContent: string;
   finishReason?: string | null;
+  usage?: LlmUsage;
   diagnostics?: NodeDiagnostics;
   prefillContent?: string;
 };
@@ -239,6 +244,7 @@ async function streamPassThrough(
   let raw = '';
   let reasoningContent = '';
   let finishReason: string | null | undefined;
+  let usage: LlmUsage | undefined;
   let shown = '';
   const toVisible = options.toVisibleContent ?? ((text: string) => text);
   const reasoningEffort = normalizeReasoningEffort(options.config.reasoningEffort);
@@ -249,10 +255,12 @@ async function streamPassThrough(
     model: options.config.model,
     reasoningEffort,
     messages: options.messages,
+    includeUsage: true,
     signal: options.callbacks?.signal,
   })) {
     if (options.callbacks?.signal?.aborted) throw createAbortError();
     if (delta.finishReason != null) finishReason = delta.finishReason;
+    if (delta.usage) usage = mergeLlmUsage(usage, delta.usage);
     if (delta.reasoningDelta && reasoningEffort !== 'none') {
       reasoningContent += delta.reasoningDelta;
       options.callbacks?.onReasoningDelta?.(delta.reasoningDelta);
@@ -267,7 +275,7 @@ async function streamPassThrough(
   }
 
   throwIfAborted(options);
-  return { content: raw, reasoningContent, finishReason };
+  return { content: raw, reasoningContent, finishReason, ...(usage ? { usage } : {}) };
 }
 
 async function runAttempt(
@@ -290,6 +298,7 @@ async function runAttempt(
     model: options.config.model,
     reasoningEffort,
     messages,
+    includeUsage: true,
     signal: options.callbacks?.signal,
     ...(prefixContent !== undefined ? { prefixCompletion: { content: prefixContent } } : {}),
   };
@@ -297,6 +306,7 @@ async function runAttempt(
   let raw = '';
   let reasoningContent = '';
   let finishReason: string | null | undefined;
+  let usage: LlmUsage | undefined;
   let shown = '';
   let gateOpen = false;
 
@@ -342,6 +352,7 @@ async function runAttempt(
       raw,
       reasoningContent,
       finishReason,
+      ...(usage ? { usage } : {}),
       ...(diagnostics ? { diagnostics } : {}),
       ...(prefixContent !== undefined ? { prefillContent: prefixContent } : {}),
     };
@@ -351,6 +362,7 @@ async function runAttempt(
     for await (const delta of options.transport.streamChat(request)) {
       if (options.callbacks?.signal?.aborted) throw createAbortError();
       if (delta.finishReason != null) finishReason = delta.finishReason;
+      if (delta.usage) usage = mergeLlmUsage(usage, delta.usage);
       if (delta.reasoningDelta && reasoningEffort !== 'none') {
         reasoningContent += delta.reasoningDelta;
         options.callbacks?.onReasoningDelta?.(delta.reasoningDelta);
@@ -378,6 +390,7 @@ async function runAttempt(
             raw,
             reasoningContent,
             matchedRuleId: evaluated.matchedRuleId ?? 'skeleton-01',
+            ...(usage ? { usage } : {}),
           };
         }
         emitVisible();
@@ -399,6 +412,7 @@ async function runAttempt(
         raw,
         reasoningContent,
         matchedRuleId: evaluated.matchedRuleId ?? 'skeleton-01',
+        ...(usage ? { usage } : {}),
       };
     }
     emitVisible();
@@ -449,6 +463,7 @@ export async function streamWithRefusalHandling(
       content: first.raw,
       reasoningContent: first.reasoningContent,
       finishReason: first.finishReason,
+      ...(first.usage ? { usage: first.usage } : {}),
       ...(first.diagnostics ? { diagnostics: first.diagnostics } : {}),
       ...(first.prefillContent !== undefined ? { prefillContent: first.prefillContent } : {}),
     };
@@ -469,6 +484,7 @@ export async function streamWithRefusalHandling(
   const retriedWithPrefix =
     effective.prefixCompletion === 'on_retry' || effective.prefixCompletion === 'always';
   const retry = await runAttempt(options, effective, 'retry');
+  const combinedUsage = mergeLlmUsage(first.usage, retry.usage);
   if (retry.kind === 'result' && isStop(retry.finishReason) && !retry.diagnostics) {
     const diagnostics: NodeDiagnostics = {
       refusalRoute: first.route,
@@ -489,6 +505,7 @@ export async function streamWithRefusalHandling(
       content: retry.raw,
       reasoningContent: retry.reasoningContent,
       finishReason: retry.finishReason,
+      ...(combinedUsage ? { usage: combinedUsage } : {}),
       diagnostics,
       ...(retry.prefillContent !== undefined ? { prefillContent: retry.prefillContent } : {}),
     };
@@ -515,6 +532,7 @@ export async function streamWithRefusalHandling(
       content: retry.raw,
       reasoningContent: retry.reasoningContent,
       finishReason: retry.finishReason,
+      ...(combinedUsage ? { usage: combinedUsage } : {}),
       diagnostics,
       ...(retry.prefillContent !== undefined ? { prefillContent: retry.prefillContent } : {}),
     };
@@ -526,6 +544,7 @@ export async function streamWithRefusalHandling(
       content: retry.raw,
       reasoningContent: retry.reasoningContent,
       finishReason: retry.finishReason,
+      ...(combinedUsage ? { usage: combinedUsage } : {}),
       ...(retry.diagnostics ? { diagnostics: retry.diagnostics } : {}),
       ...(retry.prefillContent !== undefined ? { prefillContent: retry.prefillContent } : {}),
     };
@@ -552,6 +571,7 @@ export async function streamWithRefusalHandling(
     content: REFUSAL_EXHAUSTED_MESSAGE,
     reasoningContent: '',
     finishReason: 'stop',
+    ...(combinedUsage ? { usage: combinedUsage } : {}),
     diagnostics,
   };
 }

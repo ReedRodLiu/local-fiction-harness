@@ -481,10 +481,14 @@ function requestErrorFromUnknown(error: unknown, timeoutMs: number): GoRequestEr
       retryable: false,
     };
   }
+  const message = error instanceof Error ? error.message.slice(0, 500) : 'Unknown request failure.';
+  const isTransientNetworkError =
+    error instanceof TypeError &&
+    /fetch failed|network|econnreset|etimedout|socket/i.test(message);
   return {
     type: error instanceof Error ? error.name : 'Error',
-    message: error instanceof Error ? error.message.slice(0, 500) : 'Unknown request failure.',
-    retryable: false,
+    message,
+    retryable: isTransientNetworkError,
   };
 }
 
@@ -832,6 +836,7 @@ function folioMessages(
     targetParentId: parentId,
     userInput: action,
     budgetOverrides: FOLIO_BUDGET,
+    enableRetrievable: false,
   }).messages;
 }
 

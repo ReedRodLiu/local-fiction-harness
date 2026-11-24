@@ -24,6 +24,8 @@ const COMMON_MARKDOWN_PREFIX = [
   '',
   '**粗体内容**',
   '',
+  '渡口夜风微凉，煤油灯在栈桥尽头轻轻摇晃，石阶湿滑泥泞，岸边那块旧木牌上清清楚楚写着几行渡船班次与潮汐时刻表，远处钟声低沉地传过雾气漫上来的河面，船夫拎起缆绳准备靠岸。',
+  '',
   '- 列表一',
   '- 列表二',
   '',
@@ -223,7 +225,10 @@ async function installFixtureFetch(context, fixtureContent) {
       }
 
       const request = JSON.parse(init.body);
-      const system = request.messages?.[0]?.content ?? '';
+      const system = (request.messages ?? [])
+        .filter((item) => item.role === 'system')
+        .map((item) => item.content ?? '')
+        .join('\n');
       const prompt = request.messages?.at(-1)?.content ?? '';
 
       if (system.includes('正文稿纸界面') && prompt.includes('MARKDOWN_MANUSCRIPT_ANSWER')) {

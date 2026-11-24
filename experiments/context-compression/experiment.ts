@@ -667,6 +667,7 @@ function folioMessages(
     targetParentId: parentLeafId,
     userInput: action,
     budgetOverrides: OFFLINE_FOLIO_BUDGET,
+    enableRetrievable: false,
   }).messages;
   const coveredNodeCount = snapshot.coveredUpToNodeId
     ? path.findIndex((node) => node.id === snapshot.coveredUpToNodeId) + 1

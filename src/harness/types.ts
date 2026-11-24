@@ -105,6 +105,18 @@ export interface DeepSeekThinkingParam {
   type: 'enabled' | 'disabled';
 }
 
+export type UsageProviderKind = 'deepseek-official' | 'other';
+
+export interface TurnUsageTelemetry {
+  providerKind: UsageProviderKind;
+  model: string;
+  generationUsage?: LlmUsage;
+  summaryUsage?: LlmUsage;
+  uncompressedPromptChars?: number;
+  compressedPromptChars?: number;
+  retrievedNodeCount?: number;
+}
+
 export interface TurnNode {
   id: string;
   parentId: string | null;
@@ -116,6 +128,7 @@ export interface TurnNode {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   diagnostics?: NodeDiagnostics;
+  telemetry?: TurnUsageTelemetry;
   createdAt: number;
   summarySnapshot: PlotSummarySnapshot;
   documents?: StoryDocumentState;

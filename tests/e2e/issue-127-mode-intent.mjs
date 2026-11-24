@@ -143,7 +143,10 @@ async function main() {
     const stageInputs = [];
     await page.route('**/chat/completions', async (route) => {
       const requestBody = route.request().postDataJSON();
-      const systemText = requestBody.messages?.[0]?.content ?? '';
+      const systemText = (requestBody.messages ?? [])
+        .filter((item) => item.role === 'system')
+        .map((item) => item.content ?? '')
+        .join('\n');
       const input = requestBody.messages?.at(-1)?.content ?? '';
       let content;
       if (systemText.includes('Folio 的自然语言第一入口助手')) {

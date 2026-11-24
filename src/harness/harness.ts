@@ -46,11 +46,16 @@ import {
   streamWithRefusalHandling,
   type RefusalStreamIntegrationOptions,
 } from './refusalWrapper.ts';
+import {
+  buildTurnUsageTelemetry,
+  mergeLlmUsage,
+} from './usageSavings.ts';
 import type {
   AbortSignalLike,
   DocumentRead,
   LlmMessage,
   LlmTransport,
+  LlmUsage,
   ModelConfig,
   NodeDiagnostics,
   PlotSummarySnapshot,
@@ -61,6 +66,7 @@ import type {
   TurnExecutionResult,
   TurnNode,
   TurnProposalRecord,
+  TurnUsageTelemetry,
 } from './types.ts';
 
 export interface FictionHarnessDeps {
@@ -278,6 +284,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     content: string;
     reasoningContent: string;
     finishReason?: string | null;
+    usage?: LlmUsage;
     diagnostics?: NodeDiagnostics;
     prefillContent?: string;
   }> => {
@@ -302,6 +309,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     let content = '';
     let reasoningContent = '';
     let finishReason: string | null | undefined;
+    let usage: LlmUsage | undefined;
     let shownChars = 0;
     const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
 
@@ -311,10 +319,12 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       model: config.model,
       reasoningEffort,
       messages,
+      includeUsage: true,
       signal: callbacks?.signal,
     })) {
       throwIfAborted(callbacks?.signal);
       if (delta.finishReason != null) finishReason = delta.finishReason;
+      if (delta.usage) usage = mergeLlmUsage(usage, delta.usage);
       if (delta.reasoningDelta && reasoningEffort !== 'none') {
         reasoningContent += delta.reasoningDelta;
         callbacks?.onReasoningDelta?.(delta.reasoningDelta);
@@ -327,27 +337,28 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       }
     }
     throwIfAborted(callbacks?.signal);
-    return { content, reasoningContent, finishReason };
+    return { content, reasoningContent, finishReason, ...(usage ? { usage } : {}) };
   };
 
-  const summarizeOverflowTurns = async (
+  const summarizeOverflowTurnsWithUsage = async (
     story: Story,
     targetLeafId: string | null,
     parentSnapshot: PlotSummarySnapshot,
     config: ModelConfig,
     signal?: AbortSignalLike,
-  ): Promise<PlotSummarySnapshot> => {
-    if (!targetLeafId) return parentSnapshot;
+  ): Promise<{ snapshot: PlotSummarySnapshot; summaryUsage?: LlmUsage }> => {
+    if (!targetLeafId) return { snapshot: parentSnapshot };
     const bgConfig = createBackgroundModelConfig(config);
     const branchNodes = getActiveBranchNodes(story, targetLeafId);
     const setupFilter = getSetupNodeFilter(story, targetLeafId);
     let currentSnapshot = parentSnapshot;
+    let summaryUsage: LlmUsage | undefined;
 
     while (true) {
       const uncovered = getUncoveredNodes(branchNodes, currentSnapshot.coveredUpToNodeId);
       const toSummarize = selectNodesToSummarize(uncovered, deps.contextBudget, setupFilter);
       if (toSummarize.length === 0) {
-        return currentSnapshot;
+        return { snapshot: currentSnapshot, ...(summaryUsage ? { summaryUsage } : {}) };
       }
       const maxBatchNodes = Math.max(
         1,
@@ -370,7 +381,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         setupFilter,
       );
       if (batch.length === 0) {
-        return currentSnapshot;
+        return { snapshot: currentSnapshot, ...(summaryUsage ? { summaryUsage } : {}) };
       }
 
       const summarizeBatch = async (
@@ -384,6 +395,9 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
             buildSummaryCompressionMessages(previousContent, nodes, filter, maxBatchChars),
             { signal },
           );
+          if (result.usage) {
+            summaryUsage = mergeLlmUsage(summaryUsage, result.usage);
+          }
           return result.finishReason === 'stop' ? result.content.trim() || null : null;
         } catch (err) {
           if (isAbortError(err)) throw err;
@@ -402,7 +416,9 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
             rollingContent,
             [{ ...oversizedNode, content: chunk }],
           );
-          if (!next) return currentSnapshot;
+          if (!next) {
+            return { snapshot: currentSnapshot, ...(summaryUsage ? { summaryUsage } : {}) };
+          }
           rollingContent = next;
         }
         currentSnapshot = {
@@ -414,7 +430,9 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       }
 
       const finalContent = await summarizeBatch(currentSnapshot.content, batch, setupFilter);
-      if (!finalContent) return currentSnapshot;
+      if (!finalContent) {
+        return { snapshot: currentSnapshot, ...(summaryUsage ? { summaryUsage } : {}) };
+      }
       currentSnapshot = {
         content: finalContent,
         coveredUpToNodeId: batch[batch.length - 1].id,
@@ -422,6 +440,15 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       };
     }
   };
+
+  const summarizeOverflowTurns = async (
+    story: Story,
+    targetLeafId: string | null,
+    parentSnapshot: PlotSummarySnapshot,
+    config: ModelConfig,
+    signal?: AbortSignalLike,
+  ): Promise<PlotSummarySnapshot> =>
+    (await summarizeOverflowTurnsWithUsage(story, targetLeafId, parentSnapshot, config, signal)).snapshot;
 
   const prepareTurn = async (
     story: Story,
@@ -444,7 +471,13 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     const base = documentVersion(scoped.documents.local, state.local);
     const progress = documentProgress(base.markdown);
     const previous = progress ? { ...original, content: progress } : EMPTY_SUMMARY_SNAPSHOT;
-    const snapshot = await summarizeOverflowTurns(scoped, parentId, previous, config, signal);
+    const { snapshot, summaryUsage: prepareSummaryUsage } = await summarizeOverflowTurnsWithUsage(
+      scoped,
+      parentId,
+      previous,
+      config,
+      signal,
+    );
     const local = snapshot.content === progress ? { ...scoped.documents.local, head: base.id } :
       writeDocument(scoped.documents.local, base.id, replaceDocumentProgress(base.markdown, snapshot.content), 'automatic');
     const container = documentVersion(scoped.documents.container, state.container);
@@ -483,6 +516,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         container,
         local: documentVersion(local),
         snapshot,
+        ...(prepareSummaryUsage ? { prepareSummaryUsage } : {}),
         publicResearch: publicResearch.reference ?? undefined,
         publicResearchFailure: publicResearch.failure,
         publicResearchSettingKey: publicResearch.settingKey,
@@ -542,6 +576,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     reasoningContent: string;
     diagnostics?: NodeDiagnostics;
     prefillContent?: string;
+    telemetry?: TurnUsageTelemetry;
     extraNodes: Record<string, TurnNode>;
     rootNodeIds: string[];
     config: ModelConfig;
@@ -561,6 +596,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       ...(opts.reasoningContent ? { reasoningContent: opts.reasoningContent } : {}),
       ...(opts.prefillContent ? { prefillContent: opts.prefillContent } : {}),
       ...(opts.diagnostics ? { diagnostics: opts.diagnostics } : {}),
+      ...(opts.telemetry ? { telemetry: opts.telemetry } : {}),
       model: opts.config.model,
       reasoningEffort,
       createdAt: assistantCreatedAt,
@@ -585,25 +621,49 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       updatedAt: assistantCreatedAt,
     };
 
-    const updatedSnapshot = opts.proposal?.target === 'local'
-      ? opts.baseSnapshot
-      : await summarizeOverflowTurns(
-        provisionalStory,
-        provisionalStory.activeLeafNodeId,
-        opts.baseSnapshot,
-        opts.config,
-        opts.signal,
-      );
+    const overflowSummary = opts.proposal?.target === 'local'
+      ? { snapshot: opts.baseSnapshot }
+      : await summarizeOverflowTurnsWithUsage(
+          provisionalStory,
+          provisionalStory.activeLeafNodeId,
+          opts.baseSnapshot,
+          opts.config,
+          opts.signal,
+        );
+    const updatedSnapshot = overflowSummary.snapshot;
+    const mergedTelemetry =
+      overflowSummary.summaryUsage && initialAssistantNode.telemetry
+        ? {
+            ...initialAssistantNode.telemetry,
+            summaryUsage: mergeLlmUsage(
+              initialAssistantNode.telemetry.summaryUsage,
+              overflowSummary.summaryUsage,
+            ),
+          }
+        : overflowSummary.summaryUsage
+          ? buildTurnUsageTelemetry({
+              baseUrl: opts.config.baseUrl,
+              model: opts.config.model,
+              summaryUsage: overflowSummary.summaryUsage,
+            })
+          : initialAssistantNode.telemetry;
 
     const documents = opts.baseStory.documents;
     const before = documentVersion(documents.local, opts.documentState.local);
     const revised = updatedSnapshot === opts.baseSnapshot ? documents.local : writeDocument(
       documents.local, before.id, replaceDocumentProgress(before.markdown, updatedSnapshot.content), 'automatic',
     );
-    const finalAssistantNode: TurnNode = updatedSnapshot === opts.baseSnapshot ? initialAssistantNode : {
-      ...initialAssistantNode, summarySnapshot: updatedSnapshot,
-      documents: { ...opts.documentState, local: revised.head },
-    };
+    const finalAssistantNode: TurnNode =
+      updatedSnapshot === opts.baseSnapshot && mergedTelemetry === initialAssistantNode.telemetry
+        ? initialAssistantNode
+        : {
+            ...initialAssistantNode,
+            summarySnapshot: updatedSnapshot,
+            documents: updatedSnapshot === opts.baseSnapshot
+              ? opts.documentState
+              : { ...opts.documentState, local: revised.head },
+            ...(mergedTelemetry ? { telemetry: mergedTelemetry } : {}),
+          };
 
     const updatedStory: Story =
       finalAssistantNode === initialAssistantNode
@@ -638,7 +698,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
     const prepared = await prepareTurn(story, parentId, trimmedInput, config, callbacks?.signal);
     const { story: workingStory, snapshot: parentSnapshot } = prepared;
 
-    const { messages } = assembleThreeZoneContext(
+    const { messages, metrics } = assembleThreeZoneContext(
       workingStory,
       parentId,
       trimmedInput,
@@ -695,6 +755,15 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       reasoningContent: result.reasoningContent,
       ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
       ...(result.prefillContent ? { prefillContent: result.prefillContent } : {}),
+      telemetry: buildTurnUsageTelemetry({
+        baseUrl: config.baseUrl,
+        model: config.model,
+        generationUsage: result.usage,
+        summaryUsage: prepared.request.prepareSummaryUsage,
+        uncompressedPromptChars: metrics.uncompressedPromptChars,
+        compressedPromptChars: metrics.compressedPromptChars,
+        retrievedNodeCount: metrics.retrievedNodeCount,
+      }),
       documentState: prepared.state,
       reads: prepared.reads,
       proposal: result.finishReason === 'stop' ? parsed.proposal : undefined,
@@ -945,7 +1014,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         targetNode.publicResearchSettingKey,
       );
       const { story: workingStory, snapshot: parentSnapshot } = prepared;
-      const { messages } = assembleThreeZoneContext(
+      const { messages, metrics } = assembleThreeZoneContext(
         workingStory,
         userNode.parentId,
         userNode.content,
@@ -991,6 +1060,15 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         reasoningContent: result.reasoningContent,
         ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
         ...(result.prefillContent ? { prefillContent: result.prefillContent } : {}),
+        telemetry: buildTurnUsageTelemetry({
+          baseUrl: config.baseUrl,
+          model: config.model,
+          generationUsage: result.usage,
+          summaryUsage: prepared.request.prepareSummaryUsage,
+          uncompressedPromptChars: metrics.uncompressedPromptChars,
+          compressedPromptChars: metrics.compressedPromptChars,
+          retrievedNodeCount: metrics.retrievedNodeCount,
+        }),
         documentState: prepared.state,
         reads: prepared.reads,
         proposal: result.finishReason === 'stop' ? parsed.proposal : undefined,

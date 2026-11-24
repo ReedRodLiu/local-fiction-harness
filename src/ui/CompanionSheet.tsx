@@ -2,6 +2,7 @@ import { useState, type KeyboardEvent } from 'react';
 import { ChevronRight, Download, Edit3 } from 'lucide-react';
 import {
   documentVersion,
+  getActiveBranchNodes,
   legacyStoryMarkdown,
   storyDocumentState,
   type PlotSummarySnapshot,
@@ -9,6 +10,7 @@ import {
   type StoryDocuments,
 } from '../harness/index.ts';
 import { MarkdownView } from './MarkdownView.tsx';
+import { SessionUsageCard } from './SessionUsageCard.tsx';
 import { StoryTree } from './StoryTree.tsx';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
@@ -178,6 +180,8 @@ export function CompanionSheet({
                 )}
               </div>
             </InsetGroup>
+
+            <SessionUsageCard nodes={getActiveBranchNodes(story)} />
 
             <details className="branch-note-details" data-testid="branch-note-details">
               <summary>分支笔记</summary>

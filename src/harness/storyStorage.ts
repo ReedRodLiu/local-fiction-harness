@@ -6,6 +6,7 @@ import { validatePublicResearchFailure, validatePublicResearchReference } from '
 import type {
   ActiveStorySelection,
   GenerationPreference,
+  LlmUsage,
   NodeDiagnosticStatus,
   NodeDiagnostics,
   PlotSummarySnapshot,
@@ -21,6 +22,8 @@ import type {
   TurnProposalRecord,
   TurnProposalStatus,
   TurnProposalTarget,
+  TurnUsageTelemetry,
+  UsageProviderKind,
 } from './types.ts';
 
 function cloneStory(story: Story): Story {
@@ -344,6 +347,85 @@ export function validateGenerationPreference(
   return Object.keys(pref).length > 0 ? pref : undefined;
 }
 
+export function validateLlmUsage(raw: unknown, nodeId: string, label: string): LlmUsage | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    throw new Error(`备份文件中的节点 ${nodeId} 的 ${label} 必须为对象。`);
+  }
+  const intFields = [
+    'promptTokens',
+    'completionTokens',
+    'totalTokens',
+    'promptCacheHitTokens',
+    'promptCacheMissTokens',
+  ] as const;
+  const out: LlmUsage = {};
+  for (const field of intFields) {
+    const value = raw[field];
+    if (value !== undefined) {
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+        throw new Error(`备份文件中的节点 ${nodeId} 的 ${label}.${field} 必须为非负整数。`);
+      }
+      out[field] = value;
+    }
+  }
+  if (raw.completionTokensDetails !== undefined) {
+    if (!isRecord(raw.completionTokensDetails)) {
+      throw new Error(`备份文件中的节点 ${nodeId} 的 ${label}.completionTokensDetails 必须为对象。`);
+    }
+    const reasoningTokens = raw.completionTokensDetails.reasoningTokens;
+    if (reasoningTokens !== undefined) {
+      if (
+        typeof reasoningTokens !== 'number' ||
+        !Number.isSafeInteger(reasoningTokens) ||
+        reasoningTokens < 0
+      ) {
+        throw new Error(
+          `备份文件中的节点 ${nodeId} 的 ${label}.completionTokensDetails.reasoningTokens 必须为非负整数。`,
+        );
+      }
+      out.completionTokensDetails = { reasoningTokens };
+    }
+  }
+  return out;
+}
+
+function validateTurnUsageTelemetry(raw: unknown, nodeId: string): TurnUsageTelemetry | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    throw new Error(`备份文件中的节点 ${nodeId} 的 telemetry 必须为对象。`);
+  }
+  if (raw.providerKind !== 'deepseek-official' && raw.providerKind !== 'other') {
+    throw new Error(`备份文件中的节点 ${nodeId} 的 telemetry.providerKind 无效。`);
+  }
+  if (typeof raw.model !== 'string' || !raw.model.trim()) {
+    throw new Error(`备份文件中的节点 ${nodeId} 的 telemetry.model 必须为非空字符串。`);
+  }
+  const generationUsage = validateLlmUsage(raw.generationUsage, nodeId, 'telemetry.generationUsage');
+  const summaryUsage = validateLlmUsage(raw.summaryUsage, nodeId, 'telemetry.summaryUsage');
+  const charFields = [
+    'uncompressedPromptChars',
+    'compressedPromptChars',
+    'retrievedNodeCount',
+  ] as const;
+  const out: TurnUsageTelemetry = {
+    providerKind: raw.providerKind as UsageProviderKind,
+    model: raw.model.trim(),
+    ...(generationUsage ? { generationUsage } : {}),
+    ...(summaryUsage ? { summaryUsage } : {}),
+  };
+  for (const field of charFields) {
+    const value = raw[field];
+    if (value !== undefined) {
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+        throw new Error(`备份文件中的节点 ${nodeId} 的 telemetry.${field} 必须为非负整数。`);
+      }
+      out[field] = value;
+    }
+  }
+  return out;
+}
+
 export function validateTurnNodeEntry(entry: unknown, expectedId?: string): TurnNode {
   if (
     !isRecord(entry) ||
@@ -368,6 +450,7 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
     throw new Error(`备份文件中的节点 ${expectedId ?? entry.id} 的 reasoningEffort 无效。`);
   }
   const diagnostics = validateDiagnostics(entry.diagnostics, entry.id);
+  const telemetry = validateTurnUsageTelemetry(entry.telemetry, entry.id);
   const attachmentIds = entry.attachmentIds === undefined ? undefined : assertStringArray(entry.attachmentIds, 'node.attachmentIds');
   const reads = validateDocumentReads(entry.documentReads);
   const proposals = validateProposals(entry.proposals, entry.id);
@@ -403,6 +486,7 @@ export function validateTurnNodeEntry(entry: unknown, expectedId?: string): Turn
     ...(trimmedModel !== undefined ? { model: trimmedModel } : {}),
     ...(entry.reasoningEffort !== undefined ? { reasoningEffort: entry.reasoningEffort as ReasoningEffort } : {}),
     ...(diagnostics ? { diagnostics } : {}),
+    ...(telemetry ? { telemetry } : {}),
     ...(attachmentIds ? { attachmentIds } : {}),
     createdAt: entry.createdAt,
     summarySnapshot: validateSummarySnapshot(entry.summarySnapshot, entry.id),

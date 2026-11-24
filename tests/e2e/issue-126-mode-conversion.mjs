@@ -237,7 +237,10 @@ export async function verifyIssue126ModeConversion(browser, port, helpers) {
     await mockSuccessfulKeyVerification(page);
     await page.route('**/chat/completions', async (route) => {
       const messages = route.request().postDataJSON().messages;
-      const system = messages[0]?.content ?? '';
+      const system = messages
+        .filter((item) => item.role === 'system')
+        .map((item) => item.content ?? '')
+        .join('\n');
       const input = messages.at(-1)?.content ?? '';
       let content = '一句十五字左右的合成背景更新摘要。';
       if (system.includes('自然语言第一入口助手')) {
