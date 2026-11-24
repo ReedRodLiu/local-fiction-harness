@@ -326,6 +326,10 @@ textarea:focus-visible {
 .timeline { flex: 1 1 auto; min-height: 0; max-height: none; gap: 0; overflow: visible; }
 .turn-card { max-width: 68ch; margin-inline: auto; background: transparent; border-color: var(--border-hairline); border-radius: var(--radius-md); }
 .turn-card.user { background: var(--bg-user-bubble); border-color: var(--border-user-bubble); color: var(--text-user-bubble); }
+.composer-dock { position: sticky; bottom: 0; z-index: 1; display: flex; flex-direction: column; gap: 8px; width: min(100%, 68ch); margin: auto auto 0; }
+.composer-dock > .composer { position: relative; width: 100%; margin: 0; }
+.composer-flow-notices { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.composer-flow-notices .banner-alert { width: 100%; }
 .composer { position: sticky; bottom: 0; z-index: 1; display: flex; flex-direction: row; align-items: flex-end; gap: 8px; width: min(100%, 68ch); margin: auto; padding: 8px 10px 8px 16px; border: 1px solid var(--border-hairline); border-radius: var(--radius-sheet); background: var(--bg-surface); box-shadow: var(--shadow-floating); }
 .composer.composer-double-row { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px 8px 14px; }
 .composer label { display: block; margin: 0 0 5px 7px; color: var(--text-muted); font-size: 11px; }

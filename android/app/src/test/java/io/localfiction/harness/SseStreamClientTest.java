@@ -5,12 +5,17 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.io.BufferedReader;
+import java.io.EOFException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import javax.net.ssl.SSLException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -230,5 +235,41 @@ public class SseStreamClientTest {
                 client.shutdown();
             }
         }
+    }
+
+    @Test
+    public void classifiesConnectionAbortAndNetworkExceptionsIntoReadableChineseErrors() {
+        SseStreamClient.ClassifiedError abortErr = SseStreamClient.classifyException(
+            new SocketException("Software caused connection abort")
+        );
+        assertEquals("CONNECTION_ABORTED", abortErr.code);
+        assertTrue(abortErr.message.contains("中断"));
+
+        SseStreamClient.ClassifiedError resetErr = SseStreamClient.classifyException(
+            new SocketException("Connection reset by peer")
+        );
+        assertEquals("SOCKET_RESET", resetErr.code);
+        assertTrue(resetErr.message.contains("重置"));
+
+        SseStreamClient.ClassifiedError timeoutErr = SseStreamClient.classifyException(
+            new SocketTimeoutException("Read timed out")
+        );
+        assertEquals("TIMEOUT", timeoutErr.code);
+        assertTrue(timeoutErr.message.contains("超时"));
+
+        SseStreamClient.ClassifiedError dnsErr = SseStreamClient.classifyException(
+            new UnknownHostException("api.deepseek.com")
+        );
+        assertEquals("DNS_ERROR", dnsErr.code);
+
+        SseStreamClient.ClassifiedError tlsErr = SseStreamClient.classifyException(
+            new SSLException("SSL handshake aborted")
+        );
+        assertEquals("TLS_ERROR", tlsErr.code);
+
+        SseStreamClient.ClassifiedError eofErr = SseStreamClient.classifyException(
+            new EOFException("Unexpected end of stream")
+        );
+        assertEquals("STREAM_EOF", eofErr.code);
     }
 }

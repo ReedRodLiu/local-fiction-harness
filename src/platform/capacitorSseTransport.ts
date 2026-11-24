@@ -17,7 +17,7 @@ import {
 export interface NativeSseEventMap {
   sseChunk: { requestId: string; chunkBase64: string };
   sseComplete: { requestId: string };
-  sseError: { requestId: string; message: string; status?: number; aborted?: boolean };
+  sseError: { requestId: string; message: string; code?: string; status?: number; aborted?: boolean };
 }
 
 export interface NativeSsePluginLike {
@@ -98,9 +98,17 @@ export function createCapacitorSseTransport(
           }),
           plugin.addListener('sseError', (ev) => {
             if (ev.requestId !== requestId || streamDone || streamError) return;
-            streamError = ev.aborted
-              ? createAbortError(ev.message || '操作已中止。')
-              : new Error(ev.message || 'Android 原生 SSE 请求失败。');
+            if (ev.aborted) {
+              streamError = createAbortError(ev.message || '操作已中止。');
+            } else {
+              const err = new Error(ev.message || 'Android 原生 SSE 请求失败。') as Error & {
+                code?: string;
+                status?: number;
+              };
+              if (ev.code) err.code = ev.code;
+              if (typeof ev.status === 'number') err.status = ev.status;
+              streamError = err;
+            }
             wake();
           }),
         ]);

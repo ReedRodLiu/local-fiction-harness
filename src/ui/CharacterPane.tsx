@@ -146,7 +146,7 @@ export function CharacterPane(props: CharacterPaneProps) {
     activeLeafKey: conversation?.activeLeafNodeId ?? null,
     turnCount: path.length,
     isStreaming: reply.busy,
-    streamPulse: `${reply.output.length}:${reply.reasoning.length}`,
+    streamPulse: `${reply.output.length}:${reply.reasoning.length}:${reply.error}:${createdAssetNotice?.id ?? ''}`,
     paused: companionOpen || Boolean(confirm),
   });
 
@@ -962,48 +962,58 @@ export function CharacterPane(props: CharacterPaneProps) {
         )}
       </section>
 
-      <form
-        className="composer composer-double-row"
-        data-testid="stage-composer"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const contents = input.trim();
-          if (!contents || reply.busy) return;
-          if (conversation) send(conversation.id, contents);
-          else void startConversation(false).then((id) => send(id, contents)).catch(reply.fail);
-        }}
-      >
-        <div className="composer-notices">
-          {reply.error && <BannerAlert tone="danger">{reply.error}</BannerAlert>}
-          {createdAssetNotice && (
-            <div className="manuscript-undo-toast" role="status">
-              <span>{createdAssetNotice.label}</span>
-              {props.onNavigateCreatedAsset && (
-                <button
-                  type="button"
-                  className="text-action"
-                  onClick={() => {
-                    const { kind, id } = createdAssetNotice;
-                    setCreatedAssetNotice(null);
-                    props.onNavigateCreatedAsset?.(kind, id);
-                  }}
-                >
-                  去看看
-                </button>
-              )}
-            </div>
-          )}
-          {autoScroll.showScrollToBottom && (
-            <button
-              type="button"
-              className="scroll-to-bottom"
-              data-testid="scroll-to-bottom"
-              onClick={autoScroll.scrollToBottom}
-            >
-              回到底部 ↓
-            </button>
-          )}
-        </div>
+      <div className="composer-dock">
+        {(reply.error || createdAssetNotice) && (
+          <div className="composer-flow-notices">
+            {reply.error && (
+              <BannerAlert tone="danger" onDismiss={reply.clearError}>
+                {reply.error}
+              </BannerAlert>
+            )}
+            {createdAssetNotice && (
+              <div className="manuscript-undo-toast" role="status">
+                <span>{createdAssetNotice.label}</span>
+                {props.onNavigateCreatedAsset && (
+                  <button
+                    type="button"
+                    className="text-action"
+                    onClick={() => {
+                      const { kind, id } = createdAssetNotice;
+                      setCreatedAssetNotice(null);
+                      props.onNavigateCreatedAsset?.(kind, id);
+                    }}
+                  >
+                    去看看
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <form
+          className="composer composer-double-row"
+          data-testid="stage-composer"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const contents = input.trim();
+            if (!contents || reply.busy) return;
+            if (conversation) send(conversation.id, contents);
+            else void startConversation(false).then((id) => send(id, contents)).catch(reply.fail);
+          }}
+        >
+          <div className="composer-notices">
+            {autoScroll.showScrollToBottom && (
+              <button
+                type="button"
+                className="scroll-to-bottom"
+                data-testid="scroll-to-bottom"
+                onClick={autoScroll.scrollToBottom}
+              >
+                回到底部 ↓
+              </button>
+            )}
+          </div>
         <label className="visually-hidden" htmlFor="character-chat-input">
           发消息
         </label>
@@ -1058,7 +1068,8 @@ export function CharacterPane(props: CharacterPaneProps) {
             </div>
           }
         />
-      </form>
+        </form>
+      </div>
 
       <SheetDialog
         open={companionOpen}

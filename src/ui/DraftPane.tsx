@@ -215,7 +215,7 @@ export function DraftPane(props: DraftPaneProps) {
     activeLeafKey: activeLeafId,
     turnCount: discussionNodes.length,
     isStreaming: reply.busy && !editing,
-    streamPulse: `${reply.output.length}:${reply.reasoning.length}`,
+    streamPulse: `${reply.output.length}:${reply.reasoning.length}:${reply.error}:${autosave.saveError ?? ''}`,
     paused: editing || companionOpen,
   });
 
@@ -1137,9 +1137,14 @@ export function DraftPane(props: DraftPaneProps) {
   const showFloatingSuggestionCard =
     editing && (reply.busy || Boolean(activeSuggestion) || Boolean(selectedSuggestion));
 
-  const composerNotices = (
-    <div className="composer-notices">
-      {reply.error && <BannerAlert tone="danger">{reply.error}</BannerAlert>}
+  const hasFlowNotices = Boolean(reply.error || autosave.saveError || autosave.undoBanner || createdAssetNotice);
+  const composerFlowNotices = hasFlowNotices ? (
+    <div className="composer-flow-notices">
+      {reply.error && (
+        <BannerAlert tone="danger" onDismiss={reply.clearError}>
+          {reply.error}
+        </BannerAlert>
+      )}
       {autosave.saveError && (
         <BannerAlert tone="warning">
           <span>{autosave.saveError}</span>
@@ -1206,6 +1211,11 @@ export function DraftPane(props: DraftPaneProps) {
           )}
         </div>
       )}
+    </div>
+  ) : null;
+
+  const composerFloatingNotices = (
+    <div className="composer-notices">
       {!editing && autoScroll.showScrollToBottom && (
         <button
           type="button"
@@ -1303,15 +1313,17 @@ export function DraftPane(props: DraftPaneProps) {
             )}
           </section>
 
-          <form
-            className="composer composer-double-row"
-            data-testid="stage-composer"
-            onSubmit={(event) => {
-              event.preventDefault();
-              submitChatTurn(discussionInput);
-            }}
-          >
-            {composerNotices}
+          <div className="composer-dock">
+            {composerFlowNotices}
+            <form
+              className="composer composer-double-row"
+              data-testid="stage-composer"
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitChatTurn(discussionInput);
+              }}
+            >
+              {composerFloatingNotices}
             <label className="visually-hidden" htmlFor="writing-discussion-input">
               聊天内容
             </label>
@@ -1366,7 +1378,8 @@ export function DraftPane(props: DraftPaneProps) {
                 </div>
               }
             />
-          </form>
+            </form>
+          </div>
         </>
       ) : (
         <>
@@ -1620,6 +1633,7 @@ export function DraftPane(props: DraftPaneProps) {
               </section>
             )}
 
+            {composerFlowNotices}
             <form
               className="composer writing-composer composer-double-row"
               data-testid="stage-composer"
@@ -1628,7 +1642,7 @@ export function DraftPane(props: DraftPaneProps) {
                 submitManuscriptPrompt(manuscriptInput);
               }}
             >
-              {composerNotices}
+              {composerFloatingNotices}
               <label className="visually-hidden" htmlFor="writing-suggestion-input">
                 写作要求
               </label>

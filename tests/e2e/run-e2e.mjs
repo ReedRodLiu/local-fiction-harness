@@ -2892,6 +2892,17 @@ async function verifyStoppedSendPreservesNewerDraft(page, delayNextTurn) {
   await page.fill('#turn-input', newerDraft);
   await page.getByRole('button', { name: '停止生成' }).click();
   await page.getByTestId('main-error-banner').waitFor();
+  const bannerBox = await page.getByTestId('main-error-banner').boundingBox();
+  const lastRegenBox = await page
+    .getByTestId('turn-assistant')
+    .last()
+    .getByRole('button', { name: '重新生成' })
+    .boundingBox();
+  if (!bannerBox || !lastRegenBox || bannerBox.y < lastRegenBox.y + lastRegenBox.height - 1) {
+    throw new Error(
+      `Issue #101 overlap regression: banner=${JSON.stringify(bannerBox)}, lastRegen=${JSON.stringify(lastRegenBox)}`,
+    );
+  }
   if ((await page.inputValue('#turn-input')) !== newerDraft) {
     throw new Error('Stopping a turn replaced a newer composer draft with the submitted action.');
   }

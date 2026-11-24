@@ -84,6 +84,35 @@
   gap: 14px;
 }
 
+.main-stage.is-creative .composer-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(100%, 68ch);
+  margin: auto auto 0;
+}
+
+.main-stage.is-creative .composer-dock > .composer {
+  position: relative;
+  width: 100%;
+  margin: 0;
+}
+
+.main-stage.is-creative .composer-flow-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.main-stage.is-creative .composer-flow-notices .banner-alert {
+  width: 100%;
+}
+
+.main-stage.is-creative .composer-dock .composer-notices,
 .main-stage.is-creative .composer .composer-notices {
   position: absolute;
   right: 0;
@@ -96,9 +125,14 @@
   pointer-events: none;
 }
 
+.main-stage.is-creative .composer-dock .composer-notices > *,
 .main-stage.is-creative .composer .composer-notices > * {
   pointer-events: auto;
   width: 100%;
+}
+
+.main-stage.is-creative .composer-dock .composer-notices .scroll-to-bottom {
+  width: auto;
 }
 
 .creative-empty-state {

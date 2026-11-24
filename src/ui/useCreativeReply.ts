@@ -215,6 +215,7 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
   }
 
   const fail = (err: unknown) => setError(toErrorMessage(err, '本地操作失败。'));
+  const clearError = () => setError('');
   return {
     start,
     busy,
@@ -223,6 +224,7 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
     refusalRetrying,
     error,
     fail,
+    clearError,
     stop: () => active.current?.abort(),
   };
 }

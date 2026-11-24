@@ -61,9 +61,19 @@ function createFakeNativeSsePlugin() {
         fn({ requestId });
       }
     },
-    emitError(requestId: string, message: string, options?: { status?: number; aborted?: boolean }) {
+    emitError(
+      requestId: string,
+      message: string,
+      options?: { code?: string; status?: number; aborted?: boolean },
+    ) {
       for (const fn of listeners.sseError) {
-        fn({ requestId, message, status: options?.status, aborted: options?.aborted });
+        fn({
+          requestId,
+          message,
+          code: options?.code,
+          status: options?.status,
+          aborted: options?.aborted,
+        });
       }
     },
     listenerCounts() {
@@ -335,8 +345,11 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
     await vi.waitFor(() => expect(fake.started).toHaveLength(1));
     fake.emitChunk('req-mid-1', new TextEncoder().encode('data: {"choices":[{"delta":{"content":"半句"}}]}\n\n'));
     await vi.waitFor(() => expect(midErrDeltas).toEqual(['半句']));
-    fake.emitError('req-mid-1', 'Socket reset mid-stream');
-    await expect(midErrRun).rejects.toThrow(/Socket reset mid-stream/);
+    fake.emitError('req-mid-1', '连接中断', { code: 'CONNECTION_ABORTED' });
+    await expect(midErrRun).rejects.toMatchObject({
+      message: '连接中断',
+      code: 'CONNECTION_ABORTED',
+    });
 
     // 2. In-stream SSE error JSON payload
     const sseErrRun = (async () => {
