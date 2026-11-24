@@ -15,11 +15,12 @@ import {
   getActiveBranchNodes,
   getNodeSiblingBranchInfo,
   invalidateSummarySnapshotsFromNode,
-  isSummaryTargetUnchanged,
+  mergeCharacterSummaryResult,
   newConversation,
   normalizeProposalTarget,
   resolveEffectiveModelConfig,
   restoreRefusalOriginalContent,
+  summaryTargetBranchFingerprint,
   summarizeCharacterConversation,
   writeDocument,
   DEFAULT_MODEL_CONFIG,
@@ -218,7 +219,9 @@ export function CharacterPane(props: CharacterPaneProps) {
     config: Parameters<typeof summarizeCharacterConversation>[2],
     targetLeafId: string | null,
   ) => {
-    const expectedLeaf = targetLeafId ? targetConv.nodes[targetLeafId] : undefined;
+    const expectedBranchFingerprint = targetLeafId
+      ? summaryTargetBranchFingerprint(targetConv.nodes, targetLeafId)
+      : null;
     void summarizeCharacterConversation(targetConv, runtime.transport, config, { targetLeafId })
       .then(async (res) => {
         try {
@@ -239,18 +242,12 @@ export function CharacterPane(props: CharacterPaneProps) {
         await save((state) =>
           updateCharacter(state, targetCharacterId, (current) =>
             updateConversation(current, targetConv.id, (live) => {
-              const updatedLeaf = res.conversation.nodes[targetLeafId];
-              if (!updatedLeaf || !isSummaryTargetUnchanged(expectedLeaf, live.nodes[targetLeafId])) return live;
-              return {
-                ...live,
-                nodes: {
-                  ...live.nodes,
-                  [targetLeafId]: {
-                    ...live.nodes[targetLeafId],
-                    summarySnapshot: updatedLeaf.summarySnapshot,
-                  },
-                },
-              };
+              return mergeCharacterSummaryResult(
+                live,
+                res.conversation,
+                targetLeafId,
+                expectedBranchFingerprint,
+              ) ?? live;
             }),
           ),
         );

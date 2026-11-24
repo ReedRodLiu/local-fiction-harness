@@ -438,8 +438,10 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
       const source = readFileSync(join(repoRoot, 'src/ui', file), 'utf8');
       expect(source).toContain('finalizePrefixContinuation');
       expect(source).toContain('invalidateSummarySnapshotsFromNode');
-      expect(source).toContain('isSummaryTargetUnchanged');
-      expect(source).toContain('isSummaryTargetUnchanged(expectedLeaf, live');
+      expect(source).toContain('summaryTargetBranchFingerprint');
+      expect(source).toContain(file === 'DraftPane.tsx'
+        ? 'mergeWorkSummaryResult'
+        : 'mergeCharacterSummaryResult');
       expect(source).not.toContain('continued.content.trim() === node.content.trim()');
     }
     const appSource = readFileSync(join(repoRoot, 'src/ui', 'App.tsx'), 'utf8');

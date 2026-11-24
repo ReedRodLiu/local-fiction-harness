@@ -18,7 +18,7 @@ import {
   getWorkActiveDiscussionNodes,
   getWorkDiscussionTree,
   invalidateSummarySnapshotsFromNode,
-  isSummaryTargetUnchanged,
+  mergeWorkSummaryResult,
   normalizeProposalTarget,
   normalizeReasoningEffort,
   parseManuscriptAssistantReply,
@@ -27,6 +27,7 @@ import {
   resolveEffectiveModelConfig,
   restoreRefusalOriginalContent,
   streamWithRefusalHandling,
+  summaryTargetBranchFingerprint,
   summarizeWorkDiscussion,
   visibleManuscriptReplyPrefix,
   visibleReplyPrefix,
@@ -264,7 +265,9 @@ export function DraftPane(props: DraftPaneProps) {
   }
 
   const runSilentSummary = (targetWork: DraftWork, config: Parameters<typeof summarizeWorkDiscussion>[2], targetLeafId: string | null) => {
-    const expectedLeaf = targetLeafId ? getWorkDiscussionTree(targetWork).nodes[targetLeafId] : undefined;
+    const expectedBranchFingerprint = targetLeafId
+      ? summaryTargetBranchFingerprint(getWorkDiscussionTree(targetWork).nodes, targetLeafId)
+      : null;
     void summarizeWorkDiscussion(targetWork, runtime.transport, config, { targetLeafId })
       .then(async (res) => {
         try {
@@ -284,24 +287,13 @@ export function DraftPane(props: DraftPaneProps) {
         if (!res.updated) return;
         await save((state) =>
           updateWork(state, targetWork.id, (live) => {
-            const liveTree = getWorkDiscussionTree(live);
-            const updatedLeaf = targetLeafId ? res.work.discussionNodes?.[targetLeafId] : undefined;
-            if (!targetLeafId || !updatedLeaf ||
-              !isSummaryTargetUnchanged(expectedLeaf, liveTree.nodes[targetLeafId])) return live;
-            const nextNodes = {
-              ...liveTree.nodes,
-              [targetLeafId]: {
-                ...liveTree.nodes[targetLeafId],
-                summarySnapshot: updatedLeaf.summarySnapshot,
-              },
-            };
-            const activeLeaf = liveTree.activeLeafNodeId;
-            return {
-              ...live,
-              discussionNodes: nextNodes,
-              activeDiscussionLeafId: activeLeaf,
-              discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: activeLeaf }, activeLeaf),
-            };
+            if (!targetLeafId) return live;
+            return mergeWorkSummaryResult(
+              live,
+              res.work,
+              targetLeafId,
+              expectedBranchFingerprint,
+            ) ?? live;
           }),
         );
       })
