@@ -7,16 +7,50 @@ import {
   type CreativeWorkspaceState,
   type DraftWork,
   type LlmMessage,
+  type LlmTransport,
   type LocalCharacter,
   type MarkdownProposal,
   type ModelConfig,
   type PlatformRuntime,
   type RefusalStreamIntegrationOptions,
+  type TurnCallbacks,
   type TurnNode,
 } from '../harness/index.ts';
 import { toErrorMessage } from './textHelpers.ts';
 
 export type RequestModel = (label: string, run: (config: ModelConfig) => void) => void;
+
+export type CreativeReplyRequestOptions = {
+  onVisibleDelta?: (delta: string) => void;
+  config?: ModelConfig;
+  refusalOptions?: RefusalStreamIntegrationOptions;
+};
+
+/**
+ * Wraps `streamCreativeReply` for UI callers so `refusalOptions` is forwarded as
+ * the dedicated 5th argument rather than merged into stream callbacks.
+ */
+export function createCreativeReplyRequest(
+  transport: LlmTransport,
+  defaultConfig: ModelConfig,
+  callbacks: TurnCallbacks,
+) {
+  return (messages: LlmMessage[], options?: CreativeReplyRequestOptions) =>
+    streamCreativeReply(
+      transport,
+      options?.config ?? defaultConfig,
+      messages,
+      {
+        ...callbacks,
+        onContentDelta: (delta) => {
+          if (callbacks.signal?.aborted) return;
+          if (options?.onVisibleDelta) options.onVisibleDelta(delta);
+          else callbacks.onContentDelta?.(delta);
+        },
+      },
+      options?.refusalOptions,
+    );
+}
 
 export function updateWork(
   state: CreativeWorkspaceState,
@@ -118,11 +152,7 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
     run: (
       request: (
         messages: LlmMessage[],
-        options?: {
-          onVisibleDelta?: (delta: string) => void;
-          config?: ModelConfig;
-          refusalOptions?: RefusalStreamIntegrationOptions;
-        },
+        options?: CreativeReplyRequestOptions,
       ) => ReturnType<typeof streamCreativeReply>,
       signal: AbortSignal,
       config: ModelConfig,
@@ -147,22 +177,18 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
           setReasoning('');
         }
       };
+      const request = createCreativeReplyRequest(runtime.transport, config, {
+        signal: controller.signal,
+        onReasoningDelta: (delta) => {
+          if (!controller.signal.aborted) setReasoning((text) => text + delta);
+        },
+        onContentDelta: (delta) => {
+          if (!controller.signal.aborted) setOutput((text) => text + delta);
+        },
+        onRefusalRetry: handleRefusalRetry,
+      });
       void run(
-        (messages, options) =>
-          streamCreativeReply(runtime.transport, options?.config ?? config, messages, {
-            ...options?.refusalOptions,
-            signal: controller.signal,
-            onReasoningDelta: (delta) => {
-              if (!controller.signal.aborted) setReasoning((text) => text + delta);
-            },
-            onContentDelta: (delta) => {
-              if (!controller.signal.aborted) {
-                if (options?.onVisibleDelta) options.onVisibleDelta(delta);
-                else setOutput((text) => text + delta);
-              }
-            },
-            onRefusalRetry: handleRefusalRetry,
-          }),
+        request,
         controller.signal,
         config,
         (next) => {

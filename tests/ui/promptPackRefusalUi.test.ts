@@ -6,12 +6,17 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
   BUILTIN_NARRATIVE_PROMPT_PACK,
+  DEFAULT_CONTEXT_BUDGET,
   assembleThreeZoneContext,
   createDefaultPromptPackLibrary,
+  createFictionHarness,
   createPromptPack,
   createDefaultBlueprint,
   excludeRefusedTurns,
   isDefaultPromptPackLibrary,
+  type LlmStreamRequest,
+  type ModelConfig,
+  type RefusalDiagnosticEvent,
   type Story,
   type TurnNode,
 } from '../../src/harness/index.ts';
@@ -19,10 +24,15 @@ import { GenerationControls } from '../../src/ui/GenerationControls.tsx';
 import { PromptPackSheet } from '../../src/ui/PromptPackSheet.tsx';
 import {
   finalizePrefixContinuation,
+  prepareStoryContinuationContext,
+  restoreStoryRefusalOriginal,
+  restoreTurnNodeRefusalOriginal,
   streamPrefixContinuation,
 } from '../../src/ui/refusalContinuation.ts';
 import { StoryTree } from '../../src/ui/StoryTree.tsx';
 import { TurnCard } from '../../src/ui/TurnCard.tsx';
+import { createCreativeReplyRequest } from '../../src/ui/useCreativeReply.ts';
+import { WelcomeView } from '../../src/ui/WelcomeView.tsx';
 
 function makeNode(overrides: Partial<TurnNode> = {}): TurnNode {
   return {
@@ -170,9 +180,32 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
       onContinuePartialRefusal: vi.fn(),
     }));
     expect(partialMarkup).toContain('data-testid="turn-partial-refusal-banner"');
+    expect(partialMarkup).toContain('banner-alert-warning');
     expect(partialMarkup).toContain('data-testid="turn-partial-refusal-continue"');
     expect(partialMarkup).toContain('模型似乎略过了部分具体描写');
     expect(partialMarkup).toContain('将消耗一次新请求');
+
+    const refusedRetryNode = makeNode({
+      diagnostics: {
+        sourceStatus: 'REFUSAL',
+        refusalRoute: 'retry',
+        recoveredFromText: '旧拒答文本',
+      },
+    });
+    const refusedRetryMarkup = renderToStaticMarkup(createElement(TurnCard, {
+      node: refusedRetryNode,
+      isActiveLeaf: true,
+      isLatestTurn: true,
+      isSetupNode: false,
+      turnNumber: 1,
+      isBusy: false,
+      isStreaming: false,
+      siblings: { siblings: [refusedRetryNode], prevSiblingId: null, nextSiblingId: null, currentIndex: 0, total: 1 },
+      onSwitchBranch: vi.fn(),
+      onRewindToNode: vi.fn(),
+      onRestoreRefusalOriginal: vi.fn(),
+    }));
+    expect(refusedRetryMarkup).not.toContain('data-testid="turn-refusal-recovered-badge"');
   });
 
   it('streams a manual prefix continuation while exposing only newly appended text', async () => {
@@ -323,24 +356,46 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     });
   });
 
-  it('preserves a thin second refusal as REFUSAL instead of marking the continuation pass', () => {
-    const node = makeNode({ diagnostics: { refusalRoute: 'partial_refused' } });
-    const finalized = finalizePrefixContinuation(
-      node,
-      {
-        content: `${node.content}\n\n抱歉，我不能继续写这段内容。`,
-        reasoningContent: '',
-        finishReason: 'stop',
+  it('rejects a thin second refusal non-destructively and preserves partial_refused without recovered badge', () => {
+    const node = makeNode({
+      diagnostics: {
+        refusalRoute: 'partial_refused',
+        recoveredFromText: '首次薄拒答。',
+        matchedRuleId: 'L1-01',
       },
-      { mode: 'story' },
-    );
-
-    expect(finalized.content).toContain('抱歉，我不能继续写这段内容。');
-    expect(finalized.diagnostics).toMatchObject({
-      sourceStatus: 'REFUSAL',
-      refusalRoute: 'retry',
     });
-    expect(finalized.diagnostics?.refusalRoute).not.toBe('pass');
+    const before = structuredClone(node);
+
+    expect(() =>
+      finalizePrefixContinuation(
+        node,
+        {
+          content: `${node.content}\n\n抱歉，我不能继续写这段内容。`,
+          reasoningContent: '',
+          finishReason: 'stop',
+        },
+        { mode: 'story' },
+      ),
+    ).toThrow('追要未获得新的有效正文，已保留原有内容，请稍后再试。');
+
+    expect(node).toEqual(before);
+    expect(node.diagnostics?.sourceStatus).toBeUndefined();
+    expect(node.diagnostics?.refusalRoute).toBe('partial_refused');
+    const markup = renderToStaticMarkup(createElement(TurnCard, {
+      node,
+      isActiveLeaf: true,
+      isLatestTurn: true,
+      isSetupNode: false,
+      turnNumber: 1,
+      isBusy: false,
+      isStreaming: false,
+      siblings: { siblings: [node], prevSiblingId: null, nextSiblingId: null, currentIndex: 0, total: 1 },
+      onSwitchBranch: vi.fn(),
+      onRewindToNode: vi.fn(),
+      onContinuePartialRefusal: vi.fn(),
+    }));
+    expect(markup).toContain('data-testid="turn-partial-refusal-continue"');
+    expect(markup).not.toContain('data-testid="turn-refusal-recovered-badge"');
   });
 
   it('keeps partial refusal content and the recoverable continue route after prefix continuation', () => {
@@ -364,9 +419,13 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     expect(finalized.diagnostics?.sourceStatus).toBeUndefined();
   });
 
-  it('clears a legacy REFUSAL status when a continuation passes and keeps the node in context', () => {
+  it('clears legacy REFUSAL status and stale matchedRuleId when a continuation passes', () => {
     const node = makeNode({
-      diagnostics: { sourceStatus: 'REFUSAL', refusalRoute: 'partial_refused' },
+      diagnostics: {
+        sourceStatus: 'REFUSAL',
+        refusalRoute: 'partial_refused',
+        matchedRuleId: 'L1-01',
+      },
     });
     const finalized = finalizePrefixContinuation(node, {
       content: `${node.content}\n\n她握紧门把手，走进雨里。`,
@@ -376,6 +435,7 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
 
     expect(finalized.diagnostics).toMatchObject({ refusalRoute: 'pass' });
     expect(finalized.diagnostics?.sourceStatus).toBeUndefined();
+    expect(finalized.diagnostics?.matchedRuleId).toBeUndefined();
     const story = makeStory(finalized);
     expect(excludeRefusedTurns([story.nodes['user-1'], finalized])).toEqual([
       story.nodes['user-1'],
@@ -384,6 +444,56 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
 
     const context = assembleThreeZoneContext(story, finalized.id, '继续');
     expect(context.messages.map((message) => message.content).join('\n')).toContain('她握紧门把手');
+  });
+
+  it('combines prefix and suffix safely when continuation reply does not echo the prefix', () => {
+    const node = makeNode({
+      content: '雨夜里她停在楼梯口。',
+      diagnostics: { refusalRoute: 'partial_refused', matchedRuleId: 'L1-01' },
+    });
+    const finalized = finalizePrefixContinuation(
+      node,
+      {
+        content: '指尖摸到门锁上的铜锈，她推门走进屋内。\n\n```lfh-summary\n推门入屋。\n```',
+        reasoningContent: '',
+        finishReason: 'stop',
+      },
+      { mode: 'story' },
+    );
+
+    expect(finalized.content).toBe('雨夜里她停在楼梯口。指尖摸到门锁上的铜锈，她推门走进屋内。');
+    expect(finalized.content).not.toContain('lfh-summary');
+    expect(finalized.turnSummary).toBe('推门入屋。');
+    expect(finalized.diagnostics?.matchedRuleId).toBeUndefined();
+  });
+
+  it('strips lfh fences live during streamPrefixContinuation without flashing raw markers', async () => {
+    const chunks: string[] = [];
+    const result = await streamPrefixContinuation({
+      transport: {
+        async *streamChat() {
+          yield { contentDelta: '原有正文' };
+          yield { contentDelta: '，她推开门。\n\n```lfh-s' };
+          yield { contentDelta: 'ummary\n门后景象。\n```', finishReason: 'stop' };
+        },
+      },
+      config: {
+        baseUrl: 'https://api.deepseek.com',
+        apiKey: 'sk-test',
+        model: 'deepseek-flash',
+        reasoningEffort: 'high',
+        memoryOnly: false,
+      },
+      messages: [{ role: 'user', content: '继续。' }],
+      prefixContent: '原有正文',
+      onContentDelta: (delta) => chunks.push(delta),
+    });
+
+    const streamed = chunks.join('');
+    expect(streamed).toContain('，她推开门。');
+    expect(streamed).not.toContain('lfh-s');
+    expect(streamed).not.toContain('```');
+    expect(result.content).toContain('```lfh-summary');
   });
 
   it('keeps partial-refused nodes in context while excluding thin refusal nodes', () => {
@@ -396,15 +506,12 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
       },
       { mode: 'story' },
     );
-    const thinNode = finalizePrefixContinuation(
-      makeNode({ id: 'thin-assistant', parentId: 'thin-user', diagnostics: { refusalRoute: 'partial_refused' } }),
-      {
-        content: '已经写出的正文。\n\n抱歉，我不能继续写这段内容。',
-        reasoningContent: '',
-        finishReason: 'stop',
-      },
-      { mode: 'story' },
-    );
+    const thinNode = makeNode({
+      id: 'thin-assistant',
+      parentId: 'thin-user',
+      content: '抱歉，我不能继续写这段内容。',
+      diagnostics: { sourceStatus: 'REFUSAL', refusalRoute: 'retry' },
+    });
     const nodes = [
       {
         id: 'partial-user',
@@ -427,10 +534,6 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     ];
 
     expect(excludeRefusedTurns(nodes)).toEqual([nodes[0], partialNode]);
-    expect(thinNode.diagnostics).toMatchObject({
-      sourceStatus: 'REFUSAL',
-      refusalRoute: 'retry',
-    });
   });
 
   it('keeps all three manual continuation callers on the shared finalization path', () => {
@@ -478,9 +581,12 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
       expect(source).toContain('streamPrefixContinuation');
       expect(source).toContain('onRestoreRefusalOriginal');
       expect(source).toContain('onContinuePartialRefusal');
-      expect(source.match(/onDiagnostic: \(event\) => recordRefusalDiagnostic\(runtime\.diagnostics, event\)/g)?.length).toBe(2);
+      expect(source).toContain('restoreTurnNodeRefusalOriginal');
       expect(source.match(/recordRefusalOriginalRestoredDiagnostic\(runtime\.diagnostics, refusalDiagnostics\)/g)?.length).toBe(1);
     }
+    expect(draftSource.match(/onDiagnostic: \(event\) => recordRefusalDiagnostic\(runtime\.diagnostics, event\)/g)?.length).toBe(3);
+    expect(characterSource.match(/onDiagnostic: \(event\) => recordRefusalDiagnostic\(runtime\.diagnostics, event\)/g)?.length).toBe(2);
+    expect(draftSource).toContain('TurnRefusalNotices');
     expect(draftSource.match(/diagnostics: result\.diagnostics/g)?.length).toBe(5);
     expect(draftSource.match(/prefillContent: result\.prefillContent/g)?.length).toBe(5);
     expect(characterSource.match(/diagnostics: result\.diagnostics/g)?.length).toBe(2);
@@ -507,5 +613,289 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     expect(markup).toContain('本轮触发拒答，已从上下文隔离');
     expect(markup).toContain('data-testid="story-tree-diag-refusal"');
     expect(markup).not.toContain('这条历史消息在原平台未完整生成');
+  });
+
+  it('forwards refusalOptions as the 5th argument in useCreativeReply for character and writing modes', async () => {
+    const baseConfig: ModelConfig = {
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-test',
+      model: 'deepseek-flash',
+      reasoningEffort: 'high',
+      memoryOnly: false,
+    };
+
+    for (const mode of ['character', 'writing'] as const) {
+      const requests: LlmStreamRequest[] = [];
+      const diagnostics: RefusalDiagnosticEvent[] = [];
+      let retryNotified = 0;
+      let attempt = 0;
+
+      const request = createCreativeReplyRequest(
+        {
+          async *streamChat(req) {
+            requests.push(req);
+            attempt += 1;
+            if (attempt === 1) {
+              yield { contentDelta: '抱歉，我不能帮你写这段内容。', finishReason: 'stop' };
+              return;
+            }
+            yield { contentDelta: '她停在门边，指节抵着门框。\n\n```lfh-summary\n门边停顿。\n```', finishReason: 'stop' };
+          },
+        },
+        baseConfig,
+        {
+          onRefusalRetry: () => {
+            retryNotified += 1;
+          },
+        },
+      );
+
+      const result = await request(
+        [{ role: 'user', content: '继续这一幕。' }],
+        {
+          refusalOptions: {
+            mode,
+            characterName: mode === 'character' ? '沈砚' : undefined,
+            promptPackOptions: {
+              promptPackLibrary: createDefaultPromptPackLibrary(),
+            },
+            onDiagnostic: (event) => diagnostics.push(event),
+          },
+        },
+      );
+
+      expect(retryNotified).toBe(1);
+      expect(requests).toHaveLength(2);
+      expect(requests[1]?.prefixCompletion?.content).toBeDefined();
+      if (mode === 'character') {
+        expect(requests[1]?.prefixCompletion?.content).toContain('沈砚');
+      }
+      expect(diagnostics.map((item) => item.action)).toEqual([
+        'refusal_detected',
+        'refusal_retry_recovered',
+      ]);
+      expect(result.diagnostics).toMatchObject({
+        refusalRoute: 'retry',
+        retriedWithPrefix: true,
+        recoveredFromText: '抱歉，我不能帮你写这段内容。',
+      });
+    }
+
+    const hookSource = readFileSync(join(repoRoot, 'src/ui/useCreativeReply.ts'), 'utf8');
+    expect(hookSource).not.toContain('...options?.refusalOptions');
+  });
+
+  it('reads prompt-pack updates dynamically via getPromptPackLibrary without recreating harness or reloading story', () => {
+    let activeLibrary = createDefaultPromptPackLibrary();
+    const harness = createFictionHarness({
+      transport: {
+        async *streamChat() {
+          yield { contentDelta: 'ok', finishReason: 'stop' };
+        },
+      },
+      getPromptPackLibrary: () => activeLibrary,
+    });
+    const story = harness.createStory({ title: '动态提示词包测试' });
+
+    const beforeMessages = harness.assembleContext(story, null, '继续').messages;
+    expect(beforeMessages.map((m) => m.content).join('\n')).not.toContain('动态更新的新头段规则');
+
+    const customPack = createPromptPack('dynamic-pack', {
+      head: '动态更新的新头段规则',
+      mid: '中段规则',
+      tail: '尾段规则',
+    }, { title: '动态包' });
+    activeLibrary = {
+      ...activeLibrary,
+      packs: [...activeLibrary.packs, customPack],
+      activePackId: customPack.id,
+    };
+
+    const afterMessages = harness.assembleContext(story, null, '继续').messages;
+    expect(afterMessages.map((m) => m.content).join('\n')).toContain('动态更新的新头段规则');
+
+    const appSource = readFileSync(join(repoRoot, 'src/ui/App.tsx'), 'utf8');
+    expect(appSource).toContain('getPromptPackLibrary:');
+    expect(appSource).not.toContain('[promptPackLibrary, runtime]');
+  });
+
+  it('catches up branch summary and assembles continuation context for long stories exceeding recentMaxChars without throwing', async () => {
+    const chunk = '长剧情段落内容。'.repeat(700); // ~5600 chars per node -> 6 nodes > 24000 recentMaxChars
+    const nodes: Record<string, TurnNode> = {
+      u1: {
+        id: 'u1',
+        parentId: null,
+        role: 'user',
+        content: chunk,
+        createdAt: 1,
+        summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+      },
+      a1: {
+        id: 'a1',
+        parentId: 'u1',
+        role: 'assistant',
+        content: chunk,
+        createdAt: 2,
+        summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+      },
+      u2: {
+        id: 'u2',
+        parentId: 'a1',
+        role: 'user',
+        content: chunk,
+        createdAt: 3,
+        summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+      },
+      a2: {
+        id: 'a2',
+        parentId: 'u2',
+        role: 'assistant',
+        content: chunk,
+        createdAt: 4,
+        summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+      },
+      u3: {
+        id: 'u3',
+        parentId: 'a2',
+        role: 'user',
+        content: chunk,
+        createdAt: 5,
+        summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+      },
+      a3: {
+        id: 'a3',
+        parentId: 'u3',
+        role: 'assistant',
+        content: '雨声落下。抱歉，我不能继续写这段内容。',
+        createdAt: 6,
+        summarySnapshot: { content: '', coveredUpToNodeId: null, summarizedTurnCount: 0 },
+        diagnostics: { refusalRoute: 'partial_refused' },
+      },
+    };
+    const longStory: Story = {
+      id: 'long-story',
+      title: '超长故事续写',
+      rawScript: '',
+      blueprint: createDefaultBlueprint('超长故事续写'),
+      nodes,
+      rootNodeIds: ['u1'],
+      activeLeafNodeId: 'a3',
+      createdAt: 1,
+      updatedAt: 6,
+    };
+
+    const totalBeforeU3 = Object.values(nodes)
+      .filter((n) => n.id !== 'a3')
+      .reduce((acc, n) => acc + n.content.length, 0);
+    expect(totalBeforeU3).toBeGreaterThan(DEFAULT_CONTEXT_BUDGET.recentMaxChars);
+
+    const harness = createFictionHarness({
+      transport: {
+        async *streamChat() {
+          yield { contentDelta: '压缩后的剧情摘要。', finishReason: 'stop' };
+        },
+      },
+    });
+    const config: ModelConfig = {
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-test',
+      model: 'deepseek-flash',
+      reasoningEffort: 'high',
+      memoryOnly: false,
+    };
+
+    const ctx = await prepareStoryContinuationContext({
+      story: longStory,
+      nodeId: 'a3',
+      config,
+      promptPackLibrary: createDefaultPromptPackLibrary(),
+      calculateBranchSummary: harness.calculateActiveBranchSummary,
+    });
+
+    expect(ctx.workingStory.activeLeafNodeId).toBe('a3');
+    expect(ctx.messages.length).toBeGreaterThan(0);
+    expect(ctx.messages.map((m) => m.content).join('\n')).toContain('压缩后的剧情摘要。');
+  });
+
+  it('invalidates downstream summary snapshots when restoring original refusal content in stories and creative trees', () => {
+    const story = makeStory(
+      makeNode({
+        id: 'a1',
+        parentId: 'user-1',
+        content: '重拟后的正文。',
+        summarySnapshot: { content: '重拟摘要', coveredUpToNodeId: 'a1', summarizedTurnCount: 2 },
+        diagnostics: {
+          refusalRoute: 'retry',
+          recoveredFromText: '抱歉，我不能帮你写这段内容。',
+          retriedWithPrefix: true,
+        },
+      }),
+    );
+    story.nodes['u2'] = {
+      id: 'u2',
+      parentId: 'a1',
+      role: 'user',
+      content: '下一步',
+      createdAt: 3,
+      summarySnapshot: { content: '下游摘要', coveredUpToNodeId: 'u2', summarizedTurnCount: 3 },
+    };
+    story.nodes['sibling'] = {
+      id: 'sibling',
+      parentId: 'user-1',
+      role: 'assistant',
+      content: '兄弟分支。',
+      createdAt: 4,
+      summarySnapshot: { content: '兄弟摘要', coveredUpToNodeId: 'sibling', summarizedTurnCount: 2 },
+    };
+
+    const storyRestored = restoreStoryRefusalOriginal(story, 'a1');
+    expect(storyRestored).not.toBeNull();
+    expect(storyRestored?.restored.content).toBe('抱歉，我不能帮你写这段内容。');
+    expect(storyRestored?.story.nodes['a1'].summarySnapshot.coveredUpToNodeId).toBeNull();
+    expect(storyRestored?.story.nodes['u2'].summarySnapshot.coveredUpToNodeId).toBeNull();
+    expect(storyRestored?.story.nodes['sibling'].summarySnapshot.coveredUpToNodeId).toBe('sibling');
+
+    const treeRestored = restoreTurnNodeRefusalOriginal(story.nodes, 'a1');
+    expect(treeRestored).not.toBeNull();
+    expect(treeRestored?.nodes['a1'].summarySnapshot.coveredUpToNodeId).toBeNull();
+    expect(treeRestored?.nodes['u2'].summarySnapshot.coveredUpToNodeId).toBeNull();
+    expect(treeRestored?.nodes['sibling'].summarySnapshot.coveredUpToNodeId).toBe('sibling');
+  });
+
+  it('renders WelcomeView refusalRetrying copy and restore/continue controls on neutral assistant turns', () => {
+    const neutralRecovered: TurnNode = makeNode({
+      id: 'neutral-recovered',
+      content: '重拟后的中性回复。',
+      diagnostics: {
+        refusalRoute: 'retry',
+        recoveredFromText: '抱歉，我不能写这个。',
+        retriedWithPrefix: true,
+      },
+    });
+    const neutralPartial: TurnNode = makeNode({
+      id: 'neutral-partial',
+      content: '半拒绝中性回复。',
+      diagnostics: {
+        refusalRoute: 'partial_refused',
+      },
+    });
+
+    const markup = renderToStaticMarkup(createElement(WelcomeView, {
+      stories: [],
+      recentCreative: [],
+      neutralTurns: [neutralRecovered, neutralPartial],
+      isStreaming: true,
+      streamContent: '',
+      streamReasoning: '',
+      refusalRetrying: true,
+      onSelectStory: vi.fn(),
+      onRestoreRefusalOriginal: vi.fn(),
+      onContinuePartialRefusal: vi.fn(),
+    }));
+
+    expect(markup).toContain('正在重新构思落笔…');
+    expect(markup).toContain('data-testid="turn-refusal-restore-original"');
+    expect(markup).toContain('data-testid="turn-partial-refusal-continue"');
+    expect(markup).toContain('banner-alert-warning');
   });
 });

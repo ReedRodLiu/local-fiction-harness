@@ -21,7 +21,6 @@ import {
   recordRefusalDiagnostic,
   recordRefusalOriginalRestoredDiagnostic,
   resolveEffectiveModelConfig,
-  restoreRefusalOriginalContent,
   summaryTargetBranchFingerprint,
   summarizeCharacterConversation,
   writeDocument,
@@ -55,6 +54,7 @@ import {
 } from './proposalActions.ts';
 import {
   finalizePrefixContinuation,
+  restoreTurnNodeRefusalOriginal,
   streamPrefixContinuation,
 } from './refusalContinuation.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
@@ -525,13 +525,11 @@ export function CharacterPane(props: CharacterPaneProps) {
       await save((state) =>
         updateCharacter(state, character.id, (live) =>
           updateConversation(live, conversation.id, (current) => {
-            const node = current.nodes[nodeId];
-            if (!node || node.role !== 'assistant') return current;
-            const restored = restoreRefusalOriginalContent(node);
-            if (restored === node) return current;
+            const result = restoreTurnNodeRefusalOriginal(current.nodes, nodeId);
+            if (!result) return current;
             didRestore = true;
-            refusalDiagnostics = node.diagnostics;
-            return { ...current, nodes: { ...current.nodes, [nodeId]: restored } };
+            refusalDiagnostics = result.previousDiagnostics;
+            return { ...current, nodes: result.nodes };
           }),
         ),
       );

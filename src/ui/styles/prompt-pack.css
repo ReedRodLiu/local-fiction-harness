@@ -272,21 +272,19 @@
 .turn-refusal-recovered,
 .turn-partial-refusal {
   flex-wrap: wrap;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
   font-size: 12px;
   line-height: 1.5;
 }
 
 .turn-refusal-recovered {
+  padding: 8px 10px;
   border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
   background: var(--bg-surface);
   color: var(--text-secondary);
 }
 
 .turn-partial-refusal {
-  border: 1px solid var(--status-warn);
-  background: var(--status-warn-soft);
   color: var(--text-primary);
 }
 
