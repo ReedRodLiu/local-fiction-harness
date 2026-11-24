@@ -62,7 +62,29 @@ export function StoryTree({
   const treeOpen = !collapsible || isPanelOpen;
   const spanIdPrefix = useId();
 
-  const spine = useMemo(() => projectStoryTreeSpine(story), [story]);
+  const { spine, activePath, spanRefusalById } = useMemo(() => {
+    const nextSpine = projectStoryTreeSpine(story);
+    const nextActivePath = getActiveBranchNodes(story, nextSpine.activeLeafNodeId);
+    const indexById = new Map<string, number>();
+    nextActivePath.forEach((node, idx) => indexById.set(node.id, idx));
+    const refusalMap = new Map<string, boolean>();
+    for (const item of nextSpine.items) {
+      if (item.kind !== 'span') continue;
+      const startIndex = indexById.get(item.startNodeId) ?? -1;
+      const endIndex = indexById.get(item.endNodeId) ?? -1;
+      let hasRefusal = false;
+      if (startIndex >= 0 && endIndex >= startIndex) {
+        for (let i = startIndex; i <= endIndex; i++) {
+          if (nextActivePath[i].diagnostics?.sourceStatus === 'REFUSAL') {
+            hasRefusal = true;
+            break;
+          }
+        }
+      }
+      refusalMap.set(item.id, hasRefusal);
+    }
+    return { spine: nextSpine, activePath: nextActivePath, spanRefusalById: refusalMap };
+  }, [story]);
 
   const toggleFork = (forkId: string) => {
     setExpandedForkIds((prev) => ({ ...prev, [forkId]: !prev[forkId] }));
@@ -78,7 +100,6 @@ export function StoryTree({
       return;
     }
 
-    const activePath = getActiveBranchNodes(story, spine.activeLeafNodeId);
     const startIndex = activePath.findIndex((node) => node.id === item.startNodeId);
     const endIndex = activePath.findIndex((node) => node.id === item.endNodeId);
     if (startIndex < 0 || endIndex < startIndex) return;
@@ -141,15 +162,7 @@ export function StoryTree({
                   const expandedNodes = expandedSpanNodes[item.id];
                   const isExpanded = expandedNodes !== undefined;
                   const previewId = `${spanIdPrefix}-span-${index}`;
-                  const activePath = getActiveBranchNodes(story, spine.activeLeafNodeId);
-                  const startIndex = activePath.findIndex((node) => node.id === item.startNodeId);
-                  const endIndex = activePath.findIndex((node) => node.id === item.endNodeId);
-                  const spanHasRefusal =
-                    startIndex >= 0 &&
-                    endIndex >= startIndex &&
-                    activePath.slice(startIndex, endIndex + 1).some(
-                      (node) => node.diagnostics?.sourceStatus === 'REFUSAL',
-                    );
+                  const spanHasRefusal = spanRefusalById.get(item.id) ?? false;
                   return (
                     <li
                       key={item.id}
@@ -217,7 +230,6 @@ export function StoryTree({
                                   <span
                                     className="story-tree-span-node-diagnostics"
                                     role="note"
-                                    data-testid={node.diagnostics?.sourceStatus === 'REFUSAL' ? 'story-tree-diag-refusal' : undefined}
                                   >
                                     来源提示：{diagnostics.join(' · ')}
                                   </span>

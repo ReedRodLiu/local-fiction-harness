@@ -162,17 +162,6 @@
   border-color: var(--status-danger);
 }
 
-.prompt-pack-disclaimer {
-  margin: 0;
-  padding: 10px 12px;
-  border-left: 3px solid var(--status-warn);
-  border-radius: var(--radius-sm);
-  background: var(--status-warn-soft);
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
 .prompt-pack-editor-head label {
   flex: 1 1 auto;
 }

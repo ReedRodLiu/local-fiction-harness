@@ -27,6 +27,7 @@ import {
   type PromptPackLibrary,
   type PromptPackSlots,
 } from '../harness/index.ts';
+import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 
 export const PROMPT_PACK_DISCLAIMER =
@@ -95,18 +96,37 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const importInputRef = useRef<HTMLInputElement>(null);
+  const prevActivePackIdRef = useRef<string | null>(library.activePackId);
   const readOnly = selected.readOnly === true || selected.source === 'builtin';
   const validation = useMemo(() => validatePromptPackSlots(slotsDraft), [slotsDraft]);
   const total = validation.totalChars;
 
   useEffect(() => {
-    setSelectedId(activePack.id);
-  }, [activePack.id]);
+    if (library.activePackId && library.activePackId !== prevActivePackIdRef.current) {
+      if (library.packs.some((pack) => pack.id === library.activePackId)) {
+        setSelectedId(library.activePackId);
+      }
+    } else if (!library.packs.some((pack) => pack.id === selectedId)) {
+      setSelectedId(
+        (library.activePackId && library.packs.find((pack) => pack.id === library.activePackId)?.id) ??
+          library.packs[0]?.id ??
+          '',
+      );
+    }
+    prevActivePackIdRef.current = library.activePackId;
+  }, [library.activePackId, library.packs, selectedId]);
 
   useEffect(() => {
     setTitleDraft(selected.title);
     setSlotsDraft(selected.slots);
-  }, [selected.id]);
+  }, [
+    selected.id,
+    selected.updatedAt,
+    selected.title,
+    selected.slots.head,
+    selected.slots.mid,
+    selected.slots.tail,
+  ]);
 
   const applyLibrary = (next: PromptPackLibrary, message: string) => {
     setError('');
@@ -125,10 +145,11 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
 
   const toggleGlobal = () => {
     if (library.activePackId) {
-      applyLibrary(setActivePromptPack(library, null), '已停用全局提示词包。');
+      applyLibrary(setActivePromptPack(library, null), '已停用默认提示词包。');
       return;
     }
     const nextEnabled =
+      library.packs.find((pack) => pack.id === selected.id) ??
       library.packs.find((pack) => pack.enabled !== false) ??
       library.packs.find((pack) => pack.id === 'builtin-narrative-skeleton');
     if (!nextEnabled) return;
@@ -252,7 +273,7 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
     >
       <div className="prompt-pack-global-row">
         <div>
-          <strong>{library.activePackId ? `当前激活：${activePack.title}` : '全局提示词包已停用'}</strong>
+          <strong>{library.activePackId ? `当前激活：${activePack.title}` : '默认提示词包已停用'}</strong>
           <p>同一时间只激活一个包；切换后会用于未单独覆盖的故事、作品与角色。</p>
         </div>
         <button
@@ -309,9 +330,9 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
         </button>
       </div>
 
-      <p className="prompt-pack-disclaimer" data-testid="prompt-pack-disclaimer">
+      <BannerAlert tone="warning" testId="prompt-pack-disclaimer">
         {PROMPT_PACK_DISCLAIMER}
-      </p>
+      </BannerAlert>
 
       <div className="prompt-pack-import-block">
         <input
