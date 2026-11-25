@@ -115,6 +115,7 @@ import { toErrorMessage } from './textHelpers.ts';
 import { useAppOverlayHistory } from './useAppOverlayHistory.ts';
 import { useAppUpdater } from './useAppUpdater.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
+import { sendOnEnter, useComposerEnterKeyHint } from './useCreativeReply.ts';
 import { useCreativeWorkspace } from './useCreativeWorkspace.ts';
 import { useDeepSeekBalance } from './useDeepSeekBalance.ts';
 import { useDisplayPreferences } from './useDisplayPreferences.ts';
@@ -211,6 +212,7 @@ export function App({ runtime }: AppProps) {
     label: string;
   } | null>(null);
   const { asyncError, dismissAsyncError } = useAppAsyncError();
+  const composerEnterKeyHint = useComposerEnterKeyHint();
 
   const [promptPackLibrary, setPromptPackLibraryState] = useState<PromptPackLibrary>(() =>
     loadPromptPackLibrary(runtime.promptPackStorage),
@@ -2846,6 +2848,7 @@ export function App({ runtime }: AppProps) {
                   id="turn-input"
                   name="playerInput"
                   rows={1}
+                  enterKeyHint={composerEnterKeyHint}
                   value={input}
                   placeholder={isWelcome
                     ? '说说你想玩的故事、想写的小说，或想找谁聊聊…'
@@ -2859,17 +2862,7 @@ export function App({ runtime }: AppProps) {
                       textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
                     }
                   }}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === 'Enter' &&
-                      !event.shiftKey &&
-                      !event.nativeEvent.isComposing &&
-                      event.nativeEvent.keyCode !== 229
-                    ) {
-                      event.preventDefault();
-                      void handleSubmit();
-                    }
-                  }}
+                  onKeyDown={(event) => sendOnEnter(event, () => handleSubmit())}
                 />
                 <GenerationControls
                   model={effectiveComposerConfig.model}

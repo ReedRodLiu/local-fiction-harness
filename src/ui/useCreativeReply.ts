@@ -16,7 +16,11 @@ import {
   type TurnCallbacks,
   type TurnNode,
 } from '../harness/index.ts';
-import { toErrorMessage } from './textHelpers.ts';
+import {
+  getComposerEnterKeyHint,
+  shouldSubmitComposerOnEnter,
+  toErrorMessage,
+} from './textHelpers.ts';
 
 export type RequestModel = (label: string, run: (config: ModelConfig) => void) => void;
 
@@ -106,17 +110,51 @@ export function makeTurn(
   };
 }
 
-export function sendOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
-  if (
-    event.key !== 'Enter' ||
-    event.shiftKey ||
-    event.nativeEvent.isComposing ||
-    event.nativeEvent.keyCode === 229
-  ) {
+export function sendOnEnter(
+  event: KeyboardEvent<HTMLTextAreaElement>,
+  onSubmit?: () => void,
+) {
+  if (!shouldSubmitComposerOnEnter(event)) {
     return;
   }
   event.preventDefault();
-  event.currentTarget.form?.requestSubmit();
+  if (onSubmit) {
+    onSubmit();
+  } else {
+    event.currentTarget.form?.requestSubmit();
+  }
+}
+
+export function useComposerEnterKeyHint(): 'enter' | 'send' {
+  const [enterKeyHint, setEnterKeyHint] = useState<'enter' | 'send'>(() => getComposerEnterKeyHint());
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const queries = [
+      window.matchMedia('(pointer: coarse)'),
+      window.matchMedia('(pointer: fine)'),
+    ];
+    const update = () => setEnterKeyHint(getComposerEnterKeyHint());
+    update();
+    for (const mq of queries) {
+      if (typeof mq.addEventListener === 'function') {
+        mq.addEventListener('change', update);
+      } else if (typeof mq.addListener === 'function') {
+        mq.addListener(update);
+      }
+    }
+    return () => {
+      for (const mq of queries) {
+        if (typeof mq.removeEventListener === 'function') {
+          mq.removeEventListener('change', update);
+        } else if (typeof mq.removeListener === 'function') {
+          mq.removeListener(update);
+        }
+      }
+    };
+  }, []);
+
+  return enterKeyHint;
 }
 
 export function replyContent(content: string, proposal?: MarkdownProposal) {

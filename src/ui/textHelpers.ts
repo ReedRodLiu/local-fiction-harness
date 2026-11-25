@@ -5,6 +5,58 @@ export function splitNonEmptyLines(text: string): string[] {
     .filter(Boolean);
 }
 
+export type ComposerEnterKeyEvent = {
+  key: string;
+  shiftKey: boolean;
+  isComposing?: boolean;
+  keyCode?: number;
+  nativeEvent?: {
+    isComposing?: boolean;
+    keyCode?: number;
+  };
+};
+
+/**
+ * Returns true when the primary input device is touch/coarse-pointer (mobile browser or WebView)
+ * so Enter on the soft keyboard inserts a newline instead of submitting.
+ */
+export function isCoarsePointerDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (typeof window.matchMedia === 'function') {
+    if (window.matchMedia('(pointer: coarse)').matches) return true;
+    if (window.matchMedia('(pointer: fine)').matches) return false;
+    if (
+      window.matchMedia('(hover: none)').matches &&
+      typeof navigator !== 'undefined' &&
+      navigator.maxTouchPoints > 0
+    ) {
+      return true;
+    }
+  }
+  if (typeof navigator !== 'undefined') {
+    const hasTouch = navigator.maxTouchPoints > 0;
+    const isMobileUa = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent ?? '');
+    if (hasTouch && isMobileUa) return true;
+  }
+  return false;
+}
+
+export function getComposerEnterKeyHint(coarsePointer = isCoarsePointerDevice()): 'enter' | 'send' {
+  return coarsePointer ? 'enter' : 'send';
+}
+
+export function shouldSubmitComposerOnEnter(
+  event: ComposerEnterKeyEvent,
+  coarsePointer = isCoarsePointerDevice(),
+): boolean {
+  if (coarsePointer || event.key !== 'Enter' || event.shiftKey) {
+    return false;
+  }
+  const isComposing = event.nativeEvent?.isComposing ?? event.isComposing ?? false;
+  const keyCode = event.nativeEvent?.keyCode ?? event.keyCode;
+  return !isComposing && keyCode !== 229;
+}
+
 const NETWORK_ABORT_PATTERN =
   /software caused connection abort|econnaborted|connection abort/i;
 const SOCKET_RESET_PATTERN =

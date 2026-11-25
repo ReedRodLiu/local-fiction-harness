@@ -79,6 +79,7 @@ import {
   sendOnEnter,
   syncTextareaHeight,
   updateWork,
+  useComposerEnterKeyHint,
   useCreativeReply,
   type RequestModel,
 } from './useCreativeReply.ts';
@@ -120,6 +121,7 @@ export function DraftPane(props: DraftPaneProps) {
     setCompanionOpen,
   } = props;
   const reply = useCreativeReply(runtime, props.requestModel);
+  const composerEnterKeyHint = useComposerEnterKeyHint();
   const editing = props.manuscript ?? Boolean(work.writingStarted || work.body || work.source);
 
   const [discussionInput, setDiscussionInput] = useState('');
@@ -1360,6 +1362,7 @@ export function DraftPane(props: DraftPaneProps) {
               id="writing-discussion-input"
               aria-label="聊天内容"
               rows={1}
+              enterKeyHint={composerEnterKeyHint}
               value={discussionInput}
               placeholder="聊聊设定、构思情节，或让 AI 试写一段…"
               onChange={(event) => {
@@ -1679,6 +1682,7 @@ export function DraftPane(props: DraftPaneProps) {
                 id="writing-suggestion-input"
                 aria-label="写作要求"
                 rows={1}
+                enterKeyHint={composerEnterKeyHint}
                 value={manuscriptInput}
                 placeholder="输入续写/改写要求、调整设定，或直接提问…"
                 onChange={(event) => {
