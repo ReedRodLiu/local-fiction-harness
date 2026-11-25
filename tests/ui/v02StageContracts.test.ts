@@ -64,6 +64,7 @@ describe('Folio V0.2 UI contracts & jargon purge', () => {
       '引用讨论',
       '本人聊天',
       '扮演对戏',
+      '推进量级',
     ];
 
     for (const file of activeUiFiles) {
@@ -72,6 +73,10 @@ describe('Folio V0.2 UI contracts & jargon purge', () => {
         expect(source, `${file} should not contain "${term}"`).not.toContain(term);
       }
     }
+
+    const storyTreeSource = readUiSource('StoryTree.tsx');
+    expect(storyTreeSource).toContain('最近游玩');
+    expect(storyTreeSource).toContain('最多轮次');
   });
 
   it('renders Welcome neutral unpersisted timeline and empty guidance without mode pills', () => {
@@ -177,9 +182,32 @@ describe('Folio V0.2 UI contracts & jargon purge', () => {
       onExportStoryBackup: () => undefined,
     }));
 
+    expect(markup).toContain('>文游</button>');
+    expect(markup).toContain('>写故事</button>');
+    expect(markup).toContain('>角色互动</button>');
+    expect(markup).not.toContain('>角色</button>');
     expect(markup).toContain('我的作品');
     expect(markup).toContain('长篇草稿');
     expect(markup).not.toContain('.lfh.json');
+
+    const characterMarkup = renderToStaticMarkup(createElement(StoryLibrary, {
+      stories: [story],
+      characters: [{ id: 'c1', title: '岑灯', subtitle: '2 条对话' }],
+      activeCategory: 'character',
+      activeCharacterId: 'c1',
+      activeStoryId: '',
+      onSelectStory: () => undefined,
+      onRenameStory: () => undefined,
+      onDeleteStory: () => undefined,
+      onExportStoryBackup: () => undefined,
+    }));
+    expect(characterMarkup).toContain('<h2>我的角色</h2>');
+    expect(characterMarkup).toContain('aria-pressed="true">角色互动</button>');
+
+    const libraryDrawerCss = readUiSource('styles/library-drawer.css');
+    expect(libraryDrawerCss).toMatch(/\.library-categories button\s*\{[^}]*min-height:\s*44px;/s);
+    expect(libraryDrawerCss).toMatch(/\.library-categories button\s*\{[^}]*white-space:\s*nowrap;/s);
+    expect(libraryDrawerCss).toMatch(/\.library-categories button\s*\{[^}]*font-size:\s*1[234]px;/s);
   });
 
   it('renders TurnCard inline ProposalCard without duplicate PencilLine writeFrom button', () => {

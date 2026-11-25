@@ -115,7 +115,7 @@ async function closeCharacterCompanion(page) {
 
 async function openStoredCharacter(page, title) {
   const library = page.getByTestId('desktop-library');
-  await library.getByRole('button', { name: '角色', exact: true }).click();
+  await library.getByRole('button', { name: '角色互动', exact: true }).click();
   const row = library.getByTestId('story-select-button').filter({ hasText: title }).first();
   await row.waitFor();
   await row.click();

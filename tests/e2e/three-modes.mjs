@@ -778,7 +778,7 @@ export async function verifyThreeModes(browser, port, helpers) {
         for (const [name, category, title, target, actionLabel] of [
           ['文游', '文游', '浮灯渡口', page.getByTestId('story-timeline'), '打开分支与设定'],
           ['写故事', '写故事', '纸月车站', writing, '打开灵感与设定'],
-          ['角色互动', '角色', '岑灯', character, '打开历史对话与设定'],
+          ['角色互动', '角色互动', '岑灯', character, '打开历史对话与设定'],
         ]) {
           if (viewport.width < 960) await page.getByTestId('library-drawer-trigger').click();
           const activeLib = page.getByTestId(viewport.width < 960 ? 'mobile-library-dialog' : 'desktop-library');
@@ -870,7 +870,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     assert.match(workExport.suggestedFilename(), /纸月车站改名\.md$/);
     assert.match(fs.readFileSync(await workExport.path(), 'utf8'), /第三声钟响/);
 
-    await library.getByRole('button', { name: '角色', exact: true }).click();
+    await library.getByRole('button', { name: '角色互动', exact: true }).click();
     const charRow = library.getByTestId('story-list-item').filter({ hasText: '岑灯' }).first();
     await charRow.getByTestId('story-menu-trigger').click();
     const [charExport] = await Promise.all([
