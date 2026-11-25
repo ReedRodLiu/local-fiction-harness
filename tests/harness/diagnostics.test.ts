@@ -9,6 +9,7 @@ import {
   createInMemoryStoryStorage,
   recordAutoScrollDiagnostic,
   recordRefusalOriginalRestoredDiagnostic,
+  recordSwipeDiagnostic,
   sanitizeDiagnosticText,
   sanitizeEndpointProfile,
   scanDeepSeekExportZip,
@@ -825,6 +826,36 @@ describe('Spec #26 Slice 2: DeepSeek structure radar & breadcrumb wrappers', () 
       reasonCode: 'resolved_scrollable_ancestor',
     });
     expect(JSON.stringify(bundle)).not.toContain('SECRET_STORY_CANARY');
+  });
+
+  it('records zero-content swipe gesture diagnostics with allowlisted surface and reasonCode only', () => {
+    const collector = createDiagnosticCollector({ platform: 'android' });
+    recordSwipeDiagnostic(collector, {
+      action: 'swipe_gesture_canceled',
+      surface: 'drawer_close',
+      reasonCode: 'pointer_cancel_horizontal',
+    });
+    recordSwipeDiagnostic(collector, {
+      action: 'swipe_gesture_rejected',
+      surface: 'overlay_back',
+      reasonCode: 'below_threshold',
+    });
+
+    const bundle = collector.buildBundle({ baseUrl: '', model: '', memoryOnly: true });
+    expect(bundle.events.map((e) => ({ level: e.level, category: e.category, action: e.action, meta: e.meta }))).toEqual([
+      {
+        level: 'warn',
+        category: 'ui',
+        action: 'swipe_gesture_canceled',
+        meta: { swipeSurface: 'drawer_close', reasonCode: 'pointer_cancel_horizontal' },
+      },
+      {
+        level: 'info',
+        category: 'ui',
+        action: 'swipe_gesture_rejected',
+        meta: { swipeSurface: 'overlay_back', reasonCode: 'below_threshold' },
+      },
+    ]);
   });
 
 });

@@ -21,6 +21,7 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .overlay-page-progress {
@@ -378,6 +379,7 @@
   width: 100%;
   overflow-x: auto;
   scrollbar-width: none;
+  touch-action: pan-x pan-y;
 }
 
 .ds-filter-tabs button {

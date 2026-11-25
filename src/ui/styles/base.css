@@ -700,6 +700,7 @@ a:focus-visible,
   margin: 0.75em 0;
   padding: 10px 12px;
   overflow-x: auto;
+  touch-action: pan-x pan-y;
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
@@ -714,6 +715,7 @@ a:focus-visible,
   max-width: 100%;
   margin: 0.75em 0;
   overflow-x: auto;
+  touch-action: pan-x pan-y;
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-sm);
 }
@@ -780,6 +782,7 @@ a:focus-visible,
   font-size: 12px;
   line-height: 1.55;
   overflow-x: auto;
+  touch-action: pan-x pan-y;
 }
 
 .diff-hunk {

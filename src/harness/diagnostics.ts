@@ -161,6 +161,9 @@ const DIAGNOSTIC_ACTIONS = new Set([
   'autoscroll_target_non_scrollable',
   'autoscroll_follow_transition',
   'autoscroll_follow_anomaly',
+  // UI swipe gesture diagnostics (zero-content surface/reason only)
+  'swipe_gesture_canceled',
+  'swipe_gesture_rejected',
   'other',
 ]);
 const REFUSAL_DIAGNOSTIC_ACTIONS = new Set([
@@ -253,6 +256,7 @@ const SAFE_ENUM_METRICS: Record<string, ReadonlySet<string>> = {
     'installed',
     'browser_fallback',
   ]),
+  swipeSurface: new Set(['drawer_open', 'drawer_close', 'overlay_back']),
 };
 const SAFE_REASON_CODE_UPPER_ALLOWLIST = new Set([
   'TIMEOUT',
@@ -485,6 +489,32 @@ export function recordAutoScrollDiagnostic(
     });
   } catch {
     // Diagnostics must never alter scroll behavior.
+  }
+}
+
+export interface SwipeDiagnosticInput {
+  action: 'swipe_gesture_canceled' | 'swipe_gesture_rejected';
+  surface: 'drawer_open' | 'drawer_close' | 'overlay_back';
+  reasonCode: 'pointer_cancel_pending' | 'pointer_cancel_horizontal' | 'below_threshold';
+}
+
+/** Records one zero-content UI swipe breadcrumb through the fail-closed diagnostics allowlist. */
+export function recordSwipeDiagnostic(
+  collector: Pick<DiagnosticCollector, 'recordEvent'>,
+  event: SwipeDiagnosticInput,
+): void {
+  try {
+    collector.recordEvent({
+      level: event.action === 'swipe_gesture_canceled' ? 'warn' : 'info',
+      category: 'ui',
+      action: event.action,
+      meta: {
+        swipeSurface: event.surface,
+        reasonCode: event.reasonCode,
+      },
+    });
+  } catch {
+    // Diagnostics must never interfere with UI touch handling.
   }
 }
 
