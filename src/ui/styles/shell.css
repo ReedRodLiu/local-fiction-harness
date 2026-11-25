@@ -46,16 +46,19 @@ textarea:focus-visible {
 }
 
 .app-root {
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow-x: clip;
+  overflow-y: hidden;
 }
 
 .app-topbar {
   position: relative;
   z-index: 1;
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: minmax(44px, 1fr) minmax(0, 3fr) minmax(44px, 1fr);
   align-items: center;
@@ -157,11 +160,24 @@ textarea:focus-visible {
   display: grid;
   flex: 1 1 auto;
   grid-template-columns: 288px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
 }
 
 .app-workspace.is-overlay { grid-template-columns: minmax(0, 1fr); }
 .app-workspace.is-overlay .library-sidebar { display: none; }
+.app-workspace.is-overlay .main-stage {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  padding-top: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-top: calc(72px + var(--safe-area-top));
+}
+.app-workspace.is-overlay .main-stage > .banner-alert:first-child {
+  margin-top: max(12px, var(--safe-area-top));
+}
 .app-workspace.is-library-collapsed { grid-template-columns: 0px minmax(0, 1fr); }
 
 .library-sidebar {
@@ -366,8 +382,8 @@ textarea:focus-visible {
 .settings-privacy svg { flex: 0 0 auto; color: var(--status-ok); }
 .settings-button-row { flex-wrap: wrap; gap: 8px; }
 
-.overlay-page-shell { width: min(100%, 640px); min-height: 100%; margin: 0 auto; padding-bottom: 30px; }
-.overlay-page-header { position: sticky; top: calc(-20px - var(--safe-area-top)); z-index: 2; display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; min-height: 64px; margin: -20px calc(clamp(16px, 4vw, 40px) * -1) 18px; padding: var(--safe-area-top) 16px 0; border-bottom: 1px solid var(--border-hairline); background: var(--bg-canvas); }
+.overlay-page-shell { flex: 0 0 auto; width: min(100%, 640px); min-height: 100%; margin: 0 auto; padding-bottom: 30px; }
+.overlay-page-header { position: sticky; top: 0; z-index: 2; flex: 0 0 auto; display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; min-height: calc(64px + var(--safe-area-top)); margin: 0 calc(clamp(16px, 4vw, 40px) * -1) 18px; padding: var(--safe-area-top) max(16px, var(--safe-area-right)) 0 max(16px, var(--safe-area-left)); border-bottom: 1px solid var(--border-hairline); background: var(--bg-canvas); }
 .overlay-page-header h1 { margin: 0; font-size: 17px; text-align: center; }
 .overlay-header-spacer { width: 44px; height: 44px; }
 .overlay-page-content { display: flex; flex-direction: column; gap: 14px; }
@@ -485,6 +501,7 @@ textarea:focus-visible {
   .branch-badge { max-width: 112px; overflow: hidden; padding-inline: 8px; text-overflow: ellipsis; }
   .summary-progress { max-width: 6em; overflow: hidden; text-overflow: ellipsis; }
   .main-stage { padding-inline: 16px; }
+  .overlay-page-header { margin-inline: -16px; }
 }
 
 @media (max-width: 560px) {

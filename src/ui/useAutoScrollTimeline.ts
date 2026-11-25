@@ -25,13 +25,22 @@ export function useAutoScrollTimeline(options: UseAutoScrollTimelineOptions) {
   const stageRef = useRef<HTMLElement | null>(null);
   const contextKeyRef = useRef(contextKey);
   const leafKeyRef = useRef(activeLeafKey);
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+  const wasPausedRef = useRef(paused);
   const shouldFollowRef = useRef(true);
   const userPausedRef = useRef(false);
   const userIntentUntilRef = useRef(0);
   const lastMetricsRef = useRef({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 });
 
   useLayoutEffect(() => {
-    if (paused) return;
+    if (paused) {
+      wasPausedRef.current = true;
+      return;
+    }
+    const resumedFromPause = wasPausedRef.current;
+    wasPausedRef.current = false;
+
     const stage = stageRef.current;
     const contextChanged = contextKeyRef.current !== contextKey;
     if (contextChanged) {
@@ -44,7 +53,7 @@ export function useAutoScrollTimeline(options: UseAutoScrollTimelineOptions) {
       if (stage) {
         const frame = window.requestAnimationFrame(() => {
           const currentStage = stageRef.current;
-          if (!currentStage || contextKeyRef.current !== contextKey) return;
+          if (!currentStage || pausedRef.current || contextKeyRef.current !== contextKey) return;
           currentStage.scrollTop = currentStage.scrollHeight;
           lastMetricsRef.current = {
             scrollTop: currentStage.scrollTop,
@@ -59,7 +68,7 @@ export function useAutoScrollTimeline(options: UseAutoScrollTimelineOptions) {
 
     const leafChanged = leafKeyRef.current !== activeLeafKey;
     leafKeyRef.current = activeLeafKey;
-    if (leafChanged && userPausedRef.current && stage) {
+    if ((leafChanged || resumedFromPause) && userPausedRef.current && stage) {
       stage.scrollTop = Math.min(
         lastMetricsRef.current.scrollTop,
         Math.max(0, stage.scrollHeight - stage.clientHeight),
@@ -74,7 +83,7 @@ export function useAutoScrollTimeline(options: UseAutoScrollTimelineOptions) {
 
     if (!stage || !shouldFollowRef.current) return;
     const frame = window.requestAnimationFrame(() => {
-      if (shouldFollowRef.current) {
+      if (!pausedRef.current && shouldFollowRef.current) {
         stage.scrollTop = stage.scrollHeight;
         lastMetricsRef.current = {
           scrollTop: stage.scrollTop,
@@ -88,6 +97,7 @@ export function useAutoScrollTimeline(options: UseAutoScrollTimelineOptions) {
 
   useEffect(() => {
     const keepLatestInView = () => {
+      if (pausedRef.current) return;
       const stage = stageRef.current;
       if (!stage) return;
       if (!userPausedRef.current) {
@@ -101,6 +111,7 @@ export function useAutoScrollTimeline(options: UseAutoScrollTimelineOptions) {
   }, []);
 
   const handleScroll = () => {
+    if (pausedRef.current) return;
     const stage = stageRef.current;
     if (!stage) return;
     const prev = lastMetricsRef.current;
@@ -139,7 +150,7 @@ export function useAutoScrollTimeline(options: UseAutoScrollTimelineOptions) {
       shouldFollowRef.current = true;
       window.requestAnimationFrame(() => {
         const currentStage = stageRef.current;
-        if (currentStage) {
+        if (currentStage && !pausedRef.current) {
           currentStage.scrollTop = currentStage.scrollHeight;
           lastMetricsRef.current = {
             scrollTop: currentStage.scrollTop,
@@ -160,7 +171,7 @@ export function useAutoScrollTimeline(options: UseAutoScrollTimelineOptions) {
     if (scrolledUp) {
       window.requestAnimationFrame(() => {
         const currentStage = stageRef.current;
-        if (currentStage) {
+        if (currentStage && !pausedRef.current) {
           currentStage.scrollTop = currentStage.scrollHeight;
           lastMetricsRef.current = {
             scrollTop: currentStage.scrollTop,
@@ -173,6 +184,7 @@ export function useAutoScrollTimeline(options: UseAutoScrollTimelineOptions) {
   };
 
   const markScrollIntent = (target: EventTarget | null) => {
+    if (pausedRef.current) return;
     const isEditable =
       target instanceof Element &&
       Boolean(target.closest('textarea, input, [contenteditable="true"]'));
@@ -182,27 +194,30 @@ export function useAutoScrollTimeline(options: UseAutoScrollTimelineOptions) {
   };
 
   const scrollToBottom = () => {
+    if (pausedRef.current) return;
     shouldFollowRef.current = true;
     userPausedRef.current = false;
     setShowScrollToBottom(false);
     window.requestAnimationFrame(() => {
       const stage = stageRef.current;
-      if (stage) stage.scrollTop = stage.scrollHeight;
+      if (stage && !pausedRef.current) stage.scrollTop = stage.scrollHeight;
     });
   };
 
-  const containerHandlers = {
-    onScroll: handleScroll,
-    onWheelCapture: (event: WheelEvent<HTMLElement>) => {
-      if (event.deltaY !== 0) markScrollIntent(event.target);
-    },
-    onTouchMoveCapture: (event: TouchEvent<HTMLElement>) => markScrollIntent(event.target),
-    onKeyDownCapture: (event: KeyboardEvent<HTMLElement>) => {
-      if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) {
-        markScrollIntent(event.target);
-      }
-    },
-  };
+  const containerHandlers = paused
+    ? {}
+    : {
+        onScroll: handleScroll,
+        onWheelCapture: (event: WheelEvent<HTMLElement>) => {
+          if (event.deltaY !== 0) markScrollIntent(event.target);
+        },
+        onTouchMoveCapture: (event: TouchEvent<HTMLElement>) => markScrollIntent(event.target),
+        onKeyDownCapture: (event: KeyboardEvent<HTMLElement>) => {
+          if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) {
+            markScrollIntent(event.target);
+          }
+        },
+      };
 
   return {
     stageRef,
