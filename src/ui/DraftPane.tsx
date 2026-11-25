@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { ArrowUp, ChevronRight, Download, Edit3, RotateCcw, Sparkles, Square, X } from 'lucide-react';
 import {
   adoptSuggestion,
@@ -107,6 +107,7 @@ interface DraftPaneProps {
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;
   setCompanionOpen: (open: boolean) => void;
+  scrollContainerRef?: RefObject<HTMLElement | null>;
 }
 
 export function DraftPane(props: DraftPaneProps) {
@@ -222,6 +223,9 @@ export function DraftPane(props: DraftPaneProps) {
     isStreaming: reply.busy && !editing,
     streamPulse: `${reply.output.length}:${reply.reasoning.length}:${reply.error}:${autosave.saveError ?? ''}`,
     paused: editing || companionOpen,
+    scrollContainerRef: props.scrollContainerRef,
+    diagnosticMode: 'writing',
+    diagnostics: runtime.diagnostics,
   });
 
   const latestSuggestion = [...work.suggestions].reverse().find((item) => Boolean(item.text));
@@ -325,6 +329,7 @@ export function DraftPane(props: DraftPaneProps) {
     }
 
     const startedAt = performance.now();
+    autoScroll.resumeFollow();
     reply.start(options.label ?? '继续写故事聊天', async (request, signal, config) => {
       const { state, live } = await currentWork();
       if (signal.aborted) return;
@@ -743,6 +748,7 @@ export function DraftPane(props: DraftPaneProps) {
     if (!userNode || userNode.role !== 'user') return;
 
     const startedAt = performance.now();
+    autoScroll.resumeFollow();
     reply.start('重新生成回复', async (request, signal, config) => {
       const { state, live } = await currentWork();
       if (signal.aborted) return;
