@@ -25,6 +25,7 @@ interface Props {
   requestModel: RequestModel;
   openPublic: (proposal?: string, expected?: string) => void;
   openDocument: (edit: DocumentEdit) => void;
+  onOpenNarrativePresets?: () => void;
   manuscript?: boolean;
   onStartManuscript?: () => void;
   onSwitchToChat?: () => void;

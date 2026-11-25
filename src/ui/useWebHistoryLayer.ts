@@ -13,14 +13,17 @@ interface HistoryLayer {
 }
 
 const HISTORY_SESSION_KEY = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-window.__lfhOverlayHistorySession = HISTORY_SESSION_KEY;
+if (typeof window !== 'undefined') {
+  window.__lfhOverlayHistorySession = HISTORY_SESSION_KEY;
+}
 const layers = new Map<string, HistoryLayer>();
-let currentDepth = readCurrentDepth();
+let currentDepth = typeof window !== 'undefined' ? readCurrentDepth() : 0;
 let installPromise: Promise<void> | null = null;
 let pendingProgrammaticBacks = 0;
 let syncQueued = false;
 
 function readHistoryState(): Record<string, unknown> {
+  if (typeof window === 'undefined') return {};
   const state = window.history.state;
   return state && typeof state === 'object' ? state as Record<string, unknown> : {};
 }
