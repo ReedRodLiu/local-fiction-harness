@@ -1,5 +1,6 @@
 import {
   documentVersion,
+  materializeAssetFromNodes,
   newCharacter,
   newConversation,
   newWork,
@@ -8,6 +9,7 @@ import {
   type CreativeWorkspaceState,
   type DiagnosticCollector,
   type MarkdownDocument,
+  type Story,
   type TurnNode,
   type TurnProposalRecord,
 } from '../harness/index.ts';
@@ -52,13 +54,15 @@ export function recordProposalDiagnostic(
   if (!diagnostics) return;
   const normalizedTarget = normalizeProposalTarget(proposal.target) ?? 'setting';
   const targetMeta =
-    normalizedTarget === 'memory'
-      ? 'memory'
-      : normalizedTarget === 'note'
-        ? 'branch_note'
-        : normalizedTarget === 'character'
-          ? 'character'
-          : 'setting';
+    normalizedTarget === 'note'
+      ? 'branch_note'
+      : normalizedTarget === 'memory' ||
+          normalizedTarget === 'character' ||
+          normalizedTarget === 'draft' ||
+          normalizedTarget === 'story' ||
+          normalizedTarget === 'manuscript'
+        ? normalizedTarget
+        : 'setting';
   try {
     diagnostics.recordEvent({
       level: action === 'patch_conflict' || action === 'proposal_needs_review' ? 'warn' : 'info',
@@ -100,11 +104,49 @@ export function revertDocumentToVersion(
   return { nextDocument, revertedMarkdown: previousMarkdown };
 }
 
+export function recordDerivedAssetDiagnostic(
+  diagnostics: DiagnosticCollector | undefined,
+  proposal: Pick<TurnProposalRecord, 'target'>,
+): void {
+  if (!diagnostics) return;
+  const normalizedTarget = normalizeProposalTarget(proposal.target);
+  if (normalizedTarget !== 'character' && normalizedTarget !== 'draft' && normalizedTarget !== 'story') {
+    return;
+  }
+  const routeMode =
+    normalizedTarget === 'character'
+      ? 'character'
+      : normalizedTarget === 'draft'
+        ? 'writing'
+        : 'story';
+  try {
+    diagnostics.recordEvent({
+      level: 'info',
+      category: 'ui',
+      action: 'asset_derived_from_proposal',
+      meta: {
+        routeMode,
+        target: normalizedTarget,
+      },
+    });
+  } catch {
+    // Diagnostics breadcrumbs must never disrupt user edits.
+  }
+}
+
+export interface DerivedAssetResult {
+  nextState: CreativeWorkspaceState;
+  createdKind: 'character' | 'work' | 'story';
+  createdId: string;
+  label: string;
+  createdStory?: Story;
+}
+
 export function createDerivedAssetInWorkspace(
   state: CreativeWorkspaceState,
   proposal: TurnProposalRecord,
   resolvedMarkdown: string,
-): { nextState: CreativeWorkspaceState; createdKind: 'character' | 'work'; createdId: string; label: string } {
+): DerivedAssetResult {
   const normalized = normalizeProposalTarget(proposal.target);
   if (normalized === 'character') {
     const name = proposal.name?.trim() || '新角色';
@@ -123,6 +165,22 @@ export function createDerivedAssetInWorkspace(
         ...state,
         characters: [...state.characters, createdChar],
       },
+    };
+  }
+  if (normalized === 'story') {
+    const title = proposal.name?.trim() || '新开文游';
+    const createdStory = materializeAssetFromNodes({
+      targetMode: 'story',
+      title,
+      settingMarkdown: resolvedMarkdown,
+      turns: [],
+    }).story!;
+    return {
+      createdKind: 'story',
+      createdId: createdStory.id,
+      label: `已创建文游「${createdStory.title}」`,
+      nextState: state,
+      createdStory,
     };
   }
   const title = proposal.name?.trim() || '新故事稿';

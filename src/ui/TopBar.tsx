@@ -1,19 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { BookOpenText, ChevronDown, GitBranch, Menu, PanelLeft, PanelRight } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { BookOpenText, GitBranch, Menu, PanelLeft, PanelRight } from 'lucide-react';
 import type { StageAssetMode } from '../harness/index.ts';
-
-const MODE_LABELS: Record<StageAssetMode, string> = {
-  story: '文游',
-  writing: '写故事',
-  character: '角色互动',
-};
 
 interface TopBarProps {
   title: string;
   stageMode?: StageAssetMode;
-  showModeSwitcher?: boolean;
-  onSwitchStageMode?: (targetMode: StageAssetMode) => void;
-  modeSwitchDisabled?: boolean;
   stageControls?: ReactNode;
   hasStory: boolean;
   hideStoryTools?: boolean;
@@ -30,9 +21,6 @@ interface TopBarProps {
 export function TopBar({
   title,
   stageMode = 'story',
-  showModeSwitcher = false,
-  onSwitchStageMode,
-  modeSwitchDisabled = false,
   stageControls,
   hasStory,
   hideStoryTools = false,
@@ -45,27 +33,6 @@ export function TopBar({
   onToggleLibrary,
   onOpenStoryTree,
 }: TopBarProps) {
-  const [modeMenuOpen, setModeMenuOpen] = useState(false);
-  const modeMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!modeMenuOpen) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!(event.target instanceof Element)) return;
-      if (!event.target.closest('.topbar-mode-switcher')) {
-        setModeMenuOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setModeMenuOpen(false);
-    };
-    window.addEventListener('pointerdown', handlePointerDown, true);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('pointerdown', handlePointerDown, true);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [modeMenuOpen]);
 
   const creativeCompanion = stageMode === 'character'
     ? { label: '打开历史对话与设定', Icon: PanelRight }
@@ -101,48 +68,6 @@ export function TopBar({
 
       <div className="topbar-title-group">
         <h1>{title}</h1>
-        {showModeSwitcher && onSwitchStageMode && (
-          <div className="topbar-mode-switcher" ref={modeMenuRef}>
-            <button
-              type="button"
-              className="topbar-mode-chip"
-              data-testid="topbar-mode-switcher"
-              aria-haspopup="menu"
-              aria-expanded={modeMenuOpen}
-              aria-label={`当前模式：${MODE_LABELS[stageMode]}，点击切换`}
-              disabled={modeSwitchDisabled}
-              onClick={() => setModeMenuOpen((open) => !open)}
-            >
-              <span>{MODE_LABELS[stageMode]}</span>
-              <ChevronDown size={13} strokeWidth={1.75} aria-hidden="true" />
-            </button>
-            {modeMenuOpen && (
-              <div
-                className="topbar-mode-menu"
-                role="menu"
-                aria-label="切换创作模式"
-                data-testid="topbar-mode-menu"
-              >
-                {(['story', 'writing', 'character'] as const).map((target) => (
-                  <button
-                    key={target}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={stageMode === target}
-                    className={`topbar-mode-menu-item${stageMode === target ? ' is-active' : ''}`}
-                    data-testid={`topbar-mode-option-${target}`}
-                    onClick={() => {
-                      setModeMenuOpen(false);
-                      if (target !== stageMode) onSwitchStageMode(target);
-                    }}
-                  >
-                    <span>{MODE_LABELS[target]}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
         {stageControls}
         {hasStory && (
           <button

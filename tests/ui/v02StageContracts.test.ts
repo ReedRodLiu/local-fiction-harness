@@ -126,27 +126,38 @@ describe('Folio V0.2 UI contracts & jargon purge', () => {
     expect(neutralMarkup).toContain('随时都可以');
   });
 
-  it('renders TopBar with subtle mode switcher and zero summary progress text', () => {
-    const markup = renderToStaticMarkup(createElement(TopBar, {
-      title: '雨夜车站',
-      stageMode: 'story',
-      showModeSwitcher: true,
-      onSwitchStageMode: () => undefined,
-      hasStory: true,
-      onOpenCreativeCompanion: () => undefined,
-      canOpenCreativeCompanion: false,
-      branchLabel: '主线',
-      forkCount: 1,
-      libraryCollapsed: false,
-      onOpenLibrary: () => undefined,
-      onToggleLibrary: () => undefined,
-      onOpenStoryTree: () => undefined,
-    }));
+  it('renders TopBar without mode switcher dropdown across story, writing, and character views and with zero summary progress text', () => {
+    for (const stageMode of ['story', 'writing', 'character'] as const) {
+      const markup = renderToStaticMarkup(createElement(TopBar, {
+        title: '雨夜车站',
+        stageMode,
+        hasStory: stageMode === 'story',
+        hideStoryTools: stageMode !== 'story',
+        onOpenCreativeCompanion: () => undefined,
+        canOpenCreativeCompanion: stageMode !== 'story',
+        branchLabel: '主线',
+        forkCount: 1,
+        libraryCollapsed: false,
+        onOpenLibrary: () => undefined,
+        onToggleLibrary: () => undefined,
+        onOpenStoryTree: () => undefined,
+      }));
 
-    expect(markup).toContain('data-testid="topbar-mode-switcher"');
-    expect(markup).toContain('data-testid="open-companion-sheet"');
-    expect(markup).not.toContain('summary-progress');
-    expect(markup).not.toContain('补算摘要中');
+      expect(markup).not.toContain('topbar-mode-switcher');
+      expect(markup).not.toContain('topbar-mode-menu');
+      expect(markup).toContain('data-testid="open-companion-sheet"');
+      expect(markup).not.toContain('summary-progress');
+      expect(markup).not.toContain('补算摘要中');
+    }
+
+    for (const file of ['App.tsx', 'DraftPane.tsx', 'CharacterPane.tsx', 'CreativeWorkspace.tsx']) {
+      const source = readUiSource(file);
+      expect(source).not.toContain('handleConvertStageMode');
+      expect(source).not.toContain('convertActiveAssetMode');
+      expect(source).not.toContain('onSwitchStageMode');
+    }
+    expect(readUiSource('DraftPane.tsx')).not.toContain('detectNaturalModeSwitchIntent');
+    expect(readUiSource('CharacterPane.tsx')).not.toContain('detectNaturalModeSwitchIntent');
   });
 
   it('auto-syncs StoryLibrary active category and renders unified .md export in overflow', () => {

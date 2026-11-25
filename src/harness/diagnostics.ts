@@ -118,6 +118,7 @@ const DIAGNOSTIC_ACTIONS = new Set([
   'proposal_reverted',
   'patch_reapplied',
   'patch_conflict',
+  'asset_derived_from_proposal',
   // V0.2 background silent summary
   'summary_background_done',
   'summary_background_skipped',
@@ -223,6 +224,8 @@ const SAFE_ENUM_METRICS: Record<string, ReadonlySet<string>> = {
     'container',
     'local',
     'character',
+    'draft',
+    'story',
     'setting',
     'memory',
     'branch_note',

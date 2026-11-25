@@ -9,7 +9,6 @@ import {
   computeActiveReviewState,
   computeWorkspaceUsageSummary,
   conversationExport,
-  convertActiveAssetMode,
   createAsyncModelConfigStore,
   createDefaultBlueprint,
   createDefaultId,
@@ -110,6 +109,7 @@ import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
 import { waitForExitAnimation } from './primitives/waitForExitAnimation.ts';
 import {
   createDerivedAssetInWorkspace,
+  recordDerivedAssetDiagnostic,
   recordProposalCreationBreadcrumbs,
   recordProposalDiagnostic,
   revertDocumentToVersion,
@@ -251,7 +251,7 @@ export function App({ runtime }: AppProps) {
   const [documentEdit, setDocumentEdit] = useState<DocumentEdit | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [createdAssetNotice, setCreatedAssetNotice] = useState<{
-    kind: 'character' | 'work';
+    kind: 'character' | 'work' | 'story';
     id: string;
     label: string;
   } | null>(null);
@@ -1111,44 +1111,18 @@ export function App({ runtime }: AppProps) {
     }
   };
 
-  const handleConvertStageMode = async (targetMode: StageAssetMode) => {
-    if (isStreaming || branchSwitchBusyRef.current || modeConversionPendingRef.current) return;
-    const fromMode: StageAssetMode = creativePage ?? 'story';
-    if (fromMode === targetMode) return;
-    modeConversionPendingRef.current = true;
-    setErrorMsg(null);
+  const saveDerivedStory = async (derivedStory: Story) => {
+    await harness.saveStory(migrateStoryToV02(derivedStory));
+    await refreshStories();
+  };
 
-    try {
-      await flushActiveManuscripts();
-      const latestWorkspace = await creative.read();
-      const activeWorkNow = latestWorkspace.works.find((item) => item.id === latestWorkspace.activeWorkId);
-      const activeCharacterNow = latestWorkspace.characters.find((item) => item.id === latestWorkspace.activeCharacterId);
-      const converted = convertActiveAssetMode({
-        fromMode,
-        toMode: targetMode,
-        story,
-        work: activeWorkNow,
-        character: activeCharacterNow,
-        workspace: latestWorkspace,
-      });
-      await persistMaterializedAsset(targetMode, converted);
-      try {
-        runtime.diagnostics.recordEvent({
-          level: 'info',
-          category: 'ui',
-          action: 'entry_misroute_corrected',
-          meta: { routeMode: targetMode },
-        });
-      } catch {
-        // Ignore diagnostics failure.
-      }
-      const modeName = targetMode === 'story' ? '文游' : targetMode === 'writing' ? '写故事' : '角色互动';
-      setStatusNotice(`已切换为「${modeName}」，原有设定与对话已完整保留。`);
-    } catch (err) {
-      setErrorMsg(toErrorMessage(err, '模式切换失败。'));
-    } finally {
-      modeConversionPendingRef.current = false;
+  const navigateCreatedAsset = (kind: 'character' | 'work' | 'story', id: string) => {
+    setCreatedAssetNotice(null);
+    if (kind === 'story') {
+      void handleSelectStory(id);
+      return;
     }
+    void changeCreativeItem(kind === 'character' ? 'character' : 'writing', id, 'select');
   };
 
   const sendAction = (
@@ -1160,18 +1134,10 @@ export function App({ runtime }: AppProps) {
     if (
       !trimmed ||
       branchSwitchBusyRef.current ||
-      modeConversionPendingRef.current ||
       abortRef.current ||
       isStreaming ||
       isSummarizing
     ) return;
-
-    const switchTarget = detectNaturalModeSwitchIntent(trimmed);
-    if (switchTarget && switchTarget !== 'story') {
-      if (restoreOnError) setInput('');
-      void handleConvertStageMode(switchTarget);
-      return;
-    }
 
     withCredentials(
       '继续互动对话',
@@ -1826,6 +1792,7 @@ export function App({ runtime }: AppProps) {
           setShowImport(false);
           setShowSettings(false);
           setCreativePage(null);
+          setCreatedAssetNotice(null);
           setMobileLibraryOpen(false);
         }
       }
@@ -2040,6 +2007,7 @@ export function App({ runtime }: AppProps) {
     setNeutralTurns([]);
     setPendingWelcomePref(undefined);
     setNewCreationOpen(true);
+    setCreatedAssetNotice(null);
     setInput('');
     setErrorMsg(null);
     const shouldFocus = closeOverlays && !mobileLibraryOpen;
@@ -2074,6 +2042,7 @@ export function App({ runtime }: AppProps) {
     setNeutralTurns([]);
     setPendingWelcomePref(undefined);
     setNewCreationOpen(true);
+    setCreatedAssetNotice(null);
     setInput('');
     setErrorMsg(null);
     focusNewCreation.current = true;
@@ -2234,8 +2203,12 @@ export function App({ runtime }: AppProps) {
       const note = documentVersion(scoped.documents.local, state.local);
       return { currentMarkdown: note.markdown, currentVersionId: note.id, targetLabel: '分支笔记' };
     }
-    if (normalized === 'character' || normalized === 'draft') {
-      return { currentMarkdown: '', targetLabel: normalized === 'character' ? '新建角色' : '新开写故事' };
+    if (normalized === 'character' || normalized === 'draft' || normalized === 'story') {
+      return {
+        currentMarkdown: '',
+        targetLabel:
+          normalized === 'character' ? '新建角色' : normalized === 'draft' ? '新开写故事' : '新开文游',
+      };
     }
     const scoped = migrateStoryDocuments(story) as Story & { documents: StoryDocuments };
     const state = storyDocumentState(scoped, scoped.activeLeafNodeId, true);
@@ -2274,13 +2247,21 @@ export function App({ runtime }: AppProps) {
       return;
     }
 
-    if (normalized === 'character' || normalized === 'draft') {
-      let createdAsset: { kind: 'character' | 'work'; id: string; label: string } | null = null;
-      await creative.save((state) => {
-        const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
+    if (normalized === 'character' || normalized === 'draft' || normalized === 'story') {
+      let createdAsset: { kind: 'character' | 'work' | 'story'; id: string; label: string } | null = null;
+      if (normalized === 'story') {
+        const derived = createDerivedAssetInWorkspace(creative.workspace, proposal, resolvedMarkdown);
+        if (derived.createdStory) {
+          await saveDerivedStory(derived.createdStory);
+        }
         createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
-        return derived.nextState;
-      });
+      } else {
+        await creative.save((state) => {
+          const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
+          createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+          return derived.nextState;
+        });
+      }
       await enqueueStoryCommit((latest) => {
         if (!latest) return null;
         return {
@@ -2292,6 +2273,7 @@ export function App({ runtime }: AppProps) {
         };
       });
       recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
+      recordDerivedAssetDiagnostic(runtime.diagnostics, proposal);
       if (createdAsset) setCreatedAssetNotice(createdAsset);
       return;
     }
@@ -2603,9 +2585,6 @@ export function App({ runtime }: AppProps) {
               ? (activeCharacter?.name ?? 'Folio')
               : !isWelcome ? story.title : 'Folio'}
           stageMode={creativePage ?? 'story'}
-          showModeSwitcher={!isWelcome && (Boolean(creativePage) || storyExists)}
-          onSwitchStageMode={(targetMode) => void handleConvertStageMode(targetMode)}
-          modeSwitchDisabled={isStreaming || isSummarizing || isBranchSwitching}
           hasStory={storyExists && !isWelcome && !creativePage}
           hideStoryTools={Boolean(creativePage)}
           stageControls={creativePage === 'writing' && activeWork ? (
@@ -2730,8 +2709,8 @@ export function App({ runtime }: AppProps) {
                 manuscript={showManuscript}
                 onStartManuscript={() => void selectWritingView(true)}
                 onSwitchToChat={() => void selectWritingView(false)}
-                onSwitchStageMode={(targetMode) => void handleConvertStageMode(targetMode)}
-                onNavigateCreatedAsset={(kind, id) => void changeCreativeItem(kind === 'character' ? 'character' : 'writing', id, 'select')}
+                onSaveDerivedStory={saveDerivedStory}
+                onNavigateCreatedAsset={navigateCreatedAsset}
                 initialTurn={initialCreativeTurn}
                 onConsumeInitialTurn={() => setInitialCreativeTurn(null)}
                 scrollContainerRef={mainStageRef}
@@ -2891,11 +2870,7 @@ export function App({ runtime }: AppProps) {
                         <button
                           type="button"
                           className="text-action"
-                          onClick={() => {
-                            const { kind, id } = createdAssetNotice;
-                            setCreatedAssetNotice(null);
-                            void changeCreativeItem(kind === 'character' ? 'character' : 'writing', id, 'select');
-                          }}
+                          onClick={() => navigateCreatedAsset(createdAssetNotice.kind, createdAssetNotice.id)}
                         >
                           去看看
                         </button>

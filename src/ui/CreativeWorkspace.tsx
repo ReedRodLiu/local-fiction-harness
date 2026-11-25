@@ -4,7 +4,7 @@ import type {
   ModelConfig,
   PlatformRuntime,
   PromptPackLibrary,
-  StageAssetMode,
+  Story,
 } from '../harness/index.ts';
 import { CharacterPane } from './CharacterPane.tsx';
 import type { DocumentEdit } from './DocumentDialog.tsx';
@@ -30,8 +30,8 @@ interface Props {
   manuscript?: boolean;
   onStartManuscript?: () => void;
   onSwitchToChat?: () => void;
-  onSwitchStageMode?: (targetMode: StageAssetMode) => void;
-  onNavigateCreatedAsset?: (kind: 'character' | 'work', id: string) => void;
+  onSaveDerivedStory?: (story: Story) => Promise<void>;
+  onNavigateCreatedAsset?: (kind: 'character' | 'work' | 'story', id: string) => void;
   initialTurn: { id: string; prompt: string } | null;
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;

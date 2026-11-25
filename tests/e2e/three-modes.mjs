@@ -449,19 +449,15 @@ export async function verifyThreeModes(browser, port, helpers) {
     const writingCategoryBtn = page.getByTestId('desktop-library').getByRole('button', { name: '写故事', exact: true });
     assert.equal(await writingCategoryBtn.getAttribute('aria-pressed'), 'true');
 
-    // 3. Dual-channel mode correction: TopBar mode switcher + natural-language chat command
-    await page.getByTestId('topbar-mode-switcher').click();
-    await page.getByTestId('topbar-mode-option-story').click();
-    await page.getByTestId('story-timeline').waitFor();
-    await page.getByTestId('status-notice-banner').getByText('已切换为「文游」', { exact: false }).waitFor();
-    assert.equal(
-      await page.getByTestId('desktop-library').getByRole('button', { name: '文游', exact: true }).getAttribute('aria-pressed'),
-      'true',
-    );
-    await page.fill('#turn-input', '切换成写故事');
-    await button('发送行动').click();
-    await writing.waitFor();
+    // 3. Strict mode isolation: no TopBar mode switcher, and in-session switch phrases stay in active writing mode without cloning
+    assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0);
+    await page.getByLabel('聊天内容').fill('切换成文游');
+    await button('发送').click();
+    await writing.getByTestId('writing-discussion-timeline').getByText('接续：切换成文游', { exact: true }).waitFor();
     assert.equal(await writingCategoryBtn.getAttribute('aria-pressed'), 'true');
+    await page.getByTestId('desktop-library').getByRole('button', { name: '文游', exact: true }).click();
+    assert.equal(await page.getByTestId('desktop-library').getByTestId('story-list-item').count(), 0);
+    await writingCategoryBtn.click();
 
     // 4. 写故事: zero V0.1 citation/jargon, inline ProposalCard + Diff/Preview + Save + Undo, Chat-to-Manuscript push, Manuscript intent routing
     const writingText = await writing.innerText();

@@ -7,7 +7,6 @@ import {
   characterContext,
   conversationExport,
   conversationLocalVersion,
-  detectNaturalModeSwitchIntent,
   documentLineage,
   documentVersion,
   findLeafForTurnTreeNode,
@@ -36,7 +35,7 @@ import {
   type PromptPackLibrary,
   type PublicResearchFailure,
   type PublicResearchReference,
-  type StageAssetMode,
+  type Story,
   type TurnNode,
   type TurnProposalRecord,
 } from '../harness/index.ts';
@@ -52,6 +51,7 @@ import { ModalDialog } from './primitives/ModalDialog.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
 import {
   createDerivedAssetInWorkspace,
+  recordDerivedAssetDiagnostic,
   recordProposalCreationBreadcrumbs,
   recordProposalDiagnostic,
   revertDocumentToVersion,
@@ -91,8 +91,8 @@ interface CharacterPaneProps {
   openPublic: (proposal?: string, expected?: string) => void;
   openDocument: (edit: DocumentEdit) => void;
   onOpenNarrativePresets?: () => void;
-  onSwitchStageMode?: (targetMode: StageAssetMode) => void;
-  onNavigateCreatedAsset?: (kind: 'character' | 'work', id: string) => void;
+  onSaveDerivedStory?: (story: Story) => Promise<void>;
+  onNavigateCreatedAsset?: (kind: 'character' | 'work' | 'story', id: string) => void;
   initialTurn: { id: string; prompt: string } | null;
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;
@@ -139,7 +139,7 @@ export function CharacterPane(props: CharacterPaneProps) {
     ? '正在重新构思落笔…'
     : characterWaitingPhrase;
   const [createdAssetNotice, setCreatedAssetNotice] = useState<{
-    kind: 'character' | 'work';
+    kind: 'character' | 'work' | 'story';
     id: string;
     label: string;
   } | null>(null);
@@ -281,14 +281,6 @@ export function CharacterPane(props: CharacterPaneProps) {
     } = {},
   ) {
     const trimmed = contents.trim();
-    if (trimmed) {
-      const switchTarget = detectNaturalModeSwitchIntent(trimmed);
-      if (switchTarget && switchTarget !== 'character' && props.onSwitchStageMode) {
-        setInput('');
-        props.onSwitchStageMode(switchTarget);
-        return;
-      }
-    }
 
     const startedAt = performance.now();
     autoScroll.resumeFollow();
@@ -725,8 +717,12 @@ export function CharacterPane(props: CharacterPaneProps) {
       const note = documentVersion(conversation.document, localId);
       return { currentMarkdown: note.markdown, currentVersionId: note.id, targetLabel: '分支笔记' };
     }
-    if (normalized === 'character' || normalized === 'draft') {
-      return { currentMarkdown: '', targetLabel: normalized === 'character' ? '新建角色' : '新开写故事' };
+    if (normalized === 'character' || normalized === 'draft' || normalized === 'story') {
+      return {
+        currentMarkdown: '',
+        targetLabel:
+          normalized === 'character' ? '新建角色' : normalized === 'draft' ? '新开写故事' : '新开文游',
+      };
     }
     const charDoc = documentVersion(character.document);
     return { currentMarkdown: charDoc.markdown, currentVersionId: charDoc.id, targetLabel: '角色设定' };
@@ -739,9 +735,21 @@ export function CharacterPane(props: CharacterPaneProps) {
   ) => {
     if (!conversation) return;
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
-    let createdAsset: { kind: 'character' | 'work'; id: string; label: string } | null = null;
+    let createdAsset: { kind: 'character' | 'work' | 'story'; id: string; label: string } | null = null;
 
     try {
+      if (normalized === 'story') {
+        const derived = createDerivedAssetInWorkspace(workspace, proposal, resolvedMarkdown);
+        if (derived.createdStory) {
+          if (props.onSaveDerivedStory) {
+            await props.onSaveDerivedStory(derived.createdStory);
+          } else {
+            await runtime.storyStorage.saveStory(derived.createdStory);
+          }
+        }
+        createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+      }
+
       await save((state) => {
         if (normalized === 'memory') {
           const prevId = state.publicDocument.head;
@@ -759,6 +767,18 @@ export function CharacterPane(props: CharacterPaneProps) {
                   appliedVersionId: nextPublicDoc.head,
                 })),
               })),
+          );
+        }
+
+        if (normalized === 'story') {
+          return updateCharacter(state, character.id, (live) =>
+            updateConversation(live, conversation.id, (conv) => ({
+              ...conv,
+              nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
+                ...p,
+                status: 'applied',
+              })),
+            })),
           );
         }
 
@@ -817,7 +837,10 @@ export function CharacterPane(props: CharacterPaneProps) {
       });
 
       recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
-      if (createdAsset) setCreatedAssetNotice(createdAsset);
+      if (createdAsset) {
+        recordDerivedAssetDiagnostic(runtime.diagnostics, proposal);
+        setCreatedAssetNotice(createdAsset);
+      }
     } catch (err) {
       reply.fail(err);
     }

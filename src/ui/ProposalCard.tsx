@@ -70,6 +70,8 @@ export function getProposalTargetBadgeLabel(
       return '分支笔记';
     case 'draft':
       return '新开写故事';
+    case 'story':
+      return '新开文游';
     case 'manuscript':
       return '作品正文';
     case 'character':
@@ -126,7 +128,8 @@ export function computeProposalCardState(
     };
   }
 
-  const isCreationTarget = normalizedTarget === 'character' || normalizedTarget === 'draft';
+  const isCreationTarget =
+    normalizedTarget === 'character' || normalizedTarget === 'draft' || normalizedTarget === 'story';
   if (isCreationTarget) {
     const resolvedMarkdown = proposal.body;
     const diff = computeMarkdownDiff('', resolvedMarkdown);
