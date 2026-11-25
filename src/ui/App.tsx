@@ -103,6 +103,7 @@ import {
 } from './refusalContinuation.ts';
 import type { DisplayFontSize, DisplayThemePreference } from './displayPreferences.ts';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
+import { waitForExitAnimation } from './primitives/waitForExitAnimation.ts';
 import {
   createDerivedAssetInWorkspace,
   recordProposalCreationBreadcrumbs,
@@ -325,10 +326,48 @@ export function App({ runtime }: AppProps) {
 
   const isNavigationCurrent = (storySeq: number, overlaySeq: number) =>
     storyOpSeqRef.current === storySeq && overlayNavigationSeqRef.current === overlaySeq;
-  const edgeSwipeHandlers = useEdgeSwipeToOpen(
-    !showImport && !showSettings && !mobileLibraryOpen,
+  const edgeSwipe = useEdgeSwipeToOpen(
+    !showImport &&
+      !showSettings &&
+      !mobileLibraryOpen &&
+      !storyTreeOpen &&
+      !creativeCompanionOpen &&
+      !wizardOpen &&
+      !diagnosticsOpen &&
+      !documentEdit,
     () => setMobileLibraryOpen(true),
   );
+  const activeOverlay: 'settings' | 'import' | null = showSettings
+    ? 'settings'
+    : showImport
+      ? 'import'
+      : null;
+  const [renderedOverlay, setRenderedOverlay] = useState<'settings' | 'import' | null>(activeOverlay);
+  const [closingOverlay, setClosingOverlay] = useState(false);
+  const overlayLayerRef = useRef<HTMLDivElement | null>(null);
+
+  if (activeOverlay !== null && (renderedOverlay !== activeOverlay || closingOverlay)) {
+    setRenderedOverlay(activeOverlay);
+    setClosingOverlay(false);
+  } else if (activeOverlay === null && renderedOverlay !== null && !closingOverlay) {
+    setClosingOverlay(true);
+  }
+
+  useEffect(() => {
+    if (!closingOverlay) return;
+    const layer = overlayLayerRef.current;
+    const stage = layer?.querySelector<HTMLElement>('.app-overlay-stage') ?? layer;
+    if (!stage) {
+      setRenderedOverlay(null);
+      setClosingOverlay(false);
+      return;
+    }
+    return waitForExitAnimation(stage, () => {
+      setRenderedOverlay(null);
+      setClosingOverlay(false);
+      window.requestAnimationFrame(() => overlayReturnFocusRef.current?.focus());
+    });
+  }, [closingOverlay]);
 
   useEffect(() => {
     if (!plusMenuOpen) return;
@@ -2451,7 +2490,11 @@ export function App({ runtime }: AppProps) {
 
   return (
     <div className="app-root">
-      {!showImport && !showSettings && (
+      <div
+        className={`app-shell-underlay${activeOverlay ? ' is-covered' : ''}`}
+        inert={Boolean(activeOverlay)}
+        aria-hidden={Boolean(activeOverlay)}
+      >
         <TopBar
           title={creativePage === 'writing'
             ? (activeWork?.title ?? 'Folio')
@@ -2495,10 +2538,9 @@ export function App({ runtime }: AppProps) {
           onToggleLibrary={toggleLibraryCollapsed}
           onOpenStoryTree={() => setStoryTreeOpen(true)}
         />
-      )}
 
       <div
-        className={`app-workspace ${libraryCollapsed ? 'is-library-collapsed' : ''} ${showImport || showSettings ? 'is-overlay' : ''}`}
+        className={`app-workspace ${libraryCollapsed ? 'is-library-collapsed' : ''}`}
         data-testid="app-workspace"
       >
         <LibraryDrawer
@@ -2523,6 +2565,8 @@ export function App({ runtime }: AppProps) {
           onMobileExitComplete={focusCreationInput}
           collapsed={libraryCollapsed}
           mobileOpen={mobileLibraryOpen && !showImport && !showSettings}
+          mobileSwipePreview={edgeSwipe.previewOpen}
+          mobileDialogRef={edgeSwipe.drawerDialogRef}
           hasCredentials={hasCredentials}
           onClose={() => setMobileLibraryOpen(false)}
           onCollapse={() => setLibraryCollapsed(true)}
@@ -2537,9 +2581,9 @@ export function App({ runtime }: AppProps) {
 
         <main
           ref={autoScroll.stageRef}
-          className={`main-stage${storyExists && !isWelcome && !showSettings && !showImport && !creativePage ? ' is-playing' : ''}${creativePage && !showSettings && !showImport ? ' is-creative' : ''}`}
+          className={`main-stage${storyExists && !isWelcome && !creativePage ? ' is-playing' : ''}${creativePage ? ' is-creative' : ''}`}
           data-testid="main-stage"
-          {...edgeSwipeHandlers}
+          {...edgeSwipe.containerHandlers}
           {...autoScroll.containerHandlers}
         >
           {asyncError && (
@@ -2566,7 +2610,7 @@ export function App({ runtime }: AppProps) {
             </BannerAlert>
           )}
 
-          {errorMsg && (showSettings || showImport || isWelcome) && (
+          {errorMsg && !renderedOverlay && isWelcome && (
             <BannerAlert
               tone="danger"
               testId="main-error-banner"
@@ -2580,41 +2624,7 @@ export function App({ runtime }: AppProps) {
             </BannerAlert>
           )}
 
-          {showSettings ? (
-            <SettingsPage
-              appVersion={APP_VERSION}
-              hasCredentials={hasCredentials}
-              config={config}
-              useDevEnvKey={useDevEnvKey}
-              showDevTestProxy={import.meta.env.DEV && isWebDev && Boolean(devTestInfo?.available)}
-              balanceState={balanceState}
-              onRefreshBalance={refreshBalance}
-              themePreference={displayPreferences.theme}
-              fontSize={displayPreferences.fontSize}
-              canExportCurrentStory={storyExists}
-              currentStoryTitle={story.title}
-              canExportFullBackup={canExportFullBackup}
-              backupSummaryText={backupSummaryText}
-              onBack={() => setShowSettings(false)}
-              onOpenSetupWizard={openSetupWizard}
-              onClearSavedKey={handleClearSavedKey}
-              onApplyDevTestConfig={applyDevTestConfig}
-              onOpenDiagnostics={() => openDiagnostics('settings_manual')}
-              onOpenPublicMemory={() => openPublicDocument()}
-              onExportCurrentStory={() => void handleExportFullBackup()}
-              onExportFullBackup={() => void handleExportFullBackup()}
-              onImportBackupFile={(file) => void handleImportBackupFile(file)}
-              onThemePreferenceChange={setThemePreference}
-              onFontSizeChange={setDisplayFontSize}
-              onDefaultModelChange={(model) => updateConfig({ ...config, model })}
-              onDefaultReasoningEffortChange={(reasoningEffort) =>
-                updateConfig({ ...config, reasoningEffort })}
-              promptPackLibrary={promptPackLibrary}
-              onPromptPackLibraryChange={setPromptPackLibrary}
-              onExportPromptPack={handleExportPromptPack}
-              appUpdater={appUpdater}
-            />
-          ) : creativePage ? (
+          {creativePage ? (
             <>
               <CreativeWorkspace
                 key={creativePage}
@@ -2640,7 +2650,7 @@ export function App({ runtime }: AppProps) {
                 initialTurn={initialCreativeTurn}
                 onConsumeInitialTurn={() => setInitialCreativeTurn(null)}
               />
-              {errorMsg && (
+              {errorMsg && !renderedOverlay && (
                 <BannerAlert
                   tone="danger"
                   action={{
@@ -2652,25 +2662,6 @@ export function App({ runtime }: AppProps) {
                 </BannerAlert>
               )}
             </>
-          ) : showImport ? (
-            <ImportPanel
-              initialMode={importMode}
-              resetKey={importResetKey}
-              config={config}
-              transport={runtime.transport}
-              binaryDownloader={runtime.binaryDownloader}
-              hasCredentials={hasCredentials}
-              byokOpen={wizardOpen}
-              onRequireByok={openByokPrompt}
-              onCreateSettingStory={handleCreateSettingStory}
-              onImportDeepSeekBatch={handleImportDeepSeekBatch}
-              onDeepSeekImportBusyChange={(busy) => { deepSeekImportBusyRef.current = busy; }}
-              diagnostics={runtime.diagnostics}
-              onPackageDiagnostics={() => openDiagnostics('error_banner')}
-              onContinueStory={(storyId) => void handleContinueImportedStory(storyId)}
-              onCancel={() => setShowImport(false)}
-              existingStories={stories}
-            />
           ) : (
             <>
               {isWelcome ? (
@@ -2687,7 +2678,7 @@ export function App({ runtime }: AppProps) {
                   onContinuePartialRefusal={handleContinueNeutralPartialRefusal}
                 />
               ) : (
-                <section className="timeline" data-testid="story-timeline" aria-label="故事对话记录">
+                <section key={story.id} className="timeline" data-testid="story-timeline" aria-label="故事对话记录">
                   {activeNodes.length === 0 && !isStreaming && (
                     <div className="turn-card empty-story-card">
                       <div className="turn-role">故事设定</div>
@@ -2793,9 +2784,9 @@ export function App({ runtime }: AppProps) {
               )}
 
               <div className="composer-dock">
-                {((errorMsg && !showSettings && !showImport && !isWelcome) || createdAssetNotice) && (
+                {((errorMsg && !renderedOverlay && !isWelcome) || createdAssetNotice) && (
                   <div className="composer-flow-notices">
-                    {errorMsg && !showSettings && !showImport && !isWelcome && (
+                    {errorMsg && !renderedOverlay && !isWelcome && (
                       <BannerAlert
                         tone="danger"
                         testId="main-error-banner"
@@ -2975,39 +2966,120 @@ export function App({ runtime }: AppProps) {
             </>
           )}
 
-          {wizardMounted && (
-            <DeepSeekSetupWizard
-              open={wizardOpen}
-              initialKey={config.apiKey}
-              pendingLabel={pendingByok?.label ?? null}
-              verifyUrlBase={
-                useDevProxyForSetup ? config.baseUrl : DEFAULT_MODEL_CONFIG.baseUrl
-              }
-              onComplete={(verifiedKey) => {
-                const nextCfg: ModelConfig = useDevProxyForSetup
-                  ? { ...config, apiKey: verifiedKey, memoryOnly: false }
-                  : normalizeOfficialModelConfig({ ...config, baseUrl: DEFAULT_MODEL_CONFIG.baseUrl, apiKey: verifiedKey });
-                const resume = pendingByok?.resume;
-                wizardCloseReasonRef.current = 'success';
-                setPendingByok(null);
-                setWizardOpen(false);
-                updateConfig(nextCfg, false);
-                setKeyBoundSeq((seq) => seq + 1);
-                if (resume) resume(nextCfg);
-              }}
-              onVerifyingChange={setWizardVerifying}
-              onExitComplete={finishWizardExit}
-              onCancel={() => {
-                const cancel = pendingByok?.onCancel;
-                wizardCloseReasonRef.current = 'cancel';
-                setPendingByok(null);
-                setWizardOpen(false);
-                cancel?.();
-              }}
-            />
-          )}
         </main>
       </div>
+      </div>
+
+      {renderedOverlay && (
+        <div
+          ref={overlayLayerRef}
+          className="app-overlay-layer"
+          data-closing={closingOverlay ? 'true' : undefined}
+        >
+          <div className="app-overlay-backdrop" aria-hidden="true" />
+          <div className="app-overlay-stage">
+            {errorMsg && (
+              <BannerAlert
+                tone="danger"
+                testId="main-error-banner"
+                action={{
+                  label: '导出日志',
+                  onClick: () => openDiagnostics('error_banner'),
+                }}
+                onDismiss={() => setErrorMsg(null)}
+              >
+                <span>{errorMsg}</span>
+              </BannerAlert>
+            )}
+            {renderedOverlay === 'settings' ? (
+              <SettingsPage
+                appVersion={APP_VERSION}
+                hasCredentials={hasCredentials}
+                config={config}
+                useDevEnvKey={useDevEnvKey}
+                showDevTestProxy={import.meta.env.DEV && isWebDev && Boolean(devTestInfo?.available)}
+                balanceState={balanceState}
+                onRefreshBalance={refreshBalance}
+                themePreference={displayPreferences.theme}
+                fontSize={displayPreferences.fontSize}
+                canExportCurrentStory={storyExists}
+                currentStoryTitle={story.title}
+                canExportFullBackup={canExportFullBackup}
+                backupSummaryText={backupSummaryText}
+                onBack={() => setShowSettings(false)}
+                onOpenSetupWizard={openSetupWizard}
+                onClearSavedKey={handleClearSavedKey}
+                onApplyDevTestConfig={applyDevTestConfig}
+                onOpenDiagnostics={() => openDiagnostics('settings_manual')}
+                onOpenPublicMemory={() => openPublicDocument()}
+                onExportCurrentStory={() => void handleExportFullBackup()}
+                onExportFullBackup={() => void handleExportFullBackup()}
+                onImportBackupFile={(file) => void handleImportBackupFile(file)}
+                onThemePreferenceChange={setThemePreference}
+                onFontSizeChange={setDisplayFontSize}
+                onDefaultModelChange={(model) => updateConfig({ ...config, model })}
+                onDefaultReasoningEffortChange={(reasoningEffort) =>
+                  updateConfig({ ...config, reasoningEffort })}
+                promptPackLibrary={promptPackLibrary}
+                onPromptPackLibraryChange={setPromptPackLibrary}
+                onExportPromptPack={handleExportPromptPack}
+                appUpdater={appUpdater}
+              />
+            ) : (
+              <ImportPanel
+                initialMode={importMode}
+                resetKey={importResetKey}
+                config={config}
+                transport={runtime.transport}
+                binaryDownloader={runtime.binaryDownloader}
+                hasCredentials={hasCredentials}
+                byokOpen={wizardOpen}
+                onRequireByok={openByokPrompt}
+                onCreateSettingStory={handleCreateSettingStory}
+                onImportDeepSeekBatch={handleImportDeepSeekBatch}
+                onDeepSeekImportBusyChange={(busy) => { deepSeekImportBusyRef.current = busy; }}
+                diagnostics={runtime.diagnostics}
+                onPackageDiagnostics={() => openDiagnostics('error_banner')}
+                onContinueStory={(storyId) => void handleContinueImportedStory(storyId)}
+                onCancel={() => setShowImport(false)}
+                existingStories={stories}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {wizardMounted && (
+        <DeepSeekSetupWizard
+          open={wizardOpen}
+          initialKey={config.apiKey}
+          pendingLabel={pendingByok?.label ?? null}
+          verifyUrlBase={
+            useDevProxyForSetup ? config.baseUrl : DEFAULT_MODEL_CONFIG.baseUrl
+          }
+          onComplete={(verifiedKey) => {
+            const nextCfg: ModelConfig = useDevProxyForSetup
+              ? { ...config, apiKey: verifiedKey, memoryOnly: false }
+              : normalizeOfficialModelConfig({ ...config, baseUrl: DEFAULT_MODEL_CONFIG.baseUrl, apiKey: verifiedKey });
+            const resume = pendingByok?.resume;
+            wizardCloseReasonRef.current = 'success';
+            setPendingByok(null);
+            setWizardOpen(false);
+            updateConfig(nextCfg, false);
+            setKeyBoundSeq((seq) => seq + 1);
+            if (resume) resume(nextCfg);
+          }}
+          onVerifyingChange={setWizardVerifying}
+          onExitComplete={finishWizardExit}
+          onCancel={() => {
+            const cancel = pendingByok?.onCancel;
+            wizardCloseReasonRef.current = 'cancel';
+            setPendingByok(null);
+            setWizardOpen(false);
+            cancel?.();
+          }}
+        />
+      )}
 
       {diagnosticsMounted && (
         <DiagnosticsPreview
