@@ -33,6 +33,7 @@
   --bg-surface-active: #DFE3E8;
   --bg-drawer: #F8F9FB;
   --bg-scrim: rgba(19, 20, 22, 0.36);
+  --bg-spotlight-scrim: rgba(19, 20, 22, 0.56);
   --bg-user-bubble: #E8EEF7;
   --border-user-bubble: #D5E0F0;
   --text-user-bubble: #141824;
@@ -67,6 +68,7 @@
   --bg-surface-active: #343946;
   --bg-drawer: #181A1F;
   --bg-scrim: rgba(0, 0, 0, 0.62);
+  --bg-spotlight-scrim: rgba(0, 0, 0, 0.72);
   --bg-user-bubble: #242B3B;
   --border-user-bubble: #333D54;
   --text-user-bubble: #F3F5F9;
@@ -101,6 +103,7 @@
   --bg-surface-active: #DDD4C3;
   --bg-drawer: #F2ECE0;
   --bg-scrim: rgba(42, 37, 32, 0.36);
+  --bg-spotlight-scrim: rgba(42, 37, 32, 0.54);
   --bg-user-bubble: #E4DBC8;
   --border-user-bubble: #D2C5AC;
   --text-user-bubble: #231E19;

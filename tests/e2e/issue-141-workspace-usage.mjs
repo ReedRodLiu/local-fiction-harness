@@ -302,6 +302,10 @@ async function main() {
     serviceWorkers: 'block',
   });
   context.setDefaultTimeout(20000);
+  await context.addInitScript(() => {
+    localStorage.setItem('folio.tutorial.mainDone', 'true');
+    localStorage.setItem('folio.tutorial.settingsDone', 'true');
+  });
   await context.route('**/*', (route) => {
     const url = new URL(route.request().url());
     return url.origin === `http://localhost:${PORT}`

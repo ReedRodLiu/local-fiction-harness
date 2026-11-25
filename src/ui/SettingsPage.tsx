@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Download, ExternalLink, FileUp, LifeBuoy, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ChevronRight, Download, ExternalLink, FileUp, LifeBuoy, RefreshCw, RotateCcw, ShieldCheck } from 'lucide-react';
 import {
   DEEPSEEK_DEV_PROXY_BALANCE_NOTICE,
   DEEPSEEK_OFFICIAL_TOP_UP_DECLARATION,
@@ -58,6 +58,7 @@ export interface SettingsPageProps {
   promptPackLibrary?: PromptPackLibrary;
   workspaceUsageSummary?: WorkspaceUsageSummary;
   appUpdater?: AppUpdaterController;
+  onReplayTutorial?: () => void;
 }
 
 const MODEL_OPTIONS: Array<{
@@ -137,6 +138,7 @@ export function SettingsPage({
   promptPackLibrary = createDefaultPromptPackLibrary(),
   workspaceUsageSummary,
   appUpdater,
+  onReplayTutorial,
 }: SettingsPageProps) {
   const resolvedUsageSummary = workspaceUsageSummary ?? computeWorkspaceUsageSummary({});
   const backupInputRef = useRef<HTMLInputElement>(null);
@@ -515,6 +517,21 @@ export function SettingsPage({
         />
         <button type="button" className="btn" data-testid="restore-backup-btn" onClick={() => backupInputRef.current?.click()}>
           <FileUp size={18} strokeWidth={1.75} /> 从备份恢复
+        </button>
+      </InsetGroup>
+
+      <InsetGroup
+        title="引导教程"
+        description="随时重置主界面与设置页的新手引导进度并重新查看。"
+        testId="settings-tutorial-group"
+      >
+        <button
+          type="button"
+          className="btn"
+          data-testid="replay-tutorial-btn"
+          onClick={onReplayTutorial}
+        >
+          <RotateCcw size={18} strokeWidth={1.75} aria-hidden="true" /> 重新查看引导教程
         </button>
       </InsetGroup>
 

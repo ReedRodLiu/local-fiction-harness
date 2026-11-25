@@ -184,6 +184,10 @@ async function startViteServer(port) {
 async function newOfflineContext(browser, port, viewport) {
   const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
   context.setDefaultTimeout(12000);
+  await context.addInitScript(() => {
+    localStorage.setItem('folio.tutorial.mainDone', 'true');
+    localStorage.setItem('folio.tutorial.settingsDone', 'true');
+  });
   await context.route('**/*', (route) =>
     new URL(route.request().url()).origin === `http://localhost:${port}`
       ? route.continue()

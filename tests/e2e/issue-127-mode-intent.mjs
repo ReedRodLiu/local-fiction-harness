@@ -151,6 +151,8 @@ async function main() {
         memoryOnly: false,
       }));
       localStorage.setItem('lfh.model_config.api_key', 'sk-e2e-issue-127');
+      localStorage.setItem('folio.tutorial.mainDone', 'true');
+      localStorage.setItem('folio.tutorial.settingsDone', 'true');
     });
 
     const stageInputs = [];

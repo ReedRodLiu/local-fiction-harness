@@ -92,6 +92,7 @@ import { MarkdownView } from './MarkdownView.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { PromptPackSheet } from './PromptPackSheet.tsx';
 import { SettingsPage } from './SettingsPage.tsx';
+import { SpotlightTutorial } from './SpotlightTutorial.tsx';
 import { TopBar } from './TopBar.tsx';
 import { TurnCard, type ResolvedProposalTargetState } from './TurnCard.tsx';
 import { WelcomeView } from './WelcomeView.tsx';
@@ -118,6 +119,17 @@ import {
 import { mergeBranchRenameResult } from './storyConcurrency.ts';
 import { SwipeDiagnosticContext, type SwipeDiagnosticEvent } from './swipeGesture.ts';
 import { toErrorMessage } from './textHelpers.ts';
+import {
+  persistTutorialStageDone,
+  readTutorialState,
+  resetTutorialState,
+  type TutorialStage,
+  type TutorialState,
+} from './tutorialState.ts';
+import {
+  buildMainTutorialSteps,
+  buildSettingsTutorialSteps,
+} from './tutorialSteps.ts';
 import { useAppOverlayHistory } from './useAppOverlayHistory.ts';
 import { restoreVisibleFocus } from './useWebHistoryLayer.ts';
 import { useAppUpdater } from './useAppUpdater.ts';
@@ -341,6 +353,12 @@ export function App({ runtime }: AppProps) {
   const [diagnosticsMounted, setDiagnosticsMounted] = useState(false);
   const [diagnosticsRevision, setDiagnosticsRevision] = useState(0);
   const [diagnosticTrigger, setDiagnosticTrigger] = useState<DiagnosticBundleTrigger>('settings_manual');
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [tutorialState, setTutorialState] = useState<TutorialState>(() => readTutorialState());
+  const [tutorialReplayActive, setTutorialReplayActive] = useState(false);
+  const [activeTutorialStage, setActiveTutorialStage] = useState<TutorialStage | null>(null);
+  const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
+  const [settingsTutorialReady, setSettingsTutorialReady] = useState(false);
   const {
     displayPreferences,
     setThemePreference,
@@ -383,7 +401,8 @@ export function App({ runtime }: AppProps) {
       !creativeCompanionOpen &&
       !wizardOpen &&
       !diagnosticsOpen &&
-      !documentEdit,
+      !documentEdit &&
+      !activeTutorialStage,
     () => setMobileLibraryOpen(true),
     reportSwipeDiagnostic,
   );
@@ -603,6 +622,10 @@ export function App({ runtime }: AppProps) {
       } catch (err) {
         if (!cancelled && configEditSeqRef.current === editSeqAtStart) {
           setErrorMsg(toErrorMessage(err, '读取连接配置失败。'));
+        }
+      } finally {
+        if (!cancelled) {
+          setConfigLoaded(true);
         }
       }
     })();
@@ -979,6 +1002,111 @@ export function App({ runtime }: AppProps) {
     setWizardOpen(true);
   };
 
+  const isAppUpdateModalOpen =
+    appUpdater.enabled && appUpdater.modalOpen && appUpdater.availableRelease !== null;
+
+  const completeTutorialStage = useCallback((stage: TutorialStage) => {
+    setTutorialState(persistTutorialStageDone(stage, true));
+    if (stage === 'main') {
+      setTutorialReplayActive(false);
+    }
+    setActiveTutorialStage(null);
+    setTutorialStepIndex(0);
+  }, []);
+
+  useEffect(() => {
+    if (!showSettings || renderedOverlay !== 'settings' || closingOverlay || settingsSubPage !== 'main') {
+      setSettingsTutorialReady(false);
+      return;
+    }
+    if (tutorialState.settingsDone) {
+      setSettingsTutorialReady(false);
+      return;
+    }
+    const reduced =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const timer = window.setTimeout(() => {
+      setSettingsTutorialReady(true);
+    }, reduced ? 60 : 340);
+    return () => window.clearTimeout(timer);
+  }, [closingOverlay, renderedOverlay, settingsSubPage, showSettings, tutorialState.settingsDone]);
+
+  useEffect(() => {
+    const hasBlockingModal =
+      wizardOpen ||
+      wizardMounted ||
+      diagnosticsOpen ||
+      diagnosticsMounted ||
+      Boolean(documentEdit) ||
+      isAppUpdateModalOpen ||
+      Boolean(document.querySelector('dialog[open]:not(.spotlight-dialog)'));
+
+    if (
+      renderedOverlay === 'settings' &&
+      showSettings &&
+      !closingOverlay &&
+      settingsSubPage === 'main' &&
+      settingsTutorialReady &&
+      !tutorialState.settingsDone &&
+      !hasBlockingModal
+    ) {
+      if (activeTutorialStage !== 'settings') {
+        setTutorialStepIndex(0);
+        setActiveTutorialStage('settings');
+      }
+      return;
+    }
+
+    if (
+      configLoaded &&
+      !tutorialState.mainDone &&
+      (!hasCredentials || tutorialReplayActive) &&
+      !renderedOverlay &&
+      !showImport &&
+      !showSettings &&
+      !mobileLibraryOpen &&
+      !storyTreeOpen &&
+      !creativeCompanionOpen &&
+      !isStreaming &&
+      !hasBlockingModal
+    ) {
+      if (activeTutorialStage !== 'main') {
+        setTutorialStepIndex(0);
+        setActiveTutorialStage('main');
+      }
+      return;
+    }
+
+    if (activeTutorialStage !== null) {
+      setActiveTutorialStage(null);
+    }
+  }, [
+    activeTutorialStage,
+    closingOverlay,
+    configLoaded,
+    creativeCompanionOpen,
+    diagnosticsMounted,
+    diagnosticsOpen,
+    documentEdit,
+    hasCredentials,
+    isAppUpdateModalOpen,
+    isStreaming,
+    mobileLibraryOpen,
+    renderedOverlay,
+    settingsSubPage,
+    settingsTutorialReady,
+    showImport,
+    showSettings,
+    storyTreeOpen,
+    tutorialReplayActive,
+    tutorialState.mainDone,
+    tutorialState.settingsDone,
+    wizardMounted,
+    wizardOpen,
+  ]);
+
   const openSetupWizard = () => {
     wizardReturnFocusRef.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
@@ -1036,6 +1164,34 @@ export function App({ runtime }: AppProps) {
 
   const openSettings = () => openSettingsOverlay('main');
   const openNarrativePresetSettings = () => openSettingsOverlay('narrative-presets');
+
+  const handleReplayTutorial = () => {
+    setTutorialState(resetTutorialState());
+    setTutorialStepIndex(0);
+    setTutorialReplayActive(true);
+    setActiveTutorialStage(null);
+    if (creativePage === 'writing' && showManuscript) {
+      openNewCreation();
+      return;
+    }
+    setSettingsSubPage('main');
+    setShowSettings(false);
+  };
+
+  const handleTutorialConnectAction = () => {
+    completeTutorialStage('main');
+    if (!hasCredentials) {
+      openSetupWizard();
+      return;
+    }
+    openSettings();
+  };
+
+  const mainTutorialSteps = useMemo(
+    () => buildMainTutorialSteps({ onConnectAction: handleTutorialConnectAction }),
+    [hasCredentials],
+  );
+  const settingsTutorialSteps = useMemo(() => buildSettingsTutorialSteps(), []);
 
   const toggleLibraryCollapsed = () => {
     setLibraryCollapsed((collapsed) => !collapsed);
@@ -3094,6 +3250,7 @@ export function App({ runtime }: AppProps) {
                 promptPackLibrary={promptPackLibrary}
                 workspaceUsageSummary={workspaceUsageSummary}
                 appUpdater={appUpdater}
+                onReplayTutorial={handleReplayTutorial}
               />
             ) : (
               <ImportPanel
@@ -3216,6 +3373,19 @@ export function App({ runtime }: AppProps) {
         updater={appUpdater}
         canExportBackup={canExportFullBackup}
         onExportBackup={handleExportFullBackup}
+      />
+      <SpotlightTutorial
+        open={activeTutorialStage !== null}
+        label={activeTutorialStage === 'settings' ? '设置页功能引导' : 'Folio 新手引导'}
+        steps={activeTutorialStage === 'settings' ? settingsTutorialSteps : mainTutorialSteps}
+        stepIndex={tutorialStepIndex}
+        onStepChange={setTutorialStepIndex}
+        onSkip={() => {
+          if (activeTutorialStage) completeTutorialStage(activeTutorialStage);
+        }}
+        onComplete={() => {
+          if (activeTutorialStage) completeTutorialStage(activeTutorialStage);
+        }}
       />
     </div>
     </SwipeDiagnosticContext.Provider>

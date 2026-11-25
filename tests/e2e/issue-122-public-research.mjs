@@ -172,6 +172,8 @@ async function runScenario(browser, scenario) {
       memoryOnly: false,
     }));
     localStorage.setItem('lfh.model_config.api_key', 'sk-e2e-issue-122');
+    localStorage.setItem('folio.tutorial.mainDone', 'true');
+    localStorage.setItem('folio.tutorial.settingsDone', 'true');
   });
 
   const searchRequests = [];
