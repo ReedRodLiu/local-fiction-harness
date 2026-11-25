@@ -7,6 +7,7 @@ import {
   buildPromptPackContextOptions,
   buildTurnProposalRecords,
   computeActiveReviewState,
+  computeWorkspaceUsageSummary,
   conversationExport,
   convertActiveAssetMode,
   createAsyncModelConfigStore,
@@ -2469,6 +2470,23 @@ export function App({ runtime }: AppProps) {
 
   const backupSummaryText = `包含 ${stories.length} 个故事、${creative.workspace.works.length} 部作品、${creative.workspace.characters.length} 位角色、${promptPackLibrary.packs.length} 个叙事预设与我的记忆（不含 API Key）`;
 
+  const workspaceStoriesForUsage = useMemo(() => {
+    if (!storyExists) return stories;
+    const hasActive = stories.some((item) => item.id === story.id);
+    return hasActive
+      ? stories.map((item) => (item.id === story.id ? story : item))
+      : [...stories, story];
+  }, [stories, story, storyExists]);
+
+  const workspaceUsageSummary = useMemo(
+    () =>
+      computeWorkspaceUsageSummary({
+        stories: workspaceStoriesForUsage,
+        creativeWorkspace: creative.workspace,
+      }),
+    [workspaceStoriesForUsage, creative.workspace],
+  );
+
   const effectiveComposerConfig = isWelcome
     ? resolveEffectiveModelConfig(config, pendingWelcomePref)
     : resolveEffectiveModelConfig(config, story.generationPreference);
@@ -3091,6 +3109,7 @@ export function App({ runtime }: AppProps) {
                 onDefaultReasoningEffortChange={(reasoningEffort) =>
                   updateConfig({ ...config, reasoningEffort })}
                 promptPackLibrary={promptPackLibrary}
+                workspaceUsageSummary={workspaceUsageSummary}
                 appUpdater={appUpdater}
               />
             ) : (

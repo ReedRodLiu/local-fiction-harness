@@ -2087,6 +2087,7 @@ async function verifyDisplayPreferenceMatrix(page, port) {
   const settings = page.getByTestId('settings-page');
   for (const group of [
     'settings-connection-group',
+    'settings-usage-overview',
     'settings-appearance-group',
     'settings-backup-group',
     'settings-diagnostics-group',
