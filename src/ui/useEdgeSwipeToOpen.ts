@@ -6,6 +6,7 @@ import {
   createVelocityTracker,
   hasOpenTopLayerDialog,
   releaseSwipePointer,
+  reportSwipeOutcome,
   resolveSwipeAxisLock,
   shouldCommitHorizontalSwipe,
   shouldIgnoreSwipeStart,
@@ -213,11 +214,7 @@ export function useEdgeSwipeToOpen(
       return;
     }
 
-    onDiagnostic?.({
-      action: 'swipe_gesture_rejected',
-      surface: 'drawer_open',
-      reasonCode: 'below_threshold',
-    });
+    reportSwipeOutcome(onDiagnostic, 'drawer_open', 'rejected');
     cancelSwipe();
   };
 
@@ -225,11 +222,7 @@ export function useEdgeSwipeToOpen(
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     releaseSwipePointer(event.currentTarget, event.pointerId);
-    onDiagnostic?.({
-      action: 'swipe_gesture_canceled',
-      surface: 'drawer_open',
-      reasonCode: gesture.lock === 'horizontal' ? 'pointer_cancel_horizontal' : 'pointer_cancel_pending',
-    });
+    reportSwipeOutcome(onDiagnostic, 'drawer_open', 'canceled', gesture.lock);
     cancelSwipe();
   };
 

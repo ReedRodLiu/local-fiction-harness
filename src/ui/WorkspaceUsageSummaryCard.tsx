@@ -143,13 +143,21 @@ export function WorkspaceUsageSummaryCard({ summary }: WorkspaceUsageSummaryCard
           <div className="workspace-usage-unavailable-body">
             <div className="workspace-usage-unavailable-row" data-testid="workspace-usage-unavailable">
               <Info
-                size={15}
+                size={16}
                 strokeWidth={1.75}
                 className="workspace-usage-unavailable-icon"
                 aria-hidden="true"
               />
               <span>暂无可比省费：{WORKSPACE_UNAVAILABLE_REASON_TEXT[savings.reason]}</span>
             </div>
+            {total.actualCostUsd !== null && (
+              <div className="workspace-usage-hero-compare">
+                <div className="workspace-usage-compare-cell" data-testid="workspace-usage-actual-cost">
+                  <span>实测费用</span>
+                  <strong>{formatUsd(total.actualCostUsd)}</strong>
+                </div>
+              </div>
+            )}
             {total.recordedTurnCount === 0 && (
               <p className="workspace-usage-empty" data-testid="workspace-usage-empty">
                 暂无实测用量数据（在文游、写故事或角色互动中生成回复后自动记录）。
@@ -234,7 +242,7 @@ export function WorkspaceUsageSummaryCard({ summary }: WorkspaceUsageSummaryCard
               >
                 <div className="workspace-usage-mode-main">
                   <div className="workspace-usage-mode-title">
-                    <Icon size={15} strokeWidth={1.75} aria-hidden="true" />
+                    <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
                     <strong>{label}</strong>
                     <span className="workspace-usage-mode-items">
                       {formatModeItemCount(mode, modeSummary, itemUnit)}
@@ -246,6 +254,9 @@ export function WorkspaceUsageSummaryCard({ summary }: WorkspaceUsageSummaryCard
                       输入 {formatCount(modeSummary.promptTokens)} / 输出{' '}
                       {formatCount(modeSummary.completionTokens)}
                     </span>
+                    {modeSavings.status === 'unavailable' && modeSummary.actualCostUsd !== null && (
+                      <span>实测费用 {formatUsd(modeSummary.actualCostUsd)}</span>
+                    )}
                   </div>
                 </div>
 

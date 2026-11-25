@@ -268,12 +268,33 @@ describe('SettingsPage WorkspaceUsageSummaryCard (Issue #141)', () => {
         }),
       ),
     };
+    const preCompSummary = computeWorkspaceUsageSummary({ works: [preCompWork] });
     const preCompMarkup = renderSettings({
-      workspaceUsageSummary: computeWorkspaceUsageSummary({ works: [preCompWork] }),
+      workspaceUsageSummary: preCompSummary,
     });
+    expect(preCompSummary.total.savings.status).toBe('unavailable');
+    expect(preCompSummary.total.actualCostUsd).not.toBeNull();
     expect(preCompMarkup).toContain('暂无可比省费');
     expect(preCompMarkup).toContain('尚未触发前文压缩');
-    expect(preCompMarkup).not.toContain('US$');
+    expect(preCompMarkup).toContain('未触发压缩');
+    expect(preCompMarkup).toContain('data-testid="workspace-usage-actual-cost"');
+    expect(preCompMarkup).toContain('实测费用');
+    expect(preCompMarkup).not.toContain('累计预计省费');
+    expect(preCompMarkup).not.toContain('预计省');
+    expect(preCompMarkup).not.toContain('width="15"');
+    const preCompHero = preCompMarkup.slice(
+      preCompMarkup.indexOf('data-testid="workspace-usage-hero"'),
+      preCompMarkup.indexOf('data-testid="workspace-usage-metrics"'),
+    );
+    expect(preCompHero).toContain('实测费用');
+    expect(preCompHero).toContain('US$0.');
+    const preCompWritingRow = preCompMarkup.slice(
+      preCompMarkup.indexOf('data-testid="workspace-usage-mode-writing"'),
+      preCompMarkup.indexOf('data-testid="workspace-usage-mode-character"'),
+    );
+    expect(preCompWritingRow).toContain('实测费用');
+    expect(preCompWritingRow).toContain('US$0.');
+    expect(preCompWritingRow).toContain('未触发压缩');
   });
 
   it('displays 费用增加 honestly without negative US$- when compression overhead exceeds baseline', () => {

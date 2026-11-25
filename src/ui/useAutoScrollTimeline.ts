@@ -129,59 +129,41 @@ export function useAutoScrollTimeline(options: UseAutoScrollTimelineOptions) {
     });
   };
 
+  const resolveScrollCandidate = (
+    element: HTMLElement,
+    keyPrefix: 'explicit' | 'stage',
+  ): HTMLElement => {
+    const overflowY = readOverflowY(element);
+    if (!isNonScrollableOverflow(overflowY)) return element;
+    const ancestor = findScrollableAncestor(element);
+    const reasonCode = ancestor ? 'resolved_scrollable_ancestor' : 'no_scrollable_ancestor';
+    const dedupeKey =
+      keyPrefix === 'explicit'
+        ? ancestor
+          ? 'non_scrollable:explicit_resolved_ancestor'
+          : 'non_scrollable:explicit_no_ancestor'
+        : `non_scrollable:${reasonCode}`;
+    recordAnomalyOnce(dedupeKey, {
+      level: 'warn',
+      action: 'autoscroll_target_non_scrollable',
+      metrics: {
+        scrollState: userPausedRef.current ? 'user_paused' : 'following',
+        scrollOverflowY: overflowY,
+        scrollTop: element.scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+        scrollGapPx: computeGapPx(element),
+        reasonCode,
+      },
+    });
+    return ancestor ?? element;
+  };
+
   const resolveScrollContainer = (): HTMLElement | null => {
     const explicit = scrollContainerRefRef.current?.current ?? null;
-    if (explicit) {
-      const overflowY = readOverflowY(explicit);
-      if (isNonScrollableOverflow(overflowY)) {
-        const ancestor = findScrollableAncestor(explicit);
-        recordAnomalyOnce(
-          ancestor ? 'non_scrollable:explicit_resolved_ancestor' : 'non_scrollable:explicit_no_ancestor',
-          {
-            level: 'warn',
-            action: 'autoscroll_target_non_scrollable',
-            metrics: {
-              scrollState: userPausedRef.current ? 'user_paused' : 'following',
-              scrollOverflowY: overflowY,
-              scrollTop: explicit.scrollTop,
-              scrollHeight: explicit.scrollHeight,
-              clientHeight: explicit.clientHeight,
-              scrollGapPx: computeGapPx(explicit),
-              reasonCode: ancestor ? 'resolved_scrollable_ancestor' : 'no_scrollable_ancestor',
-            },
-          },
-        );
-        return ancestor ?? explicit;
-      }
-      return explicit;
-    }
-
+    if (explicit) return resolveScrollCandidate(explicit, 'explicit');
     const stage = stageRef.current;
-    if (!stage) return null;
-
-    const overflowY = readOverflowY(stage);
-    if (isNonScrollableOverflow(overflowY)) {
-      const ancestor = findScrollableAncestor(stage);
-      recordAnomalyOnce(
-        ancestor ? 'non_scrollable:resolved_scrollable_ancestor' : 'non_scrollable:no_scrollable_ancestor',
-        {
-          level: 'warn',
-          action: 'autoscroll_target_non_scrollable',
-          metrics: {
-            scrollState: userPausedRef.current ? 'user_paused' : 'following',
-            scrollOverflowY: overflowY,
-            scrollTop: stage.scrollTop,
-            scrollHeight: stage.scrollHeight,
-            clientHeight: stage.clientHeight,
-            scrollGapPx: computeGapPx(stage),
-            reasonCode: ancestor ? 'resolved_scrollable_ancestor' : 'no_scrollable_ancestor',
-          },
-        },
-      );
-      return ancestor ?? stage;
-    }
-
-    return stage;
+    return stage ? resolveScrollCandidate(stage, 'stage') : null;
   };
 
   const cancelScheduledScroll = () => {

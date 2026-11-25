@@ -14,6 +14,7 @@ import {
   hasActiveTextSelection,
   isInsideHorizontalScroller,
   releaseSwipePointer,
+  reportSwipeOutcome,
   resolveSwipeAxisLock,
   shouldCommitHorizontalSwipe,
   type GestureAxisLock,
@@ -164,11 +165,7 @@ export function createDrawerCloseSwipeHandlers(options: {
       return;
     }
 
-    onDiagnostic?.({
-      action: 'swipe_gesture_rejected',
-      surface: 'drawer_close',
-      reasonCode: 'below_threshold',
-    });
+    reportSwipeOutcome(onDiagnostic, 'drawer_close', 'rejected');
     clearDragVisual();
   };
 
@@ -180,11 +177,7 @@ export function createDrawerCloseSwipeHandlers(options: {
       releaseSwipePointer(event.currentTarget ?? sheetRef.current, event.pointerId);
     }
     if (gesture) {
-      onDiagnostic?.({
-        action: 'swipe_gesture_canceled',
-        surface: 'drawer_close',
-        reasonCode: gesture.lock === 'horizontal' ? 'pointer_cancel_horizontal' : 'pointer_cancel_pending',
-      });
+      reportSwipeOutcome(onDiagnostic, 'drawer_close', 'canceled', gesture.lock);
     }
     clearDragVisual();
   };
