@@ -24,6 +24,7 @@
 }
 
 .overlay-page-progress {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -51,6 +52,7 @@
 }
 
 .overlay-page-footer {
+  flex: 0 0 auto;
   margin-top: auto;
   padding: 12px 0 max(10px, var(--safe-area-bottom));
   border-top: 1px solid var(--border-hairline);

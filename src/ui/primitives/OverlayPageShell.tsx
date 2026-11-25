@@ -23,9 +23,14 @@ export function OverlayPageShell({
   children,
 }: OverlayPageShellProps) {
   const hasProgress = step !== undefined && stepCount !== undefined && stepCount > 0;
+  const shellRef = useRef<HTMLElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
 
   useLayoutEffect(() => {
+    const stage = shellRef.current?.closest('.main-stage');
+    if (stage) {
+      stage.scrollTop = 0;
+    }
     const focusTitleIfUnclaimed = () => {
       const active = document.activeElement;
       if (
@@ -33,7 +38,7 @@ export function OverlayPageShell({
         active === null ||
         (active instanceof Element && active.closest('dialog:not([open])'))
       ) {
-        titleRef.current?.focus();
+        titleRef.current?.focus({ preventScroll: true });
       }
     };
     focusTitleIfUnclaimed();
@@ -42,7 +47,12 @@ export function OverlayPageShell({
   }, []);
 
   return (
-    <section className="overlay-page-shell" data-testid={testId} data-has-footer={Boolean(footer)}>
+    <section
+      ref={shellRef}
+      className="overlay-page-shell"
+      data-testid={testId}
+      data-has-footer={Boolean(footer)}
+    >
       <header className="overlay-page-header">
         <button
           type="button"
