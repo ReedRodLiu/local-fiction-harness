@@ -197,6 +197,49 @@ async function assertTouchTarget(locator, label) {
   assert.ok(box.width >= 44 && box.height >= 44, `${label} touch target too small: ${box.width}x${box.height}`);
 }
 
+async function assertLibraryCategoriesSingleRow(dialog, label) {
+  const metrics = await dialog.locator('.library-categories').evaluate((group) => {
+    const buttons = [...group.querySelectorAll('button')];
+    return {
+      groupScrollWidth: group.scrollWidth,
+      groupClientWidth: group.clientWidth,
+      buttons: buttons.map((button) => {
+        const rect = button.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(button);
+        const lineRects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+        const uniqueLines = new Set(lineRects.map((r) => Math.round(r.top)));
+        return {
+          text: button.textContent?.trim() ?? '',
+          width: rect.width,
+          height: rect.height,
+          top: rect.top,
+          scrollWidth: button.scrollWidth,
+          clientWidth: button.clientWidth,
+          lineCount: uniqueLines.size,
+        };
+      }),
+    };
+  });
+
+  assert.deepEqual(
+    metrics.buttons.map((b) => b.text),
+    ['文游', '写故事', '角色互动'],
+    `${label}: unexpected library category labels`,
+  );
+  assert.ok(
+    metrics.groupScrollWidth <= metrics.groupClientWidth,
+    `${label}: .library-categories horizontal overflow (${metrics.groupScrollWidth} > ${metrics.groupClientWidth})`,
+  );
+  const baseTop = metrics.buttons[0].top;
+  for (const btn of metrics.buttons) {
+    assert.ok(btn.width >= 44 && btn.height >= 44, `${label} "${btn.text}" touch target too small: ${btn.width}x${btn.height}`);
+    assert.ok(Math.abs(btn.top - baseTop) <= 2, `${label} "${btn.text}" wrapped to another row (top ${btn.top} vs ${baseTop})`);
+    assert.equal(btn.lineCount, 1, `${label} "${btn.text}" wrapped onto ${btn.lineCount} lines`);
+    assert.ok(btn.scrollWidth <= btn.clientWidth, `${label} "${btn.text}" text overflow (${btn.scrollWidth} > ${btn.clientWidth})`);
+  }
+}
+
 async function runMobileScenario(browser, viewport) {
   const context = await browser.newContext({
     viewport,
@@ -219,7 +262,9 @@ async function runMobileScenario(browser, viewport) {
 
     // Open mobile drawer -> Settings -> Import v3 backup
     await page.getByTestId('library-drawer-trigger').click();
-    await page.getByTestId('mobile-library-dialog').waitFor({ state: 'visible' });
+    const mobileDrawer = page.getByTestId('mobile-library-dialog');
+    await mobileDrawer.waitFor({ state: 'visible' });
+    await assertLibraryCategoriesSingleRow(mobileDrawer, `${viewport.width}x${viewport.height} mobile drawer`);
     await page.getByTestId('mobile-settings-open').click();
     await page.getByTestId('settings-page').waitFor();
 
@@ -302,10 +347,14 @@ async function runMobileScenario(browser, viewport) {
     await sheet.getByTestId('story-tree-overview-branch-retry-1').waitFor({ state: 'visible' });
     await overviewRetriesToggle.click();
 
-    // Verify scale sort button touch target & behavior
-    await assertTouchTarget(sheet.getByTestId('story-tree-sort-recent'), 'sort recent');
-    await assertTouchTarget(sheet.getByTestId('story-tree-sort-scale'), 'sort scale');
-    await sheet.getByTestId('story-tree-sort-scale').click();
+    // Verify scale sort button touch target, label & behavior
+    const sortRecent = sheet.getByTestId('story-tree-sort-recent');
+    const sortScale = sheet.getByTestId('story-tree-sort-scale');
+    assert.equal((await sortRecent.textContent())?.trim(), '最近游玩');
+    assert.equal((await sortScale.textContent())?.trim(), '最多轮次');
+    await assertTouchTarget(sortRecent, 'sort recent');
+    await assertTouchTarget(sortScale, 'sort scale');
+    await sortScale.click();
 
     // 4. Find deep nested grandchild branch via search and switch in <= 3 clicks (from spine tab)
     await sheet.getByTestId('story-tree-tab-spine').click();

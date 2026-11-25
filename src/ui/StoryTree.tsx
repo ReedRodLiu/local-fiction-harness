@@ -509,7 +509,7 @@ export function StoryTree({
                   aria-pressed={sortBy === 'scale'}
                   onClick={() => setSortBy('scale')}
                 >
-                  推进量级
+                  最多轮次
                 </button>
               </div>
 
