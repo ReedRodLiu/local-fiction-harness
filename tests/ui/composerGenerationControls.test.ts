@@ -31,6 +31,9 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
     expect(markup).toContain('data-testid="send-btn"');
     expect(markup).toContain('data-testid="composer-model-deepseek-flash"');
     expect(markup).toContain('data-testid="composer-model-deepseek-v4-pro"');
+    expect(markup).not.toContain('data-testid="generation-pref-prompt-pack"');
+    expect(markup).not.toContain('data-testid="generation-pref-prefix-mode"');
+    expect(markup).not.toContain('composer-preference-row');
     expect(markup).toContain('日常轻量');
     expect(markup).toContain('Flash');
     expect(markup).toContain('旗舰深度');
@@ -164,6 +167,7 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
   });
 
   it('wires double-row GenerationControls into DraftPane (both discussion and manuscript views) and CharacterPane', () => {
+    const appSource = readSource('src/ui/App.tsx');
     const draftSource = readSource('src/ui/DraftPane.tsx');
     const charSource = readSource('src/ui/CharacterPane.tsx');
     const workspaceSource = readSource('src/ui/CreativeWorkspace.tsx');
@@ -177,5 +181,61 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
     expect(charSource).toContain("from './GenerationControls.tsx'");
     expect(charSource).toContain('className="composer composer-double-row"');
     expect(charSource).toContain('resolveEffectiveModelConfig(config, current.generationPreference)');
+    expect(appSource).toContain('onManageNarrativePresets={openNarrativePresetSettings}');
+    expect(workspaceSource).toContain('onOpenNarrativePresets?: () => void');
+    expect(draftSource).toContain('onManageNarrativePresets={props.onOpenNarrativePresets}');
+    expect(charSource).toContain('onManageNarrativePresets={props.onOpenNarrativePresets}');
+  });
+
+  it('renders a single 44x44 narrative preset icon button with active override indicator and no <select> rows', () => {
+    const defaultMarkup = renderToStaticMarkup(
+      createElement(GenerationControls, {
+        model: 'deepseek-flash',
+        reasoningEffort: 'high',
+        onModelChange: vi.fn(),
+        onReasoningEffortChange: vi.fn(),
+        promptPackMode: 'inherit',
+        prefixCompletion: 'inherit',
+        onPromptPackModeChange: vi.fn(),
+        onPrefixCompletionChange: vi.fn(),
+      }),
+    );
+
+    expect(defaultMarkup).toContain('data-testid="composer-narrative-preset-trigger"');
+    expect(defaultMarkup).toContain('aria-label="叙事预设"');
+    expect(defaultMarkup).toContain('data-overridden="false"');
+    expect(defaultMarkup).not.toContain('data-testid="composer-narrative-preset-dot"');
+    expect(defaultMarkup).not.toContain('<select');
+    expect(defaultMarkup).not.toContain('composer-preference-row');
+
+    const overriddenMarkup = renderToStaticMarkup(
+      createElement(GenerationControls, {
+        model: 'deepseek-flash',
+        reasoningEffort: 'high',
+        onModelChange: vi.fn(),
+        onReasoningEffortChange: vi.fn(),
+        promptPackMode: 'off',
+        prefixCompletion: 'inherit',
+        onPromptPackModeChange: vi.fn(),
+        onPrefixCompletionChange: vi.fn(),
+      }),
+    );
+    expect(overriddenMarkup).toContain('data-overridden="true"');
+    expect(overriddenMarkup).toContain('data-testid="composer-narrative-preset-dot"');
+
+    const continuityOverriddenMarkup = renderToStaticMarkup(
+      createElement(GenerationControls, {
+        model: 'deepseek-flash',
+        reasoningEffort: 'high',
+        onModelChange: vi.fn(),
+        onReasoningEffortChange: vi.fn(),
+        promptPackMode: 'inherit',
+        prefixCompletion: 'on_retry',
+        onPromptPackModeChange: vi.fn(),
+        onPrefixCompletionChange: vi.fn(),
+      }),
+    );
+    expect(continuityOverriddenMarkup).toContain('data-overridden="true"');
+    expect(continuityOverriddenMarkup).toContain('data-testid="composer-narrative-preset-dot"');
   });
 });

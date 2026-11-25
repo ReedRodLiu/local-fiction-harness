@@ -52,6 +52,46 @@ async function assertNoHorizontalOverflow(page, label) {
   }
 }
 
+async function openNarrativePresetsSubpage(page) {
+  const presetsPage = page.getByTestId('narrative-presets-page');
+  if (await presetsPage.isVisible().catch(() => false)) return presetsPage;
+  const settings = page.getByTestId('settings-page');
+  await settings.waitFor({ state: 'visible' });
+  await settings.getByTestId('open-narrative-presets').click();
+  await presetsPage.waitFor({ state: 'visible' });
+  return presetsPage;
+}
+
+async function closeNarrativePresetsToSettings(page) {
+  const presetsPage = page.getByTestId('narrative-presets-page');
+  if (await presetsPage.isVisible().catch(() => false)) {
+    await presetsPage.getByRole('button', { name: '返回' }).click();
+    await presetsPage.waitFor({ state: 'detached' });
+    await page.getByTestId('settings-page').waitFor({ state: 'visible' });
+  }
+}
+
+async function openQuickPresetSheet(page) {
+  const trigger = page.getByTestId('composer-narrative-preset-trigger');
+  await trigger.waitFor({ state: 'visible' });
+  const box = await trigger.boundingBox();
+  if (!box || box.width < 43.99 || box.height < 43.99) {
+    throw new Error(`Narrative preset trigger is below 44×44px: ${JSON.stringify(box)}`);
+  }
+  await trigger.click();
+  const sheet = page.getByTestId('narrative-preset-quick-sheet');
+  await sheet.waitFor({ state: 'visible' });
+  return sheet;
+}
+
+async function closeQuickPresetSheet(page) {
+  const sheet = page.getByTestId('narrative-preset-quick-sheet');
+  if (await sheet.isVisible().catch(() => false)) {
+    await sheet.getByRole('button', { name: '关闭叙事预设面板' }).click();
+    await sheet.waitFor({ state: 'hidden' });
+  }
+}
+
 export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
   const {
     newOfflineContext,
@@ -215,15 +255,28 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
     await page.getByRole('heading', { name: '雨夜提示词包测试' }).waitFor();
     await openSettings(page);
     settings = page.getByTestId('settings-page');
+    if ((await settings.getByTestId('settings-prompt-pack-section').count()) !== 0) {
+      throw new Error('SettingsPage should not render inline PromptPackSheet.');
+    }
+    const presetEntry = settings.getByTestId('open-narrative-presets');
+    await presetEntry.waitFor({ state: 'visible' });
+    if (!(await presetEntry.textContent())?.includes('Folio 基础叙事骨架')) {
+      throw new Error('SettingsPage 叙事预设 entry did not display active preset title.');
+    }
 
-    const promptSection = settings.getByTestId('settings-prompt-pack-section');
+    const presetsPage = await openNarrativePresetsSubpage(page);
+    const promptSection = presetsPage.getByTestId('settings-prompt-pack-section');
     await promptSection.waitFor({ state: 'visible' });
-    if (!(await promptSection.textContent()).includes('叙事提示词包与拒答治理')) {
-      throw new Error('Prompt pack settings section title missing.');
+    if (!(await promptSection.textContent())?.includes('当前叙事预设')) {
+      throw new Error('Narrative presets sub-page title missing.');
     }
     const disclaimerClass = await promptSection.getByTestId('prompt-pack-disclaimer').getAttribute('class');
     if (!disclaimerClass?.includes('banner-alert-warning')) {
       throw new Error(`Expected BannerAlert warning on prompt-pack-disclaimer, got: ${disclaimerClass}`);
+    }
+    const advancedDetails = promptSection.getByTestId('prompt-pack-advanced-details');
+    if ((await advancedDetails.getAttribute('open')) !== null) {
+      throw new Error('Advanced slot/prefix accordion should be collapsed by default.');
     }
 
     await promptSection.getByTestId('prompt-pack-import-input').setInputFiles({
@@ -231,7 +284,9 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
       mimeType: 'text/markdown',
       buffer: Buffer.from(PACK_HEAD, 'utf8'),
     });
+    await advancedDetails.locator('summary').click();
     const headSlot = promptSection.getByTestId('prompt-pack-slot-head');
+    await headSlot.waitFor({ state: 'visible' });
     await page.waitForFunction(
       (expected) => document.querySelector('[data-testid="prompt-pack-slot-head"]')?.value === expected,
       PACK_HEAD,
@@ -253,22 +308,23 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
     await promptSection.getByTestId('prompt-pack-enable-toggle').click();
     const disabledSectionText = await promptSection.textContent();
     if (
-      !disabledSectionText?.includes('默认提示词包已停用') ||
-      !disabledSectionText?.includes('已停用默认提示词包。') ||
-      disabledSectionText.includes('全局提示词')
+      !disabledSectionText?.includes('默认叙事预设已停用') ||
+      !disabledSectionText?.includes('已停用默认叙事预设。') ||
+      disabledSectionText.includes('全局提示词') ||
+      disabledSectionText.includes('防拒答')
     ) {
-      throw new Error(`Prompt pack disabled copy failed glossary check: ${disabledSectionText}`);
+      throw new Error(`Narrative preset disabled copy failed glossary check: ${disabledSectionText}`);
     }
     if ((await headSlot.inputValue()) !== unsavedDraft) {
-      throw new Error('Disabling prompt pack reset unsaved head draft.');
+      throw new Error('Disabling narrative preset reset unsaved head draft.');
     }
     await promptSection.getByTestId('prompt-pack-enable-toggle').click();
     const reenabledStatus = await promptSection.getByTestId('prompt-pack-status').textContent();
     if (!reenabledStatus?.includes('已启用「issue133-unmarked」')) {
-      throw new Error(`Re-enabling prompt pack did not restore previously selected pack: ${reenabledStatus}`);
+      throw new Error(`Re-enabling narrative preset did not restore previously selected pack: ${reenabledStatus}`);
     }
     if ((await headSlot.inputValue()) !== unsavedDraft) {
-      throw new Error('Re-enabling prompt pack reset unsaved head draft.');
+      throw new Error('Re-enabling narrative preset reset unsaved head draft.');
     }
 
     // > 12000 char soft warning keeps save enabled
@@ -290,14 +346,34 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
     }
     await headSlot.fill(PACK_HEAD);
     await promptSection.getByTestId('prompt-pack-save').click();
+    await closeNarrativePresetsToSettings(page);
+    if (!(await page.getByTestId('settings-narrative-presets-summary').textContent())?.includes('issue133-unmarked')) {
+      throw new Error('Settings summary row did not reflect newly imported preset.');
+    }
     await closeSettings(page);
+
+    if ((await page.getByTestId('generation-pref-prompt-pack').count()) !== 0) {
+      throw new Error('Legacy composer prompt-pack <select> should be removed.');
+    }
+    if ((await page.getByTestId('generation-pref-prefix-mode').count()) !== 0) {
+      throw new Error('Legacy composer prefix-mode <select> should be removed.');
+    }
 
     const stableBeforeOverride = stableRequests;
     const betaBeforeOverride = betaRequests;
-    const promptPackSelect = page.getByTestId('generation-pref-prompt-pack');
-    const prefixSelect = page.getByTestId('generation-pref-prefix-mode');
-    await promptPackSelect.selectOption('off');
-    await prefixSelect.selectOption('off');
+    const presetTrigger = page.getByTestId('composer-narrative-preset-trigger');
+    if ((await presetTrigger.getAttribute('data-overridden')) !== 'false') {
+      throw new Error('Narrative preset trigger should not show override indicator before customization.');
+    }
+    let quickSheet = await openQuickPresetSheet(page);
+    await quickSheet.getByTestId('quick-preset-option-off').click();
+    await quickSheet.getByTestId('quick-continuity-option-off').click();
+    await closeQuickPresetSheet(page);
+    if ((await presetTrigger.getAttribute('data-overridden')) !== 'true') {
+      throw new Error('Narrative preset trigger did not show override indicator after per-story override.');
+    }
+    await presetTrigger.getByTestId('composer-narrative-preset-dot').waitFor({ state: 'visible' });
+
     await page.fill('#turn-input', '覆盖测试：先关闭故事级提示词包');
     await page.getByRole('button', { name: '发送行动' }).click();
     await page.getByTestId('turn-assistant').last().getByText('她把门推开一条缝').waitFor();
@@ -309,9 +385,16 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
       throw new Error('Story-level prompt-pack off override still sent the imported pack head.');
     }
 
-    // Keep default on_retry mode for 短拒答恢复测试
-    await promptPackSelect.selectOption({ label: 'issue133-unmarked' });
-    await prefixSelect.selectOption('inherit');
+    // Verify quick-sheet "管理叙事预设…" jumps straight into Settings sub-page and Back returns cleanly
+    quickSheet = await openQuickPresetSheet(page);
+    const importedQuickOption = quickSheet.getByRole('radio', { name: /^issue133-unmarked/ });
+    await importedQuickOption.click();
+    await quickSheet.getByTestId('quick-continuity-option-inherit').click();
+    await quickSheet.getByTestId('quick-sheet-manage-presets').click();
+    await quickSheet.waitFor({ state: 'hidden' });
+    await page.getByTestId('narrative-presets-page').waitFor({ state: 'visible' });
+    await closeNarrativePresetsToSettings(page);
+    await closeSettings(page);
     await page.evaluate(() => {
       window.__lfhRefusalFlashed = false;
       const root = document.querySelector('[data-testid="story-timeline"]') || document.body;
@@ -429,20 +512,48 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
     }
 
     await openSettings(page);
-    await page.getByTestId('settings-page').getByTestId('prompt-pack-global-prefix').selectOption('always');
+    const updatedPresetsPage = await openNarrativePresetsSubpage(page);
+    await updatedPresetsPage.getByTestId('prompt-pack-advanced-details').locator('summary').click();
+    await updatedPresetsPage.getByTestId('prompt-pack-global-prefix').selectOption('always');
+    await closeNarrativePresetsToSettings(page);
     await closeSettings(page);
 
     const themeIds = ['light', 'dark', 'warm'];
     for (const theme of themeIds) {
-      for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }]) {
+      for (const viewport of [
+        { width: 360, height: 800 },
+        { width: 390, height: 844 },
+        { width: 1280, height: 800 },
+      ]) {
         await page.setViewportSize(viewport);
         await openSettings(page);
         const currentSettings = page.getByTestId('settings-page');
         await currentSettings.getByTestId(`theme-option-${theme}`).click();
-        await currentSettings.getByTestId('settings-prompt-pack-section').scrollIntoViewIfNeeded();
-        await assertNoHorizontalOverflow(page, `prompt-pack ${theme} ${viewport.width}x${viewport.height}`);
+        await assertNoHorizontalOverflow(page, `settings ${theme} ${viewport.width}x${viewport.height}`);
+        const subpage = await openNarrativePresetsSubpage(page);
+        await subpage.getByTestId('settings-prompt-pack-section').scrollIntoViewIfNeeded();
+        await assertNoHorizontalOverflow(page, `narrative-presets ${theme} ${viewport.width}x${viewport.height}`);
+        await closeNarrativePresetsToSettings(page);
         await closeSettings(page);
         await assertNoHorizontalOverflow(page, `story ${theme} ${viewport.width}x${viewport.height}`);
+        if (viewport.width <= 390) {
+          const toolbarLayout = await page.evaluate(() => {
+            const flash = document.querySelector('[data-testid="composer-model-deepseek-flash"]')?.getBoundingClientRect();
+            const trigger = document.querySelector('[data-testid="composer-narrative-preset-trigger"]')?.getBoundingClientRect();
+            const row = document.querySelector('[data-testid="composer-generation-controls"]')?.getBoundingClientRect();
+            return {
+              flashTop: flash?.top ?? 0,
+              triggerTop: trigger?.top ?? 0,
+              rowHeight: row?.height ?? 0,
+            };
+          });
+          if (Math.abs(toolbarLayout.flashTop - toolbarLayout.triggerTop) > 12) {
+            throw new Error(`Composer toolbar wrapped on ${viewport.width}x${viewport.height}: ${JSON.stringify(toolbarLayout)}`);
+          }
+        }
+        const sheet = await openQuickPresetSheet(page);
+        await assertNoHorizontalOverflow(page, `quick-sheet ${theme} ${viewport.width}x${viewport.height}`);
+        await closeQuickPresetSheet(page);
       }
     }
 

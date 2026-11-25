@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { BookMarked } from 'lucide-react';
 import {
   REASONING_EFFORTS,
   normalizeGenerationPreference,
@@ -10,6 +11,7 @@ import {
   type PromptPackLibrary,
   type ReasoningEffort,
 } from '../harness/index.ts';
+import { NarrativePresetQuickSheet } from './NarrativePresetQuickSheet.tsx';
 
 export interface GenerationControlsProps {
   model: string;
@@ -22,6 +24,7 @@ export interface GenerationControlsProps {
   prefixCompletion?: PrefixCompletionMode | 'inherit';
   onPromptPackModeChange?: (mode: GenerationPreference['promptPackMode'] | 'inherit') => void;
   onPrefixCompletionChange?: (mode: PrefixCompletionMode | 'inherit') => void;
+  onManageNarrativePresets?: () => void;
   leadingSlot?: ReactNode;
   trailingSlot?: ReactNode;
 }
@@ -89,8 +92,8 @@ export function mergeGenerationPreference(
 
 /**
  * Reusable bottom composer toolbar containing an optional leading action slot,
- * DeepSeek Flash/Pro 2-way selector, 4-stop thinking intensity slider, Pro cost
- * hint, and trailing send/stop action slot.
+ * DeepSeek Flash/Pro 2-way selector, 4-stop thinking intensity slider, single
+ * narrative-preset trigger + quick sheet, Pro cost hint, and trailing send/stop slot.
  */
 export function GenerationControls({
   model,
@@ -103,12 +106,21 @@ export function GenerationControls({
   prefixCompletion = 'inherit',
   onPromptPackModeChange,
   onPrefixCompletionChange,
+  onManageNarrativePresets,
   leadingSlot,
   trailingSlot,
 }: GenerationControlsProps) {
+  const [presetSheetOpen, setPresetSheetOpen] = useState(false);
   const activeModel = normalizeOfficialDeepSeekModel(model);
   const activeEffort = normalizeReasoningEffort(reasoningEffort);
   const sliderIndex = REASONING_EFFORTS.indexOf(activeEffort);
+  const hasPresetControls = Boolean(onPromptPackModeChange && onPrefixCompletionChange);
+  const normalizedPromptPackMode =
+    promptPackMode && promptPackMode !== 'inherit' ? promptPackMode : 'inherit';
+  const normalizedPrefixCompletion =
+    prefixCompletion && prefixCompletion !== 'inherit' ? prefixCompletion : 'inherit';
+  const hasCustomOverride =
+    normalizedPromptPackMode !== 'inherit' || normalizedPrefixCompletion !== 'inherit';
 
   return (
     <div className="composer-toolbar" data-testid="composer-generation-controls">
@@ -181,46 +193,28 @@ export function GenerationControls({
             </div>
           </div>
 
-          {onPromptPackModeChange && onPrefixCompletionChange && (
-            <div className="composer-preference-row" role="group" aria-label="提示词包与续写偏好">
-              <label className="composer-preference-field">
-                <span>提示词包</span>
-                <select
-                  data-testid="generation-pref-prompt-pack"
-                  value={promptPackMode || 'inherit'}
-                  disabled={disabled}
-                  onChange={(event) => onPromptPackModeChange(event.currentTarget.value)}
-                >
-                  <option value="inherit">跟随全局</option>
-                  <option value="off">在此条目停用</option>
-                  {(promptPackLibrary?.packs ?? []).map((pack) => (
-                    <option key={pack.id} value={pack.id}>
-                      {pack.title}
-                    </option>
-                  ))}
-                  {promptPackMode &&
-                    promptPackMode !== 'inherit' &&
-                    promptPackMode !== 'off' &&
-                    !(promptPackLibrary?.packs ?? []).some((pack) => pack.id === promptPackMode) && (
-                      <option value={promptPackMode}>缺失的提示词包</option>
-                    )}
-                </select>
-              </label>
-              <label className="composer-preference-field">
-                <span>前缀续写</span>
-                <select
-                  data-testid="generation-pref-prefix-mode"
-                  value={prefixCompletion || 'inherit'}
-                  disabled={disabled}
-                  onChange={(event) => onPrefixCompletionChange(event.currentTarget.value as PrefixCompletionMode | 'inherit')}
-                >
-                  <option value="inherit">跟随全局</option>
-                  <option value="off">关闭</option>
-                  <option value="on_retry">仅重试时开启</option>
-                  <option value="always">每轮开启</option>
-                </select>
-              </label>
-            </div>
+          {hasPresetControls && (
+            <button
+              type="button"
+              className={`icon-button composer-preset-trigger${hasCustomOverride ? ' is-overridden' : ''}`}
+              data-testid="composer-narrative-preset-trigger"
+              aria-label="叙事预设"
+              aria-haspopup="dialog"
+              aria-expanded={presetSheetOpen}
+              data-overridden={hasCustomOverride ? 'true' : 'false'}
+              title="叙事预设"
+              disabled={disabled}
+              onClick={() => setPresetSheetOpen(true)}
+            >
+              <BookMarked size={18} strokeWidth={1.75} aria-hidden="true" />
+              {hasCustomOverride && (
+                <span
+                  className="composer-preset-dot"
+                  data-testid="composer-narrative-preset-dot"
+                  aria-hidden="true"
+                />
+              )}
+            </button>
           )}
         </div>
         {trailingSlot}
@@ -230,6 +224,20 @@ export function GenerationControls({
         <p className="composer-pro-hint" data-testid="composer-pro-cost-hint">
           旗舰深度响应耗时更长，额度消耗约为 Flash 的 3–4 倍。
         </p>
+      )}
+
+      {onPromptPackModeChange && onPrefixCompletionChange && (
+        <NarrativePresetQuickSheet
+          open={presetSheetOpen}
+          library={promptPackLibrary}
+          promptPackMode={normalizedPromptPackMode}
+          prefixCompletion={normalizedPrefixCompletion}
+          disabled={disabled}
+          onPromptPackModeChange={onPromptPackModeChange}
+          onPrefixCompletionChange={onPrefixCompletionChange}
+          onManagePresets={onManageNarrativePresets}
+          onClose={() => setPresetSheetOpen(false)}
+        />
       )}
     </div>
   );

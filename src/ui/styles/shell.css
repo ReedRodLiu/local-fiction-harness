@@ -1098,3 +1098,17 @@ textarea:focus-visible {
 .composer-toolbar-row .composer-actions {
   align-self: flex-end;
 }
+
+@media (max-width: 440px) {
+  .composer-toolbar-row { gap: 6px; }
+  .composer-toolbar-left { gap: 4px; }
+  .composer-model-btn { padding: 3px 7px; }
+  .composer-reasoning-control { gap: 3px; padding: 2px 2px 2px 6px; }
+  .composer-reasoning-slider { display: none; }
+  .composer-reasoning-stop { padding: 2px 4px; }
+}
+
+@media (max-width: 380px) {
+  .composer-reasoning-control { padding: 2px; }
+  .composer-reasoning-title { display: none; }
+}

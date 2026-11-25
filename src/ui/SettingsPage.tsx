@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, ExternalLink, FileUp, LifeBuoy, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ChevronRight, Download, ExternalLink, FileUp, LifeBuoy, RefreshCw, ShieldCheck } from 'lucide-react';
 import {
   DEEPSEEK_DEV_PROXY_BALANCE_NOTICE,
   DEEPSEEK_OFFICIAL_TOP_UP_DECLARATION,
@@ -11,7 +11,6 @@ import {
   createDefaultPromptPackLibrary,
   type ModelConfig,
   type OfficialDeepSeekModel,
-  type PromptPack,
   type PromptPackLibrary,
   type ReasoningEffort,
 } from '../harness/index.ts';
@@ -20,7 +19,6 @@ import {
   type DisplayFontSize,
   type DisplayThemePreference,
 } from './displayPreferences.ts';
-import { PromptPackSheet } from './PromptPackSheet.tsx';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
 import type { AppUpdaterController } from './useAppUpdater.ts';
@@ -44,6 +42,7 @@ export interface SettingsPageProps {
   onApplyDevTestConfig: () => void;
   onOpenDiagnostics: () => void;
   onOpenPublicMemory: () => void;
+  onOpenNarrativePresets?: () => void;
   onExportCurrentStory: () => void;
   onExportFullBackup?: () => void;
   canExportFullBackup?: boolean;
@@ -54,8 +53,6 @@ export interface SettingsPageProps {
   onDefaultModelChange?: (model: OfficialDeepSeekModel) => void;
   onDefaultReasoningEffortChange?: (effort: ReasoningEffort) => void;
   promptPackLibrary?: PromptPackLibrary;
-  onPromptPackLibraryChange?: (library: PromptPackLibrary) => void;
-  onExportPromptPack?: (pack: PromptPack) => void | Promise<void>;
   appUpdater?: AppUpdaterController;
 }
 
@@ -123,6 +120,7 @@ export function SettingsPage({
   onApplyDevTestConfig,
   onOpenDiagnostics,
   onOpenPublicMemory,
+  onOpenNarrativePresets,
   onExportCurrentStory,
   onExportFullBackup,
   canExportFullBackup,
@@ -133,8 +131,6 @@ export function SettingsPage({
   onDefaultModelChange,
   onDefaultReasoningEffortChange,
   promptPackLibrary = createDefaultPromptPackLibrary(),
-  onPromptPackLibraryChange = () => undefined,
-  onExportPromptPack = () => undefined,
   appUpdater,
 }: SettingsPageProps) {
   const backupInputRef = useRef<HTMLInputElement>(null);
@@ -142,6 +138,11 @@ export function SettingsPage({
   const activeModel = normalizeOfficialDeepSeekModel(config.model);
   const activeReasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
   const reasoningSliderIndex = REASONING_EFFORTS.indexOf(activeReasoningEffort);
+  const activePreset = promptPackLibrary.activePackId
+    ? promptPackLibrary.packs.find((pack) => pack.id === promptPackLibrary.activePackId) ??
+      promptPackLibrary.packs[0]
+    : null;
+  const activePresetSummary = activePreset ? activePreset.title : '已停用';
 
   const handleBackupExport = onExportFullBackup ?? onExportCurrentStory;
   const exportEnabled = canExportFullBackup ?? (Boolean(onExportFullBackup) || canExportCurrentStory);
@@ -440,15 +441,30 @@ export function SettingsPage({
         </button>
       </InsetGroup>
 
-      <PromptPackSheet
-        library={promptPackLibrary}
-        onChange={onPromptPackLibraryChange}
-        onExport={onExportPromptPack}
-      />
+      <InsetGroup
+        title="叙事预设"
+        description="管理本地叙事风格预设、导入外部模板与叙事连贯保护。"
+        testId="settings-narrative-presets-group"
+      >
+        <button
+          type="button"
+          className="settings-nav-row"
+          data-testid="open-narrative-presets"
+          onClick={onOpenNarrativePresets}
+        >
+          <span className="settings-nav-row-copy">
+            <strong>叙事预设</strong>
+            <span className="settings-nav-row-value" data-testid="settings-narrative-presets-summary">
+              {activePresetSummary}
+            </span>
+          </span>
+          <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
+        </button>
+      </InsetGroup>
 
       <InsetGroup
         title="全量数据备份与恢复"
-        description="导出全部文游、写故事、角色互动、我的记忆、提示词包与显示偏好；支持从 .folio.json 或旧版 .lfh.json 恢复。"
+        description="导出全部文游、写故事、角色互动、我的记忆、叙事预设与显示偏好；支持从 .folio.json 或旧版 .lfh.json 恢复。"
         testId="settings-backup-group"
       >
         <div className="settings-data-row">

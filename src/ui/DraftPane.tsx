@@ -97,6 +97,7 @@ interface DraftPaneProps {
   requestModel: RequestModel;
   openPublic: (proposal?: string, expected?: string) => void;
   openDocument: (edit: DocumentEdit) => void;
+  onOpenNarrativePresets?: () => void;
   manuscript?: boolean;
   onStartManuscript?: () => void;
   onSwitchToChat?: () => void;
@@ -1384,6 +1385,7 @@ export function DraftPane(props: DraftPaneProps) {
                 handleGenerationPreferenceChange({ promptPackMode: mode === 'inherit' ? null : mode })}
               onPrefixCompletionChange={(mode) =>
                 handleGenerationPreferenceChange({ prefixCompletion: mode === 'inherit' ? null : mode })}
+              onManageNarrativePresets={props.onOpenNarrativePresets}
               trailingSlot={
                 <div className="composer-actions">
                   {reply.busy ? (
@@ -1704,6 +1706,7 @@ export function DraftPane(props: DraftPaneProps) {
                   handleGenerationPreferenceChange({ promptPackMode: mode === 'inherit' ? null : mode })}
                 onPrefixCompletionChange={(mode) =>
                   handleGenerationPreferenceChange({ prefixCompletion: mode === 'inherit' ? null : mode })}
+                onManageNarrativePresets={props.onOpenNarrativePresets}
                 trailingSlot={
                   <div className="composer-actions">
                     {reply.busy ? (

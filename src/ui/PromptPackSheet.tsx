@@ -31,7 +31,7 @@ import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 
 export const PROMPT_PACK_DISCLAIMER =
-  '「提示词包在技术上作为系统提示词（System Prompt）与可选前缀续写发往你所配置的 DeepSeek 官方接口。Folio 仅提供本地槽位编排与拒答重拟机制，不预置、不分发、也不代为获取任何第三方规避提示词；导入内容由你自行维护并对接口调用合规性与双倍重试 Token 消耗负责。」';
+  '「叙事预设在技术上作为系统提示词（System Prompt）与可选前缀续写发往你所配置的 DeepSeek 官方接口。Folio 仅提供本地槽位编排与叙事连贯保护机制，不预置、不分发、也不代为获取任何第三方模板；导入内容由你自行维护并对接口调用合规性与重试 Token 消耗负责。」';
 
 export interface PromptPackSheetProps {
   library: PromptPackLibrary;
@@ -54,14 +54,14 @@ const SLOT_META: Record<SlotKey, { label: string; hint: string; testId: string }
   },
   tail: {
     label: 'tail · 常驻尾槽',
-    hint: '仅在拒答重试或显式开启常驻尾槽时追加，适合最后的落笔提醒。',
+    hint: '仅在叙事连贯保护重拟或显式开启常驻尾槽时追加，适合最后的落笔提醒。',
     testId: 'prompt-pack-slot-tail',
   },
 };
 
 const PREFIX_OPTIONS: Array<{ value: PrefixCompletionMode; label: string }> = [
   { value: 'off', label: '关闭' },
-  { value: 'on_retry', label: '仅重试时开启（推荐）' },
+  { value: 'on_retry', label: '仅中断重拟时（推荐）' },
   { value: 'always', label: '每轮开启' },
 ];
 
@@ -145,7 +145,7 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
 
   const toggleGlobal = () => {
     if (library.activePackId) {
-      applyLibrary(setActivePromptPack(library, null), '已停用默认提示词包。');
+      applyLibrary(setActivePromptPack(library, null), '已停用默认叙事预设。');
       return;
     }
     const nextEnabled =
@@ -174,9 +174,9 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
         createdAt: selected.createdAt,
         updatedAt: Date.now(),
       });
-      applyLibrary(updatePromptPack(library, nextPack), '提示词包已保存。');
+      applyLibrary(updatePromptPack(library, nextPack), '叙事预设已保存。');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存提示词包失败。');
+      setError(err instanceof Error ? err.message : '保存叙事预设失败。');
     }
   };
 
@@ -184,16 +184,16 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
     try {
       const now = Date.now();
       const pack = createPromptPack(createDefaultId(), emptyPromptPackSlots(), {
-        title: '未命名提示词包',
+        title: '未命名叙事预设',
         source: 'user',
         createdAt: now,
         updatedAt: now,
       });
       const added = addPromptPack(library, pack);
       setSelectedId(pack.id);
-      applyLibrary(setActivePromptPack(added, pack.id), '已新建并激活提示词包。');
+      applyLibrary(setActivePromptPack(added, pack.id), '已新建并激活叙事预设。');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '新建提示词包失败。');
+      setError(err instanceof Error ? err.message : '新建叙事预设失败。');
     }
   };
 
@@ -209,9 +209,9 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
       });
       const added = addPromptPack(library, pack);
       setSelectedId(pack.id);
-      applyLibrary(setActivePromptPack(added, pack.id), '已复制为新包并激活。');
+      applyLibrary(setActivePromptPack(added, pack.id), '已复制为新预设并激活。');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '复制提示词包失败。');
+      setError(err instanceof Error ? err.message : '复制叙事预设失败。');
     }
   };
 
@@ -220,9 +220,9 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
     try {
       const next = removePromptPack(library, selected.id);
       setSelectedId(next.packs[0]?.id ?? '');
-      applyLibrary(next, '已删除自定义提示词包。');
+      applyLibrary(next, '已删除自定义叙事预设。');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除提示词包失败。');
+      setError(err instanceof Error ? err.message : '删除叙事预设失败。');
     }
   };
 
@@ -234,7 +234,7 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
       applyLibrary(setActivePromptPack(added, pack.id), `已导入并激活「${pack.title}」。`);
       setPasteDraft('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '导入提示词包失败。');
+      setError(err instanceof Error ? err.message : '导入叙事预设失败。');
     }
   };
 
@@ -253,12 +253,12 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
       setStatus(`已导出「${selected.title}」。`);
       setError('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '导出提示词包失败。');
+      setError(err instanceof Error ? err.message : '导出叙事预设失败。');
     }
   };
 
   const changeGlobalPrefix = (value: PrefixCompletionMode) => {
-    applyLibrary({ ...library, defaultPrefixCompletion: value }, '已更新全局前缀续写默认档位。');
+    applyLibrary({ ...library, defaultPrefixCompletion: value }, '已更新默认前缀续写档位。');
   };
 
   const changeTailAlways = (checked: boolean) => {
@@ -267,14 +267,14 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
 
   return (
     <InsetGroup
-      title="叙事提示词包与拒答治理"
-      description="自定义前置叙事框架、前缀续写与拒答自动重拟"
+      title="当前叙事预设"
+      description="切换全局默认预设或一键导入；如需细调三段槽位与前缀续写，可展开下方高级设置。"
       testId="settings-prompt-pack-section"
     >
       <div className="prompt-pack-global-row">
         <div>
-          <strong>{library.activePackId ? `当前激活：${activePack.title}` : '默认提示词包已停用'}</strong>
-          <p>同一时间只激活一个包；切换后会用于未单独覆盖的故事、作品与角色。</p>
+          <strong>{library.activePackId ? `当前激活：${activePack.title}` : '默认叙事预设已停用'}</strong>
+          <p>同一时间只激活一个预设；切换后会用于未单独覆盖的故事、作品与角色。</p>
         </div>
         <button
           type="button"
@@ -287,7 +287,7 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
         </button>
       </div>
 
-      <div className="prompt-pack-picker" role="radiogroup" aria-label="当前全局激活包">
+      <div className="prompt-pack-picker" role="radiogroup" aria-label="当前激活叙事预设">
         {library.packs.map((pack) => (
           <button
             key={pack.id}
@@ -309,7 +309,7 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
           <Plus size={16} strokeWidth={1.75} aria-hidden="true" /> 新建
         </button>
         <button type="button" className="btn" data-testid="prompt-pack-copy" onClick={copyPack}>
-          <Copy size={16} strokeWidth={1.75} aria-hidden="true" /> 复制为新包
+          <Copy size={16} strokeWidth={1.75} aria-hidden="true" /> 复制为新预设
         </button>
         <button
           type="button"
@@ -349,15 +349,18 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
           }}
         />
         <button type="button" className="btn" onClick={() => importInputRef.current?.click()}>
-          <FileUp size={16} strokeWidth={1.75} aria-hidden="true" /> 导入 .md / .txt / SillyTavern .json
+          <FileUp size={16} strokeWidth={1.75} aria-hidden="true" /> 一键导入预设文件
         </button>
+        <p className="prompt-pack-import-note">
+          支持导入 .md / .txt / SillyTavern 提示词包 (.json)
+        </p>
         <label className="prompt-pack-paste-label">
           <span>直接粘贴导入</span>
           <textarea
             rows={4}
             value={pasteDraft}
             data-testid="prompt-pack-paste-input"
-            placeholder="粘贴无标记 Markdown（默认进入 head），或带 folio-slot 标记的文本 / SillyTavern JSON。"
+            placeholder="粘贴 Markdown 文本（默认进入 head），或带 folio-slot 标记的文本 / SillyTavern JSON。"
             onChange={(event) => setPasteDraft(event.currentTarget.value)}
           />
         </label>
@@ -372,97 +375,105 @@ export function PromptPackSheet({ library, onChange, onExport }: PromptPackSheet
         </button>
       </div>
 
-      <div className="prompt-pack-editor-head">
-        <label>
-          <span>提示词包名称</span>
-          <input
-            type="text"
-            value={titleDraft}
-            data-testid="prompt-pack-title"
-            readOnly={readOnly}
-            onChange={(event) => setTitleDraft(event.currentTarget.value)}
-          />
-        </label>
-        {readOnly && <span className="badge badge-pending">内置只读</span>}
-      </div>
+      <details
+        className="prompt-pack-advanced-details"
+        data-testid="prompt-pack-advanced-details"
+      >
+        <summary>高级槽位与续写设置</summary>
+        <div className="prompt-pack-advanced-body">
+          <div className="prompt-pack-editor-head">
+            <label>
+              <span>叙事预设名称</span>
+              <input
+                type="text"
+                value={titleDraft}
+                data-testid="prompt-pack-title"
+                readOnly={readOnly}
+                onChange={(event) => setTitleDraft(event.currentTarget.value)}
+              />
+            </label>
+            {readOnly && <span className="badge badge-pending">内置只读</span>}
+          </div>
 
-      {(['head', 'mid', 'tail'] as const).map((slot) => {
-        const meta = SLOT_META[slot];
-        const count = slotsDraft[slot].length;
-        const limit = PROMPT_PACK_LIMITS[slot];
-        const over = count > limit;
-        return (
-          <label className="prompt-pack-slot" key={slot}>
-            <span className="prompt-pack-slot-head">
-              <strong>{meta.label}</strong>
-              <span className={over ? 'is-over' : undefined}>
-                {count} / {limit}
+          {(['head', 'mid', 'tail'] as const).map((slot) => {
+            const meta = SLOT_META[slot];
+            const count = slotsDraft[slot].length;
+            const limit = PROMPT_PACK_LIMITS[slot];
+            const over = count > limit;
+            return (
+              <label className="prompt-pack-slot" key={slot}>
+                <span className="prompt-pack-slot-head">
+                  <strong>{meta.label}</strong>
+                  <span className={over ? 'is-over' : undefined}>
+                    {count} / {limit}
+                  </span>
+                </span>
+                <span className="prompt-pack-slot-hint">{meta.hint}</span>
+                <textarea
+                  rows={slot === 'head' ? 8 : 5}
+                  value={slotsDraft[slot]}
+                  data-testid={meta.testId}
+                  readOnly={readOnly}
+                  aria-invalid={over}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSlotsDraft((current) => ({ ...current, [slot]: value }));
+                  }}
+                />
+              </label>
+            );
+          })}
+
+          <div className="prompt-pack-budget" data-testid="prompt-pack-budget">
+            <strong>总长度 {total} / {PROMPT_PACK_LIMITS.total}</strong>
+            {total > PROMPT_PACK_LIMITS.warning && (
+              <span className="prompt-pack-soft-warning">
+                已超过 12000 字软提示：首轮请求延迟与 Token 消耗会增加，但仍可保存。
               </span>
-            </span>
-            <span className="prompt-pack-slot-hint">{meta.hint}</span>
-            <textarea
-              rows={slot === 'head' ? 8 : 5}
-              value={slotsDraft[slot]}
-              data-testid={meta.testId}
-              readOnly={readOnly}
-              aria-invalid={over}
-              onChange={(event) => {
-                const value = event.currentTarget.value;
-                setSlotsDraft((current) => ({ ...current, [slot]: value }));
-              }}
-            />
-          </label>
-        );
-      })}
-
-      <div className="prompt-pack-budget" data-testid="prompt-pack-budget">
-        <strong>总长度 {total} / {PROMPT_PACK_LIMITS.total}</strong>
-        {total > PROMPT_PACK_LIMITS.warning && (
-          <span className="prompt-pack-soft-warning">
-            已超过 12000 字软提示：首轮请求延迟与 Token 消耗会增加，但仍可保存。
-          </span>
-        )}
-        {validation.errors.map((item) => (
-          <span className="prompt-pack-hard-error" key={item}>{item}</span>
-        ))}
-      </div>
-
-      <div className="prompt-pack-save-row">
-        <button
-          type="button"
-          className="btn btn-primary"
-          data-testid="prompt-pack-save"
-          disabled={readOnly || !validation.valid || !titleDraft.trim()}
-          onClick={savePack}
-        >
-          <Save size={16} strokeWidth={1.75} aria-hidden="true" /> 保存当前包
-        </button>
-        <span>软提示不阻止保存；任一槽位或总长度超过硬上限时禁止保存。</span>
-      </div>
-
-      <div className="prompt-pack-global-settings">
-        <label>
-          <span>全局默认前缀续写</span>
-          <select
-            data-testid="prompt-pack-global-prefix"
-            value={library.defaultPrefixCompletion ?? 'on_retry'}
-            onChange={(event) => changeGlobalPrefix(event.currentTarget.value as PrefixCompletionMode)}
-          >
-            {PREFIX_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+            )}
+            {validation.errors.map((item) => (
+              <span className="prompt-pack-hard-error" key={item}>{item}</span>
             ))}
-          </select>
-        </label>
-        <label className="prompt-pack-checkbox">
-          <input
-            type="checkbox"
-            data-testid="prompt-pack-tail-always"
-            checked={library.includeTail === true}
-            onChange={(event) => changeTailAlways(event.currentTarget.checked)}
-          />
-          <span>每轮常驻 tail 槽位</span>
-        </label>
-      </div>
+          </div>
+
+          <div className="prompt-pack-save-row">
+            <button
+              type="button"
+              className="btn btn-primary"
+              data-testid="prompt-pack-save"
+              disabled={readOnly || !validation.valid || !titleDraft.trim()}
+              onClick={savePack}
+            >
+              <Save size={16} strokeWidth={1.75} aria-hidden="true" /> 保存当前预设
+            </button>
+            <span>软提示不阻止保存；任一槽位或总长度超过硬上限时禁止保存。</span>
+          </div>
+
+          <div className="prompt-pack-global-settings">
+            <label>
+              <span>默认前缀续写</span>
+              <select
+                data-testid="prompt-pack-global-prefix"
+                value={library.defaultPrefixCompletion ?? 'on_retry'}
+                onChange={(event) => changeGlobalPrefix(event.currentTarget.value as PrefixCompletionMode)}
+              >
+                {PREFIX_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="prompt-pack-checkbox">
+              <input
+                type="checkbox"
+                data-testid="prompt-pack-tail-always"
+                checked={library.includeTail === true}
+                onChange={(event) => changeTailAlways(event.currentTarget.checked)}
+              />
+              <span>每轮常驻 tail 槽位</span>
+            </label>
+          </div>
+        </div>
+      </details>
 
       {(status || error) && (
         <p

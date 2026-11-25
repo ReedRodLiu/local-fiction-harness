@@ -89,6 +89,7 @@ import { ImportPanel, type ImportMode } from './ImportPanel.tsx';
 import { LibraryDrawer } from './LibraryDrawer.tsx';
 import { MarkdownView } from './MarkdownView.tsx';
 import { MessageContent } from './MessageContent.tsx';
+import { PromptPackSheet } from './PromptPackSheet.tsx';
 import { SettingsPage } from './SettingsPage.tsx';
 import { TopBar } from './TopBar.tsx';
 import { TurnCard, type ResolvedProposalTargetState } from './TurnCard.tsx';
@@ -103,6 +104,7 @@ import {
 } from './refusalContinuation.ts';
 import type { DisplayFontSize, DisplayThemePreference } from './displayPreferences.ts';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
+import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
 import { waitForExitAnimation } from './primitives/waitForExitAnimation.ts';
 import {
   createDerivedAssetInWorkspace,
@@ -264,6 +266,8 @@ export function App({ runtime }: AppProps) {
     setShowImport,
     showSettings,
     setShowSettings,
+    settingsSubPage,
+    setSettingsSubPage,
     mobileLibraryOpen,
     setMobileLibraryOpen,
     storyTreeOpen,
@@ -662,7 +666,12 @@ export function App({ runtime }: AppProps) {
     mobileLibraryOpen,
     onMobileLibraryBack: () => setMobileLibraryOpen(false),
     showSettings,
-    onSettingsBack: () => setShowSettings(false),
+    onSettingsBack: () => {
+      setSettingsSubPage('main');
+      setShowSettings(false);
+    },
+    showNarrativePresets: showSettings && settingsSubPage === 'narrative-presets',
+    onNarrativePresetsBack: () => setSettingsSubPage('main'),
     showImport,
     onImportBack: () => setShowImport(false),
     canCloseImport: () => !deepSeekImportBusyRef.current,
@@ -970,7 +979,7 @@ export function App({ runtime }: AppProps) {
     setShowImport(true);
   };
 
-  const openSettings = () => {
+  const openSettingsOverlay = (subPage: 'main' | 'narrative-presets') => {
     if (branchSwitchBusyRef.current) return;
     ++overlayNavigationSeqRef.current;
     captureOverlayTrigger();
@@ -980,8 +989,12 @@ export function App({ runtime }: AppProps) {
     setShowImport(false);
     setMobileLibraryOpen(false);
     setStoryTreeOpen(false);
+    setSettingsSubPage(subPage);
     setShowSettings(true);
   };
+
+  const openSettings = () => openSettingsOverlay('main');
+  const openNarrativePresetSettings = () => openSettingsOverlay('narrative-presets');
 
   const toggleLibraryCollapsed = () => {
     setLibraryCollapsed((collapsed) => !collapsed);
@@ -1838,7 +1851,7 @@ export function App({ runtime }: AppProps) {
     const markdown = exportPromptPackMarkdown(pack);
     const fileName = `${pack.title.replace(/[\/:*?"<>|]+/g, '_').trim() || 'prompt-pack'}.md`;
     await runtime.backupExporter.exportMarkdown(fileName, markdown);
-    setStatusNotice(`已导出提示词包「${pack.title}」。`);
+    setStatusNotice(`已导出叙事预设「${pack.title}」。`);
   };
 
   const handleExportFullBackup = async () => {
@@ -2416,7 +2429,7 @@ export function App({ runtime }: AppProps) {
     Boolean(documentVersion(creative.workspace.publicDocument).markdown.trim()) ||
     !isDefaultPromptPackLibrary(promptPackLibrary);
 
-  const backupSummaryText = `包含 ${stories.length} 个故事、${creative.workspace.works.length} 部作品、${creative.workspace.characters.length} 位角色、${promptPackLibrary.packs.length} 个提示词包与我的记忆（不含 API Key）`;
+  const backupSummaryText = `包含 ${stories.length} 个故事、${creative.workspace.works.length} 部作品、${creative.workspace.characters.length} 位角色、${promptPackLibrary.packs.length} 个叙事预设与我的记忆（不含 API Key）`;
 
   const effectiveComposerConfig = isWelcome
     ? resolveEffectiveModelConfig(config, pendingWelcomePref)
@@ -2640,6 +2653,7 @@ export function App({ runtime }: AppProps) {
                 requestModel={withCredentials}
                 openPublic={openPublicDocument}
                 openDocument={setDocumentEdit}
+                onOpenNarrativePresets={openNarrativePresetSettings}
                 companionOpen={creativeCompanionOpen}
                 setCompanionOpen={setCreativeCompanionOpen}
                 manuscript={showManuscript}
@@ -2872,6 +2886,7 @@ export function App({ runtime }: AppProps) {
                   }
                   onPromptPackModeChange={handlePromptPackModeChange}
                   onPrefixCompletionChange={handlePrefixCompletionChange}
+                  onManageNarrativePresets={openNarrativePresetSettings}
                   leadingSlot={isWelcome ? (
                     <div className="composer-plus-wrap">
                       <button
@@ -2992,39 +3007,57 @@ export function App({ runtime }: AppProps) {
               </BannerAlert>
             )}
             {renderedOverlay === 'settings' ? (
-              <SettingsPage
-                appVersion={APP_VERSION}
-                hasCredentials={hasCredentials}
-                config={config}
-                useDevEnvKey={useDevEnvKey}
-                showDevTestProxy={import.meta.env.DEV && isWebDev && Boolean(devTestInfo?.available)}
-                balanceState={balanceState}
-                onRefreshBalance={refreshBalance}
-                themePreference={displayPreferences.theme}
-                fontSize={displayPreferences.fontSize}
-                canExportCurrentStory={storyExists}
-                currentStoryTitle={story.title}
-                canExportFullBackup={canExportFullBackup}
-                backupSummaryText={backupSummaryText}
-                onBack={() => setShowSettings(false)}
-                onOpenSetupWizard={openSetupWizard}
-                onClearSavedKey={handleClearSavedKey}
-                onApplyDevTestConfig={applyDevTestConfig}
-                onOpenDiagnostics={() => openDiagnostics('settings_manual')}
-                onOpenPublicMemory={() => openPublicDocument()}
-                onExportCurrentStory={() => void handleExportFullBackup()}
-                onExportFullBackup={() => void handleExportFullBackup()}
-                onImportBackupFile={(file) => void handleImportBackupFile(file)}
-                onThemePreferenceChange={setThemePreference}
-                onFontSizeChange={setDisplayFontSize}
-                onDefaultModelChange={(model) => updateConfig({ ...config, model })}
-                onDefaultReasoningEffortChange={(reasoningEffort) =>
-                  updateConfig({ ...config, reasoningEffort })}
-                promptPackLibrary={promptPackLibrary}
-                onPromptPackLibraryChange={setPromptPackLibrary}
-                onExportPromptPack={handleExportPromptPack}
-                appUpdater={appUpdater}
-              />
+              settingsSubPage === 'narrative-presets' ? (
+                <OverlayPageShell
+                  key="narrative-presets"
+                  title="叙事预设"
+                  testId="narrative-presets-page"
+                  onBack={() => setSettingsSubPage('main')}
+                >
+                  <PromptPackSheet
+                    library={promptPackLibrary}
+                    onChange={setPromptPackLibrary}
+                    onExport={handleExportPromptPack}
+                  />
+                </OverlayPageShell>
+              ) : (
+                <SettingsPage
+                  key="settings-main"
+                  appVersion={APP_VERSION}
+                  hasCredentials={hasCredentials}
+                  config={config}
+                  useDevEnvKey={useDevEnvKey}
+                  showDevTestProxy={import.meta.env.DEV && isWebDev && Boolean(devTestInfo?.available)}
+                  balanceState={balanceState}
+                  onRefreshBalance={refreshBalance}
+                  themePreference={displayPreferences.theme}
+                  fontSize={displayPreferences.fontSize}
+                  canExportCurrentStory={storyExists}
+                  currentStoryTitle={story.title}
+                  canExportFullBackup={canExportFullBackup}
+                  backupSummaryText={backupSummaryText}
+                  onBack={() => {
+                    setSettingsSubPage('main');
+                    setShowSettings(false);
+                  }}
+                  onOpenSetupWizard={openSetupWizard}
+                  onClearSavedKey={handleClearSavedKey}
+                  onApplyDevTestConfig={applyDevTestConfig}
+                  onOpenDiagnostics={() => openDiagnostics('settings_manual')}
+                  onOpenPublicMemory={() => openPublicDocument()}
+                  onOpenNarrativePresets={() => setSettingsSubPage('narrative-presets')}
+                  onExportCurrentStory={() => void handleExportFullBackup()}
+                  onExportFullBackup={() => void handleExportFullBackup()}
+                  onImportBackupFile={(file) => void handleImportBackupFile(file)}
+                  onThemePreferenceChange={setThemePreference}
+                  onFontSizeChange={setDisplayFontSize}
+                  onDefaultModelChange={(model) => updateConfig({ ...config, model })}
+                  onDefaultReasoningEffortChange={(reasoningEffort) =>
+                    updateConfig({ ...config, reasoningEffort })}
+                  promptPackLibrary={promptPackLibrary}
+                  appUpdater={appUpdater}
+                />
+              )
             ) : (
               <ImportPanel
                 initialMode={importMode}

@@ -90,6 +90,7 @@ interface CharacterPaneProps {
   requestModel: RequestModel;
   openPublic: (proposal?: string, expected?: string) => void;
   openDocument: (edit: DocumentEdit) => void;
+  onOpenNarrativePresets?: () => void;
   onSwitchStageMode?: (targetMode: StageAssetMode) => void;
   onNavigateCreatedAsset?: (kind: 'character' | 'work', id: string) => void;
   initialTurn: { id: string; prompt: string } | null;
@@ -1118,6 +1119,7 @@ export function CharacterPane(props: CharacterPaneProps) {
             handleGenerationPreferenceChange({ promptPackMode: mode === 'inherit' ? null : mode })}
           onPrefixCompletionChange={(mode) =>
             handleGenerationPreferenceChange({ prefixCompletion: mode === 'inherit' ? null : mode })}
+          onManageNarrativePresets={props.onOpenNarrativePresets}
           trailingSlot={
             <div className="composer-actions">
               {reply.busy ? (

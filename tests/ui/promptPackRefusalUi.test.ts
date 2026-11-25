@@ -21,7 +21,12 @@ import {
   type TurnNode,
 } from '../../src/harness/index.ts';
 import { GenerationControls } from '../../src/ui/GenerationControls.tsx';
+import {
+  NarrativePresetQuickSheet,
+  resolveContinuityEnableMode,
+} from '../../src/ui/NarrativePresetQuickSheet.tsx';
 import { PromptPackSheet } from '../../src/ui/PromptPackSheet.tsx';
+import { SettingsPage } from '../../src/ui/SettingsPage.tsx';
 import {
   finalizePrefixContinuation,
   prepareStoryContinuationContext,
@@ -72,14 +77,14 @@ function makeStory(node: TurnNode): Story {
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-describe('Issue #133 prompt pack and refusal UI contracts', () => {
-  it('renders the prompt pack first-class settings sheet with exact copy and all controls', () => {
+describe('Issue #133 & #140 narrative preset, continuity protection, and refusal UI contracts', () => {
+  it('renders PromptPackSheet with simple preset switcher, one-step import, compliant disclaimer, and collapsed advanced slots', () => {
     const library = createDefaultPromptPackLibrary();
     const custom = createPromptPack('custom-pack', {
       head: '开头规则',
       mid: '中段规则',
       tail: '尾段规则',
-    }, { title: '自定义叙事包' });
+    }, { title: '自定义叙事预设' });
     library.packs.push(custom);
     library.activePackId = custom.id;
 
@@ -90,24 +95,31 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     }));
 
     expect(markup).toContain('data-testid="settings-prompt-pack-section"');
-    expect(markup).toContain('叙事提示词包与拒答治理');
-    expect(markup).toContain('自定义前置叙事框架、前缀续写与拒答自动重拟');
+    expect(markup).toContain('叙事预设');
     expect(markup).toContain('data-testid="prompt-pack-enable-toggle"');
     expect(markup).toContain('data-testid="prompt-pack-import-input"');
+    expect(markup).toContain('.md / .txt / SillyTavern 提示词包');
+    expect(markup).toContain('data-testid="prompt-pack-disclaimer"');
+    expect(markup).toContain('banner-alert-warning');
+    expect(markup).toContain('叙事预设在技术上作为系统提示词（System Prompt）');
+    expect(markup).toContain('Folio 基础叙事骨架');
+    expect(markup).toContain('data-testid="prompt-pack-advanced-details"');
+    expect(markup).toContain('高级槽位与续写设置');
+    expect(markup).not.toMatch(/<details[^>]*data-testid="prompt-pack-advanced-details"[^>]* open=/);
     expect(markup).toContain('data-testid="prompt-pack-slot-head"');
     expect(markup).toContain('data-testid="prompt-pack-slot-mid"');
     expect(markup).toContain('data-testid="prompt-pack-slot-tail"');
     expect(markup).toContain('data-testid="prompt-pack-tail-always"');
     expect(markup).toContain('data-testid="prompt-pack-global-prefix"');
-    expect(markup).toContain('data-testid="prompt-pack-disclaimer"');
-    expect(markup).toContain('banner-alert-warning');
+    expect(markup).toContain('仅中断重拟时');
     expect(markup).toContain('24000');
     expect(markup).toContain('6000');
     expect(markup).toContain('2000');
-    expect(markup).toContain('Folio 基础叙事骨架');
-    expect(markup).toContain('提示词包在技术上作为系统提示词（System Prompt）');
     expect(markup.indexOf('data-testid="prompt-pack-disclaimer"')).toBeLessThan(
       markup.indexOf('class="prompt-pack-import-block"'),
+    );
+    expect(markup.indexOf('class="prompt-pack-import-block"')).toBeLessThan(
+      markup.indexOf('data-testid="prompt-pack-advanced-details"'),
     );
 
     const disabledMarkup = renderToStaticMarkup(createElement(PromptPackSheet, {
@@ -115,36 +127,108 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
       onChange: vi.fn(),
       onExport: vi.fn(),
     }));
-    expect(disabledMarkup).toContain('默认提示词包已停用');
+    expect(disabledMarkup).toContain('默认叙事预设已停用');
     expect(disabledMarkup).not.toContain('全局提示词');
 
     const sheetSource = readFileSync(join(repoRoot, 'src/ui/PromptPackSheet.tsx'), 'utf8');
     const cssSource = readFileSync(join(repoRoot, 'src/ui/styles/prompt-pack.css'), 'utf8');
     expect(sheetSource).not.toContain('全局提示词');
+    expect(sheetSource).not.toContain('防拒答');
+    expect(sheetSource).not.toContain('规避提示词');
     expect(sheetSource).toContain('<BannerAlert tone="warning" testId="prompt-pack-disclaimer">');
     expect(cssSource).not.toContain('.prompt-pack-disclaimer');
   });
 
-  it('renders story-level prompt-pack and prefix selectors next to the existing generation controls', () => {
-    const markup = renderToStaticMarkup(createElement(GenerationControls, {
-      model: 'deepseek-flash',
-      reasoningEffort: 'high',
-      onModelChange: vi.fn(),
-      onReasoningEffortChange: vi.fn(),
-      promptPackLibrary: createDefaultPromptPackLibrary(),
+  it('renders SettingsPage with a single 叙事预设 summary row instead of inline PromptPackSheet', () => {
+    const library = createDefaultPromptPackLibrary();
+    const settingsMarkup = renderToStaticMarkup(createElement(SettingsPage, {
+      appVersion: '0.4.1',
+      hasCredentials: false,
+      config: { baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', apiKey: '', memoryOnly: false },
+      useDevEnvKey: false,
+      showDevTestProxy: false,
+      themePreference: 'system',
+      fontSize: 16,
+      canExportCurrentStory: false,
+      currentStoryTitle: '',
+      onBack: vi.fn(),
+      onOpenSetupWizard: vi.fn(),
+      onClearSavedKey: vi.fn(),
+      onApplyDevTestConfig: vi.fn(),
+      onOpenDiagnostics: vi.fn(),
+      onOpenPublicMemory: vi.fn(),
+      onOpenNarrativePresets: vi.fn(),
+      onExportCurrentStory: vi.fn(),
+      onImportBackupFile: vi.fn(),
+      onThemePreferenceChange: vi.fn(),
+      onFontSizeChange: vi.fn(),
+      promptPackLibrary: library,
+    }));
+
+    expect(settingsMarkup).toContain('data-testid="open-narrative-presets"');
+    expect(settingsMarkup).toContain('叙事预设');
+    expect(settingsMarkup).toContain(BUILTIN_NARRATIVE_PROMPT_PACK.title);
+    expect(settingsMarkup).not.toContain('data-testid="settings-prompt-pack-section"');
+    expect(settingsMarkup).not.toContain('data-testid="prompt-pack-slot-head"');
+  });
+
+  it('renders focused NarrativePresetQuickSheet with preset list, 叙事连贯保护, and manage action', () => {
+    const library = createDefaultPromptPackLibrary();
+    const markup = renderToStaticMarkup(createElement(NarrativePresetQuickSheet, {
+      open: true,
+      library,
       promptPackMode: 'inherit',
       prefixCompletion: 'inherit',
       onPromptPackModeChange: vi.fn(),
       onPrefixCompletionChange: vi.fn(),
+      onManagePresets: vi.fn(),
+      onClose: vi.fn(),
     }));
 
-    expect(markup).toContain('data-testid="generation-pref-prompt-pack"');
-    expect(markup).toContain('data-testid="generation-pref-prefix-mode"');
+    expect(markup).toContain('data-testid="narrative-preset-quick-sheet"');
+    expect(markup).toContain('data-testid="quick-sheet-preset-list"');
+    expect(markup).toContain('data-testid="quick-preset-option-inherit"');
+    expect(markup).toContain('data-testid="quick-preset-option-off"');
+    expect(markup).toContain(`data-testid="quick-preset-option-${BUILTIN_NARRATIVE_PROMPT_PACK.id}"`);
     expect(markup).toContain('跟随全局');
-    expect(markup).toContain('在此条目停用');
+    expect(markup).toContain('停用预设');
     expect(markup).toContain(BUILTIN_NARRATIVE_PROMPT_PACK.title);
-    expect(markup).toContain('仅重试时开启');
-    expect(markup).toContain('每轮开启');
+    expect(markup).toContain('data-testid="quick-sheet-continuity-group"');
+    expect(markup).toContain('叙事连贯保护');
+    expect(markup).toContain('data-testid="quick-continuity-option-inherit"');
+    expect(markup).toContain('data-testid="quick-continuity-option-on"');
+    expect(markup).toContain('data-testid="quick-continuity-option-off"');
+    expect(markup).toContain('data-testid="quick-sheet-manage-presets"');
+    expect(markup).toContain('管理叙事预设…');
+    expect(markup).not.toContain('防拒答');
+    expect(markup).not.toContain('prompt-pack-slot-head');
+
+    expect(resolveContinuityEnableMode('inherit', 'off')).toBe('on_retry');
+    expect(resolveContinuityEnableMode('off', 'on_retry')).toBe('on_retry');
+    expect(resolveContinuityEnableMode('inherit', 'always')).toBe('always');
+    expect(resolveContinuityEnableMode('always', 'off')).toBe('always');
+
+    const controlsMarkup = renderToStaticMarkup(createElement(GenerationControls, {
+      model: 'deepseek-flash',
+      reasoningEffort: 'high',
+      onModelChange: vi.fn(),
+      onReasoningEffortChange: vi.fn(),
+      promptPackLibrary: library,
+      promptPackMode: 'off',
+      prefixCompletion: 'on_retry',
+      onPromptPackModeChange: vi.fn(),
+      onPrefixCompletionChange: vi.fn(),
+      onManageNarrativePresets: vi.fn(),
+    }));
+    expect(controlsMarkup).toContain('data-testid="composer-narrative-preset-trigger"');
+    expect(controlsMarkup).toContain('data-overridden="true"');
+    expect(controlsMarkup).not.toContain('data-testid="generation-pref-prompt-pack"');
+    expect(controlsMarkup).not.toContain('data-testid="generation-pref-prefix-mode"');
+
+    for (const file of ['GenerationControls.tsx', 'NarrativePresetQuickSheet.tsx', 'PromptPackSheet.tsx', 'SettingsPage.tsx', 'App.tsx']) {
+      const uiSource = readFileSync(join(repoRoot, 'src/ui', file), 'utf8');
+      expect(uiSource, file).not.toContain('防拒答');
+    }
   });
 
   it('renders recovered restore and partial-refusal continue actions on assistant turns', () => {
@@ -634,8 +718,9 @@ describe('Issue #133 prompt pack and refusal UI contracts', () => {
     expect(appSource.match(/recordRefusalOriginalRestoredDiagnostic\(runtime\.diagnostics, node\.diagnostics\)/g)?.length).toBe(1);
     expect(appSource).toContain('promptPacks: promptPackLibrary');
     expect(appSource).toContain('setPromptPackLibrary(merged.promptPacks)');
-    expect(appSource).toContain('个提示词包与我的记忆');
-    expect(appSource).toContain('onPromptPackLibraryChange={setPromptPackLibrary}');
+    expect(appSource).toContain('个叙事预设与我的记忆');
+    expect(appSource).toContain('testId="narrative-presets-page"');
+    expect(appSource).toContain('onChange={setPromptPackLibrary}');
     expect(appSource).toContain('!isDefaultPromptPackLibrary(promptPackLibrary)');
     const draftSource = readFileSync(join(repoRoot, 'src/ui/DraftPane.tsx'), 'utf8');
     const characterSource = readFileSync(join(repoRoot, 'src/ui/CharacterPane.tsx'), 'utf8');

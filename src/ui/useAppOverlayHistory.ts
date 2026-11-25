@@ -10,6 +10,8 @@ interface AppOverlayHistoryOptions {
   onMobileLibraryBack: () => void;
   showSettings: boolean;
   onSettingsBack: () => void;
+  showNarrativePresets: boolean;
+  onNarrativePresetsBack: () => void;
   showImport: boolean;
   onImportBack: () => void;
   canCloseImport: () => boolean;
@@ -26,6 +28,8 @@ export function useAppOverlayHistory({
   onMobileLibraryBack,
   showSettings,
   onSettingsBack,
+  showNarrativePresets,
+  onNarrativePresetsBack,
   showImport,
   onImportBack,
   canCloseImport,
@@ -50,6 +54,7 @@ export function useAppOverlayHistory({
     () => document.querySelector<HTMLElement>('[data-testid="open-story-tree"]'),
   );
   useWebHistoryLayer('mobile-library', 30, mobileLibraryOpen, onMobileLibraryBack);
+  useWebHistoryLayer('settings-narrative-presets', 25, showNarrativePresets, onNarrativePresetsBack);
   useWebHistoryLayer('settings', 20, showSettings, onSettingsBack, true, undefined, returnFocus);
   useWebHistoryLayer('import-view', 20, showImport, onImportBack, true, canCloseImport, returnFocus);
 }
