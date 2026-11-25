@@ -7,6 +7,7 @@ import { strToU8, zipSync } from 'fflate';
 import { runIssue113PromptPackRefusalE2E } from './issue-113-prompt-pack-refusal.mjs';
 import { verifyInactiveStoryReload, verifyThreeModes } from './three-modes.mjs';
 import { verifyIssue126ModeConversion } from './issue-126-mode-conversion.mjs';
+import { verifyIssue145SpotlightTutorial } from './issue-145-spotlight-tutorial.mjs';
 
 const require = createRequire(import.meta.url);
 const playwrightCorePath =
@@ -269,9 +270,16 @@ function sseResponse(payloads) {
   return `${chunks}data: [DONE]\n\n`;
 }
 
-async function newOfflineContext(browser, port, options) {
-  const context = await browser.newContext({ ...options, serviceWorkers: 'block' });
+async function newOfflineContext(browser, port, options = {}) {
+  const { skipTutorial = true, ...contextOptions } = options;
+  const context = await browser.newContext({ ...contextOptions, serviceWorkers: 'block' });
   context.setDefaultTimeout(15000);
+  if (skipTutorial) {
+    await context.addInitScript(() => {
+      localStorage.setItem('folio.tutorial.mainDone', 'true');
+      localStorage.setItem('folio.tutorial.settingsDone', 'true');
+    });
+  }
   // Page-level fixture routes take precedence. Unmocked HTTP traffic stays on the local Vite origin.
   await context.route('**/*', (route) =>
     new URL(route.request().url()).origin === `http://localhost:${port}`
@@ -3007,6 +3015,10 @@ async function main() {
         sseResponse,
       });
       console.log('ISSUE_126_MODE_CONVERSION_E2E_PASSED');
+      await verifyIssue145SpotlightTutorial(browser, port, {
+        newOfflineContext,
+      });
+      console.log('ISSUE_145_SPOTLIGHT_TUTORIAL_E2E_PASSED');
       if (process.env.LFH_CREATIVE_ONLY === '1') return;
     }
 
