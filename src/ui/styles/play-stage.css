@@ -656,6 +656,11 @@
   margin: 0;
 }
 
+.main-stage.is-playing > .composer:focus-within,
+.main-stage.is-playing > .composer-dock > .composer:focus-within {
+  border-color: var(--accent-fiction);
+}
+
 .main-stage.is-playing > .composer.composer-double-row {
   flex-direction: column;
   align-items: stretch;

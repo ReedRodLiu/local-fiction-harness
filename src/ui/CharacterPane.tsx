@@ -72,6 +72,7 @@ import {
   syncTextareaHeight,
   updateCharacter,
   updateConversation,
+  useComposerEnterKeyHint,
   useCreativeReply,
   type RequestModel,
 } from './useCreativeReply.ts';
@@ -122,6 +123,7 @@ export function CharacterPane(props: CharacterPaneProps) {
     setCompanionOpen,
   } = props;
   const reply = useCreativeReply(runtime, props.requestModel);
+  const composerEnterKeyHint = useComposerEnterKeyHint();
   const [input, setInput] = useState('');
   const [confirm, setConfirm] = useState<'export' | 'delete' | null>(null);
   const [companionTab, setCompanionTab] = useState<CharacterCompanionTab>('conversations');
@@ -1094,6 +1096,7 @@ export function CharacterPane(props: CharacterPaneProps) {
           id="character-chat-input"
           aria-label="发消息"
           rows={1}
+          enterKeyHint={composerEnterKeyHint}
           value={input}
           placeholder={`给 ${character.name} 发消息…`}
           onChange={(event) => {
