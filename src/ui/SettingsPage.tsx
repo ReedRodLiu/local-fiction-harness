@@ -5,6 +5,7 @@ import {
   DEEPSEEK_OFFICIAL_TOP_UP_DECLARATION,
   DEEPSEEK_OFFICIAL_TOP_UP_URL,
   REASONING_EFFORTS,
+  computeWorkspaceUsageSummary,
   maskApiKey,
   normalizeOfficialDeepSeekModel,
   normalizeReasoningEffort,
@@ -13,6 +14,7 @@ import {
   type OfficialDeepSeekModel,
   type PromptPackLibrary,
   type ReasoningEffort,
+  type WorkspaceUsageSummary,
 } from '../harness/index.ts';
 import {
   DISPLAY_FONT_SIZES,
@@ -21,6 +23,7 @@ import {
 } from './displayPreferences.ts';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
+import { WorkspaceUsageSummaryCard } from './WorkspaceUsageSummaryCard.tsx';
 import type { AppUpdaterController } from './useAppUpdater.ts';
 import type { SettingsBalanceState } from './useDeepSeekBalance.ts';
 
@@ -53,6 +56,7 @@ export interface SettingsPageProps {
   onDefaultModelChange?: (model: OfficialDeepSeekModel) => void;
   onDefaultReasoningEffortChange?: (effort: ReasoningEffort) => void;
   promptPackLibrary?: PromptPackLibrary;
+  workspaceUsageSummary?: WorkspaceUsageSummary;
   appUpdater?: AppUpdaterController;
 }
 
@@ -131,8 +135,10 @@ export function SettingsPage({
   onDefaultModelChange,
   onDefaultReasoningEffortChange,
   promptPackLibrary = createDefaultPromptPackLibrary(),
+  workspaceUsageSummary,
   appUpdater,
 }: SettingsPageProps) {
+  const resolvedUsageSummary = workspaceUsageSummary ?? computeWorkspaceUsageSummary({});
   const backupInputRef = useRef<HTMLInputElement>(null);
   const [storageStatus, setStorageStatus] = useState('正在读取本地占用…');
   const activeModel = normalizeOfficialDeepSeekModel(config.model);
@@ -370,6 +376,14 @@ export function SettingsPage({
         </div>
 
         <p className="settings-privacy"><ShieldCheck size={16} strokeWidth={1.75} /> 不含项目方代理或云端存储。</p>
+      </InsetGroup>
+
+      <InsetGroup
+        title="省 Token 与用量总览"
+        description="统计本地全部文游、写故事与角色互动的历史实测用量（含分支与重试轮次）。"
+        testId="settings-usage-overview"
+      >
+        <WorkspaceUsageSummaryCard summary={resolvedUsageSummary} />
       </InsetGroup>
 
       <InsetGroup
