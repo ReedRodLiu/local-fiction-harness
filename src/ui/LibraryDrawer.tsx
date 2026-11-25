@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { MutableRefObject, ReactNode } from 'react';
 import { BookOpen, ChevronRight, FilePlus2, PanelLeftClose, Plus, Settings, Sparkles, X } from 'lucide-react';
 import type { Story } from '../harness/index.ts';
 import { StoryLibrary, type LibraryItem, type LibraryItemActions } from './StoryLibrary.tsx';
@@ -19,6 +19,8 @@ export interface LibraryDrawerProps {
   activeStoryId: string;
   collapsed: boolean;
   mobileOpen: boolean;
+  mobileSwipePreview?: boolean;
+  mobileDialogRef?: MutableRefObject<HTMLDialogElement | null>;
   onMobileExitComplete?: () => void;
   hasCredentials: boolean;
   onClose: () => void;
@@ -39,6 +41,8 @@ export function LibraryDrawer({
   activeStoryId,
   collapsed,
   mobileOpen,
+  mobileSwipePreview = false,
+  mobileDialogRef,
   onMobileExitComplete,
   hasCredentials,
   onClose,
@@ -158,6 +162,8 @@ export function LibraryDrawer({
       <DrawerDialog
         open={mobileOpen}
         label="我的故事书架"
+        swipePreview={mobileSwipePreview}
+        dialogRef={mobileDialogRef}
         onExitComplete={onMobileExitComplete}
         testId="mobile-library-dialog"
         sheetTestId="mobile-library-sheet"

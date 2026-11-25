@@ -55,6 +55,15 @@ textarea:focus-visible {
   overflow-y: hidden;
 }
 
+.app-shell-underlay {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
 .app-topbar {
   position: relative;
   z-index: 1;
@@ -293,9 +302,19 @@ textarea:focus-visible {
   border: 0;
   background: transparent;
   color: var(--text-primary);
+  transition: opacity var(--motion-duration-drawer) var(--motion-easing-page);
 }
-.library-dialog::backdrop { background: var(--bg-scrim); transition: opacity var(--motion-duration) var(--motion-easing); }
+.library-dialog::backdrop { background: transparent; }
+.library-dialog-scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-scrim);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity var(--motion-duration-drawer) var(--motion-easing-page);
+}
 .library-dialog-sheet {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -308,7 +327,17 @@ textarea:focus-visible {
   touch-action: pan-y;
   opacity: 1;
   transform: translateX(0);
-  transition: opacity var(--motion-duration) var(--motion-easing), transform var(--motion-duration) var(--motion-easing);
+  transition: opacity var(--motion-duration-drawer) var(--motion-easing-page), transform var(--motion-duration-drawer) var(--motion-easing-page);
+}
+.library-dialog[data-swipe-preview="true"] {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: block;
+}
+.library-dialog[data-dragging="true"] .library-dialog-scrim,
+.library-dialog[data-dragging="true"] .library-dialog-sheet {
+  transition: none;
 }
 
 .main-stage {
@@ -388,6 +417,85 @@ textarea:focus-visible {
 .overlay-page-header h1 { margin: 0; font-size: 17px; text-align: center; }
 .overlay-header-spacer { width: 44px; height: 44px; }
 .overlay-page-content { display: flex; flex-direction: column; gap: 14px; }
+
+.app-overlay-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  overflow: hidden;
+}
+.app-overlay-layer[data-closing="true"] {
+  pointer-events: none;
+}
+.app-overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-scrim);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity var(--motion-duration-page) var(--motion-easing-page);
+  animation: overlay-backdrop-enter var(--motion-duration-page) var(--motion-easing-page) backwards;
+}
+.app-overlay-stage {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  padding: 0 clamp(16px, 4vw, 40px) max(12px, var(--safe-area-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-top: calc(72px + var(--safe-area-top));
+  background: var(--bg-canvas);
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity var(--motion-duration-page) var(--motion-easing-page), transform var(--motion-duration-page) var(--motion-easing-page);
+  animation: overlay-page-enter var(--motion-duration-page) var(--motion-easing-page) backwards;
+}
+.app-overlay-stage > .banner-alert:first-child {
+  margin-top: max(12px, var(--safe-area-top));
+}
+.app-overlay-layer[data-dragging="true"] .app-overlay-stage,
+.app-overlay-layer[data-dragging="true"] .app-overlay-backdrop {
+  animation: none;
+  transition: none;
+}
+.app-overlay-layer[data-closing="true"] .app-overlay-stage {
+  opacity: 0;
+  transform: translateX(100%);
+}
+.app-overlay-layer[data-closing="true"] .app-overlay-backdrop {
+  opacity: 0;
+}
+
+@keyframes overlay-page-enter {
+  from { opacity: 0.92; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes overlay-page-enter-reduced {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes overlay-backdrop-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes stage-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes stage-enter-reduced {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.main-stage > .timeline,
+.main-stage > .welcome-view,
+.main-stage > .creative-stage,
+.creative-stage > .timeline,
+.creative-stage > .writing-manuscript-canvas,
+.creative-stage > .creative-empty-state {
+  animation: stage-enter var(--motion-duration-fast) var(--motion-easing-page) backwards;
+}
 .inset-group { padding: 16px; border: 1px solid var(--border-hairline); border-radius: var(--radius-md); background: var(--bg-surface); }
 .inset-group-header h2 { margin: 0; font-size: 15px; }
 .inset-group-header p { margin: 4px 0 12px; color: var(--text-secondary); font-size: 12px; }
@@ -437,9 +545,13 @@ textarea:focus-visible {
 @starting-style {
   .modal-dialog[open],
   .sheet-dialog[open] { opacity: 0; transform: translateY(12px); }
-  .library-dialog[open] .library-dialog-sheet { opacity: 0; transform: translateX(-100%); }
+  .library-dialog[open]:not([data-swipe-settling="true"]) .library-dialog-scrim { opacity: 0; }
+  .library-dialog[open]:not([data-swipe-settling="true"]) .library-dialog-sheet { opacity: 0; transform: translateX(-100%); }
 }
 
+.library-dialog[data-closing="true"] .library-dialog-scrim {
+  opacity: 0;
+}
 .library-dialog[data-closing="true"] .library-dialog-sheet {
   opacity: 0;
   transform: translateX(-100%);
@@ -455,11 +567,30 @@ textarea:focus-visible {
   .modal-dialog,
   .sheet-dialog,
   .library-dialog-sheet,
+  .app-overlay-stage,
+  .app-shell-underlay,
   .diagnostics-dialog,
   .wizard-dialog {
     transform: none !important;
   }
-  .sheet-dialog[data-dragging="true"] { transition: none; }
+  .app-overlay-stage {
+    animation-name: overlay-page-enter-reduced;
+  }
+  .main-stage > .timeline,
+  .main-stage > .welcome-view,
+  .main-stage > .creative-stage,
+  .creative-stage > .timeline,
+  .creative-stage > .writing-manuscript-canvas,
+  .creative-stage > .creative-empty-state {
+    animation-name: stage-enter-reduced;
+  }
+  .sheet-dialog[data-dragging="true"],
+  .library-dialog[data-dragging="true"] .library-dialog-scrim,
+  .library-dialog[data-dragging="true"] .library-dialog-sheet,
+  .app-overlay-layer[data-dragging="true"] .app-overlay-stage,
+  .app-overlay-layer[data-dragging="true"] .app-overlay-backdrop {
+    transition: none;
+  }
   button:active,
   summary:active {
     transform: none;
@@ -470,6 +601,7 @@ textarea:focus-visible {
   @starting-style {
     .modal-dialog[open],
     .sheet-dialog[open],
+    .library-dialog[open] .library-dialog-scrim,
     .library-dialog[open] .library-dialog-sheet {
       opacity: 0;
       transform: none;
@@ -502,6 +634,10 @@ textarea:focus-visible {
   .branch-badge { max-width: 112px; overflow: hidden; padding-inline: 8px; text-overflow: ellipsis; }
   .summary-progress { max-width: 6em; overflow: hidden; text-overflow: ellipsis; }
   .main-stage { padding-inline: 16px; }
+  .app-overlay-stage { padding-inline: 16px; }
+  .app-shell-underlay { transition: transform var(--motion-duration-page) var(--motion-easing-page); }
+  .app-shell-underlay.is-covered { transform: translateX(-24px); }
+  .app-shell-underlay.is-dragging-overlay { transition: none; }
   .overlay-page-header { margin-inline: -16px; }
 }
 
@@ -512,6 +648,7 @@ textarea:focus-visible {
   .topbar-title-group h1 { max-width: 38vw; font-size: 15px; }
   .topbar-tree-action { flex-basis: 44px; }
   .main-stage { padding: 16px 12px max(10px, var(--safe-area-bottom)); gap: 12px; }
+  .app-overlay-stage { padding: 0 12px max(10px, var(--safe-area-bottom)); }
   .welcome-view { min-height: 320px; }
   .composer { padding: 8px; }
   .composer.composer-double-row { padding: 10px 10px 8px; gap: 6px; }

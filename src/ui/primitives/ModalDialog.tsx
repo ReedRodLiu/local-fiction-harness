@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type MutableRefObject, type ReactNode } from 'react';
 import { waitForExitAnimation } from './waitForExitAnimation.ts';
 
 function isBackdropPointer(event: React.PointerEvent<HTMLDialogElement>) {
@@ -19,6 +19,8 @@ interface ModalDialogProps {
   testId?: string;
   closeDisabled?: boolean;
   closeOnSurfaceClick?: boolean;
+  swipePreview?: boolean;
+  dialogRef?: MutableRefObject<HTMLDialogElement | null>;
   children: ReactNode;
   onClose: () => void;
   onExitComplete?: () => void;
@@ -32,12 +34,18 @@ export function ModalDialog({
   testId,
   closeDisabled = false,
   closeOnSurfaceClick = false,
+  swipePreview = false,
+  dialogRef: externalDialogRef,
   children,
   onClose,
   onExitComplete,
   onCancel,
 }: ModalDialogProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const internalDialogRef = useRef<HTMLDialogElement | null>(null);
+  const assignDialogRef = (node: HTMLDialogElement | null) => {
+    internalDialogRef.current = node;
+    if (externalDialogRef) externalDialogRef.current = node;
+  };
   const suppressCloseEventRef = useRef(false);
   const backdropPointerRef = useRef<{ pointerId: number; startedOnBackdrop: boolean } | null>(null);
   const backdropClickRef = useRef(false);
@@ -45,7 +53,7 @@ export function ModalDialog({
   onExitCompleteRef.current = onExitComplete;
 
   useEffect(() => {
-    const dialog = dialogRef.current;
+    const dialog = internalDialogRef.current;
     if (!dialog) return;
     if (open) {
       dialog.removeAttribute('data-closing');
@@ -64,10 +72,11 @@ export function ModalDialog({
 
   return (
     <dialog
-      ref={dialogRef}
+      ref={assignDialogRef}
       className={className}
       aria-label={label}
       data-testid={testId}
+      data-swipe-preview={swipePreview && !open ? 'true' : undefined}
       onCancel={(event) => {
         event.stopPropagation();
         onCancel?.(event);
