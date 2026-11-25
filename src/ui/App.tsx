@@ -2530,6 +2530,30 @@ export function App({ runtime }: AppProps) {
     }
   };
 
+  const asyncErrorBanner = asyncError ? (
+    <BannerAlert
+      tone="danger"
+      testId="async-error-banner"
+      action={{
+        label: '导出日志',
+        onClick: () => openDiagnostics('error_banner'),
+      }}
+      onDismiss={dismissAsyncError}
+    >
+      <span>{asyncError.message}</span>
+    </BannerAlert>
+  ) : null;
+
+  const statusNoticeBanner = statusNotice ? (
+    <BannerAlert
+      tone="info"
+      testId="status-notice-banner"
+      onDismiss={() => setStatusNotice(null)}
+    >
+      <span>{statusNotice}</span>
+    </BannerAlert>
+  ) : null;
+
   return (
     <div className="app-root">
       <div
@@ -2628,29 +2652,9 @@ export function App({ runtime }: AppProps) {
           {...edgeSwipe.containerHandlers}
           {...autoScroll.containerHandlers}
         >
-          {asyncError && (
-            <BannerAlert
-              tone="danger"
-              testId="async-error-banner"
-              action={{
-                label: '导出日志',
-                onClick: () => openDiagnostics('error_banner'),
-              }}
-              onDismiss={dismissAsyncError}
-            >
-              <span>{asyncError.message}</span>
-            </BannerAlert>
-          )}
+          {!renderedOverlay && asyncErrorBanner}
 
-          {statusNotice && (
-            <BannerAlert
-              tone="info"
-              testId="status-notice-banner"
-              onDismiss={() => setStatusNotice(null)}
-            >
-              <span>{statusNotice}</span>
-            </BannerAlert>
-          )}
+          {!renderedOverlay && statusNoticeBanner}
 
           {errorMsg && !renderedOverlay && isWelcome && (
             <BannerAlert
@@ -3024,6 +3028,8 @@ export function App({ runtime }: AppProps) {
         >
           <div className="app-overlay-backdrop" aria-hidden="true" />
           <div className={`app-overlay-stage${activeSubOverlay ? ' is-covered' : ''}`}>
+            {asyncErrorBanner}
+            {statusNoticeBanner}
             {errorMsg && (
               <BannerAlert
                 tone="danger"
