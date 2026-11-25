@@ -675,6 +675,13 @@ async function leaveImportView(page) {
         ? script
         : null;
     if (!shell) return;
+    const isClosing = await shell
+      .evaluate((node) => Boolean(node.closest('.app-overlay-layer[data-closing="true"]')))
+      .catch(() => false);
+    if (isClosing) {
+      await shell.waitFor({ state: 'detached' });
+      return;
+    }
     const progress = shell.getByRole('progressbar');
     const hasProgress = (await progress.count()) > 0;
     const currentStep = hasProgress ? Number(await progress.getAttribute('aria-valuenow')) : 1;
@@ -3918,19 +3925,37 @@ async function main() {
     await mobileLibraryDialog.waitFor({ state: 'hidden' });
     await page.evaluate(() => {
       const stage = document.querySelector('[data-testid="main-stage"]');
-      if (!(stage instanceof HTMLElement)) throw new Error('Main stage missing for edge swipe');
+      if (!(stage instanceof HTMLElement)) throw new Error('Main stage missing for canvas swipe');
       stage.dispatchEvent(new PointerEvent('pointerdown', {
         bubbles: true,
         button: 0,
+        isPrimary: true,
         pointerId: 41,
-        clientX: 8,
+        clientX: 60,
         clientY: 320,
+      }));
+      stage.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true,
+        button: 0,
+        isPrimary: true,
+        pointerId: 41,
+        clientX: 130,
+        clientY: 321,
+      }));
+      stage.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true,
+        button: 0,
+        isPrimary: true,
+        pointerId: 41,
+        clientX: 190,
+        clientY: 322,
       }));
       stage.dispatchEvent(new PointerEvent('pointerup', {
         bubbles: true,
         button: 0,
+        isPrimary: true,
         pointerId: 41,
-        clientX: 96,
+        clientX: 200,
         clientY: 322,
       }));
     });
@@ -3951,34 +3976,54 @@ async function main() {
       sheet.dispatchEvent(new PointerEvent('pointerdown', {
         bubbles: true,
         button: 0,
+        isPrimary: true,
         pointerId: 42,
-        clientX: 300,
+        clientX: 280,
         clientY: 320,
+      }));
+      sheet.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true,
+        button: 0,
+        isPrimary: true,
+        pointerId: 42,
+        clientX: 200,
+        clientY: 321,
       }));
       sheet.dispatchEvent(new PointerEvent('pointerup', {
         bubbles: true,
         button: 0,
+        isPrimary: true,
         pointerId: 42,
-        clientX: 220,
+        clientX: 140,
         clientY: 322,
       }));
     });
     await mobileLibraryDialog.waitFor({ state: 'hidden' });
     await page.evaluate(() => {
       const stage = document.querySelector('[data-testid="main-stage"]');
-      if (!(stage instanceof HTMLElement)) throw new Error('Main stage missing for edge swipe');
+      if (!(stage instanceof HTMLElement)) throw new Error('Main stage missing for canvas swipe');
       stage.dispatchEvent(new PointerEvent('pointerdown', {
         bubbles: true,
         button: 0,
+        isPrimary: true,
         pointerId: 43,
-        clientX: 8,
+        clientX: 72,
         clientY: 320,
+      }));
+      stage.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true,
+        button: 0,
+        isPrimary: true,
+        pointerId: 43,
+        clientX: 160,
+        clientY: 321,
       }));
       stage.dispatchEvent(new PointerEvent('pointerup', {
         bubbles: true,
         button: 0,
+        isPrimary: true,
         pointerId: 43,
-        clientX: 96,
+        clientX: 210,
         clientY: 322,
       }));
     });

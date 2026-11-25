@@ -2553,7 +2553,7 @@ export function App({ runtime }: AppProps) {
         />
 
       <div
-        className={`app-workspace ${libraryCollapsed ? 'is-library-collapsed' : ''}`}
+        className={`app-workspace ${libraryCollapsed ? 'is-library-collapsed' : ''} ${activeOverlay ? 'is-overlay' : ''}`}
         data-testid="app-workspace"
       >
         <LibraryDrawer
@@ -2990,6 +2990,8 @@ export function App({ runtime }: AppProps) {
           ref={overlayLayerRef}
           className="app-overlay-layer"
           data-closing={closingOverlay ? 'true' : undefined}
+          aria-hidden={closingOverlay || undefined}
+          inert={closingOverlay}
         >
           <div className="app-overlay-backdrop" aria-hidden="true" />
           <div className="app-overlay-stage">
