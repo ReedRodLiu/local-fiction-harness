@@ -46,9 +46,11 @@ vi.mock('react', async () => {
 
 import {
   DRAWER_SNAP_RATIO,
+  GESTURE_LOCK_SLOP_PX,
   OS_EDGE_GUARD_PX,
   SWIPE_VELOCITY_THRESHOLD,
   createVelocityTracker,
+  resolveSwipeAxisLock,
   shouldCommitHorizontalSwipe,
   shouldIgnoreSwipeStart,
 } from '../../src/ui/swipeGesture.ts';
@@ -71,6 +73,17 @@ class MockElement {
   private styles = new Map<string, string>();
   private attributes = new Map<string, string>();
   overflowX = 'visible';
+  capturedPointers = new Set<number>();
+
+  setPointerCapture(pointerId: number) {
+    this.capturedPointers.add(pointerId);
+  }
+  hasPointerCapture(pointerId: number) {
+    return this.capturedPointers.has(pointerId);
+  }
+  releasePointerCapture(pointerId: number) {
+    this.capturedPointers.delete(pointerId);
+  }
 
   addEventListener() {}
   removeEventListener() {}
@@ -198,7 +211,7 @@ describe('Issue #139: motion tokens, reduced-motion, swipe guards, drawer swipe,
     (globalThis as Record<string, unknown>).document = {
       body: makeElement('body'),
       documentElement: makeElement('html'),
-      querySelector: (selector: string) => (selector === 'dialog[open]' && hasOpenDialog ? makeElement('dialog') : null),
+      querySelector: (selector: string) => (selector.startsWith('dialog[open]') && hasOpenDialog ? makeElement('dialog') : null),
     };
   });
 
@@ -569,5 +582,247 @@ describe('Issue #139: motion tokens, reduced-motion, swipe guards, drawer swipe,
     expect(appSource).toContain('waitForExitAnimation');
     expect(appSource).toContain('app-overlay-layer');
     expect(appSource).toContain('data-closing');
+  });
+
+  it('Issue #144: aligns touch-action CSS rules, slop/edge-guard thresholds, and axis lock for Android WebView', () => {
+    expect(OS_EDGE_GUARD_PX).toBeGreaterThanOrEqual(28);
+    expect(OS_EDGE_GUARD_PX).toBeLessThanOrEqual(32);
+    expect(GESTURE_LOCK_SLOP_PX).toBeGreaterThanOrEqual(6);
+    expect(GESTURE_LOCK_SLOP_PX).toBeLessThanOrEqual(8);
+
+    // Slightly diagonal initial movement does not prematurely abort before horizontal lock
+    expect(resolveSwipeAxisLock(-4, 4, 'left')).toBe('pending');
+    expect(resolveSwipeAxisLock(-5, 6, 'left')).toBe('pending');
+    expect(resolveSwipeAxisLock(-8, 6, 'left')).toBe('horizontal');
+    expect(resolveSwipeAxisLock(7, 4, 'right')).toBe('horizontal');
+    // Vertical dominance yields cleanly to native vertical scroll
+    expect(resolveSwipeAxisLock(2, 8, 'right')).toBe('vertical');
+    expect(resolveSwipeAxisLock(-2, 8, 'left')).toBe('vertical');
+    // Wrong horizontal direction yields cleanly
+    expect(resolveSwipeAxisLock(8, 1, 'left')).toBe('vertical');
+    expect(resolveSwipeAxisLock(-8, 1, 'right')).toBe('vertical');
+
+    const shellCss = readFile('src/ui/styles/shell.css');
+    const importCss = readFile('src/ui/styles/import-wizard.css');
+    const baseCss = readFile('src/ui/styles/base.css');
+
+    expect(shellCss).toMatch(/\.main-stage\s*\{[^}]*touch-action:\s*pan-y;/);
+    expect(shellCss).toMatch(/\.library-dialog-sheet\s*\{[^}]*touch-action:\s*pan-y;/);
+    expect(shellCss).toMatch(/\.library-list-scroll\s*\{[^}]*touch-action:\s*pan-y;/);
+    expect(shellCss).toMatch(/\.overlay-page-shell\s*\{[^}]*touch-action:\s*pan-y;/);
+    expect(shellCss).toMatch(/\.app-overlay-stage\s*\{[^}]*touch-action:\s*pan-y;/);
+    expect(shellCss).toMatch(/\.sheet-drag-handle\s*\{[^}]*touch-action:\s*none;/);
+    expect(shellCss).toMatch(/\.recent-story-list\s*\{[^}]*touch-action:\s*pan-x pan-y;/);
+    expect(importCss).toMatch(
+      /\.overlay-page-shell\[data-has-footer='true'\]\s*\.overlay-page-content\s*\{[^}]*touch-action:\s*pan-y;/,
+    );
+    expect(baseCss).toMatch(/\.md-view\s*\.md-code-block\s*\{[^}]*touch-action:\s*pan-x pan-y;/);
+    expect(baseCss).toMatch(/\.md-view\s*\.md-table-wrap\s*\{[^}]*touch-action:\s*pan-x pan-y;/);
+  });
+
+  it('Issue #144: captures and releases pointer across all 3 swipe controllers, supports drawer list close drag, and emits zero-content diagnostics', () => {
+    // 1. DrawerDialog close drag starting from a button inside .library-list-scroll
+    const dialog = makeElement('dialog', 'library-dialog');
+    const scrim = makeElement('div', 'library-dialog-scrim');
+    const sheet = makeElement('div', 'library-dialog-sheet');
+    sheet.offsetWidth = 300;
+    const listScroll = makeElement('div', 'library-list-scroll');
+    const row = makeElement('li', 'story-list-item');
+    const storyBtn = makeElement('button', 'story-select-button');
+    dialog.appendChild(scrim);
+    dialog.appendChild(sheet);
+    sheet.appendChild(listScroll);
+    listScroll.appendChild(row);
+    row.appendChild(storyBtn);
+
+    const drawerDiagnostics: unknown[] = [];
+    const onClose = vi.fn();
+    const drawerHandlers = createDrawerCloseSwipeHandlers({
+      sheetRef: { current: sheet as unknown as HTMLDivElement },
+      onClose,
+      onDiagnostic: (ev) => drawerDiagnostics.push(ev),
+    });
+
+    drawerHandlers.onPointerDown({
+      button: 0,
+      isPrimary: true,
+      pointerId: 31,
+      clientX: 250,
+      clientY: 220,
+      timeStamp: 1000,
+      target: storyBtn,
+      currentTarget: sheet,
+    } as never);
+
+    // Slightly diagonal initial move stays pending and does not yet capture
+    drawerHandlers.onPointerMove({
+      pointerId: 31,
+      clientX: 245,
+      clientY: 226,
+      timeStamp: 1016,
+      currentTarget: sheet,
+    } as never);
+    expect(sheet.capturedPointers.has(31)).toBe(false);
+
+    // Clear horizontal follow-through locks horizontal and acquires pointer capture
+    drawerHandlers.onPointerMove({
+      pointerId: 31,
+      clientX: 240,
+      clientY: 226,
+      timeStamp: 1032,
+      currentTarget: sheet,
+    } as never);
+    expect(sheet.capturedPointers.has(31)).toBe(true);
+    expect(dialog.dataset.dragging).toBe('true');
+
+    // Secondary stray pointer up does not abort active primary drag
+    drawerHandlers.onPointerUp({
+      pointerId: 99,
+      clientX: 100,
+      clientY: 200,
+      timeStamp: 1040,
+      currentTarget: sheet,
+    } as never);
+    expect(dialog.dataset.dragging).toBe('true');
+
+    drawerHandlers.onPointerMove({
+      pointerId: 31,
+      clientX: 190,
+      clientY: 228,
+      timeStamp: 1080,
+      currentTarget: sheet,
+    } as never);
+    drawerHandlers.onPointerUp({
+      pointerId: 31,
+      clientX: 190,
+      clientY: 228,
+      timeStamp: 1080,
+      currentTarget: sheet,
+    } as never);
+    expect(sheet.capturedPointers.has(31)).toBe(false);
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    // Canceled drawer drag releases capture and records diagnostic breadcrumb
+    drawerHandlers.onPointerDown({
+      button: 0,
+      isPrimary: true,
+      pointerId: 32,
+      clientX: 240,
+      clientY: 220,
+      timeStamp: 2000,
+      target: storyBtn,
+      currentTarget: sheet,
+    } as never);
+    drawerHandlers.onPointerMove({
+      pointerId: 32,
+      clientX: 225,
+      clientY: 221,
+      timeStamp: 2020,
+      currentTarget: sheet,
+    } as never);
+    expect(sheet.capturedPointers.has(32)).toBe(true);
+    drawerHandlers.onPointerCancel({
+      pointerId: 32,
+      currentTarget: sheet,
+    } as never);
+    expect(sheet.capturedPointers.has(32)).toBe(false);
+    expect(sheet.style.transform).toBe('');
+    expect(drawerDiagnostics).toEqual([
+      {
+        action: 'swipe_gesture_canceled',
+        surface: 'drawer_close',
+        reasonCode: 'pointer_cancel_horizontal',
+      },
+    ]);
+
+    // 2. Canvas swipe-to-open acquires/releases capture (and survives throwing setPointerCapture)
+    const stage = makeElement('main', 'main-stage');
+    stage.setPointerCapture = () => {
+      throw new Error('InvalidStateError');
+    };
+    const openDiagnostics: unknown[] = [];
+    hookState.stateIdx = 0;
+    hookState.refIdx = 0;
+    const openController = useEdgeSwipeToOpen(true, vi.fn(), (ev) => openDiagnostics.push(ev));
+    openController.drawerDialogRef.current = dialog as unknown as HTMLDialogElement;
+
+    openController.containerHandlers.onPointerDown({
+      button: 0,
+      isPrimary: true,
+      pointerId: 41,
+      clientX: 80,
+      clientY: 300,
+      timeStamp: 3000,
+      target: stage,
+      currentTarget: stage,
+    } as never);
+    openController.containerHandlers.onPointerMove({
+      pointerId: 41,
+      clientX: 110,
+      clientY: 301,
+      timeStamp: 3040,
+      currentTarget: stage,
+    } as never);
+    openController.containerHandlers.onPointerUp({
+      pointerId: 41,
+      clientX: 110,
+      clientY: 301,
+      timeStamp: 3400,
+      currentTarget: stage,
+    } as never);
+    expect(openDiagnostics).toEqual([
+      {
+        action: 'swipe_gesture_rejected',
+        surface: 'drawer_open',
+        reasonCode: 'below_threshold',
+      },
+    ]);
+
+    // 3. OverlayPageShell swipe-back acquires/releases capture and records cancel breadcrumb
+    const layer = makeElement('div', 'app-overlay-layer');
+    const overlayStage = makeElement('div', 'app-overlay-stage');
+    overlayStage.offsetWidth = 390;
+    const shell = makeElement('section', 'overlay-page-shell');
+    layer.appendChild(overlayStage);
+    overlayStage.appendChild(shell);
+
+    const overlayDiagnostics: unknown[] = [];
+    const overlayHandlers = createOverlaySwipeBackHandlers({
+      shellRef: { current: shell as unknown as HTMLElement },
+      backDisabled: false,
+      onBack: vi.fn(),
+      onDiagnostic: (ev) => overlayDiagnostics.push(ev),
+    });
+
+    overlayHandlers.onPointerDown({
+      button: 0,
+      isPrimary: true,
+      pointerId: 51,
+      clientX: 60,
+      clientY: 200,
+      timeStamp: 4000,
+      target: shell,
+      currentTarget: shell,
+    } as never);
+    overlayHandlers.onPointerMove({
+      pointerId: 51,
+      clientX: 90,
+      clientY: 202,
+      timeStamp: 4020,
+      currentTarget: shell,
+    } as never);
+    expect(shell.capturedPointers.has(51)).toBe(true);
+    overlayHandlers.onPointerCancel({
+      pointerId: 51,
+      currentTarget: shell,
+    } as never);
+    expect(shell.capturedPointers.has(51)).toBe(false);
+    expect(overlayDiagnostics).toEqual([
+      {
+        action: 'swipe_gesture_canceled',
+        surface: 'overlay_back',
+        reasonCode: 'pointer_cancel_horizontal',
+      },
+    ]);
   });
 });

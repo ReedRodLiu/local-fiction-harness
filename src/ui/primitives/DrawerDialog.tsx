@@ -1,12 +1,23 @@
-import { useMemo, useRef, type MutableRefObject, type PointerEvent, type ReactNode } from 'react';
+import {
+  useContext,
+  useMemo,
+  useRef,
+  type MutableRefObject,
+  type PointerEvent,
+  type ReactNode,
+} from 'react';
 import {
   DRAWER_SNAP_RATIO,
+  SwipeDiagnosticContext,
+  captureSwipePointer,
   createVelocityTracker,
   hasActiveTextSelection,
   isInsideHorizontalScroller,
+  releaseSwipePointer,
   resolveSwipeAxisLock,
   shouldCommitHorizontalSwipe,
   type GestureAxisLock,
+  type SwipeDiagnosticReporter,
   type VelocityTracker,
 } from '../swipeGesture.ts';
 import { ModalDialog } from './ModalDialog.tsx';
@@ -38,8 +49,9 @@ interface ActiveCloseGesture {
 export function createDrawerCloseSwipeHandlers(options: {
   sheetRef: MutableRefObject<HTMLDivElement | null>;
   onClose: () => void;
+  onDiagnostic?: SwipeDiagnosticReporter;
 }) {
-  const { sheetRef, onClose } = options;
+  const { sheetRef, onClose, onDiagnostic } = options;
   let activeGesture: ActiveCloseGesture | null = null;
 
   const getParts = () => {
@@ -60,7 +72,9 @@ export function createDrawerCloseSwipeHandlers(options: {
     sheet && sheet.offsetWidth > 0 ? sheet.offsetWidth : 312;
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    const { dialog } = getParts();
     if (
+      dialog?.dataset.closing === 'true' ||
       event.button !== 0 ||
       event.isPrimary === false ||
       hasActiveTextSelection() ||
@@ -96,6 +110,7 @@ export function createDrawerCloseSwipeHandlers(options: {
         activeGesture = null;
         return;
       }
+      captureSwipePointer(event.currentTarget ?? sheetRef.current, event.pointerId);
     }
 
     const { sheet, dialog, scrim } = getParts();
@@ -110,8 +125,12 @@ export function createDrawerCloseSwipeHandlers(options: {
 
   const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
     const gesture = activeGesture;
+    if (!gesture || gesture.pointerId !== event.pointerId) {
+      return;
+    }
     activeGesture = null;
-    if (!gesture || gesture.pointerId !== event.pointerId || gesture.lock !== 'horizontal') {
+    releaseSwipePointer(event.currentTarget ?? sheetRef.current, event.pointerId);
+    if (gesture.lock !== 'horizontal') {
       clearDragVisual();
       return;
     }
@@ -145,11 +164,28 @@ export function createDrawerCloseSwipeHandlers(options: {
       return;
     }
 
+    onDiagnostic?.({
+      action: 'swipe_gesture_rejected',
+      surface: 'drawer_close',
+      reasonCode: 'below_threshold',
+    });
     clearDragVisual();
   };
 
-  const onPointerCancel = () => {
+  const onPointerCancel = (event?: PointerEvent<HTMLDivElement>) => {
+    const gesture = activeGesture;
+    if (event && gesture && gesture.pointerId !== event.pointerId) return;
     activeGesture = null;
+    if (event) {
+      releaseSwipePointer(event.currentTarget ?? sheetRef.current, event.pointerId);
+    }
+    if (gesture) {
+      onDiagnostic?.({
+        action: 'swipe_gesture_canceled',
+        surface: 'drawer_close',
+        reasonCode: gesture.lock === 'horizontal' ? 'pointer_cancel_horizontal' : 'pointer_cancel_pending',
+      });
+    }
     clearDragVisual();
   };
 
@@ -175,12 +211,16 @@ export function DrawerDialog({
   const sheetRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const contextOnDiagnostic = useContext(SwipeDiagnosticContext);
+  const onDiagnosticRef = useRef(contextOnDiagnostic);
+  onDiagnosticRef.current = contextOnDiagnostic;
 
   const swipeHandlers = useMemo(
     () =>
       createDrawerCloseSwipeHandlers({
         sheetRef,
         onClose: () => onCloseRef.current(),
+        onDiagnostic: (event) => onDiagnosticRef.current?.(event),
       }),
     [],
   );

@@ -2,12 +2,15 @@ import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 
 import { waitForExitAnimation } from './primitives/waitForExitAnimation.ts';
 import {
   DRAWER_SNAP_RATIO,
+  captureSwipePointer,
   createVelocityTracker,
   hasOpenTopLayerDialog,
+  releaseSwipePointer,
   resolveSwipeAxisLock,
   shouldCommitHorizontalSwipe,
   shouldIgnoreSwipeStart,
   type GestureAxisLock,
+  type SwipeDiagnosticReporter,
   type VelocityTracker,
 } from './swipeGesture.ts';
 
@@ -55,7 +58,11 @@ function clearDrawerInlineStyles(dialog: HTMLDialogElement | null): void {
  * Interactive canvas-wide right-swipe controller for opening the mobile library drawer.
  * Yields the left OS edge zone, horizontal scrollers, form controls, and text selection.
  */
-export function useEdgeSwipeToOpen(enabled: boolean, onOpen: () => void) {
+export function useEdgeSwipeToOpen(
+  enabled: boolean,
+  onOpen: () => void,
+  onDiagnostic?: SwipeDiagnosticReporter,
+) {
   const gestureRef = useRef<ActiveOpenGesture | null>(null);
   const drawerDialogRef = useRef<HTMLDialogElement | null>(null);
   const cancelExitRef = useRef<(() => void) | null>(null);
@@ -154,6 +161,7 @@ export function useEdgeSwipeToOpen(enabled: boolean, onOpen: () => void) {
         gestureRef.current = null;
         return;
       }
+      captureSwipePointer(event.currentTarget, event.pointerId);
       pendingDxRef.current = dx;
       setPreviewOpen(true);
     }
@@ -168,6 +176,7 @@ export function useEdgeSwipeToOpen(enabled: boolean, onOpen: () => void) {
   const onPointerUp = (event: PointerEvent<HTMLElement>) => {
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
+    releaseSwipePointer(event.currentTarget, event.pointerId);
     if (gesture.lock !== 'horizontal') {
       gestureRef.current = null;
       return;
@@ -204,12 +213,23 @@ export function useEdgeSwipeToOpen(enabled: boolean, onOpen: () => void) {
       return;
     }
 
+    onDiagnostic?.({
+      action: 'swipe_gesture_rejected',
+      surface: 'drawer_open',
+      reasonCode: 'below_threshold',
+    });
     cancelSwipe();
   };
 
   const onPointerCancel = (event: PointerEvent<HTMLElement>) => {
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
+    releaseSwipePointer(event.currentTarget, event.pointerId);
+    onDiagnostic?.({
+      action: 'swipe_gesture_canceled',
+      surface: 'drawer_open',
+      reasonCode: gesture.lock === 'horizontal' ? 'pointer_cancel_horizontal' : 'pointer_cancel_pending',
+    });
     cancelSwipe();
   };
 

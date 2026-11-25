@@ -4094,6 +4094,7 @@ async function main() {
       openSettings,
       closeSettings,
     });
+    await runIssue144TouchSwipeE2E(browser, port, tmpDir);
 
     console.log('ALL_E2E_CHECKS_PASSED');
   } finally {
@@ -4952,6 +4953,146 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
         !fallback.events.some((event) => event.category === 'crash')) {
       throw new Error('Recovery cannot export recorded crashes when story context is unavailable');
     }
+  } finally {
+    await ctx.close();
+  }
+}
+
+async function runIssue144TouchSwipeE2E(browser, port, tmpDir) {
+  const zipEntries = {
+    'manifest.json': strToU8(JSON.stringify({ export_format_version: 3 })),
+  };
+  for (let idx = 0; idx < 12; idx += 1) {
+    const id = `issue144-s${idx + 1}`;
+    zipEntries[`chat_sessions/${id}.json`] = strToU8(JSON.stringify({
+      id,
+      title: `触摸滑动测试故事 ${idx + 1}`,
+      current_message_id: 2,
+      inserted_at: `2026-11-20T08:${String(idx).padStart(2, '0')}:00Z`,
+      updated_at: `2026-11-20T09:${String(idx).padStart(2, '0')}:00Z`,
+      messages: [
+        { id: 1, parent_id: null, role: 'USER', status: 'FINISHED', inserted_at: '2026-11-20T08:00:00Z', fragments: [{ type: 'REQUEST', content: `请以奇幻冒险设定开始第 ${idx + 1} 段故事` }] },
+        { id: 2, parent_id: 1, role: 'ASSISTANT', status: 'FINISHED', inserted_at: '2026-11-20T08:01:00Z', fragments: [{ type: 'RESPONSE', content: `这是第 ${idx + 1} 段冒险开场正文。` }] },
+      ],
+    }));
+  }
+  const zipPath = path.join(tmpDir, 'issue144-touch.zip');
+  fs.writeFileSync(zipPath, zipSync(zipEntries));
+
+  const ctx = await newOfflineContext(browser, port, {
+    viewport: { width: 376, height: 830 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  const page = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(page);
+
+  const touchSwipe = async (x0, y0, x1, y1, steps = 8) => {
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: x0, y: y0 }],
+    });
+    for (let i = 1; i <= steps; i += 1) {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: x0 + ((x1 - x0) * i) / steps, y: y0 + ((y1 - y0) * i) / steps }],
+      });
+    }
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: [],
+    });
+  };
+
+  try {
+    await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
+    await page.getByTestId('welcome-plus-menu-trigger').click();
+    await page.getByTestId('welcome-deepseek-import').click();
+    await page.waitForSelector('#deepseek-zip-input');
+    await page.setInputFiles('#deepseek-zip-input', zipPath);
+    await page.getByTestId('ds-session-list').waitFor();
+    await page.getByRole('button', { name: '全选', exact: true }).click();
+    await page.click('[data-testid="ds-confirm-import-btn"]');
+    await page.waitForSelector('[data-testid="deepseek-import-receipt"]');
+    await page.getByTestId('overlay-page-footer').locator('button').click();
+    await page.getByTestId('deepseek-import-panel').waitFor({ state: 'detached' });
+
+    const stageTouchAction = await page.getByTestId('main-stage').evaluate(
+      (el) => getComputedStyle(el).touchAction,
+    );
+    if (stageTouchAction !== 'pan-y') {
+      throw new Error(`Expected .main-stage touch-action: pan-y, got ${stageTouchAction}`);
+    }
+
+    const mobileDialog = page.getByTestId('mobile-library-dialog');
+    // 1. Real touch right-swipe on .main-stage opens drawer (slightly diagonal)
+    await touchSwipe(70, 360, 260, 368);
+    await mobileDialog.waitFor({ state: 'visible' });
+
+    // 2. Verify .library-list-scroll overflows vertically and supports normal vertical scroll
+    const listScroll = mobileDialog.getByTestId('library-list-scroll');
+    const listMetrics = await listScroll.evaluate((el) => ({
+      touchAction: getComputedStyle(el).touchAction,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    }));
+    if (listMetrics.touchAction !== 'pan-y') {
+      throw new Error(`Expected .library-list-scroll touch-action: pan-y, got ${listMetrics.touchAction}`);
+    }
+    if (listMetrics.scrollHeight <= listMetrics.clientHeight) {
+      throw new Error('Expected .library-list-scroll to overflow vertically for scroll/swipe test');
+    }
+    const listBox = await listScroll.boundingBox();
+    if (!listBox) throw new Error('Missing bounding box for .library-list-scroll');
+    await touchSwipe(
+      listBox.x + listBox.width / 2,
+      listBox.y + listBox.height - 60,
+      listBox.x + listBox.width / 2 + 3,
+      listBox.y + 60,
+    );
+    const scrolledTop = await listScroll.evaluate((el) => el.scrollTop);
+    if (scrolledTop <= 0) {
+      throw new Error(`Expected vertical scroll inside .library-list-scroll, got scrollTop=${scrolledTop}`);
+    }
+    if (!(await mobileDialog.evaluate((el) => el.open))) {
+      throw new Error('Vertical list scroll accidentally closed mobile drawer.');
+    }
+
+    // 3. Real touch left-swipe starting ON a story button inside .library-list-scroll closes drawer
+    const targetRowBtn = listScroll.getByTestId('story-select-button').nth(3);
+    const btnBox = await targetRowBtn.boundingBox();
+    if (!btnBox) throw new Error('Missing bounding box for story-select-button inside list');
+    await touchSwipe(
+      btnBox.x + btnBox.width - 24,
+      btnBox.y + btnBox.height / 2,
+      btnBox.x + 10,
+      btnBox.y + btnBox.height / 2 + 8,
+    );
+    await mobileDialog.waitFor({ state: 'hidden' });
+
+    // 4. Re-open drawer by touch right-swipe, open Settings, and verify real touch swipe-back
+    await touchSwipe(70, 360, 260, 364);
+    await mobileDialog.waitFor({ state: 'visible' });
+    await page.getByTestId('mobile-settings-open').click();
+    await mobileDialog.waitFor({ state: 'hidden' });
+    const settingsPage = page.getByTestId('settings-page');
+    await settingsPage.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => {
+      const el = document.querySelector('[data-testid="settings-page"]');
+      if (!(el instanceof HTMLElement)) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.left >= 0 && rect.left < 40;
+    });
+    const overlayTouchActions = await settingsPage.evaluate((shell) => ({
+      shell: getComputedStyle(shell).touchAction,
+      stage: getComputedStyle(shell.closest('.app-overlay-stage')).touchAction,
+    }));
+    if (overlayTouchActions.shell !== 'pan-y' || overlayTouchActions.stage !== 'pan-y') {
+      throw new Error(`Expected pan-y on overlay shell/stage, got ${JSON.stringify(overlayTouchActions)}`);
+    }
+    await touchSwipe(70, 380, 290, 386);
+    await settingsPage.waitFor({ state: 'detached' });
+    console.log('ISSUE144_TOUCH_SWIPE_E2E_PASSED');
   } finally {
     await ctx.close();
   }

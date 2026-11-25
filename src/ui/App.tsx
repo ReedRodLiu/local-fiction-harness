@@ -43,6 +43,7 @@ import {
   projectStoryTreeSpine,
   recordRefusalDiagnostic,
   recordRefusalOriginalRestoredDiagnostic,
+  recordSwipeDiagnostic,
   resolveEffectiveModelConfig,
   routeEntryMessage,
   savePromptPackLibrary,
@@ -115,6 +116,7 @@ import {
   updateTurnNodeProposal,
 } from './proposalActions.ts';
 import { mergeBranchRenameResult } from './storyConcurrency.ts';
+import { SwipeDiagnosticContext, type SwipeDiagnosticEvent } from './swipeGesture.ts';
 import { toErrorMessage } from './textHelpers.ts';
 import { useAppOverlayHistory } from './useAppOverlayHistory.ts';
 import { restoreVisibleFocus } from './useWebHistoryLayer.ts';
@@ -369,6 +371,10 @@ export function App({ runtime }: AppProps) {
 
   const isNavigationCurrent = (storySeq: number, overlaySeq: number) =>
     storyOpSeqRef.current === storySeq && overlayNavigationSeqRef.current === overlaySeq;
+  const reportSwipeDiagnostic = useCallback(
+    (event: SwipeDiagnosticEvent) => recordSwipeDiagnostic(runtime.diagnostics, event),
+    [runtime.diagnostics],
+  );
   const edgeSwipe = useEdgeSwipeToOpen(
     !showImport &&
       !showSettings &&
@@ -379,6 +385,7 @@ export function App({ runtime }: AppProps) {
       !diagnosticsOpen &&
       !documentEdit,
     () => setMobileLibraryOpen(true),
+    reportSwipeDiagnostic,
   );
   const activeOverlay: 'settings' | 'import' | null = showSettings
     ? 'settings'
@@ -2582,6 +2589,7 @@ export function App({ runtime }: AppProps) {
   ) : null;
 
   return (
+    <SwipeDiagnosticContext.Provider value={reportSwipeDiagnostic}>
     <div className="app-root">
       <div
         className={`app-shell-underlay${activeOverlay ? ' is-covered' : ''}`}
@@ -3235,5 +3243,6 @@ export function App({ runtime }: AppProps) {
         onExportBackup={handleExportFullBackup}
       />
     </div>
+    </SwipeDiagnosticContext.Provider>
   );
 }
