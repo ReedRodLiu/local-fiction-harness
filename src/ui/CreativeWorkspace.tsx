@@ -1,3 +1,4 @@
+import type { RefObject } from 'react';
 import type {
   CreativeWorkspaceState,
   ModelConfig,
@@ -35,6 +36,7 @@ interface Props {
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;
   setCompanionOpen: (open: boolean) => void;
+  scrollContainerRef?: RefObject<HTMLElement | null>;
 }
 
 export function CreativeWorkspace(props: Props) {

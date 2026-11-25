@@ -242,6 +242,7 @@ export function App({ runtime }: AppProps) {
   const [initialCreativeTurn, setInitialCreativeTurn] = useState<{ id: string; prompt: string } | null>(null);
   const creationPending = useRef(false);
   const focusNewCreation = useRef(false);
+  const mainStageRef = useRef<HTMLElement | null>(null);
   const [creating, setCreating] = useState(false);
   const [creativeCompanionOpen, setCreativeCompanionOpen] = useState(false);
   const [documentEdit, setDocumentEdit] = useState<DocumentEdit | null>(null);
@@ -799,6 +800,9 @@ export function App({ runtime }: AppProps) {
     isStreaming,
     streamPulse: `${streamContent.length}:${streamReasoning.length}:${errorMsg ?? ''}:${createdAssetNotice?.id ?? ''}`,
     paused: Boolean(renderedOverlay) || Boolean(creativePage),
+    scrollContainerRef: mainStageRef,
+    diagnosticMode: isWelcome ? 'welcome' : 'story',
+    diagnostics: runtime.diagnostics,
   });
 
   const runStreamingExecution = async (
@@ -1168,6 +1172,7 @@ export function App({ runtime }: AppProps) {
         if (restoreOnError) {
           setInput('');
         }
+        autoScroll.resumeFollow();
         void runStreamingExecution(
           (callbacks) => {
             const latestStory = storyRef.current ?? story;
@@ -1199,6 +1204,7 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '编辑内容并生成新分支',
       (activeCfg) => {
+        autoScroll.resumeFollow();
         void runStreamingExecution((callbacks) => {
           const latestStory = storyRef.current ?? story;
           return harness.editAndBranch(
@@ -1222,6 +1228,7 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '重新生成回复',
       (activeCfg) => {
+        autoScroll.resumeFollow();
         void runStreamingExecution((callbacks) => {
           const latestStory = storyRef.current ?? story;
           return harness.regenerateNode(
@@ -1488,6 +1495,7 @@ export function App({ runtime }: AppProps) {
 
     withCredentials('开始新的创作', (activeCfg) => {
       if (creationPending.current || abortRef.current || isStreaming) return;
+      autoScroll.resumeFollow();
       const storySeqAtStart = ++storyOpSeqRef.current;
       const overlaySeqAtStart = overlayNavigationSeqRef.current;
       const controller = new AbortController();
@@ -1692,6 +1700,7 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '开启第一幕',
       (activeCfg) => {
+        autoScroll.resumeFollow();
         void runStreamingExecution((callbacks) => {
           const latestStory =
             storyRef.current?.id === targetStory.id ? storyRef.current : targetStory;
@@ -2646,7 +2655,10 @@ export function App({ runtime }: AppProps) {
         />
 
         <main
-          ref={autoScroll.stageRef}
+          ref={(element) => {
+            mainStageRef.current = element;
+            autoScroll.stageRef.current = element;
+          }}
           className={`main-stage${storyExists && !isWelcome && !creativePage ? ' is-playing' : ''}${creativePage ? ' is-creative' : ''}`}
           data-testid="main-stage"
           {...edgeSwipe.containerHandlers}
@@ -2696,6 +2708,7 @@ export function App({ runtime }: AppProps) {
                 onNavigateCreatedAsset={(kind, id) => void changeCreativeItem(kind === 'character' ? 'character' : 'writing', id, 'select')}
                 initialTurn={initialCreativeTurn}
                 onConsumeInitialTurn={() => setInitialCreativeTurn(null)}
+                scrollContainerRef={mainStageRef}
               />
               {errorMsg && !renderedOverlay && (
                 <BannerAlert

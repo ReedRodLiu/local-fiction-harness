@@ -2927,6 +2927,12 @@ async function verifyScrollDetachAndResumeThreshold(page, delayNextTurn) {
     element.scrollTop = element.scrollHeight;
     element.dispatchEvent(new Event('scroll', { bubbles: true }));
   });
+
+  delayNextTurn();
+  await page.fill('#turn-input', '验证滚动暂停阈值');
+  await page.locator('#turn-input').press('Enter');
+  await page.getByRole('button', { name: '停止生成' }).waitFor();
+
   await stage.evaluate((element) => {
     element.dispatchEvent(new WheelEvent('wheel', { deltaY: -1, bubbles: true }));
     element.scrollTop = element.scrollHeight - element.clientHeight - 100;
@@ -2943,10 +2949,6 @@ async function verifyScrollDetachAndResumeThreshold(page, delayNextTurn) {
     throw new Error('Manual scrolling back to 40px from the bottom should remain paused until 24px or closer.');
   }
 
-  delayNextTurn();
-  await page.fill('#turn-input', '验证滚动暂停阈值');
-  await page.locator('#turn-input').press('Enter');
-  await page.getByRole('button', { name: '停止生成' }).waitFor();
   const gapWhileStreaming = await stage.evaluate((element) =>
     element.scrollHeight - element.scrollTop - element.clientHeight,
   );
@@ -3632,20 +3634,34 @@ async function main() {
       return element && element.scrollHeight - element.scrollTop - element.clientHeight > 80;
     });
     await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
+    delayNextTurnMs = 1500;
+    await page.fill('#turn-input', '上滑后提交恢复跟随');
+    await page.locator('#turn-input').press('Enter');
+    await page.getByRole('button', { name: '停止生成' }).waitFor();
+    await page.waitForFunction(() => {
+      const element = document.querySelector('[data-testid="main-stage"]');
+      return element && element.scrollHeight - element.scrollTop - element.clientHeight <= 80;
+    });
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'hidden' });
+
+    // Scrolling up DURING streaming pauses follow until clicking scroll-to-bottom
+    await stage.hover({ position: { x: 80, y: 200 } });
+    await page.mouse.wheel(0, -1000);
+    await page.waitForFunction(() => {
+      const element = document.querySelector('[data-testid="main-stage"]');
+      return element && element.scrollHeight - element.scrollTop - element.clientHeight > 80;
+    });
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
     const gapAfterManualWheel = await stage.evaluate((element) =>
       element.scrollHeight - element.scrollTop - element.clientHeight,
     );
-    delayNextTurnMs = 1000;
-    await page.fill('#turn-input', '上滑后暂停跟随');
-    await page.locator('#turn-input').press('Enter');
-    await page.getByRole('button', { name: '停止生成' }).waitFor();
+    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：上滑后提交恢复跟随")');
     const pausedGap = await stage.evaluate((element) =>
       element.scrollHeight - element.scrollTop - element.clientHeight,
     );
     if (pausedGap <= 80) {
-      throw new Error(`Timeline followed streaming output after manual scroll: gap ${gapAfterManualWheel}px -> ${pausedGap}px`);
+      throw new Error(`Timeline followed streaming output after manual scroll during stream: gap ${gapAfterManualWheel}px -> ${pausedGap}px`);
     }
-    await page.waitForSelector('[data-testid="turn-assistant"]:has-text("回执：上滑后暂停跟随")');
     await page.getByTestId('scroll-to-bottom').click();
     await page.waitForFunction(() => {
       const element = document.querySelector('[data-testid="main-stage"]');

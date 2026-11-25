@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { ArrowUp, ChevronRight, Download, Edit3, Plus, Sparkles, Square } from 'lucide-react';
 import {
   buildPromptPackContextOptions,
@@ -97,6 +97,7 @@ interface CharacterPaneProps {
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;
   setCompanionOpen: (open: boolean) => void;
+  scrollContainerRef?: RefObject<HTMLElement | null>;
 }
 
 function formatConversationTimestamp(conversation: CharacterConversation): string {
@@ -156,6 +157,9 @@ export function CharacterPane(props: CharacterPaneProps) {
     isStreaming: reply.busy,
     streamPulse: `${reply.output.length}:${reply.reasoning.length}:${reply.error}:${createdAssetNotice?.id ?? ''}`,
     paused: companionOpen || Boolean(confirm),
+    scrollContainerRef: props.scrollContainerRef,
+    diagnosticMode: 'character',
+    diagnostics: runtime.diagnostics,
   });
 
   const activeLeafNode = path.at(-1);
@@ -287,6 +291,7 @@ export function CharacterPane(props: CharacterPaneProps) {
     }
 
     const startedAt = performance.now();
+    autoScroll.resumeFollow();
     reply.start(options.label ?? (trimmed ? '继续角色互动' : '生成角色开场'), async (request, signal, config) => {
       const state = await read();
       const current = state.characters.find((item) => item.id === character.id);
@@ -480,6 +485,7 @@ export function CharacterPane(props: CharacterPaneProps) {
     if (!userNode || userNode.role !== 'user') return;
 
     const startedAt = performance.now();
+    autoScroll.resumeFollow();
     reply.start('重新生成回复', async (request, signal, config) => {
       const state = await read();
       const current = state.characters.find((item) => item.id === character.id);

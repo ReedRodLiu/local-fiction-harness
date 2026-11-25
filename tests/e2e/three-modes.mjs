@@ -363,12 +363,29 @@ export async function verifyThreeModes(browser, port, helpers) {
         ].join('\n');
       } else if (input.includes('私密文本')) {
         content = '我记住你刚刚说的话了。';
+      } else if (input.includes('长篇月台描写') || input.includes('长回复测试') || input.includes('继续写下一段')) {
+        content = Array.from({ length: 14 }, (_, idx) => `第${idx + 1}段：夜风拂过月台与灯影，铁轨尽头亮起微光。`).join('\n\n') + `\n\n尾段完成：${input}`;
       } else if (input.includes('空白后第一句')) {
         content = '初次见面。';
       } else if (input.includes('邮差重访')) {
         content = '岑灯接过信，问起你的名字。';
       } else if (input.includes('敲钟')) {
         content = '渡口灯亮，第二声钟响。';
+      }
+
+      if (input.includes('长篇月台描写') || input.includes('长回复测试') || input.includes('继续写下一段')) {
+        const chunks = [];
+        for (let i = 0; i < content.length; i += 24) {
+          const slice = content.slice(i, i + 24);
+          const isLast = i + 24 >= content.length;
+          chunks.push({ choices: [{ delta: { content: slice }, ...(isLast ? { finish_reason: 'stop' } : {}) }] });
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: sseResponse(chunks),
+        });
+        return;
       }
 
       await route.fulfill({
@@ -512,6 +529,29 @@ export async function verifyThreeModes(browser, port, helpers) {
     await page.goBack();
     await writingSheet.waitFor({ state: 'hidden' });
 
+    // Writing chat auto-scroll across multi-chunk stream & submit-after-scroll-up (Issue #146)
+    await page.setViewportSize({ width: 390, height: 600 });
+    await page.getByLabel('聊天内容').fill('写一段长篇月台描写');
+    await button('发送').click();
+    await writing.getByTestId('writing-discussion-timeline').getByText('尾段完成：写一段长篇月台描写', { exact: false }).waitFor();
+    await page.waitForFunction(() => {
+      const stage = document.querySelector('[data-testid="main-stage"]');
+      return stage && stage.scrollHeight > stage.clientHeight && stage.scrollHeight - stage.scrollTop - stage.clientHeight <= 80;
+    });
+    const writingStage = page.getByTestId('main-stage');
+    await writingStage.hover({ position: { x: 80, y: 160 } });
+    await page.mouse.wheel(0, -800);
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
+    await page.getByLabel('聊天内容').fill('继续写下一段');
+    await button('发送').click();
+    await writing.getByTestId('writing-discussion-timeline').getByText('尾段完成：继续写下一段', { exact: false }).waitFor();
+    await page.waitForFunction(() => {
+      const stage = document.querySelector('[data-testid="main-stage"]');
+      return stage && stage.scrollHeight - stage.scrollTop - stage.clientHeight <= 80;
+    });
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'hidden' });
+    await page.setViewportSize({ width: 1280, height: 800 });
+
     // Chat-to-manuscript trial writing via target: manuscript ProposalCard
     await page.getByLabel('聊天内容').fill('试写一段车站开头');
     await button('发送').click();
@@ -635,6 +675,17 @@ export async function verifyThreeModes(browser, port, helpers) {
     assert.match(lastRequest(), /PERSONA-UNIQUE/);
     await character.getByTestId('turn-history-toggle').first().click();
     await character.getByRole('button', { name: '回溯至此' }).first().waitFor();
+
+    // Character chat auto-scroll across multi-chunk stream (Issue #146)
+    await page.setViewportSize({ width: 390, height: 600 });
+    await page.getByLabel('发消息').fill('长回复测试');
+    await button('发送').click();
+    await character.getByTestId('character-timeline').getByText('尾段完成：长回复测试', { exact: false }).waitFor();
+    await page.waitForFunction(() => {
+      const stage = document.querySelector('[data-testid="main-stage"]');
+      return stage && stage.scrollHeight > stage.clientHeight && stage.scrollHeight - stage.scrollTop - stage.clientHeight <= 80;
+    });
+    await page.setViewportSize({ width: 1280, height: 800 });
 
     await page.getByTestId('open-companion-sheet').click();
     const characterSheet = page.getByTestId('character-companion-sheet');

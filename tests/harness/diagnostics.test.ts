@@ -7,6 +7,7 @@ import {
   createDiagnosticTransport,
   createFictionHarness,
   createInMemoryStoryStorage,
+  recordAutoScrollDiagnostic,
   recordRefusalOriginalRestoredDiagnostic,
   sanitizeDiagnosticText,
   sanitizeEndpointProfile,
@@ -754,6 +755,76 @@ describe('Spec #26 Slice 2: DeepSeek structure radar & breadcrumb wrappers', () 
       retryCount: 1,
     });
     expect(JSON.stringify(bundle)).not.toContain('RESTORED_BODY_CANARY');
+  });
+
+  it('records zero-content auto-scroll diagnostic breadcrumbs and drops unallowlisted fields', () => {
+    const collector = createDiagnosticCollector({ platform: 'web' });
+
+    recordAutoScrollDiagnostic(collector, {
+      level: 'warn',
+      action: 'autoscroll_target_non_scrollable',
+      metrics: {
+        scrollMode: 'writing',
+        scrollState: 'following',
+        scrollOverflowY: 'visible',
+        scrollTop: 0,
+        scrollHeight: 2400.4,
+        clientHeight: 780,
+        scrollGapPx: 1620,
+        reasonCode: 'resolved_scrollable_ancestor',
+        // @ts-expect-error verify runtime fail-closed sanitization of unexpected text keys
+        storyText: 'SECRET_STORY_CANARY',
+      },
+    });
+    recordAutoScrollDiagnostic(collector, {
+      level: 'warn',
+      action: 'autoscroll_target_missing',
+      metrics: {
+        scrollMode: 'character',
+        scrollState: 'following',
+        reasonCode: 'missing_stage_ref',
+      },
+    });
+    recordAutoScrollDiagnostic(collector, {
+      level: 'info',
+      action: 'autoscroll_follow_transition',
+      metrics: {
+        scrollMode: 'story',
+        scrollState: 'user_paused',
+        scrollGapPx: 320,
+        reasonCode: 'paused_by_user',
+      },
+    });
+    recordAutoScrollDiagnostic(collector, {
+      level: 'warn',
+      action: 'autoscroll_follow_anomaly',
+      metrics: {
+        scrollMode: 'welcome',
+        scrollState: 'following',
+        scrollGapPx: 410,
+        reasonCode: 'scroll_missed_bottom',
+      },
+    });
+
+    const bundle = collector.buildBundle({ baseUrl: '', model: '', memoryOnly: true });
+    const scrollEvents = bundle.events.filter((event) => event.action.startsWith('autoscroll_'));
+    expect(scrollEvents.map((event) => event.action)).toEqual([
+      'autoscroll_target_non_scrollable',
+      'autoscroll_target_missing',
+      'autoscroll_follow_transition',
+      'autoscroll_follow_anomaly',
+    ]);
+    expect(scrollEvents[0].meta).toEqual({
+      scrollMode: 'writing',
+      scrollState: 'following',
+      scrollOverflowY: 'visible',
+      scrollTop: 0,
+      scrollHeight: 2400,
+      clientHeight: 780,
+      scrollGapPx: 1620,
+      reasonCode: 'resolved_scrollable_ancestor',
+    });
+    expect(JSON.stringify(bundle)).not.toContain('SECRET_STORY_CANARY');
   });
 
 });
