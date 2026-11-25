@@ -94,13 +94,21 @@ function registerLayer(layer: HistoryLayer): () => void {
   };
 }
 
-function restoreVisibleFocus(preferred: HTMLElement | null): void {
+function isFocusableVisibleElement(element: HTMLElement | null | undefined): element is HTMLElement {
+  return Boolean(
+    element?.isConnected &&
+      element.getClientRects().length > 0 &&
+      !element.matches(':disabled') &&
+      !element.closest('[inert], [aria-hidden="true"], [data-closing="true"]'),
+  );
+}
+
+export function restoreVisibleFocus(preferred: HTMLElement | null): void {
   const current = document.activeElement;
   if (
     current instanceof HTMLElement &&
     current !== document.body &&
-    current.isConnected &&
-    current.getClientRects().length > 0 &&
+    isFocusableVisibleElement(current) &&
     !current.closest('dialog[open]')
   ) {
     return;
@@ -115,9 +123,7 @@ function restoreVisibleFocus(preferred: HTMLElement | null): void {
     document.querySelector<HTMLElement>('[data-testid="settings-page"] button'),
     document.querySelector<HTMLElement>('[data-testid="app-topbar"] button'),
   ];
-  const target = candidates.find((candidate) =>
-    Boolean(candidate?.isConnected && candidate.getClientRects().length > 0 && !candidate.matches(':disabled'))
-  );
+  const target = candidates.find((candidate) => isFocusableVisibleElement(candidate));
   target?.focus();
 }
 

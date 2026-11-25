@@ -424,6 +424,9 @@ textarea:focus-visible {
   z-index: 30;
   overflow: hidden;
 }
+.app-overlay-layer.is-sub-overlay {
+  z-index: 31;
+}
 .app-overlay-layer[data-closing="true"] {
   pointer-events: none;
 }
@@ -636,8 +639,10 @@ textarea:focus-visible {
   .main-stage { padding-inline: 16px; }
   .app-overlay-stage { padding-inline: 16px; }
   .app-shell-underlay { transition: transform var(--motion-duration-page) var(--motion-easing-page); }
-  .app-shell-underlay.is-covered { transform: translateX(-24px); }
-  .app-shell-underlay.is-dragging-overlay { transition: none; }
+  .app-shell-underlay.is-covered,
+  .app-overlay-stage.is-covered { transform: translateX(-24px); }
+  .app-shell-underlay.is-dragging-overlay,
+  .app-overlay-stage.is-dragging-overlay { transition: none; }
   .overlay-page-header { margin-inline: -16px; }
 }
 

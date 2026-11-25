@@ -57,7 +57,10 @@ export function createOverlaySwipeBackHandlers(options: {
     const stage = shell?.closest<HTMLElement>('.app-overlay-stage') ?? shell;
     const layer = shell?.closest<HTMLElement>('.app-overlay-layer') ?? null;
     const backdrop = layer?.querySelector<HTMLElement>('.app-overlay-backdrop') ?? null;
-    const underlay = layer?.parentElement?.querySelector<HTMLElement>('.app-shell-underlay') ?? null;
+    const isSubOverlay = Boolean(layer?.classList?.contains('is-sub-overlay'));
+    const underlay = isSubOverlay
+      ? (layer?.previousElementSibling?.querySelector<HTMLElement>('.app-overlay-stage') ?? null)
+      : (layer?.parentElement?.querySelector<HTMLElement>('.app-shell-underlay') ?? null);
     return { shell, stage, layer, backdrop, underlay };
   };
 

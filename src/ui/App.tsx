@@ -116,6 +116,7 @@ import {
 import { mergeBranchRenameResult } from './storyConcurrency.ts';
 import { toErrorMessage } from './textHelpers.ts';
 import { useAppOverlayHistory } from './useAppOverlayHistory.ts';
+import { restoreVisibleFocus } from './useWebHistoryLayer.ts';
 import { useAppUpdater } from './useAppUpdater.ts';
 import { useAutoScrollTimeline } from './useAutoScrollTimeline.ts';
 import { sendOnEnter, useComposerEnterKeyHint } from './useCreativeReply.ts';
@@ -191,6 +192,42 @@ function detectEnvironmentVersions(): { osVersion?: string; webviewVersion?: str
 
 export interface AppProps {
   runtime: PlatformRuntime;
+}
+
+function useOverlayLayerPresence<T extends string>(
+  active: T | null,
+  onExitComplete?: () => void,
+) {
+  const [rendered, setRendered] = useState<T | null>(active);
+  const [closing, setClosing] = useState(false);
+  const layerRef = useRef<HTMLDivElement | null>(null);
+  const onExitCompleteRef = useRef(onExitComplete);
+  onExitCompleteRef.current = onExitComplete;
+
+  if (active !== null && (rendered !== active || closing)) {
+    setRendered(active);
+    setClosing(false);
+  } else if (active === null && rendered !== null && !closing) {
+    setClosing(true);
+  }
+
+  useEffect(() => {
+    if (!closing) return;
+    const layer = layerRef.current;
+    const stage = layer?.querySelector<HTMLElement>('.app-overlay-stage') ?? layer;
+    if (!stage) {
+      setRendered(null);
+      setClosing(false);
+      return;
+    }
+    return waitForExitAnimation(stage, () => {
+      setRendered(null);
+      setClosing(false);
+      onExitCompleteRef.current?.();
+    });
+  }, [closing]);
+
+  return { rendered, closing, layerRef };
 }
 
 export function App({ runtime }: AppProps) {
@@ -346,32 +383,24 @@ export function App({ runtime }: AppProps) {
     : showImport
       ? 'import'
       : null;
-  const [renderedOverlay, setRenderedOverlay] = useState<'settings' | 'import' | null>(activeOverlay);
-  const [closingOverlay, setClosingOverlay] = useState(false);
-  const overlayLayerRef = useRef<HTMLDivElement | null>(null);
-
-  if (activeOverlay !== null && (renderedOverlay !== activeOverlay || closingOverlay)) {
-    setRenderedOverlay(activeOverlay);
-    setClosingOverlay(false);
-  } else if (activeOverlay === null && renderedOverlay !== null && !closingOverlay) {
-    setClosingOverlay(true);
-  }
-
-  useEffect(() => {
-    if (!closingOverlay) return;
-    const layer = overlayLayerRef.current;
-    const stage = layer?.querySelector<HTMLElement>('.app-overlay-stage') ?? layer;
-    if (!stage) {
-      setRenderedOverlay(null);
-      setClosingOverlay(false);
-      return;
-    }
-    return waitForExitAnimation(stage, () => {
-      setRenderedOverlay(null);
-      setClosingOverlay(false);
-      window.requestAnimationFrame(() => overlayReturnFocusRef.current?.focus());
-    });
-  }, [closingOverlay]);
+  const activeSubOverlay: 'narrative-presets' | null =
+    showSettings && settingsSubPage === 'narrative-presets' ? 'narrative-presets' : null;
+  const {
+    rendered: renderedOverlay,
+    closing: closingOverlay,
+    layerRef: overlayLayerRef,
+  } = useOverlayLayerPresence(activeOverlay, () => {
+    window.requestAnimationFrame(() => restoreVisibleFocus(overlayReturnFocusRef.current));
+  });
+  const {
+    rendered: renderedSubOverlay,
+    closing: closingSubOverlay,
+    layerRef: subOverlayLayerRef,
+  } = useOverlayLayerPresence(activeSubOverlay, () => {
+    window.requestAnimationFrame(() =>
+      restoreVisibleFocus(document.querySelector<HTMLElement>('[data-testid="open-narrative-presets"]')),
+    );
+  });
 
   useEffect(() => {
     if (!plusMenuOpen) return;
@@ -769,7 +798,7 @@ export function App({ runtime }: AppProps) {
     turnCount: isWelcome ? neutralTurns.length : activeNodes.length,
     isStreaming,
     streamPulse: `${streamContent.length}:${streamReasoning.length}:${errorMsg ?? ''}:${createdAssetNotice?.id ?? ''}`,
-    paused: showImport || showSettings || Boolean(creativePage),
+    paused: Boolean(renderedOverlay) || Boolean(creativePage),
   });
 
   const runStreamingExecution = async (
@@ -2990,11 +3019,11 @@ export function App({ runtime }: AppProps) {
           ref={overlayLayerRef}
           className="app-overlay-layer"
           data-closing={closingOverlay ? 'true' : undefined}
-          aria-hidden={closingOverlay || undefined}
-          inert={closingOverlay}
+          aria-hidden={closingOverlay || Boolean(activeSubOverlay) || undefined}
+          inert={closingOverlay || Boolean(activeSubOverlay)}
         >
           <div className="app-overlay-backdrop" aria-hidden="true" />
-          <div className="app-overlay-stage">
+          <div className={`app-overlay-stage${activeSubOverlay ? ' is-covered' : ''}`}>
             {errorMsg && (
               <BannerAlert
                 tone="danger"
@@ -3009,57 +3038,42 @@ export function App({ runtime }: AppProps) {
               </BannerAlert>
             )}
             {renderedOverlay === 'settings' ? (
-              settingsSubPage === 'narrative-presets' ? (
-                <OverlayPageShell
-                  key="narrative-presets"
-                  title="叙事预设"
-                  testId="narrative-presets-page"
-                  onBack={() => setSettingsSubPage('main')}
-                >
-                  <PromptPackSheet
-                    library={promptPackLibrary}
-                    onChange={setPromptPackLibrary}
-                    onExport={handleExportPromptPack}
-                  />
-                </OverlayPageShell>
-              ) : (
-                <SettingsPage
-                  key="settings-main"
-                  appVersion={APP_VERSION}
-                  hasCredentials={hasCredentials}
-                  config={config}
-                  useDevEnvKey={useDevEnvKey}
-                  showDevTestProxy={import.meta.env.DEV && isWebDev && Boolean(devTestInfo?.available)}
-                  balanceState={balanceState}
-                  onRefreshBalance={refreshBalance}
-                  themePreference={displayPreferences.theme}
-                  fontSize={displayPreferences.fontSize}
-                  canExportCurrentStory={storyExists}
-                  currentStoryTitle={story.title}
-                  canExportFullBackup={canExportFullBackup}
-                  backupSummaryText={backupSummaryText}
-                  onBack={() => {
-                    setSettingsSubPage('main');
-                    setShowSettings(false);
-                  }}
-                  onOpenSetupWizard={openSetupWizard}
-                  onClearSavedKey={handleClearSavedKey}
-                  onApplyDevTestConfig={applyDevTestConfig}
-                  onOpenDiagnostics={() => openDiagnostics('settings_manual')}
-                  onOpenPublicMemory={() => openPublicDocument()}
-                  onOpenNarrativePresets={() => setSettingsSubPage('narrative-presets')}
-                  onExportCurrentStory={() => void handleExportFullBackup()}
-                  onExportFullBackup={() => void handleExportFullBackup()}
-                  onImportBackupFile={(file) => void handleImportBackupFile(file)}
-                  onThemePreferenceChange={setThemePreference}
-                  onFontSizeChange={setDisplayFontSize}
-                  onDefaultModelChange={(model) => updateConfig({ ...config, model })}
-                  onDefaultReasoningEffortChange={(reasoningEffort) =>
-                    updateConfig({ ...config, reasoningEffort })}
-                  promptPackLibrary={promptPackLibrary}
-                  appUpdater={appUpdater}
-                />
-              )
+              <SettingsPage
+                key="settings-main"
+                appVersion={APP_VERSION}
+                hasCredentials={hasCredentials}
+                config={config}
+                useDevEnvKey={useDevEnvKey}
+                showDevTestProxy={import.meta.env.DEV && isWebDev && Boolean(devTestInfo?.available)}
+                balanceState={balanceState}
+                onRefreshBalance={refreshBalance}
+                themePreference={displayPreferences.theme}
+                fontSize={displayPreferences.fontSize}
+                canExportCurrentStory={storyExists}
+                currentStoryTitle={story.title}
+                canExportFullBackup={canExportFullBackup}
+                backupSummaryText={backupSummaryText}
+                onBack={() => {
+                  setSettingsSubPage('main');
+                  setShowSettings(false);
+                }}
+                onOpenSetupWizard={openSetupWizard}
+                onClearSavedKey={handleClearSavedKey}
+                onApplyDevTestConfig={applyDevTestConfig}
+                onOpenDiagnostics={() => openDiagnostics('settings_manual')}
+                onOpenPublicMemory={() => openPublicDocument()}
+                onOpenNarrativePresets={() => setSettingsSubPage('narrative-presets')}
+                onExportCurrentStory={() => void handleExportFullBackup()}
+                onExportFullBackup={() => void handleExportFullBackup()}
+                onImportBackupFile={(file) => void handleImportBackupFile(file)}
+                onThemePreferenceChange={setThemePreference}
+                onFontSizeChange={setDisplayFontSize}
+                onDefaultModelChange={(model) => updateConfig({ ...config, model })}
+                onDefaultReasoningEffortChange={(reasoningEffort) =>
+                  updateConfig({ ...config, reasoningEffort })}
+                promptPackLibrary={promptPackLibrary}
+                appUpdater={appUpdater}
+              />
             ) : (
               <ImportPanel
                 initialMode={importMode}
@@ -3080,6 +3094,32 @@ export function App({ runtime }: AppProps) {
                 existingStories={stories}
               />
             )}
+          </div>
+        </div>
+      )}
+
+      {renderedOverlay === 'settings' && renderedSubOverlay === 'narrative-presets' && (
+        <div
+          ref={subOverlayLayerRef}
+          className="app-overlay-layer is-sub-overlay"
+          data-closing={closingSubOverlay ? 'true' : undefined}
+          aria-hidden={closingSubOverlay || undefined}
+          inert={closingSubOverlay}
+        >
+          <div className="app-overlay-backdrop" aria-hidden="true" />
+          <div className="app-overlay-stage">
+            <OverlayPageShell
+              key="narrative-presets"
+              title="叙事预设"
+              testId="narrative-presets-page"
+              onBack={() => setSettingsSubPage('main')}
+            >
+              <PromptPackSheet
+                library={promptPackLibrary}
+                onChange={setPromptPackLibrary}
+                onExport={handleExportPromptPack}
+              />
+            </OverlayPageShell>
           </div>
         </div>
       )}
