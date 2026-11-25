@@ -2096,8 +2096,8 @@ async function verifyDisplayPreferenceMatrix(page, port) {
   await settings.getByTestId('settings-appearance-preview').waitFor();
   await settings.getByTestId('dev-proxy-toggle').waitFor();
   const versionText = await settings.getByTestId('settings-app-version').textContent();
-  if (!versionText?.includes('0.4.1')) {
-    throw new Error(`Settings did not expose v0.4.1 APP_VERSION: ${versionText}`);
+  if (!versionText?.includes('0.4.2')) {
+    throw new Error(`Settings did not expose v0.4.2 APP_VERSION: ${versionText}`);
   }
   for (const [label, value] of [['14px', 14], ['16px', 16], ['18px', 18], ['20px', 20]]) {
     await settings.getByRole('button', { name: label }).click();
@@ -2193,8 +2193,8 @@ async function verifyDisplayPreferenceMatrix(page, port) {
   if (!['welcome', 'story', 'settings', 'unknown'].includes(diagnosticBundle.appEnv?.activeView)) {
     throw new Error(`Settings diagnostics exposed activeView=${diagnosticBundle.appEnv?.activeView}`);
   }
-  if (diagnosticBundle.schemaVersion !== 2 || diagnosticBundle.appEnv?.appVersion !== '0.4.1') {
-    throw new Error(`Diagnostics bundle expected schemaVersion 2 and appVersion 0.4.1: ${JSON.stringify(diagnosticBundle.appEnv)}`);
+  if (diagnosticBundle.schemaVersion !== 2 || diagnosticBundle.appEnv?.appVersion !== '0.4.2') {
+    throw new Error(`Diagnostics bundle expected schemaVersion 2 and appVersion 0.4.2: ${JSON.stringify(diagnosticBundle.appEnv)}`);
   }
   await page.keyboard.press('Escape');
   await page.getByTestId('diagnostics-preview').waitFor({ state: 'detached' });
@@ -4750,7 +4750,7 @@ async function runDiagnosticsE2E(browser, port, tmpDir, viewport) {
       }
     }
     const { schemaVersion, appEnv, events, importRadars, activeStorySkeleton, trigger, endpointProfile, userNote } = JSON.parse(previewText);
-    if (schemaVersion !== 2 || appEnv?.appVersion !== '0.4.1' || userNote !== '切换分支后报错') {
+    if (schemaVersion !== 2 || appEnv?.appVersion !== '0.4.2' || userNote !== '切换分支后报错') {
       throw new Error(`Diagnostics bundle v2 metadata mismatch: ${JSON.stringify({ schemaVersion, appEnv, userNote })}`);
     }
     if (endpointProfile.host !== 'api.deepseek.com') {
