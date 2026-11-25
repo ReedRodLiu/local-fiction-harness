@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, X } from 'lucide-react';
+import { ModalDialog } from './primitives/ModalDialog.tsx';
 import {
   buildEvenOddPolygonClipPath,
   computeSpotlightLayout,
@@ -32,6 +33,7 @@ export interface SpotlightTutorialProps {
   onStepChange: (nextIndex: number) => void;
   onSkip: () => void;
   onComplete: () => void;
+  onExitComplete?: () => void;
 }
 
 function isElementVisible(element: Element | null): element is HTMLElement {
@@ -79,8 +81,8 @@ export function SpotlightTutorial({
   onStepChange,
   onSkip,
   onComplete,
+  onExitComplete,
 }: SpotlightTutorialProps) {
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
   const cardRef = useRef<HTMLElement | null>(null);
   const prevFocusedRef = useRef<HTMLElement | null>(null);
   const [targetRects, setTargetRects] = useState<SpotlightRect[]>([]);
@@ -96,6 +98,32 @@ export function SpotlightTutorial({
   }, [onSkip]);
 
   useWebHistoryLayer('spotlight-tutorial', 90, open, dismissTutorial, true, undefined, undefined, false);
+
+  const restoreFocus = useCallback(() => {
+    const target = prevFocusedRef.current;
+    prevFocusedRef.current = null;
+    if (!target) return;
+    window.requestAnimationFrame(() => {
+      if (document.querySelector('dialog[open]')) return;
+      if (target.isConnected) target.focus({ preventScroll: true });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (open && !prevFocusedRef.current && typeof document !== 'undefined') {
+      prevFocusedRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+  }, [open]);
+
+  useEffect(() => {
+    return () => restoreFocus();
+  }, [restoreFocus]);
+
+  const handleExitComplete = useCallback(() => {
+    restoreFocus();
+    onExitComplete?.();
+  }, [onExitComplete, restoreFocus]);
 
   const measureAndPosition = useCallback(() => {
     if (!open || !activeStep || typeof window === 'undefined') return;
@@ -120,38 +148,6 @@ export function SpotlightTutorial({
     });
     setCardLayout(layout);
   }, [activeStep, open]);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (open) {
-      if (!dialog.open) {
-        prevFocusedRef.current =
-          document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        dialog.showModal();
-      }
-    } else if (dialog.open) {
-      dialog.close();
-      const target = prevFocusedRef.current;
-      prevFocusedRef.current = null;
-      window.requestAnimationFrame(() => {
-        if (document.querySelector('dialog[open]')) return;
-        if (target?.isConnected) target.focus({ preventScroll: true });
-      });
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    return () => {
-      const target = prevFocusedRef.current;
-      prevFocusedRef.current = null;
-      window.requestAnimationFrame(() => {
-        if (document.querySelector('dialog[open]')) return;
-        if (target?.isConnected) target.focus({ preventScroll: true });
-      });
-    };
-  }, [open]);
 
   useEffect(() => {
     if (!open || !activeStep) return;
@@ -208,159 +204,159 @@ export function SpotlightTutorial({
     };
   }, [measureAndPosition, open]);
 
-  if (!open || !activeStep) return null;
-
   const hasSingleRect = targetRects.length === 1;
   const hasMultipleRects = targetRects.length > 1;
 
   return (
-    <dialog
-      ref={dialogRef}
+    <ModalDialog
+      open={open && Boolean(activeStep)}
+      label={label}
       className="spotlight-dialog"
-      aria-label={label}
-      data-testid="spotlight-tutorial"
-      data-step-id={activeStep.id}
-      onCancel={(event) => {
-        event.preventDefault();
-        dismissTutorial();
-      }}
+      testId="spotlight-tutorial"
+      dataStepId={activeStep?.id}
+      onClose={dismissTutorial}
+      onExitComplete={handleExitComplete}
     >
-      {!hasSingleRect && (
-        <div
-          className="spotlight-backdrop-full"
-          style={
-            hasMultipleRects
-              ? { clipPath: buildEvenOddPolygonClipPath(targetRects) }
-              : undefined
-          }
-          aria-hidden="true"
-        />
-      )}
-
-      {hasSingleRect && (
-        <div
-          className="spotlight-cutout"
-          data-testid="spotlight-cutout"
-          style={{
-            left: `${targetRects[0].left}px`,
-            top: `${targetRects[0].top}px`,
-            width: `${targetRects[0].width}px`,
-            height: `${targetRects[0].height}px`,
-          }}
-          aria-hidden="true"
-        />
-      )}
-
-      {hasMultipleRects &&
-        targetRects.map((rect, index) => (
-          <div
-            key={`${activeStep.id}-ring-${index}`}
-            className="spotlight-ring"
-            data-testid={index === 0 ? 'spotlight-cutout' : `spotlight-cutout-${index}`}
-            style={{
-              left: `${rect.left}px`,
-              top: `${rect.top}px`,
-              width: `${rect.width}px`,
-              height: `${rect.height}px`,
-            }}
-            aria-hidden="true"
-          />
-        ))}
-
-      <section
-        ref={cardRef}
-        className="spotlight-card"
-        data-testid="spotlight-card"
-        aria-labelledby="spotlight-card-title"
-        style={
-          cardLayout
-            ? {
-                left: `${cardLayout.left}px`,
-                top: `${cardLayout.top}px`,
-                width: `${cardLayout.width}px`,
+      {activeStep && (
+        <>
+          {!hasSingleRect && (
+            <div
+              className="spotlight-backdrop-full"
+              style={
+                hasMultipleRects
+                  ? { clipPath: buildEvenOddPolygonClipPath(targetRects) }
+                  : undefined
               }
-            : undefined
-        }
-      >
-        <div className="spotlight-card-header">
-          <span className="spotlight-step-counter" data-testid="spotlight-step-counter">
-            {safeIndex + 1} / {steps.length}
-          </span>
-          <button
-            type="button"
-            className="icon-button spotlight-close-btn"
-            aria-label="关闭引导"
-            onClick={onSkip}
+              aria-hidden="true"
+            />
+          )}
+
+          {hasSingleRect && (
+            <div
+              className="spotlight-cutout"
+              data-testid="spotlight-cutout"
+              style={{
+                left: `${targetRects[0].left}px`,
+                top: `${targetRects[0].top}px`,
+                width: `${targetRects[0].width}px`,
+                height: `${targetRects[0].height}px`,
+              }}
+              aria-hidden="true"
+            />
+          )}
+
+          {hasMultipleRects &&
+            targetRects.map((rect, index) => (
+              <div
+                key={`${activeStep.id}-ring-${index}`}
+                className="spotlight-ring"
+                data-testid={index === 0 ? 'spotlight-cutout' : `spotlight-cutout-${index}`}
+                style={{
+                  left: `${rect.left}px`,
+                  top: `${rect.top}px`,
+                  width: `${rect.width}px`,
+                  height: `${rect.height}px`,
+                }}
+                aria-hidden="true"
+              />
+            ))}
+
+          <section
+            ref={cardRef}
+            className="spotlight-card"
+            data-testid="spotlight-card"
+            aria-labelledby="spotlight-card-title"
+            style={
+              cardLayout
+                ? {
+                    left: `${cardLayout.left}px`,
+                    top: `${cardLayout.top}px`,
+                    width: `${cardLayout.width}px`,
+                  }
+                : undefined
+            }
           >
-            <X size={18} strokeWidth={1.75} aria-hidden="true" />
-          </button>
-        </div>
-
-        <h2 id="spotlight-card-title" className="spotlight-card-title" data-testid="spotlight-step-title">
-          {activeStep.title}
-        </h2>
-        <p className="spotlight-card-description" data-testid="spotlight-step-description">
-          {activeStep.description}
-        </p>
-
-        <div className="spotlight-card-actions">
-          <button
-            type="button"
-            className="btn btn-sm spotlight-skip-btn"
-            data-testid="spotlight-skip-btn"
-            onClick={onSkip}
-          >
-            跳过
-          </button>
-
-          <div className="spotlight-card-nav">
-            {!isFirstStep && (
+            <div className="spotlight-card-header">
+              <span className="spotlight-step-counter" data-testid="spotlight-step-counter">
+                {safeIndex + 1} / {steps.length}
+              </span>
               <button
                 type="button"
-                className="btn btn-sm"
-                data-testid="spotlight-prev-btn"
-                onClick={() => onStepChange(safeIndex - 1)}
+                className="icon-button spotlight-close-btn"
+                aria-label="关闭引导"
+                onClick={onSkip}
               >
-                <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
-                <span>上一步</span>
+                <X size={18} strokeWidth={1.75} aria-hidden="true" />
               </button>
-            )}
+            </div>
 
-            {isLastStep && activeStep.extraAction && (
-              <button
-                type="button"
-                className="btn btn-sm"
-                data-testid={activeStep.extraAction.testId ?? 'spotlight-extra-btn'}
-                onClick={activeStep.extraAction.onClick}
-              >
-                <span>{activeStep.extraAction.label}</span>
-              </button>
-            )}
+            <h2 id="spotlight-card-title" className="spotlight-card-title" data-testid="spotlight-step-title">
+              {activeStep.title}
+            </h2>
+            <p className="spotlight-card-description" data-testid="spotlight-step-description">
+              {activeStep.description}
+            </p>
 
-            {isLastStep ? (
+            <div className="spotlight-card-actions">
               <button
                 type="button"
-                className="btn btn-sm btn-primary"
-                data-testid="spotlight-finish-btn"
-                onClick={onComplete}
+                className="btn btn-sm spotlight-skip-btn"
+                data-testid="spotlight-skip-btn"
+                onClick={onSkip}
               >
-                <Check size={16} strokeWidth={1.75} aria-hidden="true" />
-                <span>完成</span>
+                跳过
               </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                data-testid="spotlight-next-btn"
-                onClick={() => onStepChange(safeIndex + 1)}
-              >
-                <span>下一步</span>
-                <ArrowRight size={16} strokeWidth={1.75} aria-hidden="true" />
-              </button>
-            )}
-          </div>
-        </div>
-      </section>
-    </dialog>
+
+              <div className="spotlight-card-nav">
+                {!isFirstStep && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    data-testid="spotlight-prev-btn"
+                    onClick={() => onStepChange(safeIndex - 1)}
+                  >
+                    <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
+                    <span>上一步</span>
+                  </button>
+                )}
+
+                {isLastStep && activeStep.extraAction && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    data-testid={activeStep.extraAction.testId ?? 'spotlight-extra-btn'}
+                    onClick={activeStep.extraAction.onClick}
+                  >
+                    <span>{activeStep.extraAction.label}</span>
+                  </button>
+                )}
+
+                {isLastStep ? (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    data-testid="spotlight-finish-btn"
+                    onClick={onComplete}
+                  >
+                    <Check size={16} strokeWidth={1.75} aria-hidden="true" />
+                    <span>完成</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    data-testid="spotlight-next-btn"
+                    onClick={() => onStepChange(safeIndex + 1)}
+                  >
+                    <span>下一步</span>
+                    <ArrowRight size={16} strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+        </>
+      )}
+    </ModalDialog>
   );
 }

@@ -14,11 +14,13 @@ import {
 import { SpotlightTutorial } from '../../src/ui/SpotlightTutorial.tsx';
 import {
   TUTORIAL_MAIN_DONE_STORAGE_KEY,
+  TUTORIAL_REPLAY_PENDING_STORAGE_KEY,
   TUTORIAL_SETTINGS_DONE_STORAGE_KEY,
   parseTutorialState,
   persistTutorialStageDone,
   readTutorialState,
   resetTutorialState,
+  shouldShowMainTutorial,
 } from '../../src/ui/tutorialState.ts';
 import {
   buildMainTutorialSteps,
@@ -51,13 +53,16 @@ describe('tutorialState persistent storage', () => {
     installMockWindowStorage();
     expect(TUTORIAL_MAIN_DONE_STORAGE_KEY).toBe('folio.tutorial.mainDone');
     expect(TUTORIAL_SETTINGS_DONE_STORAGE_KEY).toBe('folio.tutorial.settingsDone');
-    expect(parseTutorialState(null, null)).toEqual({
+    expect(TUTORIAL_REPLAY_PENDING_STORAGE_KEY).toBe('folio.tutorial.replayPending');
+    expect(parseTutorialState(null, null, null)).toEqual({
       mainDone: false,
       settingsDone: false,
+      replayPending: false,
     });
     expect(readTutorialState()).toEqual({
       mainDone: false,
       settingsDone: false,
+      replayPending: false,
     });
   });
 
@@ -69,31 +74,43 @@ describe('tutorialState persistent storage', () => {
     expect(readTutorialState()).toEqual({
       mainDone: false,
       settingsDone: false,
+      replayPending: false,
     });
 
     const afterMain = persistTutorialStageDone('main', true);
-    expect(afterMain).toEqual({ mainDone: true, settingsDone: false });
+    expect(afterMain).toEqual({ mainDone: true, settingsDone: false, replayPending: false });
     expect(store.get(TUTORIAL_MAIN_DONE_STORAGE_KEY)).toBe('true');
     expect(store.get(TUTORIAL_SETTINGS_DONE_STORAGE_KEY)).toBe('1');
-    expect(readTutorialState()).toEqual({ mainDone: true, settingsDone: false });
+    expect(readTutorialState()).toEqual({ mainDone: true, settingsDone: false, replayPending: false });
 
     const afterSettings = persistTutorialStageDone('settings', true);
-    expect(afterSettings).toEqual({ mainDone: true, settingsDone: true });
+    expect(afterSettings).toEqual({ mainDone: true, settingsDone: true, replayPending: false });
     expect(store.get(TUTORIAL_SETTINGS_DONE_STORAGE_KEY)).toBe('true');
-    expect(readTutorialState()).toEqual({ mainDone: true, settingsDone: true });
+    expect(readTutorialState()).toEqual({ mainDone: true, settingsDone: true, replayPending: false });
   });
 
-  it('resets both stage flags when replaying the tutorial', () => {
+  it('persists replayPending across simulated reload when credentials exist and clears it on Stage 1 completion/skip', () => {
     const { store } = installMockWindowStorage({
       [TUTORIAL_MAIN_DONE_STORAGE_KEY]: 'true',
       [TUTORIAL_SETTINGS_DONE_STORAGE_KEY]: 'true',
     });
 
     const reset = resetTutorialState();
-    expect(reset).toEqual({ mainDone: false, settingsDone: false });
+    expect(reset).toEqual({ mainDone: false, settingsDone: false, replayPending: true });
     expect(store.get(TUTORIAL_MAIN_DONE_STORAGE_KEY)).toBe('false');
     expect(store.get(TUTORIAL_SETTINGS_DONE_STORAGE_KEY)).toBe('false');
-    expect(readTutorialState()).toEqual({ mainDone: false, settingsDone: false });
+    expect(store.get(TUTORIAL_REPLAY_PENDING_STORAGE_KEY)).toBe('true');
+
+    // Simulate page reload while hasCredentials === true before completing Stage 1
+    const afterReload = readTutorialState();
+    expect(afterReload).toEqual({ mainDone: false, settingsDone: false, replayPending: true });
+    expect(shouldShowMainTutorial(afterReload, true)).toBe(true);
+
+    // Completing or skipping Stage 1 clears replayPending
+    const afterStage1Done = persistTutorialStageDone('main', true);
+    expect(afterStage1Done).toEqual({ mainDone: true, settingsDone: false, replayPending: false });
+    expect(store.get(TUTORIAL_REPLAY_PENDING_STORAGE_KEY)).toBe('false');
+    expect(shouldShowMainTutorial(readTutorialState(), true)).toBe(false);
   });
 
   it('falls back safely without throwing if localStorage is unavailable or throws', () => {
@@ -108,12 +125,13 @@ describe('tutorialState persistent storage', () => {
       },
     });
 
-    expect(readTutorialState()).toEqual({ mainDone: false, settingsDone: false });
+    expect(readTutorialState()).toEqual({ mainDone: false, settingsDone: false, replayPending: false });
     expect(persistTutorialStageDone('main', true)).toEqual({
       mainDone: true,
       settingsDone: false,
+      replayPending: false,
     });
-    expect(resetTutorialState()).toEqual({ mainDone: false, settingsDone: false });
+    expect(resetTutorialState()).toEqual({ mainDone: false, settingsDone: false, replayPending: true });
   });
 });
 
@@ -263,6 +281,36 @@ describe('SpotlightTutorial component contract', () => {
     expect(markup).toContain('data-testid="tutorial-connect-cta"');
     expect(markup).toContain('去连接 DeepSeek');
     expect(markup).not.toContain('data-testid="spotlight-next-btn"');
+  });
+
+  it('keeps ModalDialog mounted on close and uses ModalDialog primitive instead of raw dialog boilerplate', () => {
+    const closedMarkup = renderToStaticMarkup(
+      createElement(SpotlightTutorial, {
+        open: false,
+        label: '新手引导',
+        steps: sampleSteps,
+        stepIndex: 0,
+        onStepChange: vi.fn(),
+        onSkip: vi.fn(),
+        onComplete: vi.fn(),
+      }),
+    );
+    expect(closedMarkup).toContain('data-testid="spotlight-tutorial"');
+    expect(closedMarkup).toContain('data-step-id="step-1"');
+
+    const spotlightSource = readFileSync(
+      join(repoRoot, 'src', 'ui', 'SpotlightTutorial.tsx'),
+      'utf8',
+    );
+    expect(spotlightSource).toContain("from './primitives/ModalDialog.tsx'");
+    expect(spotlightSource).not.toContain('dialog.showModal()');
+    expect(spotlightSource).not.toContain('dialog.close()');
+
+    const spotlightCss = readFileSync(
+      join(repoRoot, 'src', 'ui', 'styles', 'spotlight-tutorial.css'),
+      'utf8',
+    );
+    expect(spotlightCss).toMatch(/height:\s*100vh;\s*height:\s*100dvh;/);
   });
 });
 

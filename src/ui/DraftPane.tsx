@@ -57,12 +57,17 @@ import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
 import {
+  createAndSaveDerivedStory,
   createDerivedAssetInWorkspace,
+  derivedAssetTargetLabel,
+  isDerivedAssetTarget,
   recordDerivedAssetDiagnostic,
   recordProposalCreationBreadcrumbs,
   recordProposalDiagnostic,
   revertDocumentToVersion,
+  toCreatedAssetNotice,
   updateTurnNodeProposal,
+  type CreatedAssetNotice,
 } from './proposalActions.ts';
 import {
   finalizePrefixContinuation,
@@ -839,6 +844,7 @@ export function DraftPane(props: DraftPaneProps) {
   };
 
   const continuePartialDiscussion = (nodeId: string) => {
+    autoScroll.resumeFollow();
     reply.start('继续追要半拒绝内容', async (_request, signal, config, setStreamText, appendReasoning) => {
       const { state, live } = await currentWork();
       if (signal.aborted) return;
@@ -942,11 +948,10 @@ export function DraftPane(props: DraftPaneProps) {
         targetLabel: '作品正文',
       };
     }
-    if (normalized === 'character' || normalized === 'draft' || normalized === 'story') {
+    if (isDerivedAssetTarget(normalized)) {
       return {
         currentMarkdown: '',
-        targetLabel:
-          normalized === 'character' ? '新建角色' : normalized === 'draft' ? '新开写故事' : '新开文游',
+        targetLabel: derivedAssetTargetLabel(normalized),
       };
     }
     const settingVer = documentVersion(work.document);
@@ -959,7 +964,7 @@ export function DraftPane(props: DraftPaneProps) {
     resolvedMarkdown: string,
   ) => {
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
-    let createdAsset: { kind: 'character' | 'work' | 'story'; id: string; label: string } | null = null;
+    let createdAsset: CreatedAssetNotice | null = null;
     try {
       if (normalized === 'manuscript') {
         const prevRev = String(work.bodyRevision);
@@ -992,15 +997,12 @@ export function DraftPane(props: DraftPaneProps) {
       }
 
       if (normalized === 'story') {
-        const derived = createDerivedAssetInWorkspace(workspace, proposal, resolvedMarkdown);
-        if (derived.createdStory) {
-          if (props.onSaveDerivedStory) {
-            await props.onSaveDerivedStory(derived.createdStory);
-          } else {
-            await runtime.storyStorage.saveStory(derived.createdStory);
-          }
-        }
-        createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+        createdAsset = await createAndSaveDerivedStory({
+          workspace,
+          proposal,
+          resolvedMarkdown,
+          saveStory: props.onSaveDerivedStory ?? ((derivedStory) => runtime.storyStorage.saveStory(derivedStory)),
+        });
       }
 
       await save((state) => {
@@ -1042,7 +1044,7 @@ export function DraftPane(props: DraftPaneProps) {
 
         if (normalized === 'character' || normalized === 'draft') {
           const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
-          createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+          createdAsset = toCreatedAssetNotice(derived);
           return updateWork(derived.nextState, work.id, (live) => {
             const tree = getWorkDiscussionTree(live);
             const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({

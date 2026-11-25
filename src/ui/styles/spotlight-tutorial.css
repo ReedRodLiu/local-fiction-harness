@@ -4,6 +4,7 @@
   width: 100%;
   width: 100vw;
   height: 100%;
+  height: 100vh;
   height: 100dvh;
   max-width: none;
   max-height: none;
@@ -13,6 +14,17 @@
   border: 0;
   background: transparent;
   color: var(--text-primary);
+  opacity: 1;
+  transition: opacity var(--motion-duration-fast) var(--motion-easing);
+}
+
+.spotlight-dialog[data-closing="true"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.spotlight-dialog:not([open]) {
+  display: none;
 }
 
 .spotlight-dialog::backdrop {
@@ -148,6 +160,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .spotlight-dialog,
   .spotlight-cutout,
   .spotlight-ring,
   .spotlight-card {

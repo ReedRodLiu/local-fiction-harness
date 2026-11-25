@@ -109,12 +109,17 @@ import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
 import { waitForExitAnimation } from './primitives/waitForExitAnimation.ts';
 import {
+  createAndSaveDerivedStory,
   createDerivedAssetInWorkspace,
+  derivedAssetTargetLabel,
+  isDerivedAssetTarget,
   recordDerivedAssetDiagnostic,
   recordProposalCreationBreadcrumbs,
   recordProposalDiagnostic,
   revertDocumentToVersion,
+  toCreatedAssetNotice,
   updateTurnNodeProposal,
+  type CreatedAssetNotice,
 } from './proposalActions.ts';
 import { mergeBranchRenameResult } from './storyConcurrency.ts';
 import { SwipeDiagnosticContext, type SwipeDiagnosticEvent } from './swipeGesture.ts';
@@ -123,6 +128,7 @@ import {
   persistTutorialStageDone,
   readTutorialState,
   resetTutorialState,
+  shouldShowMainTutorial,
   type TutorialStage,
   type TutorialState,
 } from './tutorialState.ts';
@@ -355,7 +361,8 @@ export function App({ runtime }: AppProps) {
   const [diagnosticTrigger, setDiagnosticTrigger] = useState<DiagnosticBundleTrigger>('settings_manual');
   const [configLoaded, setConfigLoaded] = useState(false);
   const [tutorialState, setTutorialState] = useState<TutorialState>(() => readTutorialState());
-  const [tutorialReplayActive, setTutorialReplayActive] = useState(false);
+  const [tutorialMounted, setTutorialMounted] = useState(false);
+  const [renderedTutorialStage, setRenderedTutorialStage] = useState<TutorialStage>('main');
   const [activeTutorialStage, setActiveTutorialStage] = useState<TutorialStage | null>(null);
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [settingsTutorialReady, setSettingsTutorialReady] = useState(false);
@@ -1007,9 +1014,6 @@ export function App({ runtime }: AppProps) {
 
   const completeTutorialStage = useCallback((stage: TutorialStage) => {
     setTutorialState(persistTutorialStageDone(stage, true));
-    if (stage === 'main') {
-      setTutorialReplayActive(false);
-    }
     setActiveTutorialStage(null);
     setTutorialStepIndex(0);
   }, []);
@@ -1053,6 +1057,8 @@ export function App({ runtime }: AppProps) {
       !hasBlockingModal
     ) {
       if (activeTutorialStage !== 'settings') {
+        setRenderedTutorialStage('settings');
+        setTutorialMounted(true);
         setTutorialStepIndex(0);
         setActiveTutorialStage('settings');
       }
@@ -1061,8 +1067,7 @@ export function App({ runtime }: AppProps) {
 
     if (
       configLoaded &&
-      !tutorialState.mainDone &&
-      (!hasCredentials || tutorialReplayActive) &&
+      shouldShowMainTutorial(tutorialState, hasCredentials) &&
       !renderedOverlay &&
       !showImport &&
       !showSettings &&
@@ -1073,6 +1078,8 @@ export function App({ runtime }: AppProps) {
       !hasBlockingModal
     ) {
       if (activeTutorialStage !== 'main') {
+        setRenderedTutorialStage('main');
+        setTutorialMounted(true);
         setTutorialStepIndex(0);
         setActiveTutorialStage('main');
       }
@@ -1100,9 +1107,7 @@ export function App({ runtime }: AppProps) {
     showImport,
     showSettings,
     storyTreeOpen,
-    tutorialReplayActive,
-    tutorialState.mainDone,
-    tutorialState.settingsDone,
+    tutorialState,
     wizardMounted,
     wizardOpen,
   ]);
@@ -1168,7 +1173,6 @@ export function App({ runtime }: AppProps) {
   const handleReplayTutorial = () => {
     setTutorialState(resetTutorialState());
     setTutorialStepIndex(0);
-    setTutorialReplayActive(true);
     setActiveTutorialStage(null);
     if (creativePage === 'writing' && showManuscript) {
       openNewCreation();
@@ -1415,6 +1419,7 @@ export function App({ runtime }: AppProps) {
     }
     withCredentials('继续追要半拒绝内容', (activeCfg) => {
       if (creationPending.current || abortRef.current || isStreaming) return;
+      autoScroll.resumeFollow();
       const storySeqAtStart = ++storyOpSeqRef.current;
       const overlaySeqAtStart = overlayNavigationSeqRef.current;
       const controller = new AbortController();
@@ -1494,6 +1499,7 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '继续追要半拒绝内容',
       (activeCfg) => {
+        autoScroll.resumeFollow();
         void runStreamingExecution(async (callbacks) => {
           const latest = storyRef.current ?? story;
           const effectiveConfig = resolveEffectiveModelConfig(activeCfg, latest.generationPreference);
@@ -2359,11 +2365,10 @@ export function App({ runtime }: AppProps) {
       const note = documentVersion(scoped.documents.local, state.local);
       return { currentMarkdown: note.markdown, currentVersionId: note.id, targetLabel: '分支笔记' };
     }
-    if (normalized === 'character' || normalized === 'draft' || normalized === 'story') {
+    if (isDerivedAssetTarget(normalized)) {
       return {
         currentMarkdown: '',
-        targetLabel:
-          normalized === 'character' ? '新建角色' : normalized === 'draft' ? '新开写故事' : '新开文游',
+        targetLabel: derivedAssetTargetLabel(normalized),
       };
     }
     const scoped = migrateStoryDocuments(story) as Story & { documents: StoryDocuments };
@@ -2403,18 +2408,19 @@ export function App({ runtime }: AppProps) {
       return;
     }
 
-    if (normalized === 'character' || normalized === 'draft' || normalized === 'story') {
-      let createdAsset: { kind: 'character' | 'work' | 'story'; id: string; label: string } | null = null;
+    if (isDerivedAssetTarget(normalized)) {
+      let createdAsset: CreatedAssetNotice | null = null;
       if (normalized === 'story') {
-        const derived = createDerivedAssetInWorkspace(creative.workspace, proposal, resolvedMarkdown);
-        if (derived.createdStory) {
-          await saveDerivedStory(derived.createdStory);
-        }
-        createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+        createdAsset = await createAndSaveDerivedStory({
+          workspace: creative.workspace,
+          proposal,
+          resolvedMarkdown,
+          saveStory: saveDerivedStory,
+        });
       } else {
         await creative.save((state) => {
           const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
-          createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+          createdAsset = toCreatedAssetNotice(derived);
           return derived.nextState;
         });
       }
@@ -3374,19 +3380,22 @@ export function App({ runtime }: AppProps) {
         canExportBackup={canExportFullBackup}
         onExportBackup={handleExportFullBackup}
       />
-      <SpotlightTutorial
-        open={activeTutorialStage !== null}
-        label={activeTutorialStage === 'settings' ? '设置页功能引导' : 'Folio 新手引导'}
-        steps={activeTutorialStage === 'settings' ? settingsTutorialSteps : mainTutorialSteps}
-        stepIndex={tutorialStepIndex}
-        onStepChange={setTutorialStepIndex}
-        onSkip={() => {
-          if (activeTutorialStage) completeTutorialStage(activeTutorialStage);
-        }}
-        onComplete={() => {
-          if (activeTutorialStage) completeTutorialStage(activeTutorialStage);
-        }}
-      />
+      {tutorialMounted && (
+        <SpotlightTutorial
+          open={activeTutorialStage !== null}
+          label={renderedTutorialStage === 'settings' ? '设置页功能引导' : 'Folio 新手引导'}
+          steps={renderedTutorialStage === 'settings' ? settingsTutorialSteps : mainTutorialSteps}
+          stepIndex={tutorialStepIndex}
+          onStepChange={setTutorialStepIndex}
+          onSkip={() => {
+            if (activeTutorialStage) completeTutorialStage(activeTutorialStage);
+          }}
+          onComplete={() => {
+            if (activeTutorialStage) completeTutorialStage(activeTutorialStage);
+          }}
+          onExitComplete={() => setTutorialMounted(false)}
+        />
+      )}
     </div>
     </SwipeDiagnosticContext.Provider>
   );

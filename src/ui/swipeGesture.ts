@@ -26,6 +26,29 @@ export type SwipeDiagnosticReporter = (event: SwipeDiagnosticEvent) => void;
 
 export const SwipeDiagnosticContext = createContext<SwipeDiagnosticReporter | undefined>(undefined);
 
+/** Report a rejected or canceled swipe gesture breadcrumb with consistent reason codes. */
+export function reportSwipeOutcome(
+  onDiagnostic: SwipeDiagnosticReporter | undefined,
+  surface: SwipeSurface,
+  outcome: 'rejected' | 'canceled',
+  lock?: GestureAxisLock,
+): void {
+  if (!onDiagnostic) return;
+  if (outcome === 'rejected') {
+    onDiagnostic({
+      action: 'swipe_gesture_rejected',
+      surface,
+      reasonCode: 'below_threshold',
+    });
+    return;
+  }
+  onDiagnostic({
+    action: 'swipe_gesture_canceled',
+    surface,
+    reasonCode: lock === 'horizontal' ? 'pointer_cancel_horizontal' : 'pointer_cancel_pending',
+  });
+}
+
 /** Acquire pointer capture once horizontal lock engages, tolerating synthetic test events. */
 export function captureSwipePointer(
   target: EventTarget | null | undefined,

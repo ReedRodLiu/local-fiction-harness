@@ -134,6 +134,46 @@ export function recordDerivedAssetDiagnostic(
   }
 }
 
+export interface CreatedAssetNotice {
+  kind: 'character' | 'work' | 'story';
+  id: string;
+  label: string;
+}
+
+export type DerivedAssetTarget = 'character' | 'draft' | 'story';
+
+export function isDerivedAssetTarget(
+  target: string | undefined,
+): target is DerivedAssetTarget {
+  return target === 'character' || target === 'draft' || target === 'story';
+}
+
+export function derivedAssetTargetLabel(target: DerivedAssetTarget): string {
+  if (target === 'character') return '新建角色';
+  return target === 'draft' ? '新开写故事' : '新开文游';
+}
+
+export function toCreatedAssetNotice(derived: DerivedAssetResult): CreatedAssetNotice {
+  return { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+}
+
+export async function createAndSaveDerivedStory(options: {
+  workspace: CreativeWorkspaceState;
+  proposal: TurnProposalRecord;
+  resolvedMarkdown: string;
+  saveStory: (story: Story) => Promise<void>;
+}): Promise<CreatedAssetNotice> {
+  const derived = createDerivedAssetInWorkspace(
+    options.workspace,
+    options.proposal,
+    options.resolvedMarkdown,
+  );
+  if (derived.createdStory) {
+    await options.saveStory(derived.createdStory);
+  }
+  return toCreatedAssetNotice(derived);
+}
+
 export interface DerivedAssetResult {
   nextState: CreativeWorkspaceState;
   createdKind: 'character' | 'work' | 'story';

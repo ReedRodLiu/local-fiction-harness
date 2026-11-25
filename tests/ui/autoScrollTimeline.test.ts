@@ -462,5 +462,23 @@ describe('useAutoScrollTimeline regression suite (Issue #146)', () => {
     expect(charSource).toContain("diagnosticMode: 'character'");
     expect(charSource).toContain('diagnostics: runtime.diagnostics');
     expect(charSource).toContain('autoScroll.resumeFollow()');
+
+    const extractBlock = (source: string, marker: string) => {
+      const start = source.indexOf(marker);
+      expect(start).toBeGreaterThan(-1);
+      return source.slice(start, start + 900);
+    };
+    expect(extractBlock(appSource, 'const handleContinueNeutralPartialRefusal')).toContain(
+      'autoScroll.resumeFollow()',
+    );
+    expect(extractBlock(appSource, 'const handleContinuePartialRefusal')).toContain(
+      'autoScroll.resumeFollow()',
+    );
+    expect(extractBlock(draftSource, 'const continuePartialDiscussion')).toContain(
+      'autoScroll.resumeFollow()',
+    );
+    expect(extractBlock(charSource, 'const continuePartialCharacter')).toContain(
+      'autoScroll.resumeFollow()',
+    );
   });
 });

@@ -50,12 +50,17 @@ import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { ModalDialog } from './primitives/ModalDialog.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
 import {
+  createAndSaveDerivedStory,
   createDerivedAssetInWorkspace,
+  derivedAssetTargetLabel,
+  isDerivedAssetTarget,
   recordDerivedAssetDiagnostic,
   recordProposalCreationBreadcrumbs,
   recordProposalDiagnostic,
   revertDocumentToVersion,
+  toCreatedAssetNotice,
   updateTurnNodeProposal,
+  type CreatedAssetNotice,
 } from './proposalActions.ts';
 import {
   finalizePrefixContinuation,
@@ -617,6 +622,7 @@ export function CharacterPane(props: CharacterPaneProps) {
 
   const continuePartialCharacter = (nodeId: string) => {
     if (!conversation) return;
+    autoScroll.resumeFollow();
     reply.start('继续追要半拒绝内容', async (_request, signal, config, setStreamText, appendReasoning) => {
       const state = await read();
       const current = state.characters.find((item) => item.id === character.id);
@@ -717,11 +723,10 @@ export function CharacterPane(props: CharacterPaneProps) {
       const note = documentVersion(conversation.document, localId);
       return { currentMarkdown: note.markdown, currentVersionId: note.id, targetLabel: '分支笔记' };
     }
-    if (normalized === 'character' || normalized === 'draft' || normalized === 'story') {
+    if (isDerivedAssetTarget(normalized)) {
       return {
         currentMarkdown: '',
-        targetLabel:
-          normalized === 'character' ? '新建角色' : normalized === 'draft' ? '新开写故事' : '新开文游',
+        targetLabel: derivedAssetTargetLabel(normalized),
       };
     }
     const charDoc = documentVersion(character.document);
@@ -735,19 +740,16 @@ export function CharacterPane(props: CharacterPaneProps) {
   ) => {
     if (!conversation) return;
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
-    let createdAsset: { kind: 'character' | 'work' | 'story'; id: string; label: string } | null = null;
+    let createdAsset: CreatedAssetNotice | null = null;
 
     try {
       if (normalized === 'story') {
-        const derived = createDerivedAssetInWorkspace(workspace, proposal, resolvedMarkdown);
-        if (derived.createdStory) {
-          if (props.onSaveDerivedStory) {
-            await props.onSaveDerivedStory(derived.createdStory);
-          } else {
-            await runtime.storyStorage.saveStory(derived.createdStory);
-          }
-        }
-        createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+        createdAsset = await createAndSaveDerivedStory({
+          workspace,
+          proposal,
+          resolvedMarkdown,
+          saveStory: props.onSaveDerivedStory ?? ((derivedStory) => runtime.storyStorage.saveStory(derivedStory)),
+        });
       }
 
       await save((state) => {
@@ -784,7 +786,7 @@ export function CharacterPane(props: CharacterPaneProps) {
 
         if (normalized === 'character' || normalized === 'draft') {
           const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
-          createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+          createdAsset = toCreatedAssetNotice(derived);
           return updateCharacter(derived.nextState, character.id, (live) =>
             updateConversation(live, conversation.id, (conv) => ({
               ...conv,
