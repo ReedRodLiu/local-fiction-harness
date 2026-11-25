@@ -2,6 +2,12 @@
 
 本文件记录 Folio 面向用户的版本变化。实现细节和技术决策见各版本对应的 GitHub Release 与 `docs/adr/`。
 
+## V0.4.1 — 2026-11-25
+
+### 修复与改进
+
+- **应用图标更新**：将 Android 启动器图标（全套自适应前景/背景与传统圆角/圆形图标 `mipmap-*`）与网页端图标（`favicon.png`、`icon-192.png`、`apple-touch-icon.png`）统一更换为新版 Folio 折纸“F”与钴蓝书签徽标；仅更新图标与版本号（Android `versionCode 5` / `0.4.1`），不包含其他功能改动。
+
 ## V0.4.0 — 2026-11-24
 
 ### 新增
