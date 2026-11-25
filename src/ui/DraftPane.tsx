@@ -7,7 +7,6 @@ import {
   buildTurnProposalRecords,
   buildTurnUsageTelemetry,
   createDefaultId,
-  detectNaturalModeSwitchIntent,
   documentLineage,
   documentVersion,
   findLeafForTurnTreeNode,
@@ -42,7 +41,7 @@ import {
   type ModelConfig,
   type PlatformRuntime,
   type PromptPackLibrary,
-  type StageAssetMode,
+  type Story,
   type TurnNode,
   type TurnProposalRecord,
   type WritingSuggestion,
@@ -59,6 +58,7 @@ import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
 import {
   createDerivedAssetInWorkspace,
+  recordDerivedAssetDiagnostic,
   recordProposalCreationBreadcrumbs,
   recordProposalDiagnostic,
   revertDocumentToVersion,
@@ -101,8 +101,8 @@ interface DraftPaneProps {
   manuscript?: boolean;
   onStartManuscript?: () => void;
   onSwitchToChat?: () => void;
-  onSwitchStageMode?: (targetMode: StageAssetMode) => void;
-  onNavigateCreatedAsset?: (kind: 'character' | 'work', id: string) => void;
+  onSaveDerivedStory?: (story: Story) => Promise<void>;
+  onNavigateCreatedAsset?: (kind: 'character' | 'work' | 'story', id: string) => void;
   initialTurn: { id: string; prompt: string } | null;
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;
@@ -143,7 +143,7 @@ export function DraftPane(props: DraftPaneProps) {
     proposalId: string;
   } | null>(null);
   const [createdAssetNotice, setCreatedAssetNotice] = useState<{
-    kind: 'character' | 'work';
+    kind: 'character' | 'work' | 'story';
     id: string;
     label: string;
   } | null>(null);
@@ -320,13 +320,6 @@ export function DraftPane(props: DraftPaneProps) {
   ) {
     const input = value.trim();
     if (!input || reply.busy) return;
-
-    const switchTarget = detectNaturalModeSwitchIntent(input);
-    if (switchTarget && switchTarget !== 'writing' && props.onSwitchStageMode) {
-      setDiscussionInput('');
-      props.onSwitchStageMode(switchTarget);
-      return;
-    }
 
     const startedAt = performance.now();
     autoScroll.resumeFollow();
@@ -949,8 +942,12 @@ export function DraftPane(props: DraftPaneProps) {
         targetLabel: '作品正文',
       };
     }
-    if (normalized === 'character' || normalized === 'draft') {
-      return { currentMarkdown: '', targetLabel: normalized === 'character' ? '新建角色' : '新开写故事' };
+    if (normalized === 'character' || normalized === 'draft' || normalized === 'story') {
+      return {
+        currentMarkdown: '',
+        targetLabel:
+          normalized === 'character' ? '新建角色' : normalized === 'draft' ? '新开写故事' : '新开文游',
+      };
     }
     const settingVer = documentVersion(work.document);
     return { currentMarkdown: settingVer.markdown, currentVersionId: settingVer.id, targetLabel: '作品设定' };
@@ -962,7 +959,7 @@ export function DraftPane(props: DraftPaneProps) {
     resolvedMarkdown: string,
   ) => {
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
-    let createdAsset: { kind: 'character' | 'work'; id: string; label: string } | null = null;
+    let createdAsset: { kind: 'character' | 'work' | 'story'; id: string; label: string } | null = null;
     try {
       if (normalized === 'manuscript') {
         const prevRev = String(work.bodyRevision);
@@ -994,6 +991,18 @@ export function DraftPane(props: DraftPaneProps) {
         return;
       }
 
+      if (normalized === 'story') {
+        const derived = createDerivedAssetInWorkspace(workspace, proposal, resolvedMarkdown);
+        if (derived.createdStory) {
+          if (props.onSaveDerivedStory) {
+            await props.onSaveDerivedStory(derived.createdStory);
+          } else {
+            await runtime.storyStorage.saveStory(derived.createdStory);
+          }
+        }
+        createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+      }
+
       await save((state) => {
         if (normalized === 'memory') {
           const prevId = state.publicDocument.head;
@@ -1014,6 +1023,21 @@ export function DraftPane(props: DraftPaneProps) {
             };
           });
           return { ...state, publicDocument: nextPublicDoc, works: nextWorks };
+        }
+
+        if (normalized === 'story') {
+          return updateWork(state, work.id, (live) => {
+            const tree = getWorkDiscussionTree(live);
+            const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
+              ...p,
+              status: 'applied',
+            }));
+            return {
+              ...live,
+              discussionNodes: nextNodes,
+              discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
+            };
+          });
         }
 
         if (normalized === 'character' || normalized === 'draft') {
@@ -1056,7 +1080,10 @@ export function DraftPane(props: DraftPaneProps) {
         recordProposalDiagnostic(runtime.diagnostics, 'patch_reapplied', proposal);
       }
       recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
-      if (createdAsset) setCreatedAssetNotice(createdAsset);
+      if (createdAsset) {
+        recordDerivedAssetDiagnostic(runtime.diagnostics, proposal);
+        setCreatedAssetNotice(createdAsset);
+      }
     } catch (err) {
       reply.fail(err);
     }

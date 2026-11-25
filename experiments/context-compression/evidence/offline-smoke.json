@@ -498,7 +498,7 @@
           "routeId": "route-01",
           "pathNodeCount": 146,
           "pathCharCount": 2396,
-          "contextEstimatedTokens": 1094,
+          "contextEstimatedTokens": 1211,
           "uniqueFactPresent": true,
           "foreignRouteFactCount": 0
         },
@@ -507,7 +507,7 @@
           "routeId": "route-02",
           "pathNodeCount": 146,
           "pathCharCount": 2400,
-          "contextEstimatedTokens": 1095,
+          "contextEstimatedTokens": 1212,
           "uniqueFactPresent": true,
           "foreignRouteFactCount": 0
         },
@@ -516,7 +516,7 @@
           "routeId": "route-01",
           "pathNodeCount": 146,
           "pathCharCount": 2396,
-          "contextEstimatedTokens": 1094,
+          "contextEstimatedTokens": 1211,
           "uniqueFactPresent": true,
           "foreignRouteFactCount": 0
         }
@@ -542,7 +542,7 @@
           "routeId": "route-01",
           "pathNodeCount": 146,
           "pathCharCount": 2396,
-          "contextEstimatedTokens": 1094,
+          "contextEstimatedTokens": 1211,
           "uniqueFactPresent": true,
           "foreignRouteFactCount": 0
         },
@@ -551,7 +551,7 @@
           "routeId": "route-02",
           "pathNodeCount": 146,
           "pathCharCount": 2400,
-          "contextEstimatedTokens": 1095,
+          "contextEstimatedTokens": 1212,
           "uniqueFactPresent": true,
           "foreignRouteFactCount": 0
         },
@@ -560,7 +560,7 @@
           "routeId": "route-03",
           "pathNodeCount": 146,
           "pathCharCount": 2394,
-          "contextEstimatedTokens": 1111,
+          "contextEstimatedTokens": 1228,
           "uniqueFactPresent": true,
           "foreignRouteFactCount": 0
         }

@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  V02_CHANGE_PROMPT,
   applyProposalPatch,
   inspectStreamingReplyPrefix,
+  normalizeProposalTarget,
   parseProposalReply,
   resolveProposalMarkdown,
   splitMarkdownReply,
+  toLegacyProposalTarget,
   visibleReplyPrefix,
 } from '../../src/harness/markdownProposal.ts';
 
@@ -148,6 +151,37 @@ describe('V0.2 lfh-proposal protocol', () => {
     expect(parsed.proposals[1].target).toBe('draft');
     expect(parsed.proposals[1].name).toBe('番外篇');
     expect(parsed.proposals[1].summary).toContain('番外篇');
+  });
+
+  it('supports target: story for explicit cross-mode interactive story derivation and clarifies prompt boundaries', () => {
+    expect(normalizeProposalTarget('story')).toBe('story');
+    expect(toLegacyProposalTarget('story')).toBe('container');
+
+    const reply = [
+      '已整理好适合开成互动文游的开局设定。',
+      '```lfh-proposal',
+      'target: story',
+      'op: full',
+      'name: 雾港夜航',
+      '---',
+      '## 世界观',
+      '雾港只有一班夜船。',
+      '```',
+    ].join('\n');
+
+    const parsed = parseProposalReply(reply);
+    expect(parsed.proposalStatus).toBe('recognized');
+    expect(parsed.unparsedBlocks).toEqual([]);
+    expect(parsed.proposals).toHaveLength(1);
+    expect(parsed.proposals[0]).toMatchObject({
+      target: 'story',
+      legacyTarget: 'container',
+      op: 'full',
+      name: '雾港夜航',
+    });
+    expect(parsed.proposals[0].summary).toContain('雾港夜航');
+    expect(V02_CHANGE_PROMPT).toContain('character | draft | story');
+    expect(V02_CHANGE_PROMPT).toContain('明确要求');
   });
 
   it('keeps legacy lfh-change compatibility via both parseProposalReply and splitMarkdownReply', () => {
