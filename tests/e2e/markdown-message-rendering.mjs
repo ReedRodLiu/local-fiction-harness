@@ -502,6 +502,10 @@ async function runMode(browser, port, mode) {
     await mockKeyVerification(page);
     await page.goto(`http://localhost:${port}`, { waitUntil: 'networkidle' });
 
+    if (mode.expectedMode !== 'story') {
+      const category = mode.expectedMode === 'writing' ? '写故事' : '角色互动';
+      await page.getByTestId('desktop-library').getByRole('button', { name: category, exact: true }).click();
+    }
     await page.fill('#turn-input', mode.entryPrompt);
     await page.getByRole('button', { name: '发送行动', exact: true }).click();
     await completePendingSetup(page);
