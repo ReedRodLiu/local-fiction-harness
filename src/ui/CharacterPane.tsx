@@ -35,6 +35,7 @@ import {
   type PromptPackLibrary,
   type PublicResearchFailure,
   type PublicResearchReference,
+  type StageAssetMode,
   type Story,
   type TurnNode,
   type TurnProposalRecord,
@@ -53,6 +54,7 @@ import {
   createAndSaveDerivedStory,
   createDerivedAssetInWorkspace,
   derivedAssetTargetLabel,
+  derivedTargetToStageMode,
   isDerivedAssetTarget,
   recordDerivedAssetDiagnostic,
   recordProposalCreationBreadcrumbs,
@@ -61,6 +63,7 @@ import {
   toCreatedAssetNotice,
   updateTurnNodeProposal,
   type CreatedAssetNotice,
+  type CrossModeProposalConfirmPayload,
 } from './proposalActions.ts';
 import {
   finalizePrefixContinuation,
@@ -98,6 +101,12 @@ interface CharacterPaneProps {
   onOpenNarrativePresets?: () => void;
   onSaveDerivedStory?: (story: Story) => Promise<void>;
   onNavigateCreatedAsset?: (kind: 'character' | 'work' | 'story', id: string) => void;
+  onRequestModeSwitch?: (
+    input: string,
+    fromMode: StageAssetMode,
+    restoreInput: (text: string) => void,
+  ) => boolean;
+  onRequestCrossModeProposalConfirm?: (payload: CrossModeProposalConfirmPayload) => void;
   initialTurn: { id: string; prompt: string } | null;
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;
@@ -740,9 +749,8 @@ export function CharacterPane(props: CharacterPaneProps) {
   ) => {
     if (!conversation) return;
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
-    let createdAsset: CreatedAssetNotice | null = null;
-
-    try {
+    const applyDerivedProposal = async (): Promise<CreatedAssetNotice | null> => {
+      let createdAsset: CreatedAssetNotice | null = null;
       if (normalized === 'story') {
         createdAsset = await createAndSaveDerivedStory({
           workspace,
@@ -752,6 +760,65 @@ export function CharacterPane(props: CharacterPaneProps) {
         });
       }
 
+      await save((state) => {
+        if (normalized === 'story') {
+          return updateCharacter(state, character.id, (live) =>
+            updateConversation(live, conversation.id, (conv) => ({
+              ...conv,
+              nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
+                ...p,
+                status: 'applied',
+              })),
+            })),
+          );
+        }
+
+        const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
+        createdAsset = toCreatedAssetNotice(derived);
+        return updateCharacter(derived.nextState, character.id, (live) =>
+          updateConversation(live, conversation.id, (conv) => ({
+            ...conv,
+            nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
+              ...p,
+              status: 'applied',
+            })),
+          })),
+        );
+      });
+
+      recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
+      if (createdAsset) {
+        recordDerivedAssetDiagnostic(runtime.diagnostics, proposal);
+      }
+      return createdAsset;
+    };
+
+    if (isDerivedAssetTarget(normalized)) {
+      const targetMode = derivedTargetToStageMode(normalized);
+      if (targetMode !== 'character' && props.onRequestCrossModeProposalConfirm) {
+        props.onRequestCrossModeProposalConfirm({
+          sourceMode: 'character',
+          targetMode,
+          targetTitle: proposal.name?.trim() || derivedAssetTargetLabel(normalized),
+          executeConfirm: async () => {
+            const createdAsset = await applyDerivedProposal();
+            if (createdAsset) {
+              props.onNavigateCreatedAsset?.(createdAsset.kind, createdAsset.id);
+            }
+          },
+        });
+        return;
+      }
+      try {
+        const createdAsset = await applyDerivedProposal();
+        if (createdAsset) setCreatedAssetNotice(createdAsset);
+      } catch (err) {
+        reply.fail(err);
+      }
+      return;
+    }
+
+    try {
       await save((state) => {
         if (normalized === 'memory') {
           const prevId = state.publicDocument.head;
@@ -769,32 +836,6 @@ export function CharacterPane(props: CharacterPaneProps) {
                   appliedVersionId: nextPublicDoc.head,
                 })),
               })),
-          );
-        }
-
-        if (normalized === 'story') {
-          return updateCharacter(state, character.id, (live) =>
-            updateConversation(live, conversation.id, (conv) => ({
-              ...conv,
-              nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
-                ...p,
-                status: 'applied',
-              })),
-            })),
-          );
-        }
-
-        if (normalized === 'character' || normalized === 'draft') {
-          const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
-          createdAsset = toCreatedAssetNotice(derived);
-          return updateCharacter(derived.nextState, character.id, (live) =>
-            updateConversation(live, conversation.id, (conv) => ({
-              ...conv,
-              nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
-                ...p,
-                status: 'applied',
-              })),
-            })),
           );
         }
 
@@ -839,10 +880,6 @@ export function CharacterPane(props: CharacterPaneProps) {
       });
 
       recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
-      if (createdAsset) {
-        recordDerivedAssetDiagnostic(runtime.diagnostics, proposal);
-        setCreatedAssetNotice(createdAsset);
-      }
     } catch (err) {
       reply.fail(err);
     }
@@ -1105,6 +1142,14 @@ export function CharacterPane(props: CharacterPaneProps) {
             event.preventDefault();
             const contents = input.trim();
             if (!contents || reply.busy) return;
+            if (
+              props.onRequestModeSwitch?.(contents, 'character', (text) =>
+                setInput((curr) => (curr.length === 0 ? text : curr)),
+              )
+            ) {
+              setInput('');
+              return;
+            }
             if (conversation) send(conversation.id, contents);
             else void startConversation(false).then((id) => send(id, contents)).catch(reply.fail);
           }}

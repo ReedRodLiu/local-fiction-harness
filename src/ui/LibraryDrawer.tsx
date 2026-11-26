@@ -7,6 +7,7 @@ import { DrawerDialog } from './primitives/DrawerDialog.tsx';
 export interface LibraryDrawerProps {
   /** Optional normalized entries and their ID-based actions for the two creative categories. */
   activeCategory?: 'story' | 'work' | 'character';
+  onSelectCategory?: (category: 'story' | 'work' | 'character') => void;
   works?: LibraryItem[];
   characters?: LibraryItem[];
   activeWorkId?: string;
@@ -37,6 +38,7 @@ export interface LibraryDrawerProps {
 export function LibraryDrawer({
   stories,
   activeCategory,
+  onSelectCategory,
   works, characters, activeWorkId, activeCharacterId, workActions, characterActions, onNewCreation,
   activeStoryId,
   collapsed,
@@ -84,6 +86,7 @@ export function LibraryDrawer({
     <StoryLibrary
       stories={stories}
       activeCategory={activeCategory}
+      onSelectCategory={onSelectCategory}
       works={works}
       characters={characters}
       activeWorkId={activeWorkId}

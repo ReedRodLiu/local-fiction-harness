@@ -3,6 +3,7 @@ import { ArrowUp, FilePlus2, PenLine, Plus, Sparkles, Square } from 'lucide-reac
 import {
   DEFAULT_MODEL_CONFIG,
   EMPTY_SUMMARY_SNAPSHOT,
+  STAGE_MODE_LABELS,
   buildEntryRouteMessages,
   buildPromptPackContextOptions,
   buildTurnProposalRecords,
@@ -90,6 +91,7 @@ import { ImportPanel, type ImportMode } from './ImportPanel.tsx';
 import { LibraryDrawer } from './LibraryDrawer.tsx';
 import { MarkdownView } from './MarkdownView.tsx';
 import { MessageContent } from './MessageContent.tsx';
+import { ModeSwitchConfirmDialog, type ModeSwitchConfirmRequest } from './ModeSwitchConfirmDialog.tsx';
 import { PromptPackSheet } from './PromptPackSheet.tsx';
 import { SettingsPage } from './SettingsPage.tsx';
 import { SpotlightTutorial } from './SpotlightTutorial.tsx';
@@ -112,6 +114,7 @@ import {
   createAndSaveDerivedStory,
   createDerivedAssetInWorkspace,
   derivedAssetTargetLabel,
+  derivedTargetToStageMode,
   isDerivedAssetTarget,
   recordDerivedAssetDiagnostic,
   recordProposalCreationBreadcrumbs,
@@ -120,6 +123,7 @@ import {
   toCreatedAssetNotice,
   updateTurnNodeProposal,
   type CreatedAssetNotice,
+  type CrossModeProposalConfirmPayload,
 } from './proposalActions.ts';
 import { mergeBranchRenameResult } from './storyConcurrency.ts';
 import { SwipeDiagnosticContext, type SwipeDiagnosticEvent } from './swipeGesture.ts';
@@ -215,6 +219,53 @@ export interface AppProps {
   runtime: PlatformRuntime;
 }
 
+type LibraryCategory = 'story' | 'work' | 'character';
+
+function libraryCategoryToMode(category: LibraryCategory): StageAssetMode {
+  if (category === 'work') return 'writing';
+  if (category === 'character') return 'character';
+  return 'story';
+}
+
+function modeToLibraryCategory(mode: StageAssetMode): LibraryCategory {
+  if (mode === 'writing') return 'work';
+  if (mode === 'character') return 'character';
+  return 'story';
+}
+
+type PendingModeSwitch =
+  | {
+      kind: 'welcome_neutral';
+      request: ModeSwitchConfirmRequest;
+      userInput: string;
+      targetMode: StageAssetMode;
+      prefAtSubmit?: GenerationPreference;
+    }
+  | {
+      kind: 'welcome_route';
+      request: ModeSwitchConfirmRequest;
+      userInput: string;
+      targetMode: StageAssetMode;
+      title: string;
+      settingMarkdown: string;
+      characterName?: string;
+      allTurns: TurnNode[];
+      hadNeutralHistory: boolean;
+      prefAtSubmit?: GenerationPreference;
+    }
+  | {
+      kind: 'in_chat_switch';
+      request: ModeSwitchConfirmRequest;
+      userInput: string;
+      targetMode: StageAssetMode;
+      restoreInput: (text: string) => void;
+    }
+  | {
+      kind: 'cross_mode_proposal';
+      request: ModeSwitchConfirmRequest;
+      executeConfirm: () => Promise<void>;
+    };
+
 function useOverlayLayerPresence<T extends string>(
   active: T | null,
   onExitComplete?: () => void,
@@ -254,6 +305,12 @@ function useOverlayLayerPresence<T extends string>(
 export function App({ runtime }: AppProps) {
   const isWebDev = runtime.platform === 'web' && import.meta.env.DEV;
   const creative = useCreativeWorkspace(runtime.creativeStorage);
+  const [selectedMode, setSelectedMode] = useState<StageAssetMode>('story');
+  const selectedModeRef = useRef(selectedMode);
+  selectedModeRef.current = selectedMode;
+  const [pendingModeSwitch, setPendingModeSwitch] = useState<PendingModeSwitch | null>(null);
+  const [modeSwitchBusy, setModeSwitchBusy] = useState(false);
+  const modeSwitchBusyRef = useRef(false);
   const [creativePage, setCreativePage] = useState<'writing' | 'character' | null>(null);
   const [newCreationOpen, setNewCreationOpen] = useState(false);
   const [neutralTurns, setNeutralTurns] = useState<TurnNode[]>([]);
@@ -409,6 +466,7 @@ export function App({ runtime }: AppProps) {
       !wizardOpen &&
       !diagnosticsOpen &&
       !documentEdit &&
+      !pendingModeSwitch &&
       !activeTutorialStage,
     () => setMobileLibraryOpen(true),
     reportSwipeDiagnostic,
@@ -719,7 +777,27 @@ export function App({ runtime }: AppProps) {
     };
   }, [isWebDev]);
 
+  const handleCancelPendingModeSwitch = useCallback(() => {
+    if (modeSwitchBusyRef.current) return;
+    setPendingModeSwitch((current) => {
+      if (!current) return null;
+      if (
+        current.kind === 'welcome_neutral' ||
+        current.kind === 'welcome_route'
+      ) {
+        const prevInput = current.userInput;
+        setInput((curr) => (curr.length === 0 ? prevInput : curr));
+      } else if (current.kind === 'in_chat_switch') {
+        current.restoreInput(current.userInput);
+      }
+      return null;
+    });
+  }, []);
+
   useAppOverlayHistory({
+    modeSwitchConfirmOpen: Boolean(pendingModeSwitch),
+    modeSwitchConfirmBusy: modeSwitchBusy,
+    onModeSwitchConfirmBack: handleCancelPendingModeSwitch,
     wizardOpen,
     wizardVerifying,
     onWizardBack: () => {
@@ -1039,6 +1117,7 @@ export function App({ runtime }: AppProps) {
 
   useEffect(() => {
     const hasBlockingModal =
+      Boolean(pendingModeSwitch) ||
       wizardOpen ||
       wizardMounted ||
       diagnosticsOpen ||
@@ -1101,6 +1180,7 @@ export function App({ runtime }: AppProps) {
     isAppUpdateModalOpen,
     isStreaming,
     mobileLibraryOpen,
+    pendingModeSwitch,
     renderedOverlay,
     settingsSubPage,
     settingsTutorialReady,
@@ -1237,6 +1317,7 @@ export function App({ runtime }: AppProps) {
       const active = migrateStoryToV02(activated ?? saved);
       storyRef.current = active;
       setStory(active);
+      setSelectedMode('story');
       setCreativePage(null);
       setNewCreationOpen(false);
       setNeutralTurns([]);
@@ -1251,6 +1332,7 @@ export function App({ runtime }: AppProps) {
         activeWorkId: stillCurrent() ? work.id : state.activeWorkId,
       }));
       if (!stillCurrent()) return;
+      setSelectedMode('writing');
       setNeutralTurns([]);
       setPendingWelcomePref(undefined);
       setWritingView({ id: work.id, manuscript: Boolean(work.body.trim()) });
@@ -1265,6 +1347,7 @@ export function App({ runtime }: AppProps) {
         activeCharacterId: stillCurrent() ? ch.id : state.activeCharacterId,
       }));
       if (!stillCurrent()) return;
+      setSelectedMode('character');
       setNeutralTurns([]);
       setPendingWelcomePref(undefined);
       openCreativePage('character');
@@ -1285,6 +1368,137 @@ export function App({ runtime }: AppProps) {
     void changeCreativeItem(kind === 'character' ? 'character' : 'writing', id, 'select');
   };
 
+  const requestInChatModeSwitchIfExplicit = useCallback(
+    (
+      rawText: string,
+      fromMode: StageAssetMode,
+      restoreInput: (text: string) => void,
+    ): boolean => {
+      const trimmed = rawText.trim();
+      if (!trimmed || modeSwitchBusyRef.current) return false;
+      const targetMode = detectNaturalModeSwitchIntent(trimmed);
+      if (!targetMode || targetMode === fromMode) return false;
+      setPendingModeSwitch({
+        kind: 'in_chat_switch',
+        userInput: trimmed,
+        targetMode,
+        restoreInput,
+        request: {
+          sourceMode: fromMode,
+          targetMode,
+          reasonLabel: '对话中自然语言切换模式',
+          description: `检测到你希望从「${STAGE_MODE_LABELS[fromMode]}」切换到「${STAGE_MODE_LABELS[targetMode]}」。确认后将在「${STAGE_MODE_LABELS[targetMode]}」新建独立会话并跳转，原会话内容保持不变。`,
+          confirmLabel: `确认切换到${STAGE_MODE_LABELS[targetMode]}`,
+        },
+      });
+      return true;
+    },
+    [],
+  );
+
+  const requestCrossModeProposalConfirm = useCallback(
+    (payload: CrossModeProposalConfirmPayload) => {
+      if (modeSwitchBusyRef.current) return;
+      const sourceLabel = STAGE_MODE_LABELS[payload.sourceMode];
+      const targetLabel = STAGE_MODE_LABELS[payload.targetMode];
+      setPendingModeSwitch({
+        kind: 'cross_mode_proposal',
+        executeConfirm: payload.executeConfirm,
+        request: {
+          sourceMode: payload.sourceMode,
+          targetMode: payload.targetMode,
+          targetTitle: payload.targetTitle,
+          reasonLabel: '跨模式派生新会话',
+          description: `确认后将根据当前提案在「${targetLabel}」创建独立会话并自动跳转，原有「${sourceLabel}」会话保持不变。`,
+          confirmLabel: '确认创建并跳转',
+        },
+      });
+    },
+    [],
+  );
+
+  const handleConfirmPendingModeSwitch = async () => {
+    const current = pendingModeSwitch;
+    if (!current || modeSwitchBusyRef.current) return;
+    modeSwitchBusyRef.current = true;
+    setModeSwitchBusy(true);
+    setErrorMsg(null);
+    try {
+      if (current.kind === 'welcome_neutral') {
+        const materialized = materializeAssetFromNodes({
+          targetMode: current.targetMode,
+          title: neutralTurns[0]?.content.slice(0, 20) || '新创作',
+          settingMarkdown: neutralTurns.map((t) => t.content).join('\n\n'),
+          turns: neutralTurns,
+          generationPreference: current.prefAtSubmit,
+        });
+        await persistMaterializedAsset(current.targetMode, materialized);
+        try {
+          runtime.diagnostics.recordEvent({
+            level: 'info',
+            category: 'ui',
+            action: 'entry_neutral_persisted',
+            meta: { routeMode: current.targetMode },
+          });
+        } catch {
+          // Ignore diagnostics error.
+        }
+      } else if (current.kind === 'welcome_route') {
+        const materialized = materializeAssetFromNodes({
+          targetMode: current.targetMode,
+          title: current.title,
+          settingMarkdown: current.settingMarkdown,
+          turns: current.allTurns,
+          characterName: current.characterName,
+          generationPreference: current.prefAtSubmit,
+        });
+        await persistMaterializedAsset(current.targetMode, materialized);
+        try {
+          runtime.diagnostics.recordEvent({
+            level: 'info',
+            category: 'ui',
+            action: 'entry_route_classified',
+            meta: { routeMode: current.targetMode },
+          });
+          if (current.hadNeutralHistory) {
+            runtime.diagnostics.recordEvent({
+              level: 'info',
+              category: 'ui',
+              action: 'entry_neutral_persisted',
+              meta: { routeMode: current.targetMode },
+            });
+          }
+        } catch {
+          // Ignore diagnostics error.
+        }
+      } else if (current.kind === 'in_chat_switch') {
+        await flushActiveManuscripts();
+        const defaultTitle =
+          current.targetMode === 'story'
+            ? '新故事'
+            : current.targetMode === 'writing'
+              ? '未命名作品'
+              : '未命名角色';
+        const materialized = materializeAssetFromNodes({
+          targetMode: current.targetMode,
+          title: defaultTitle,
+          settingMarkdown: '',
+          turns: [],
+        });
+        await persistMaterializedAsset(current.targetMode, materialized);
+      } else {
+        await current.executeConfirm();
+      }
+      setPendingModeSwitch(null);
+    } catch (err) {
+      setPendingModeSwitch(null);
+      setErrorMsg(toErrorMessage(err, '切换模式失败。'));
+    } finally {
+      modeSwitchBusyRef.current = false;
+      setModeSwitchBusy(false);
+    }
+  };
+
   const sendAction = (
     userPrompt: string,
     restoreOnError = false,
@@ -1298,6 +1512,16 @@ export function App({ runtime }: AppProps) {
       isStreaming ||
       isSummarizing
     ) return;
+
+    if (
+      restoreOnError &&
+      requestInChatModeSwitchIfExplicit(trimmed, 'story', (prevText) =>
+        setInput((current) => (current.length === 0 ? prevText : current)),
+      )
+    ) {
+      setInput('');
+      return;
+    }
 
     withCredentials(
       '继续互动对话',
@@ -1595,10 +1819,29 @@ export function App({ runtime }: AppProps) {
     const trimmed = rawPrompt.trim();
     if (!trimmed || creationPending.current || modeConversionPendingRef.current || isStreaming || creating) return;
     const prefAtSubmit = pendingWelcomePref;
+    const lockedModeAtSubmit = selectedModeRef.current;
 
     if (neutralTurns.length > 0) {
       const switchTarget = detectNaturalModeSwitchIntent(trimmed);
       if (switchTarget) {
+        if (switchTarget !== lockedModeAtSubmit) {
+          setInput('');
+          setPendingModeSwitch({
+            kind: 'welcome_neutral',
+            userInput: trimmed,
+            targetMode: switchTarget,
+            prefAtSubmit,
+            request: {
+              sourceMode: lockedModeAtSubmit,
+              targetMode: switchTarget,
+              targetTitle: neutralTurns[0]?.content.slice(0, 20) || '新创作',
+              reasonLabel: '新建创作模式切换确认',
+              description: `当前新创作锁定为「${STAGE_MODE_LABELS[lockedModeAtSubmit]}」，检测到你要求切换到「${STAGE_MODE_LABELS[switchTarget]}」。确认后将按「${STAGE_MODE_LABELS[switchTarget]}」保存当前对话并进入；取消则保持「${STAGE_MODE_LABELS[lockedModeAtSubmit]}」不变。`,
+              confirmLabel: `确认切换到${STAGE_MODE_LABELS[switchTarget]}`,
+            },
+          });
+          return;
+        }
         modeConversionPendingRef.current = true;
         const materialized = materializeAssetFromNodes({
           targetMode: switchTarget,
@@ -1674,6 +1917,7 @@ export function App({ runtime }: AppProps) {
         {
           onDiagnostic: (event) => recordRefusalDiagnostic(runtime.diagnostics, event),
           publicResearch: runtime.publicResearch,
+          lockedMode: lockedModeAtSubmit,
         },
       )
         .then(async (routed) => {
@@ -1732,6 +1976,29 @@ export function App({ runtime }: AppProps) {
 
           const allTurns = [...neutralTurns, userNode, assistantNode];
           const hadNeutralHistory = neutralTurns.length > 0;
+          if (routed.mode !== lockedModeAtSubmit) {
+            setPendingModeSwitch({
+              kind: 'welcome_route',
+              userInput: trimmed,
+              targetMode: routed.mode,
+              title: routed.title,
+              settingMarkdown: routed.settingMarkdown,
+              characterName: routed.characterName,
+              allTurns,
+              hadNeutralHistory,
+              prefAtSubmit,
+              request: {
+                sourceMode: lockedModeAtSubmit,
+                targetMode: routed.mode,
+                targetTitle: routed.title,
+                reasonLabel: '新建创作模式切换确认',
+                description: `当前已锁定为「${STAGE_MODE_LABELS[lockedModeAtSubmit]}」，检测到你希望切换到「${STAGE_MODE_LABELS[routed.mode]}」创建「${routed.title}」。确认后将按「${STAGE_MODE_LABELS[routed.mode]}」建档并进入；取消则保持「${STAGE_MODE_LABELS[lockedModeAtSubmit]}」且不产生新记录。`,
+                confirmLabel: `确认切换到${STAGE_MODE_LABELS[routed.mode]}`,
+              },
+            });
+            return;
+          }
+
           const materialized = materializeAssetFromNodes({
             targetMode: routed.mode,
             title: routed.title,
@@ -1810,6 +2077,7 @@ export function App({ runtime }: AppProps) {
         activeWorkId: isNavigationCurrent(storySeqAtStart, overlaySeqAtStart) ? work.id : state.activeWorkId,
       }));
       if (!isNavigationCurrent(storySeqAtStart, overlaySeqAtStart)) return;
+      setSelectedMode('writing');
       setNeutralTurns([]);
       setPendingWelcomePref(undefined);
       setInput('');
@@ -1889,6 +2157,7 @@ export function App({ runtime }: AppProps) {
       const activated = await harness.setActiveStory(saved.id);
       if (storyOpSeqRef.current !== opSeq) return;
       await commitStoryState(activated ?? saved);
+      setSelectedMode('story');
       setNewCreationOpen(false);
       setNeutralTurns([]);
       setPendingWelcomePref(undefined);
@@ -1948,6 +2217,7 @@ export function App({ runtime }: AppProps) {
         storyRef.current = migrated;
         setStory(migrated);
         if (isNavigationCurrent(opSeq, overlaySeqAtStart)) {
+          setSelectedMode('story');
           setNewCreationOpen(false);
           setNeutralTurns([]);
           setPendingWelcomePref(undefined);
@@ -2135,6 +2405,7 @@ export function App({ runtime }: AppProps) {
       setStatusNotice(
         `备份已安全合入：新增 ${report.addedStories + report.renamedStories} 个故事、${report.addedWorks + report.renamedWorks} 部作品、${report.addedCharacters + report.renamedCharacters} 位角色。`,
       );
+      if (firstAdded) setSelectedMode('story');
       setNewCreationOpen(false);
       setNeutralTurns([]);
       setCreativePage(null);
@@ -2158,10 +2429,12 @@ export function App({ runtime }: AppProps) {
     setStoryTreeOpen(false);
     setMobileLibraryOpen(false);
     setNewCreationOpen(false);
+    setSelectedMode(mode);
     setCreativePage(mode);
   }
 
   function convergeToWelcomeStage(closeOverlays: boolean) {
+    setPendingModeSwitch(null);
     setCreativePage(null);
     setCreativeCompanionOpen(false);
     setWritingView(null);
@@ -2201,6 +2474,7 @@ export function App({ runtime }: AppProps) {
     setShowImport(false);
     setStoryTreeOpen(false);
     setMobileLibraryOpen(false);
+    setPendingModeSwitch(null);
     setNeutralTurns([]);
     setPendingWelcomePref(undefined);
     setNewCreationOpen(true);
@@ -2409,33 +2683,54 @@ export function App({ runtime }: AppProps) {
     }
 
     if (isDerivedAssetTarget(normalized)) {
-      let createdAsset: CreatedAssetNotice | null = null;
-      if (normalized === 'story') {
-        createdAsset = await createAndSaveDerivedStory({
-          workspace: creative.workspace,
-          proposal,
-          resolvedMarkdown,
-          saveStory: saveDerivedStory,
+      const executeDerivedStoryProposal = async () => {
+        let createdAsset: CreatedAssetNotice | null = null;
+        if (normalized === 'story') {
+          createdAsset = await createAndSaveDerivedStory({
+            workspace: creative.workspace,
+            proposal,
+            resolvedMarkdown,
+            saveStory: saveDerivedStory,
+          });
+        } else {
+          await creative.save((state) => {
+            const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
+            createdAsset = toCreatedAssetNotice(derived);
+            return derived.nextState;
+          });
+        }
+        await enqueueStoryCommit((latest) => {
+          if (!latest) return null;
+          return {
+            ...latest,
+            nodes: updateTurnNodeProposal(latest.nodes, nodeId, proposal.id, (p) => ({
+              ...p,
+              status: 'applied',
+            })),
+          };
         });
-      } else {
-        await creative.save((state) => {
-          const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
-          createdAsset = toCreatedAssetNotice(derived);
-          return derived.nextState;
+        recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
+        recordDerivedAssetDiagnostic(runtime.diagnostics, proposal);
+        return createdAsset;
+      };
+
+      const targetMode = derivedTargetToStageMode(normalized);
+      if (targetMode !== 'story') {
+        requestCrossModeProposalConfirm({
+          sourceMode: 'story',
+          targetMode,
+          targetTitle: proposal.name?.trim() || derivedAssetTargetLabel(normalized),
+          executeConfirm: async () => {
+            const createdAsset = await executeDerivedStoryProposal();
+            if (createdAsset) {
+              navigateCreatedAsset(createdAsset.kind, createdAsset.id);
+            }
+          },
         });
+        return;
       }
-      await enqueueStoryCommit((latest) => {
-        if (!latest) return null;
-        return {
-          ...latest,
-          nodes: updateTurnNodeProposal(latest.nodes, nodeId, proposal.id, (p) => ({
-            ...p,
-            status: 'applied',
-          })),
-        };
-      });
-      recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
-      recordDerivedAssetDiagnostic(runtime.diagnostics, proposal);
+
+      const createdAsset = await executeDerivedStoryProposal();
       if (createdAsset) setCreatedAssetNotice(createdAsset);
       return;
     }
@@ -2598,12 +2893,7 @@ export function App({ runtime }: AppProps) {
     activeLeafNode?.role === 'assistant' &&
     activeLeafNode.id === streamingNodeId;
 
-  const activeCategory: 'story' | 'work' | 'character' =
-    creativePage === 'writing'
-      ? 'work'
-      : creativePage === 'character'
-        ? 'character'
-        : 'story';
+  const activeCategory: LibraryCategory = modeToLibraryCategory(selectedMode);
 
   const storySettingPreview = story.documents
     ? documentVersion(
@@ -2788,6 +3078,7 @@ export function App({ runtime }: AppProps) {
         <LibraryDrawer
           stories={stories}
           activeCategory={activeCategory}
+          onSelectCategory={(category) => setSelectedMode(libraryCategoryToMode(category))}
           activeStoryId={!creativePage && !isWelcome ? story.id : ''}
           works={creative.workspace.works.map(({ id, title, body }) => ({
             id,
@@ -2873,6 +3164,8 @@ export function App({ runtime }: AppProps) {
                 onSwitchToChat={() => void selectWritingView(false)}
                 onSaveDerivedStory={saveDerivedStory}
                 onNavigateCreatedAsset={navigateCreatedAsset}
+                onRequestModeSwitch={requestInChatModeSwitchIfExplicit}
+                onRequestCrossModeProposalConfirm={requestCrossModeProposalConfirm}
                 initialTurn={initialCreativeTurn}
                 onConsumeInitialTurn={() => setInitialCreativeTurn(null)}
                 scrollContainerRef={mainStageRef}
@@ -2896,6 +3189,7 @@ export function App({ runtime }: AppProps) {
                   stories={stories}
                   recentCreative={recentCreative}
                   neutralTurns={neutralTurns}
+                  selectedMode={selectedMode}
                   isStreaming={isStreaming}
                   streamContent={streamContent}
                   streamReasoning={streamReasoning}
@@ -3375,6 +3669,11 @@ export function App({ runtime }: AppProps) {
         onClose={() => setStoryTreeOpen(false)}
       />
       <DocumentDialog edit={documentEdit} onClose={() => setDocumentEdit(null)} />
+      <ModeSwitchConfirmDialog
+        request={pendingModeSwitch ? { ...pendingModeSwitch.request, busy: modeSwitchBusy } : null}
+        onConfirm={() => void handleConfirmPendingModeSwitch()}
+        onCancel={handleCancelPendingModeSwitch}
+      />
       <AppUpdateModal
         updater={appUpdater}
         canExportBackup={canExportFullBackup}

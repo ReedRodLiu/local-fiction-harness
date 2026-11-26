@@ -1,6 +1,9 @@
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
 
 interface AppOverlayHistoryOptions {
+  modeSwitchConfirmOpen: boolean;
+  modeSwitchConfirmBusy: boolean;
+  onModeSwitchConfirmBack: () => void;
   wizardOpen: boolean;
   wizardVerifying: boolean;
   onWizardBack: () => void;
@@ -19,6 +22,9 @@ interface AppOverlayHistoryOptions {
 }
 
 export function useAppOverlayHistory({
+  modeSwitchConfirmOpen,
+  modeSwitchConfirmBusy,
+  onModeSwitchConfirmBack,
   wizardOpen,
   wizardVerifying,
   onWizardBack,
@@ -35,6 +41,13 @@ export function useAppOverlayHistory({
   canCloseImport,
   returnFocus,
 }: AppOverlayHistoryOptions) {
+  useWebHistoryLayer(
+    'mode-switch-confirm',
+    90,
+    modeSwitchConfirmOpen,
+    onModeSwitchConfirmBack,
+    !modeSwitchConfirmBusy,
+  );
   useWebHistoryLayer(
     'setup-wizard',
     80,

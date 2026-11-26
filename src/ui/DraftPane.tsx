@@ -41,6 +41,7 @@ import {
   type ModelConfig,
   type PlatformRuntime,
   type PromptPackLibrary,
+  type StageAssetMode,
   type Story,
   type TurnNode,
   type TurnProposalRecord,
@@ -60,6 +61,7 @@ import {
   createAndSaveDerivedStory,
   createDerivedAssetInWorkspace,
   derivedAssetTargetLabel,
+  derivedTargetToStageMode,
   isDerivedAssetTarget,
   recordDerivedAssetDiagnostic,
   recordProposalCreationBreadcrumbs,
@@ -68,6 +70,7 @@ import {
   toCreatedAssetNotice,
   updateTurnNodeProposal,
   type CreatedAssetNotice,
+  type CrossModeProposalConfirmPayload,
 } from './proposalActions.ts';
 import {
   finalizePrefixContinuation,
@@ -108,6 +111,12 @@ interface DraftPaneProps {
   onSwitchToChat?: () => void;
   onSaveDerivedStory?: (story: Story) => Promise<void>;
   onNavigateCreatedAsset?: (kind: 'character' | 'work' | 'story', id: string) => void;
+  onRequestModeSwitch?: (
+    input: string,
+    fromMode: StageAssetMode,
+    restoreInput: (text: string) => void,
+  ) => boolean;
+  onRequestCrossModeProposalConfirm?: (payload: CrossModeProposalConfirmPayload) => void;
   initialTurn: { id: string; prompt: string } | null;
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;
@@ -964,6 +973,81 @@ export function DraftPane(props: DraftPaneProps) {
     resolvedMarkdown: string,
   ) => {
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
+    const applyDerivedProposal = async (): Promise<CreatedAssetNotice | null> => {
+      let createdAsset: CreatedAssetNotice | null = null;
+      if (normalized === 'story') {
+        createdAsset = await createAndSaveDerivedStory({
+          workspace,
+          proposal,
+          resolvedMarkdown,
+          saveStory: props.onSaveDerivedStory ?? ((derivedStory) => runtime.storyStorage.saveStory(derivedStory)),
+        });
+      }
+
+      await save((state) => {
+        if (normalized === 'story') {
+          return updateWork(state, work.id, (live) => {
+            const tree = getWorkDiscussionTree(live);
+            const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
+              ...p,
+              status: 'applied',
+            }));
+            return {
+              ...live,
+              discussionNodes: nextNodes,
+              discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
+            };
+          });
+        }
+
+        const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
+        createdAsset = toCreatedAssetNotice(derived);
+        return updateWork(derived.nextState, work.id, (live) => {
+          const tree = getWorkDiscussionTree(live);
+          const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
+            ...p,
+            status: 'applied',
+          }));
+          return {
+            ...live,
+            discussionNodes: nextNodes,
+            discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
+          };
+        });
+      });
+
+      recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
+      if (createdAsset) {
+        recordDerivedAssetDiagnostic(runtime.diagnostics, proposal);
+      }
+      return createdAsset;
+    };
+
+    if (isDerivedAssetTarget(normalized)) {
+      const targetMode = derivedTargetToStageMode(normalized);
+      if (targetMode !== 'writing' && props.onRequestCrossModeProposalConfirm) {
+        props.onRequestCrossModeProposalConfirm({
+          sourceMode: 'writing',
+          targetMode,
+          targetTitle: proposal.name?.trim() || derivedAssetTargetLabel(normalized),
+          executeConfirm: async () => {
+            const createdAsset = await applyDerivedProposal();
+            if (createdAsset) {
+              props.onNavigateCreatedAsset?.(createdAsset.kind, createdAsset.id);
+            }
+          },
+        });
+        return;
+      }
+      try {
+        const createdAsset = await applyDerivedProposal();
+        if (createdAsset) setCreatedAssetNotice(createdAsset);
+      } catch (err) {
+        reply.fail(err);
+      }
+      return;
+    }
+
     let createdAsset: CreatedAssetNotice | null = null;
     try {
       if (normalized === 'manuscript') {
@@ -996,15 +1080,6 @@ export function DraftPane(props: DraftPaneProps) {
         return;
       }
 
-      if (normalized === 'story') {
-        createdAsset = await createAndSaveDerivedStory({
-          workspace,
-          proposal,
-          resolvedMarkdown,
-          saveStory: props.onSaveDerivedStory ?? ((derivedStory) => runtime.storyStorage.saveStory(derivedStory)),
-        });
-      }
-
       await save((state) => {
         if (normalized === 'memory') {
           const prevId = state.publicDocument.head;
@@ -1025,38 +1100,6 @@ export function DraftPane(props: DraftPaneProps) {
             };
           });
           return { ...state, publicDocument: nextPublicDoc, works: nextWorks };
-        }
-
-        if (normalized === 'story') {
-          return updateWork(state, work.id, (live) => {
-            const tree = getWorkDiscussionTree(live);
-            const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
-              ...p,
-              status: 'applied',
-            }));
-            return {
-              ...live,
-              discussionNodes: nextNodes,
-              discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
-            };
-          });
-        }
-
-        if (normalized === 'character' || normalized === 'draft') {
-          const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
-          createdAsset = toCreatedAssetNotice(derived);
-          return updateWork(derived.nextState, work.id, (live) => {
-            const tree = getWorkDiscussionTree(live);
-            const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
-              ...p,
-              status: 'applied',
-            }));
-            return {
-              ...live,
-              discussionNodes: nextNodes,
-              discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
-            };
-          });
         }
 
         return updateWork(state, work.id, (live) => {
@@ -1387,6 +1430,16 @@ export function DraftPane(props: DraftPaneProps) {
               data-testid="stage-composer"
               onSubmit={(event) => {
                 event.preventDefault();
+                const trimmed = discussionInput.trim();
+                if (!trimmed || reply.busy) return;
+                if (
+                  props.onRequestModeSwitch?.(trimmed, 'writing', (text) =>
+                    setDiscussionInput((curr) => (curr.length === 0 ? text : curr)),
+                  )
+                ) {
+                  setDiscussionInput('');
+                  return;
+                }
                 submitChatTurn(discussionInput);
               }}
             >
