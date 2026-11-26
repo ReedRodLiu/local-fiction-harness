@@ -502,7 +502,7 @@ export function SettingsPage({
               type="button"
               className="btn btn-primary"
               data-testid="open-setup-wizard-btn"
-              onClick={handleOpenEditActive}
+              onClick={onOpenSetupWizard}
             >
               {isOfficialDeepSeekActive ? '连接 DeepSeek' : '连接模型服务'}
             </button>

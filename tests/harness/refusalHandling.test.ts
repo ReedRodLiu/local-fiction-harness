@@ -1923,4 +1923,33 @@ describe('Spec #132 exhaustion isolation integration', () => {
       retriedWithPrefix: true,
     });
   });
+
+  it('preserves trailing usage delta emitted after finishReason stop (OpenAI include_usage chunk)', async () => {
+    const transport = scriptedTransport([
+      () =>
+        stream([
+          { contentDelta: '灯塔光束掠过雾港。', finishReason: 'stop' },
+          {
+            usage: {
+              promptTokens: 1500,
+              completionTokens: 220,
+              totalTokens: 1720,
+              promptCacheHitTokens: 1000,
+              promptCacheMissTokens: 500,
+            },
+          },
+        ]),
+    ]);
+
+    const result = await streamWithRefusalHandling(baseOptions(transport));
+    expect(result.content).toBe('灯塔光束掠过雾港。');
+    expect(result.finishReason).toBe('stop');
+    expect(result.usage).toEqual({
+      promptTokens: 1500,
+      completionTokens: 220,
+      totalTokens: 1720,
+      promptCacheHitTokens: 1000,
+      promptCacheMissTokens: 500,
+    });
+  });
 });

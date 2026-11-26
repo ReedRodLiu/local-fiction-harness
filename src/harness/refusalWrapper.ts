@@ -393,20 +393,13 @@ async function runAttempt(
       if (isStop(finishReason)) {
         const evaluated = evaluateFull();
         if (
-          !gateOpen &&
-          (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton')
+          gateOpen ||
+          (evaluated.route !== 'retry' && evaluated.route !== 'retry-skeleton')
         ) {
-          return {
-            kind: 'refusal',
-            route: evaluated.route,
-            raw,
-            reasoningContent,
-            matchedRuleId: evaluated.matchedRuleId ?? 'skeleton-01',
-            ...(usage ? { usage } : {}),
-          };
+          // Flush visible text as soon as stop arrives, while letting the loop
+          // drain any trailing usage-only SSE chunk before [DONE].
+          emitVisible();
         }
-        emitVisible();
-        return resultFor(evaluated);
       }
     }
 

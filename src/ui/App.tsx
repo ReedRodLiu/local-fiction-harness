@@ -3951,7 +3951,10 @@ export function App({ runtime }: AppProps) {
           }
           initialKey={wizardMode === 'onboarding' ? config.apiKey : ''}
           hasDeepSeekProfileInLibrary={providerLibrary.profiles.some(
-            (p) => p.presetId === 'deepseek' || isOfficialDeepSeekUrl(p.baseUrl),
+            (p) =>
+              p.id === 'deepseek-official' ||
+              p.presetId === 'deepseek' ||
+              isOfficialDeepSeekUrl(p.baseUrl),
           )}
           isWebPlatform={runtime.platform === 'web'}
           pendingLabel={pendingByok?.label ?? null}

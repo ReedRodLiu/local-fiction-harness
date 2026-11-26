@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ExternalLink, RefreshCw } from 'lucide-react';
+import { isDevProxyBaseUrl } from '../platform/devProxy.ts';
 import {
   DEEPSEEK_OFFICIAL_KEYS_URL,
   PROVIDER_PRESETS,
@@ -338,6 +339,7 @@ export async function verifyWizardDraftConnection(options: {
     apiKey: draft.apiKey,
     requireSkPrefix: false,
     allowEmptyKey: true,
+    allowRelativeBaseUrl: import.meta.env.DEV && isDevProxyBaseUrl(draft.baseUrl),
     isWebPlatform: options.isWebPlatform ?? true,
   });
 
@@ -382,7 +384,8 @@ export function validateWizardFallbackSave(
   }
 
   const normalizedUrl = normalizeProviderBaseUrl(draft.baseUrl);
-  if (!/^https?:\/\/[^/\s?#]+(?:[/?#].*)?$/i.test(normalizedUrl) && normalizedUrl !== '/__dev_llm_proxy') {
+  const allowDevProxy = import.meta.env.DEV && isDevProxyBaseUrl(normalizedUrl);
+  if (!/^https?:\/\/[^/\s?#]+(?:[/?#].*)?$/i.test(normalizedUrl) && !allowDevProxy) {
     return { ok: false, errorMsg: '请填写有效的服务商接口地址（以 https:// 或 http:// 开头）。' };
   }
   const keyCheck = validateProviderApiKeyFormat(draft.apiKey, {
@@ -526,6 +529,7 @@ export function ProviderSetupWizard({
       apiKey: draft.apiKey,
       requireSkPrefix: false,
       allowEmptyKey: true,
+      allowRelativeBaseUrl: import.meta.env.DEV && isDevProxyBaseUrl(draft.baseUrl),
       isWebPlatform,
     });
 
