@@ -91,12 +91,89 @@ export interface TurnProposalRecord {
 
 export type OfficialDeepSeekModel = 'deepseek-flash' | 'deepseek-v4-pro';
 
-export type ReasoningEffort = 'none' | 'low' | 'high' | 'max';
+export type ProviderPresetId =
+  | 'deepseek'
+  | 'openai'
+  | 'openrouter'
+  | 'siliconflow'
+  | 'local'
+  | 'custom';
+
+export type ProviderThinkingProtocol = 'deepseek' | 'openai_reasoning_effort';
+
+export type ProviderPrefixProtocol = 'deepseek_beta' | 'standard_assistant_prefill' | 'none';
+
+export interface ProviderCapabilities {
+  thinkingProtocol: ProviderThinkingProtocol;
+  prefixProtocol: ProviderPrefixProtocol;
+  supportsBalanceQuery: boolean;
+  supportsBuiltinSearch: boolean;
+  supportsBuiltinPricing: boolean;
+}
+
+export interface CustomModelPricing {
+  currency: 'CNY' | 'USD';
+  inputPerMillion: number;
+  cacheHitInputPerMillion?: number;
+  outputPerMillion: number;
+}
+
+export interface ProviderModelEntry {
+  id: string;
+  label?: string;
+  pricing?: CustomModelPricing;
+}
+
+export interface ProviderProfile {
+  id: string;
+  name: string;
+  presetId: ProviderPresetId;
+  baseUrl: string;
+  apiKey: string;
+  models: ProviderModelEntry[];
+  defaultModel: string;
+  backgroundModel?: string;
+  defaultPricing?: CustomModelPricing;
+  capabilities: ProviderCapabilities;
+  prefillProbeStatus?: 'untested' | 'supported' | 'unsupported';
+  memoryOnly?: boolean;
+}
+
+export type ProviderProfileMeta = Omit<ProviderProfile, 'apiKey'>;
+
+export type PublicResearchSearchPresetId = 'none' | 'deepseek_account' | 'tavily' | 'bocha';
+
+export interface PublicResearchConfig {
+  provider: PublicResearchSearchPresetId;
+  apiKey?: string;
+  deepseekProfileId?: string;
+}
+
+export type PublicResearchConfigMeta = Omit<PublicResearchConfig, 'apiKey'>;
+
+export interface ProviderLibrary {
+  version: 2;
+  activeProviderId: string;
+  profiles: ProviderProfile[];
+  reasoningEffort?: ReasoningEffort;
+  publicResearch?: PublicResearchConfig;
+}
+
+export interface ProviderLibraryMeta {
+  version: 2;
+  activeProviderId: string;
+  profiles: ProviderProfileMeta[];
+  reasoningEffort?: ReasoningEffort;
+  publicResearch?: PublicResearchConfigMeta;
+}
+
+export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'max';
 
 export type PrefixCompletionMode = 'off' | 'on_retry' | 'always';
 
 export interface GenerationPreference {
-  model?: OfficialDeepSeekModel;
+  providerId?: string;
+  model?: string;
   reasoningEffort?: ReasoningEffort;
   promptPackMode?: 'inherit' | 'off' | string;
   prefixCompletion?: PrefixCompletionMode;
@@ -106,7 +183,7 @@ export interface DeepSeekThinkingParam {
   type: 'enabled' | 'disabled';
 }
 
-export type UsageProviderKind = 'deepseek-official' | 'other';
+export type UsageProviderKind = 'deepseek-official' | 'custom-priced' | 'other';
 
 export interface TurnUsageTelemetry {
   providerKind: UsageProviderKind;
@@ -116,6 +193,7 @@ export interface TurnUsageTelemetry {
   uncompressedPromptChars?: number;
   compressedPromptChars?: number;
   retrievedNodeCount?: number;
+  pricingSnapshot?: CustomModelPricing;
 }
 
 export interface TurnNode {
@@ -202,6 +280,7 @@ export interface LlmStreamRequest {
   reasoningEffort?: ReasoningEffort;
   thinking?: DeepSeekThinkingParam;
   reasoning_effort?: ReasoningEffort;
+  capabilities?: ProviderCapabilities;
   includeUsage?: boolean;
   maxOutputTokens?: number;
   signal?: AbortSignalLike;
@@ -244,9 +323,17 @@ export interface ModelConfig {
   reasoningEffort?: ReasoningEffort;
   apiKey: string;
   memoryOnly: boolean;
+  providerId?: string;
+  providerPresetId?: ProviderPresetId;
+  backgroundModel?: string;
+  capabilities?: ProviderCapabilities;
+  pricing?: CustomModelPricing;
+  publicResearch?: PublicResearchConfig;
 }
 
-export type ModelConfigMeta = Omit<ModelConfig, 'apiKey'>;
+export type ModelConfigMeta = Omit<ModelConfig, 'apiKey'> & {
+  providerLibrary?: ProviderLibraryMeta;
+};
 
 export interface SecretStore {
   loadMeta(): Promise<ModelConfigMeta | null>;

@@ -23,6 +23,7 @@ import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 @CapacitorPlugin(name = "NativeVault")
@@ -72,17 +73,28 @@ public class NativeVaultPlugin extends Plugin {
         }
     }
 
+    static JSONObject normalizeMetaPayload(JSONObject data) throws JSONException {
+        JSONObject meta = data != null ? new JSONObject(data.toString()) : new JSONObject();
+        if (!meta.has("baseUrl") || meta.isNull("baseUrl")) {
+            meta.put("baseUrl", "");
+        }
+        if (!meta.has("model") || meta.isNull("model")) {
+            meta.put("model", "");
+        }
+        if (!meta.has("memoryOnly") || meta.isNull("memoryOnly")) {
+            meta.put("memoryOnly", false);
+        }
+        String reasoningEffort = meta.optString("reasoningEffort", "");
+        if (meta.has("reasoningEffort") && reasoningEffort.isEmpty()) {
+            meta.remove("reasoningEffort");
+        }
+        return meta;
+    }
+
     @PluginMethod
     public void saveMeta(PluginCall call) {
         try {
-            JSObject meta = new JSObject();
-            meta.put("baseUrl", call.getString("baseUrl", ""));
-            meta.put("model", call.getString("model", ""));
-            String reasoningEffort = call.getString("reasoningEffort");
-            if (reasoningEffort != null && !reasoningEffort.isEmpty()) {
-                meta.put("reasoningEffort", reasoningEffort);
-            }
-            meta.put("memoryOnly", call.getBoolean("memoryOnly", false));
+            JSONObject meta = normalizeMetaPayload(call.getData());
             secretVault.saveMeta(meta);
             call.resolve();
         } catch (Exception err) {

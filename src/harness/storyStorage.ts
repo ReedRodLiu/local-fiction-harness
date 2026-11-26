@@ -1,5 +1,5 @@
 import { createDefaultBlueprint } from './blueprint.ts';
-import { isOfficialDeepSeekModel, isPrefixCompletionMode, isReasoningEffort } from './keyConfig.ts';
+import { isPrefixCompletionMode, isReasoningEffort } from './keyConfig.ts';
 import { documentVersion, migrateStoryDocuments, replaceDocumentProgress, validateDocumentReads, validateMarkdownDocument, writeDocument, type StoryDocuments } from './markdownDocuments.ts';
 import { createDefaultId } from './id.ts';
 import { validatePublicResearchFailure, validatePublicResearchReference } from './publicResearch.ts';
@@ -321,11 +321,21 @@ export function validateGenerationPreference(
     throw new Error(`${contextLabel} 的 generationPreference 必须为对象。`);
   }
   const pref: GenerationPreference = {};
+  if (raw.providerId !== undefined) {
+    if (typeof raw.providerId !== 'string' || !raw.providerId.trim()) {
+      throw new Error(`${contextLabel} 的 generationPreference.providerId 无效。`);
+    }
+    pref.providerId = raw.providerId.trim();
+  }
   if (raw.model !== undefined) {
-    if (!isOfficialDeepSeekModel(raw.model)) {
+    if (
+      typeof raw.model !== 'string' ||
+      raw.model.trim().length === 0 ||
+      raw.model.trim().length > 200
+    ) {
       throw new Error(`${contextLabel} 的 generationPreference.model 无效。`);
     }
-    pref.model = raw.model;
+    pref.model = raw.model.trim();
   }
   if (raw.reasoningEffort !== undefined) {
     if (!isReasoningEffort(raw.reasoningEffort)) {
@@ -396,7 +406,11 @@ function validateTurnUsageTelemetry(raw: unknown, nodeId: string): TurnUsageTele
   if (!isRecord(raw)) {
     throw new Error(`备份文件中的节点 ${nodeId} 的 telemetry 必须为对象。`);
   }
-  if (raw.providerKind !== 'deepseek-official' && raw.providerKind !== 'other') {
+  if (
+    raw.providerKind !== 'deepseek-official' &&
+    raw.providerKind !== 'custom-priced' &&
+    raw.providerKind !== 'other'
+  ) {
     throw new Error(`备份文件中的节点 ${nodeId} 的 telemetry.providerKind 无效。`);
   }
   if (typeof raw.model !== 'string' || !raw.model.trim()) {
