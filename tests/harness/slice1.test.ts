@@ -337,6 +337,7 @@ describe('Slice 1: FictionHarness streaming turn execution', () => {
         baseUrl: '/__dev_llm_proxy',
         model: 'deepseek-v4.1-flash',
         apiKey: 'test',
+        reasoningEffort: 'high',
         memoryOnly: true,
       },
       {
@@ -354,6 +355,7 @@ describe('Slice 1: FictionHarness streaming turn execution', () => {
       baseUrl: '/__dev_llm_proxy',
       model: 'deepseek-v4.1-flash',
       apiKey: 'test',
+      reasoningEffort: 'high',
       memoryOnly: true,
     });
 

@@ -693,6 +693,9 @@ async function leaveImportView(page) {
     const progress = shell.getByRole('progressbar');
     const hasProgress = (await progress.count()) > 0;
     const currentStep = hasProgress ? Number(await progress.getAttribute('aria-valuenow')) : 1;
+    await shell.evaluate((el) =>
+      Promise.all((el.closest('.app-overlay-stage') ?? el).getAnimations({ subtree: true }).map((a) => a.finished.catch(() => {}))),
+    );
     await shell.getByRole('button', { name: '返回' }).click();
     if (hasProgress && currentStep > 1) {
       await page.waitForFunction((expectedStep) =>
@@ -3476,6 +3479,14 @@ async function main() {
     await page.getByTestId('import-script-submit').click();
     await page.getByTestId('import-panel').waitFor({ state: 'detached' });
     await page.getByTestId('app-topbar').getByRole('heading', { name: 'E2E训练营故事', exact: true }).waitFor();
+    const thinkingToggle = page.getByTestId('composer-thinking-toggle');
+    if ((await thinkingToggle.getAttribute('aria-pressed')) !== 'false') {
+      throw new Error('Expected composer thinking toggle to default to OFF per ADR-0018.');
+    }
+    await thinkingToggle.click();
+    if ((await thinkingToggle.getAttribute('aria-pressed')) !== 'true') {
+      throw new Error('Failed to enable composer thinking toggle for reasoning panel verification.');
+    }
     failNextTurnWith401 = true;
     await page.getByRole('button', { name: '开启第一幕' }).click();
 

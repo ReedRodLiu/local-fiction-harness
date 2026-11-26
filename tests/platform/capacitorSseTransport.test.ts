@@ -119,11 +119,12 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
       url: 'https://no-cors.example/v1/chat/completions',
     });
     expect(fake.started[0].headers.Authorization).toBe('Bearer sk-android-1');
-    expect(JSON.parse(fake.started[0].body)).toMatchObject({
+    const sentBody = JSON.parse(fake.started[0].body) as Record<string, unknown>;
+    expect(sentBody).toMatchObject({
       model: 'deepseek-v4-pro',
-      thinking: { type: 'enabled' },
-      reasoning_effort: 'max',
+      reasoning_effort: 'high',
     });
+    expect(sentBody).not.toHaveProperty('thinking');
 
     // Emit in 5-byte fragments to split multi-byte UTF-8 characters
     for (let i = 0; i < sseBytes.length; i += 5) {

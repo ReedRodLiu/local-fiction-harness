@@ -5,7 +5,7 @@ import {
   createWebPlatformRuntime,
   detectRuntimePlatform,
 } from '../../src/platform/runtime.ts';
-import type { KeyValueStorage, ModelConfig, StoryStorage } from '../../src/harness/index.ts';
+import type { FetchLike, KeyValueStorage, ModelConfig, StoryStorage } from '../../src/harness/index.ts';
 
 function createMemoryStorage(): KeyValueStorage {
   const map = new Map<string, string>();
@@ -181,7 +181,7 @@ describe('PlatformRuntime detection & Web adapter', () => {
       const webRuntime = createWebPlatformRuntime({
         keyValueStorage: kv,
         storyStorage: createNoopStoryStorage(),
-        fetchImpl: fetchSpy as unknown as Parameters<typeof createWebPlatformRuntime>[0]['fetchImpl'],
+        fetchImpl: fetchSpy as unknown as FetchLike,
       });
       const androidRuntime = createAndroidPlatformRuntime({
         promptPackStorage: kv,

@@ -547,11 +547,11 @@ export function normalizeProviderBaseUrl(rawBaseUrl: string): string {
   return trimmed.replace(/\/(?:chat\/completions|models)$/i, '').replace(/\/+$/, '');
 }
 
-function isValidProviderBaseUrl(normalizedBaseUrl: string): boolean {
+function isValidProviderBaseUrl(normalizedBaseUrl: string, allowRelativeBaseUrl = false): boolean {
   if (!normalizedBaseUrl || /\s/.test(normalizedBaseUrl)) {
     return false;
   }
-  if (normalizedBaseUrl === '/__dev_llm_proxy') {
+  if (allowRelativeBaseUrl && /^\/[^\s?#]+$/.test(normalizedBaseUrl)) {
     return true;
   }
   return /^https?:\/\/[^/\s?#]+(?:[/?#].*)?$/i.test(normalizedBaseUrl);
@@ -635,12 +635,13 @@ export async function verifyProviderConnection(options: {
   apiKey: string;
   requireSkPrefix?: boolean;
   allowEmptyKey?: boolean;
+  allowRelativeBaseUrl?: boolean;
   isWebPlatform?: boolean;
   fetchImpl?: ProviderConnectionFetchLike;
   timeoutMs?: number;
 }): Promise<ProviderConnectionVerifyResult> {
   const baseUrl = normalizeProviderBaseUrl(options.baseUrl);
-  if (!isValidProviderBaseUrl(baseUrl)) {
+  if (!isValidProviderBaseUrl(baseUrl, options.allowRelativeBaseUrl)) {
     return {
       status: 'format_error',
       message: '请填写有效的服务商接口地址（以 https:// 或 http:// 开头）。',
