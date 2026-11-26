@@ -117,6 +117,7 @@ public class SseStreamClient {
     ) {
         Listener listener = call.listener;
         HttpURLConnection conn = null;
+        long receivedBytes = 0L;
         try {
             URI uri = URI.create(urlString);
             String scheme = uri.getScheme();
@@ -179,6 +180,7 @@ public class SseStreamClient {
                 int read;
                 while (!call.aborted.get() && (read = is.read(buffer)) != -1) {
                     if (read > 0) {
+                        receivedBytes += read;
                         byte[] copy = new byte[read];
                         System.arraycopy(buffer, 0, copy, 0, read);
                         listener.onChunk(requestId, copy, read);
@@ -196,11 +198,14 @@ public class SseStreamClient {
                 emitAbort(requestId, call, listener);
             } else if (call.finished.compareAndSet(false, true)) {
                 ClassifiedError classified = classifyException(err);
+                String message = receivedBytes > 0
+                    ? classified.message + "（断线前已接收 " + receivedBytes + " B）"
+                    : classified.message;
                 listener.onError(
                     requestId,
                     0,
                     classified.code,
-                    classified.message,
+                    message,
                     false
                 );
             }
@@ -261,11 +266,22 @@ public class SseStreamClient {
                 "网络连接中断，请检查网络或 VPN 状态后重试。"
             );
         }
-        if (lower.contains("software caused connection abort") || lower.contains("connection abort")) {
+        if (
+            lower.contains("software caused connection abort")
+                || lower.contains("connection abort")
+                || lower.contains("econnaborted")
+        ) {
             return new ClassifiedError(
                 "CONNECTION_ABORTED",
                 "网络连接在等待响应期间被系统或网络切换中断（如锁屏、切后台、VPN 或 Wi-Fi/5G 切换），请保持网络稳定并在系统设置中允许 Folio 后台运行后重试。"
             );
+        }
+        Throwable cause = err.getCause();
+        if (cause != null && cause != err) {
+            ClassifiedError causeClassified = classifyException(cause);
+            if (!"NETWORK_ERROR".equals(causeClassified.code)) {
+                return causeClassified;
+            }
         }
         return new ClassifiedError(
             "NETWORK_ERROR",
