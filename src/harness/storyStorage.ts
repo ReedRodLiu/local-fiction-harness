@@ -5,6 +5,7 @@ import { createDefaultId } from './id.ts';
 import { validatePublicResearchFailure, validatePublicResearchReference } from './publicResearch.ts';
 import type {
   ActiveStorySelection,
+  CustomModelPricing,
   GenerationPreference,
   LlmUsage,
   NodeDiagnosticStatus,
@@ -429,6 +430,36 @@ function validateTurnUsageTelemetry(raw: unknown, nodeId: string): TurnUsageTele
     ...(generationUsage ? { generationUsage } : {}),
     ...(summaryUsage ? { summaryUsage } : {}),
   };
+  if (raw.pricingSnapshot !== undefined) {
+    if (!isRecord(raw.pricingSnapshot)) {
+      throw new Error(`备份文件中的节点 ${nodeId} 的 telemetry.pricingSnapshot 必须为对象。`);
+    }
+    const ps = raw.pricingSnapshot;
+    if (
+      (ps.currency !== 'CNY' && ps.currency !== 'USD') ||
+      typeof ps.inputPerMillion !== 'number' ||
+      !Number.isFinite(ps.inputPerMillion) ||
+      ps.inputPerMillion < 0 ||
+      typeof ps.outputPerMillion !== 'number' ||
+      !Number.isFinite(ps.outputPerMillion) ||
+      ps.outputPerMillion < 0 ||
+      (ps.cacheHitInputPerMillion !== undefined &&
+        (typeof ps.cacheHitInputPerMillion !== 'number' ||
+          !Number.isFinite(ps.cacheHitInputPerMillion) ||
+          ps.cacheHitInputPerMillion < 0))
+    ) {
+      throw new Error(`备份文件中的节点 ${nodeId} 的 telemetry.pricingSnapshot 字段无效。`);
+    }
+    const pricingSnapshot: CustomModelPricing = {
+      currency: ps.currency,
+      inputPerMillion: ps.inputPerMillion,
+      ...(ps.cacheHitInputPerMillion !== undefined
+        ? { cacheHitInputPerMillion: ps.cacheHitInputPerMillion }
+        : {}),
+      outputPerMillion: ps.outputPerMillion,
+    };
+    out.pricingSnapshot = pricingSnapshot;
+  }
   for (const field of charFields) {
     const value = raw[field];
     if (value !== undefined) {
