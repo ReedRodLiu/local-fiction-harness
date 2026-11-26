@@ -189,7 +189,7 @@ describe('SettingsPage WorkspaceUsageSummaryCard (Issue #141)', () => {
     expect(peakMarkup).toContain('标准时段');
   });
 
-  it('displays honest unavailable reason for mixed non-official providers and pre-compression turns without faking US$0', () => {
+  it('displays tokens-only savings for mixed/unpriced providers and honest pre-compression state without faking US$0', () => {
     const officialStory: Story = {
       id: 's1',
       title: '官方',
@@ -239,15 +239,25 @@ describe('SettingsPage WorkspaceUsageSummaryCard (Issue #141)', () => {
       { scheduleOverride: 'off-peak' },
     );
     const mixedMarkup = renderSettings({ workspaceUsageSummary: mixedSummary });
-    expect(mixedMarkup).toContain('暂无可比省费');
-    expect(mixedMarkup).toContain('非 DeepSeek 官方接口');
+    expect(mixedMarkup).toContain('累计节省输入估算');
+    expect(mixedMarkup).toContain('未配置模型单价时只统计 Token 省量；可在设置中选填单价以估算花费');
     expect(mixedMarkup).toContain('2 轮');
-    expect(mixedMarkup).toContain('非官方费率');
+    expect(mixedMarkup).toContain('省 2,400 Token');
+    expect(mixedMarkup).not.toContain('data-testid="workspace-usage-unavailable"');
+    expect(mixedMarkup).not.toContain('data-testid="workspace-usage-schedule"');
     expect(mixedMarkup).not.toContain('US$0.0000');
-    const heroSection = mixedMarkup.slice(
+    const heroTagStart = mixedMarkup.lastIndexOf(
+      '<div',
       mixedMarkup.indexOf('data-testid="workspace-usage-hero"'),
+    );
+    const heroSection = mixedMarkup.slice(
+      heroTagStart,
       mixedMarkup.indexOf('data-testid="workspace-usage-metrics"'),
     );
+    expect(heroSection).toContain('is-saved');
+    expect(heroSection).toContain('已省略输入估算');
+    expect(heroSection).toContain('摘要压缩开销');
+    expect(heroSection).toContain('对比压缩轮次');
     expect(heroSection).not.toContain('US$');
     expect(heroSection).not.toContain('$0');
 
@@ -330,5 +340,39 @@ describe('SettingsPage WorkspaceUsageSummaryCard (Issue #141)', () => {
     expect(markup).toContain('费用增加');
     expect(markup).toContain('is-increased');
     expect(markup).not.toContain('US$-');
+  });
+
+  it('formats custom CNY pricing with ¥, uses custom baseline note, and hides DeepSeek schedule pill', () => {
+    const cnyWork = newWork('硅基作品');
+    cnyWork.discussionNodes = {
+      w1: assistantNode(
+        'w1',
+        buildTurnUsageTelemetry({
+          baseUrl: 'https://api.siliconflow.cn/v1',
+          model: 'deepseek-ai/DeepSeek-V3',
+          pricing: {
+            currency: 'CNY',
+            inputPerMillion: 2,
+            cacheHitInputPerMillion: 0.5,
+            outputPerMillion: 8,
+          },
+          generationUsage: {
+            promptCacheHitTokens: 1000,
+            promptCacheMissTokens: 1000,
+            completionTokens: 500,
+          },
+          uncompressedPromptChars: 12000,
+          compressedPromptChars: 2000,
+        }),
+      ),
+    };
+
+    const summary = computeWorkspaceUsageSummary({ works: [cnyWork] });
+    const markup = renderSettings({ workspaceUsageSummary: summary });
+    expect(markup).toContain('累计预计省费');
+    expect(markup).toContain('¥');
+    expect(markup).toContain('按自定义模型单价与未压缩前文基线估算');
+    expect(markup).not.toContain('data-testid="workspace-usage-schedule"');
+    expect(markup).not.toContain('US$');
   });
 });

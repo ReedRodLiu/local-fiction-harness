@@ -2,6 +2,7 @@ import { Activity, Info, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   computeSessionUsageSummary,
   type DeepSeekPricingSchedule,
+  type PricingCurrency,
   type SessionSavingsUnavailableReason,
   type TurnNode,
 } from '../harness/index.ts';
@@ -24,12 +25,13 @@ function formatCount(value: number): string {
   return value.toLocaleString('en-US');
 }
 
-function formatUsd(amount: number): string {
+function formatMoney(amount: number, currency: PricingCurrency = 'USD'): string {
+  const prefix = currency === 'CNY' ? '¥' : 'US$';
   const abs = Math.abs(amount);
-  if (abs >= 1) return `US$${abs.toFixed(2)}`;
-  if (abs >= 0.0001) return `US$${abs.toFixed(4)}`;
-  if (abs === 0) return 'US$0.0000';
-  return `US$${abs.toFixed(6)}`;
+  if (abs >= 1) return `${prefix}${abs.toFixed(2)}`;
+  if (abs >= 0.0001) return `${prefix}${abs.toFixed(4)}`;
+  if (abs === 0) return `${prefix}0.0000`;
+  return `${prefix}${abs.toFixed(6)}`;
 }
 
 export function SessionUsageCard({
@@ -135,24 +137,26 @@ export function SessionUsageCard({
                     )}
                     {savings.estimatedSavingsUsd >= 0 ? '预计省费' : '费用增加'}
                   </span>
-                  <span className="session-usage-tier-badge">
-                    {savings.schedule === 'off-peak' ? '非高峰优惠时段' : '标准时段'}
-                  </span>
+                  {savings.pricingSource !== 'custom' && (
+                    <span className="session-usage-tier-badge">
+                      {savings.schedule === 'off-peak' ? '非高峰优惠时段' : '标准时段'}
+                    </span>
+                  )}
                 </div>
 
                 <div className="session-usage-savings-rows">
                   <div className="session-usage-savings-cell">
                     <span>实测费用</span>
-                    <strong>{formatUsd(savings.actualCostUsd)}</strong>
+                    <strong>{formatMoney(savings.actualCostUsd, savings.currency ?? 'USD')}</strong>
                   </div>
                   <div className="session-usage-savings-cell">
                     <span>未压缩基线</span>
-                    <strong>{formatUsd(savings.baselineCostUsd)}</strong>
+                    <strong>{formatMoney(savings.baselineCostUsd, savings.currency ?? 'USD')}</strong>
                   </div>
                   <div className="session-usage-savings-cell">
                     <span>{savings.estimatedSavingsUsd >= 0 ? '预计省费' : '费用增加'}</span>
                     <strong>
-                      {formatUsd(Math.abs(savings.estimatedSavingsUsd))}
+                      {formatMoney(Math.abs(savings.estimatedSavingsUsd), savings.currency ?? 'USD')}
                       {savings.savingsPercent !== null
                         ? `（${Math.abs(savings.savingsPercent).toFixed(1)}%）`
                         : ''}
@@ -161,7 +165,43 @@ export function SessionUsageCard({
                 </div>
 
                 <p className="session-usage-savings-note">
-                  按 DeepSeek 官方公开费率与未压缩前文基线估算
+                  {savings.pricingSource === 'custom'
+                    ? '按自定义模型单价与未压缩前文基线估算'
+                    : '按 DeepSeek 官方公开费率与未压缩前文基线估算'}
+                </p>
+              </div>
+            ) : savings.status === 'tokens-only' ? (
+              <div
+                className="session-usage-savings is-saved"
+                data-testid="session-usage-savings"
+              >
+                <div className="session-usage-savings-header">
+                  <span className="session-usage-savings-title">
+                    <TrendingDown size={15} strokeWidth={1.75} aria-hidden="true" />
+                    累计节省输入估算
+                  </span>
+                  <strong className="session-usage-savings-title" data-testid="session-usage-savings-amount">
+                    {formatCount(savings.netSavedTokensEstimated)} Token
+                  </strong>
+                </div>
+
+                <div className="session-usage-savings-rows">
+                  <div className="session-usage-savings-cell">
+                    <span>已省略输入估算</span>
+                    <strong>{formatCount(savings.evictedInputTokensEstimated)} Token</strong>
+                  </div>
+                  <div className="session-usage-savings-cell">
+                    <span>摘要压缩开销</span>
+                    <strong>{formatCount(savings.summaryOverheadTokens)} Token</strong>
+                  </div>
+                  <div className="session-usage-savings-cell">
+                    <span>对比压缩轮次</span>
+                    <strong>{formatCount(savings.compressedTurnCount)} 轮</strong>
+                  </div>
+                </div>
+
+                <p className="session-usage-savings-note">
+                  未配置模型单价时只统计 Token 省量；可在设置中选填单价以估算花费
                 </p>
               </div>
             ) : (

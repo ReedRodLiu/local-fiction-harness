@@ -8,6 +8,7 @@ import {
   type WritingSuggestion,
 } from './creative.ts';
 import { createDefaultId } from './id.ts';
+import { isReasoningEffort } from './keyConfig.ts';
 import {
   documentVersion,
   validateDocumentReads,
@@ -28,7 +29,20 @@ import {
   validateStoryPayload,
   validateTurnNodeEntry,
 } from './storyStorage.ts';
-import type { GenerationPreference, Story, TurnNode } from './types.ts';
+import type {
+  CustomModelPricing,
+  GenerationPreference,
+  ProviderCapabilities,
+  ProviderLibrary,
+  ProviderLibraryMeta,
+  ProviderModelEntry,
+  ProviderPresetId,
+  ProviderProfileMeta,
+  PublicResearchConfigMeta,
+  PublicResearchSearchPresetId,
+  Story,
+  TurnNode,
+} from './types.ts';
 
 export interface FolioBackupDisplayPreferences {
   themePreference?: string;
@@ -43,6 +57,7 @@ export interface FolioBackupEnvelopeV3 {
   workspace: CreativeWorkspaceState;
   displayPreferences?: FolioBackupDisplayPreferences;
   promptPacks?: PromptPackLibrary;
+  providerLibrary?: ProviderLibraryMeta;
 }
 
 export interface ExportFolioBackupV3Options {
@@ -51,6 +66,7 @@ export interface ExportFolioBackupV3Options {
   appVersion?: string;
   displayPreferences?: FolioBackupDisplayPreferences;
   promptPacks?: PromptPackLibrary;
+  providerLibrary?: ProviderLibrary | ProviderLibraryMeta;
   now?: () => number;
 }
 
@@ -59,6 +75,7 @@ export interface FolioWorkspaceSnapshot {
   workspace: CreativeWorkspaceState;
   displayPreferences?: FolioBackupDisplayPreferences;
   promptPacks?: PromptPackLibrary;
+  providerLibrary?: ProviderLibraryMeta;
 }
 
 export interface MergeRestoredBackupOptions {
@@ -71,6 +88,7 @@ export interface MergedBackupResult {
   workspace: CreativeWorkspaceState;
   displayPreferences?: FolioBackupDisplayPreferences;
   promptPacks?: PromptPackLibrary;
+  providerLibrary?: ProviderLibraryMeta;
   report: {
     addedStories: number;
     renamedStories: number;
@@ -181,9 +199,270 @@ function sanitizeStoryForExport(story: Story): Story {
   });
 }
 
+const VALID_PROVIDER_PRESET_IDS = new Set<ProviderPresetId>([
+  'deepseek',
+  'openai',
+  'openrouter',
+  'siliconflow',
+  'local',
+  'custom',
+]);
+const VALID_PUBLIC_RESEARCH_PROVIDERS = new Set<PublicResearchSearchPresetId>([
+  'none',
+  'deepseek_account',
+  'tavily',
+  'bocha',
+]);
+
+function stripApiKeysRecursively(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stripApiKeysRecursively);
+  }
+  if (!isRecord(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'apiKey') continue;
+    out[key] = stripApiKeysRecursively(entry);
+  }
+  return out;
+}
+
+function assertNoSecretsInProviderLibrary(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) assertNoSecretsInProviderLibrary(item);
+    return;
+  }
+  if (!isRecord(value)) return;
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'apiKey') {
+      if (entry !== undefined && (typeof entry !== 'string' || entry.trim().length > 0)) {
+        throw new Error('备份文件中的 providerLibrary 不允许包含 apiKey 密钥字段。');
+      }
+      continue;
+    }
+    assertNoSecretsInProviderLibrary(entry);
+  }
+}
+
+function validateCustomPricing(raw: unknown, context: string): CustomModelPricing {
+  if (!isRecord(raw)) {
+    throw new Error(`${context} 的 pricing 必须为对象。`);
+  }
+  if (raw.currency !== 'CNY' && raw.currency !== 'USD') {
+    throw new Error(`${context} 的 pricing.currency 必须为 CNY 或 USD。`);
+  }
+  if (
+    typeof raw.inputPerMillion !== 'number' ||
+    !Number.isFinite(raw.inputPerMillion) ||
+    raw.inputPerMillion < 0
+  ) {
+    throw new Error(`${context} 的 pricing.inputPerMillion 必须为非负数字。`);
+  }
+  if (
+    typeof raw.outputPerMillion !== 'number' ||
+    !Number.isFinite(raw.outputPerMillion) ||
+    raw.outputPerMillion < 0
+  ) {
+    throw new Error(`${context} 的 pricing.outputPerMillion 必须为非负数字。`);
+  }
+  if (
+    raw.cacheHitInputPerMillion !== undefined &&
+    (typeof raw.cacheHitInputPerMillion !== 'number' ||
+      !Number.isFinite(raw.cacheHitInputPerMillion) ||
+      raw.cacheHitInputPerMillion < 0)
+  ) {
+    throw new Error(`${context} 的 pricing.cacheHitInputPerMillion 必须为非负数字。`);
+  }
+  return {
+    currency: raw.currency,
+    inputPerMillion: raw.inputPerMillion,
+    ...(raw.cacheHitInputPerMillion !== undefined
+      ? { cacheHitInputPerMillion: raw.cacheHitInputPerMillion }
+      : {}),
+    outputPerMillion: raw.outputPerMillion,
+  };
+}
+
+function validateProviderCapabilities(raw: unknown, context: string): ProviderCapabilities {
+  if (!isRecord(raw)) {
+    throw new Error(`${context} 的 capabilities 必须为对象。`);
+  }
+  if (raw.thinkingProtocol !== 'deepseek' && raw.thinkingProtocol !== 'openai_reasoning_effort') {
+    throw new Error(`${context} 的 capabilities.thinkingProtocol 无效。`);
+  }
+  if (
+    raw.prefixProtocol !== 'deepseek_beta' &&
+    raw.prefixProtocol !== 'standard_assistant_prefill' &&
+    raw.prefixProtocol !== 'none'
+  ) {
+    throw new Error(`${context} 的 capabilities.prefixProtocol 无效。`);
+  }
+  if (
+    typeof raw.supportsBalanceQuery !== 'boolean' ||
+    typeof raw.supportsBuiltinSearch !== 'boolean' ||
+    typeof raw.supportsBuiltinPricing !== 'boolean'
+  ) {
+    throw new Error(`${context} 的 capabilities 布尔字段无效。`);
+  }
+  return {
+    thinkingProtocol: raw.thinkingProtocol,
+    prefixProtocol: raw.prefixProtocol,
+    supportsBalanceQuery: raw.supportsBalanceQuery,
+    supportsBuiltinSearch: raw.supportsBuiltinSearch,
+    supportsBuiltinPricing: raw.supportsBuiltinPricing,
+  };
+}
+
+function validateProviderModelEntry(raw: unknown, context: string): ProviderModelEntry {
+  if (!isRecord(raw) || typeof raw.id !== 'string' || !raw.id.trim()) {
+    throw new Error(`${context} 的模型条目缺少有效 id。`);
+  }
+  if (raw.label !== undefined && typeof raw.label !== 'string') {
+    throw new Error(`${context} 的模型条目 label 必须为字符串。`);
+  }
+  const pricing = raw.pricing === undefined ? undefined : validateCustomPricing(raw.pricing, context);
+  return {
+    id: raw.id.trim(),
+    ...(raw.label !== undefined ? { label: raw.label } : {}),
+    ...(pricing ? { pricing } : {}),
+  };
+}
+
+function validateProviderProfileMeta(raw: unknown, index: number): ProviderProfileMeta {
+  const context = `备份文件 providerLibrary.profiles[${index}]`;
+  if (!isRecord(raw)) {
+    throw new Error(`${context} 必须为对象。`);
+  }
+  if (typeof raw.id !== 'string' || !raw.id.trim()) {
+    throw new Error(`${context} 缺少有效 id。`);
+  }
+  if (typeof raw.name !== 'string') {
+    throw new Error(`${context} 缺少有效 name。`);
+  }
+  if (
+    typeof raw.presetId !== 'string' ||
+    !VALID_PROVIDER_PRESET_IDS.has(raw.presetId as ProviderPresetId)
+  ) {
+    throw new Error(`${context} 的 presetId 无效。`);
+  }
+  if (typeof raw.baseUrl !== 'string') {
+    throw new Error(`${context} 的 baseUrl 必须为字符串。`);
+  }
+  if (typeof raw.defaultModel !== 'string') {
+    throw new Error(`${context} 的 defaultModel 必须为字符串。`);
+  }
+  if (!Array.isArray(raw.models)) {
+    throw new Error(`${context} 的 models 必须为数组。`);
+  }
+  if (raw.backgroundModel !== undefined && typeof raw.backgroundModel !== 'string') {
+    throw new Error(`${context} 的 backgroundModel 必须为字符串。`);
+  }
+  if (
+    raw.prefillProbeStatus !== undefined &&
+    raw.prefillProbeStatus !== 'untested' &&
+    raw.prefillProbeStatus !== 'supported' &&
+    raw.prefillProbeStatus !== 'unsupported'
+  ) {
+    throw new Error(`${context} 的 prefillProbeStatus 无效。`);
+  }
+  if (raw.memoryOnly !== undefined && typeof raw.memoryOnly !== 'boolean') {
+    throw new Error(`${context} 的 memoryOnly 必须为布尔值。`);
+  }
+
+  const models = raw.models.map((item) => validateProviderModelEntry(item, context));
+  const defaultPricing =
+    raw.defaultPricing === undefined
+      ? undefined
+      : validateCustomPricing(raw.defaultPricing, context);
+  const capabilities = validateProviderCapabilities(raw.capabilities, context);
+
+  return {
+    id: raw.id.trim(),
+    name: raw.name,
+    presetId: raw.presetId as ProviderPresetId,
+    baseUrl: raw.baseUrl,
+    models,
+    defaultModel: raw.defaultModel,
+    ...(raw.backgroundModel !== undefined ? { backgroundModel: raw.backgroundModel } : {}),
+    ...(defaultPricing ? { defaultPricing } : {}),
+    capabilities,
+    ...(raw.prefillProbeStatus !== undefined
+      ? { prefillProbeStatus: raw.prefillProbeStatus }
+      : {}),
+    ...(raw.memoryOnly !== undefined ? { memoryOnly: raw.memoryOnly } : {}),
+  };
+}
+
+function validatePublicResearchMeta(raw: unknown): PublicResearchConfigMeta | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    throw new Error('备份文件 providerLibrary.publicResearch 必须为对象。');
+  }
+  if (
+    typeof raw.provider !== 'string' ||
+    !VALID_PUBLIC_RESEARCH_PROVIDERS.has(raw.provider as PublicResearchSearchPresetId)
+  ) {
+    throw new Error('备份文件 providerLibrary.publicResearch.provider 无效。');
+  }
+  if (raw.deepseekProfileId !== undefined && typeof raw.deepseekProfileId !== 'string') {
+    throw new Error('备份文件 providerLibrary.publicResearch.deepseekProfileId 必须为字符串。');
+  }
+  return {
+    provider: raw.provider as PublicResearchSearchPresetId,
+    ...(typeof raw.deepseekProfileId === 'string' && raw.deepseekProfileId.trim()
+      ? { deepseekProfileId: raw.deepseekProfileId.trim() }
+      : {}),
+  };
+}
+
+function validateProviderLibraryMeta(
+  raw: unknown,
+  rejectNonEmptySecret = true,
+): ProviderLibraryMeta {
+  if (!isRecord(raw)) {
+    throw new Error('备份文件 providerLibrary 必须为对象。');
+  }
+  if (rejectNonEmptySecret) {
+    assertNoSecretsInProviderLibrary(raw);
+  }
+  if (raw.version !== 2) {
+    throw new Error('备份文件 providerLibrary.version 必须为 2。');
+  }
+  if (!Array.isArray(raw.profiles) || raw.profiles.length === 0) {
+    throw new Error('备份文件 providerLibrary.profiles 必须为非空数组。');
+  }
+  const profiles = raw.profiles.map((item, idx) => validateProviderProfileMeta(item, idx));
+  if (
+    typeof raw.activeProviderId !== 'string' ||
+    !raw.activeProviderId.trim() ||
+    !profiles.some((p) => p.id === raw.activeProviderId)
+  ) {
+    throw new Error('备份文件 providerLibrary.activeProviderId 无效。');
+  }
+  if (raw.reasoningEffort !== undefined && !isReasoningEffort(raw.reasoningEffort)) {
+    throw new Error('备份文件 providerLibrary.reasoningEffort 无效。');
+  }
+  const publicResearch = validatePublicResearchMeta(raw.publicResearch);
+  return {
+    version: 2,
+    activeProviderId: raw.activeProviderId.trim(),
+    profiles,
+    ...(raw.reasoningEffort !== undefined ? { reasoningEffort: raw.reasoningEffort } : {}),
+    ...(publicResearch ? { publicResearch } : {}),
+  };
+}
+
+function sanitizeProviderLibraryForExport(
+  raw: ProviderLibrary | ProviderLibraryMeta | undefined,
+): ProviderLibraryMeta | undefined {
+  if (!raw) return undefined;
+  const stripped = stripApiKeysRecursively(raw);
+  return validateProviderLibraryMeta(stripped, false);
+}
+
 /**
  * Exports all 3 modes (文游 stories, 写故事 works, 角色互动 characters), 我的记忆,
- * and optional display preferences into a `.folio.json` v3 bundle. Strictly excludes API keys.
+ * optional display preferences, prompt packs, and keyless provider skeletons into a `.folio.json` v3 bundle. Strictly excludes API keys.
  */
 export function exportFolioBackupV3(options: ExportFolioBackupV3Options): string {
   const now = options.now ?? (() => Date.now());
@@ -191,6 +470,7 @@ export function exportFolioBackupV3(options: ExportFolioBackupV3Options): string
   const promptPacks = options.promptPacks
     ? validatePromptPackLibrary(options.promptPacks)
     : undefined;
+  const providerLibrary = sanitizeProviderLibraryForExport(options.providerLibrary);
   const envelope: FolioBackupEnvelopeV3 = {
     schemaVersion: 3,
     exportedAt: now(),
@@ -199,6 +479,7 @@ export function exportFolioBackupV3(options: ExportFolioBackupV3Options): string
     workspace: sanitizeWorkspaceForExport(options.workspace),
     ...(displayPreferences ? { displayPreferences } : {}),
     ...(promptPacks ? { promptPacks } : {}),
+    ...(providerLibrary ? { providerLibrary } : {}),
   };
   return JSON.stringify(envelope, null, 2);
 }
@@ -514,6 +795,9 @@ export function parseAndValidateFolioBackup(rawJson: string): FolioBackupEnvelop
     const promptPacks = parsed.promptPacks === undefined
       ? undefined
       : validatePromptPackLibrary(parsed.promptPacks);
+    const providerLibrary = parsed.providerLibrary === undefined
+      ? undefined
+      : validateProviderLibraryMeta(parsed.providerLibrary, true);
     return {
       schemaVersion: 3,
       exportedAt: parsed.exportedAt,
@@ -522,6 +806,7 @@ export function parseAndValidateFolioBackup(rawJson: string): FolioBackupEnvelop
       workspace,
       ...(displayPreferences ? { displayPreferences } : {}),
       ...(promptPacks ? { promptPacks } : {}),
+      ...(providerLibrary ? { providerLibrary } : {}),
     };
   }
 
@@ -600,18 +885,82 @@ function mergePromptPackLibraries(
   };
 }
 
-function remapPromptPackReference<T extends { generationPreference?: GenerationPreference }>(
+interface ProviderLibraryMergeResult {
+  library?: ProviderLibraryMeta;
+  idRemap: Map<string, string>;
+}
+
+function mergeProviderLibraries(
+  existing: ProviderLibraryMeta | undefined,
+  incoming: ProviderLibraryMeta | undefined,
+  createId: () => string,
+): ProviderLibraryMergeResult {
+  if (!existing && !incoming) return { idRemap: new Map() };
+  if (!existing) {
+    return {
+      library: validateProviderLibraryMeta(incoming, true),
+      idRemap: new Map(),
+    };
+  }
+  if (!incoming) {
+    return {
+      library: sanitizeProviderLibraryForExport(existing),
+      idRemap: new Map(),
+    };
+  }
+
+  const current = validateProviderLibraryMeta(stripApiKeysRecursively(existing), false);
+  const restored = validateProviderLibraryMeta(incoming, true);
+  const usedIds = new Set(current.profiles.map((p) => p.id));
+  const idRemap = new Map<string, string>();
+  const profiles: ProviderProfileMeta[] = current.profiles.map((p) => cloneJson(p));
+
+  for (const incomingProfile of restored.profiles) {
+    if (incomingProfile.id === 'deepseek-official' && usedIds.has('deepseek-official')) {
+      continue;
+    }
+    let nextProfile = cloneJson(incomingProfile);
+    if (usedIds.has(nextProfile.id)) {
+      const nextId = createId();
+      idRemap.set(nextProfile.id, nextId);
+      nextProfile = {
+        ...nextProfile,
+        id: nextId,
+        name: `${nextProfile.name} (备份导入)`,
+      };
+    }
+    usedIds.add(nextProfile.id);
+    profiles.push(nextProfile);
+  }
+
+  return {
+    library: {
+      version: 2,
+      activeProviderId: current.activeProviderId,
+      profiles,
+      ...(current.reasoningEffort !== undefined ? { reasoningEffort: current.reasoningEffort } : {}),
+      ...(current.publicResearch ? { publicResearch: cloneJson(current.publicResearch) } : {}),
+    },
+    idRemap,
+  };
+}
+
+function remapImportedPreferences<T extends { generationPreference?: GenerationPreference }>(
   value: T,
-  idRemap: ReadonlyMap<string, string>,
+  promptPackIdRemap: ReadonlyMap<string, string>,
+  providerIdRemap: ReadonlyMap<string, string>,
 ): T {
   const mode = value.generationPreference?.promptPackMode;
-  const nextMode = mode && mode !== 'inherit' && mode !== 'off' ? idRemap.get(mode) : undefined;
-  if (!nextMode) return value;
+  const nextMode = mode && mode !== 'inherit' && mode !== 'off' ? promptPackIdRemap.get(mode) : undefined;
+  const providerId = value.generationPreference?.providerId;
+  const nextProviderId = providerId ? providerIdRemap.get(providerId) : undefined;
+  if (!nextMode && !nextProviderId) return value;
   return {
     ...value,
     generationPreference: {
       ...value.generationPreference,
-      promptPackMode: nextMode,
+      ...(nextMode ? { promptPackMode: nextMode } : {}),
+      ...(nextProviderId ? { providerId: nextProviderId } : {}),
     },
   };
 }
@@ -766,15 +1115,24 @@ export function mergeRestoredBackup(
     incoming.promptPacks,
     createId,
   );
+  const providerMerge = mergeProviderLibraries(
+    existing.providerLibrary,
+    incoming.providerLibrary,
+    createId,
+  );
   const remappedStories = mergedStories.map((story) =>
-    importedStories.has(story) ? remapPromptPackReference(story, promptPackMerge.idRemap) : story,
+    importedStories.has(story)
+      ? remapImportedPreferences(story, promptPackMerge.idRemap, providerMerge.idRemap)
+      : story,
   );
   const remappedWorks = mergedWorks.map((work) =>
-    importedWorks.has(work) ? remapPromptPackReference(work, promptPackMerge.idRemap) : work,
+    importedWorks.has(work)
+      ? remapImportedPreferences(work, promptPackMerge.idRemap, providerMerge.idRemap)
+      : work,
   );
   const remappedCharacters = mergedCharacters.map((character) =>
     importedCharacters.has(character)
-      ? remapPromptPackReference(character, promptPackMerge.idRemap)
+      ? remapImportedPreferences(character, promptPackMerge.idRemap, providerMerge.idRemap)
       : character,
   );
 
@@ -799,12 +1157,14 @@ export function mergeRestoredBackup(
         })
       : undefined;
   const promptPacks = promptPackMerge.library;
+  const providerLibrary = providerMerge.library;
 
   return {
     stories: remappedStories,
     workspace: mergedWorkspace,
     ...(displayPreferences ? { displayPreferences } : {}),
     ...(promptPacks ? { promptPacks } : {}),
+    ...(providerLibrary ? { providerLibrary } : {}),
     report: {
       addedStories,
       renamedStories,
