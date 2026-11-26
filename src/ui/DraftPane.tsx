@@ -41,6 +41,7 @@ import {
   type ModelConfig,
   type PlatformRuntime,
   type PromptPackLibrary,
+  type ProviderLibrary,
   type StageAssetMode,
   type Story,
   type TurnNode,
@@ -48,7 +49,11 @@ import {
   type WritingSuggestion,
 } from '../harness/index.ts';
 import type { DocumentEdit } from './DocumentDialog.tsx';
-import { GenerationControls, mergeGenerationPreference } from './GenerationControls.tsx';
+import {
+  GenerationControls,
+  mergeGenerationPreference,
+  resolveEffectiveLibraryModelConfig,
+} from './GenerationControls.tsx';
 import { MarkdownView } from './MarkdownView.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { ProposalCard } from './ProposalCard.tsx';
@@ -98,6 +103,7 @@ interface DraftPaneProps {
   work: DraftWork;
   workspace: CreativeWorkspaceState;
   defaultConfig?: ModelConfig;
+  providerLibrary?: ProviderLibrary;
   promptPackLibrary?: PromptPackLibrary;
   save: SaveWorkspace;
   read: () => Promise<CreativeWorkspaceState>;
@@ -328,6 +334,18 @@ export function DraftPane(props: DraftPaneProps) {
       .catch(() => undefined);
   };
 
+  const resolveEffectiveConfigForTurn = (config: ModelConfig, live: DraftWork) => {
+    const targetProfileId =
+      live.generationPreference?.providerId?.trim() || props.providerLibrary?.activeProviderId;
+    return !props.providerLibrary || (targetProfileId && config.providerId === targetProfileId)
+      ? resolveEffectiveModelConfig(config, live.generationPreference)
+      : resolveEffectiveLibraryModelConfig({
+          providerLibrary: props.providerLibrary,
+          defaultConfig: config,
+          preference: live.generationPreference,
+        });
+  };
+
   function submitChatTurn(
     value: string,
     options: { parentId?: string | null; label?: string } = {},
@@ -360,7 +378,7 @@ export function DraftPane(props: DraftPaneProps) {
         targetParentId: contextParentId,
         promptPackOptions,
       });
-      const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
+      const effectiveConfig = resolveEffectiveConfigForTurn(config, live);
       const result = await request(ctx.messages, {
         config: effectiveConfig,
         refusalOptions: {
@@ -409,6 +427,8 @@ export function DraftPane(props: DraftPaneProps) {
               uncompressedPromptChars: ctx.metrics.uncompressedPromptChars,
               compressedPromptChars: ctx.metrics.compressedPromptChars,
               retrievedNodeCount: ctx.metrics.retrievedNodeCount,
+              ...(effectiveConfig.pricing ? { pricing: effectiveConfig.pricing } : {}),
+              ...(effectiveConfig.capabilities ? { capabilities: effectiveConfig.capabilities } : {}),
             }),
             parentId: userId,
             documentReads: ctx.reads,
@@ -433,7 +453,7 @@ export function DraftPane(props: DraftPaneProps) {
       if (updatedWork && assistantId) {
         runSilentSummary(updatedWork, effectiveConfig, assistantId);
       }
-    });
+    }, work.generationPreference);
   }
 
   function submitManuscriptPrompt(value: string) {
@@ -473,7 +493,7 @@ export function DraftPane(props: DraftPaneProps) {
         cursorPos: start,
         promptPackOptions,
       });
-      const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
+      const effectiveConfig = resolveEffectiveConfigForTurn(config, live);
       const reasoningEffort = normalizeReasoningEffort(effectiveConfig.reasoningEffort);
       let visibleStream = '';
       const result = await streamWithRefusalHandling({
@@ -518,6 +538,8 @@ export function DraftPane(props: DraftPaneProps) {
         uncompressedPromptChars: ctx.metrics.uncompressedPromptChars,
         compressedPromptChars: ctx.metrics.compressedPromptChars,
         retrievedNodeCount: ctx.metrics.retrievedNodeCount,
+        ...(effectiveConfig.pricing ? { pricing: effectiveConfig.pricing } : {}),
+        ...(effectiveConfig.capabilities ? { capabilities: effectiveConfig.capabilities } : {}),
       });
 
       if (routed.kind === 'suggestion') {
@@ -635,7 +657,7 @@ export function DraftPane(props: DraftPaneProps) {
           runSilentSummary(updatedWork, effectiveConfig, chatAssistantId);
         }
       }
-    });
+    }, work.generationPreference);
   }
 
   const queuedOpening = useRef(false);
@@ -767,7 +789,7 @@ export function DraftPane(props: DraftPaneProps) {
         targetParentId: userNode.parentId,
         promptPackOptions,
       });
-      const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
+      const effectiveConfig = resolveEffectiveConfigForTurn(config, live);
       const result = await request(ctx.messages, {
         config: effectiveConfig,
         refusalOptions: {
@@ -803,6 +825,8 @@ export function DraftPane(props: DraftPaneProps) {
               uncompressedPromptChars: ctx.metrics.uncompressedPromptChars,
               compressedPromptChars: ctx.metrics.compressedPromptChars,
               retrievedNodeCount: ctx.metrics.retrievedNodeCount,
+              ...(effectiveConfig.pricing ? { pricing: effectiveConfig.pricing } : {}),
+              ...(effectiveConfig.capabilities ? { capabilities: effectiveConfig.capabilities } : {}),
             }),
             parentId: userNode.id,
             documentReads: ctx.reads,
@@ -820,7 +844,7 @@ export function DraftPane(props: DraftPaneProps) {
         }));
       }
       if (updatedWork && assistantId) runSilentSummary(updatedWork, effectiveConfig, assistantId);
-    });
+    }, work.generationPreference);
   };
 
   const restoreDiscussionRefusalOriginal = async (nodeId: string) => {
@@ -870,7 +894,7 @@ export function DraftPane(props: DraftPaneProps) {
         targetParentId: node.parentId,
         promptPackOptions,
       });
-      const effectiveConfig = resolveEffectiveModelConfig(config, live.generationPreference);
+      const effectiveConfig = resolveEffectiveConfigForTurn(config, live);
       let appended = '';
       const continued = await streamPrefixContinuation({
         transport: runtime.transport,
@@ -910,7 +934,7 @@ export function DraftPane(props: DraftPaneProps) {
           };
         }),
       );
-    });
+    }, work.generationPreference);
   };
 
   const editAndBranchDiscussion = (targetUserNodeId: string, newContent: string) => {
@@ -922,10 +946,11 @@ export function DraftPane(props: DraftPaneProps) {
     });
   };
 
-  const effectiveGenerationConfig = resolveEffectiveModelConfig(
-    props.defaultConfig ?? DEFAULT_MODEL_CONFIG,
-    work.generationPreference,
-  );
+  const effectiveGenerationConfig = resolveEffectiveLibraryModelConfig({
+    providerLibrary: props.providerLibrary,
+    defaultConfig: props.defaultConfig ?? DEFAULT_MODEL_CONFIG,
+    preference: work.generationPreference,
+  });
 
   const handleGenerationPreferenceChange = (
     patch: Parameters<typeof mergeGenerationPreference>[1],
@@ -1463,8 +1488,12 @@ export function DraftPane(props: DraftPaneProps) {
             <GenerationControls
               model={effectiveGenerationConfig.model}
               reasoningEffort={effectiveGenerationConfig.reasoningEffort}
+              providerLibrary={props.providerLibrary}
+              providerId={effectiveGenerationConfig.providerId}
+              capabilities={effectiveGenerationConfig.capabilities}
               disabled={reply.busy}
               onModelChange={(model) => handleGenerationPreferenceChange({ model })}
+              onProviderModelChange={(patch) => handleGenerationPreferenceChange(patch)}
               onReasoningEffortChange={(reasoningEffort) => handleGenerationPreferenceChange({ reasoningEffort })}
               promptPackLibrary={props.promptPackLibrary}
               promptPackMode={work.generationPreference?.promptPackMode ?? 'inherit'}
@@ -1784,8 +1813,12 @@ export function DraftPane(props: DraftPaneProps) {
               <GenerationControls
                 model={effectiveGenerationConfig.model}
                 reasoningEffort={effectiveGenerationConfig.reasoningEffort}
+                providerLibrary={props.providerLibrary}
+                providerId={effectiveGenerationConfig.providerId}
+                capabilities={effectiveGenerationConfig.capabilities}
                 disabled={reply.busy}
                 onModelChange={(model) => handleGenerationPreferenceChange({ model })}
+                onProviderModelChange={(patch) => handleGenerationPreferenceChange(patch)}
                 onReasoningEffortChange={(reasoningEffort) => handleGenerationPreferenceChange({ reasoningEffort })}
                 promptPackLibrary={props.promptPackLibrary}
                 promptPackMode={work.generationPreference?.promptPackMode ?? 'inherit'}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchDeepSeekBalance,
+  isOfficialDeepSeekUrl,
   recordBalanceCheckDiagnostic,
   type BalanceFetchLike,
   type DeepSeekBalanceErrorReason,
@@ -20,6 +21,7 @@ export interface DeepSeekBalanceSyncParams {
   useDevEnvKey: boolean;
   apiKey: string;
   baseUrl: string;
+  supportsBalanceQuery?: boolean;
   keyBoundSeq?: number;
 }
 
@@ -37,8 +39,15 @@ export interface DeepSeekBalanceController {
   dispose(): void;
 }
 
+function resolveSupportsBalanceQuery(params: DeepSeekBalanceSyncParams): boolean {
+  if (params.supportsBalanceQuery !== undefined) {
+    return params.supportsBalanceQuery;
+  }
+  return isOfficialDeepSeekUrl(params.baseUrl);
+}
+
 function buildContextKey(params: DeepSeekBalanceSyncParams): string {
-  return `${params.hasCredentials ? 1 : 0}|${params.useDevEnvKey ? 1 : 0}|${params.apiKey}|${params.baseUrl}|${params.keyBoundSeq ?? 0}`;
+  return `${resolveSupportsBalanceQuery(params) ? 1 : 0}|${params.hasCredentials ? 1 : 0}|${params.useDevEnvKey ? 1 : 0}|${params.apiKey}|${params.baseUrl}|${params.keyBoundSeq ?? 0}`;
 }
 
 function toPreviousBalance(state: SettingsBalanceState): ParsedDeepSeekBalance | undefined {
@@ -144,7 +153,7 @@ export function createDeepSeekBalanceController(
 
     async sync(params: DeepSeekBalanceSyncParams): Promise<void> {
       currentParams = params;
-      if (!params.hasCredentials || params.useDevEnvKey) {
+      if (!resolveSupportsBalanceQuery(params) || !params.hasCredentials || params.useDevEnvKey) {
         abortInFlight();
         lastContextKey = '';
         wasActive = params.active;
@@ -176,7 +185,13 @@ export function createDeepSeekBalanceController(
     },
 
     async refresh(): Promise<void> {
-      if (!currentParams || !currentParams.active || !currentParams.hasCredentials || currentParams.useDevEnvKey) {
+      if (
+        !currentParams ||
+        !currentParams.active ||
+        !resolveSupportsBalanceQuery(currentParams) ||
+        !currentParams.hasCredentials ||
+        currentParams.useDevEnvKey
+      ) {
         return;
       }
       if (inFlight) {
@@ -220,6 +235,7 @@ export function useDeepSeekBalance(
       useDevEnvKey: params.useDevEnvKey,
       apiKey: params.apiKey,
       baseUrl: params.baseUrl,
+      supportsBalanceQuery: params.supportsBalanceQuery,
       keyBoundSeq: params.keyBoundSeq,
     });
   }, [
@@ -228,6 +244,7 @@ export function useDeepSeekBalance(
     params.useDevEnvKey,
     params.apiKey,
     params.baseUrl,
+    params.supportsBalanceQuery,
     params.keyBoundSeq,
   ]);
 
