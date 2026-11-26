@@ -712,5 +712,24 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     expect(merged.providerLibrary?.profiles[2]?.name).toBe('硅基主力 (备份导入)');
     expect(merged.stories[0]?.generationPreference?.providerId).toBe('remapped-1');
     expect(JSON.stringify(merged.providerLibrary)).not.toContain('"apiKey"');
+
+    // When existing library has no publicResearch configured, adopt restored publicResearch skeleton
+    const mergedAdoptsResearch = mergeRestoredBackup(
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        providerLibrary: {
+          version: 2,
+          activeProviderId: 'deepseek-official',
+          profiles: [existingDsMeta],
+          reasoningEffort: 'none',
+        },
+      },
+      parsed,
+      { createId: () => `adopted-${nextSeq++}` },
+    );
+    expect(mergedAdoptsResearch.providerLibrary?.publicResearch).toEqual({
+      provider: 'tavily',
+    });
   });
 });

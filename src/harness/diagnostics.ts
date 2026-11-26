@@ -390,6 +390,7 @@ export interface DiagnosticBundleBuildOptions {
   userNote?: string;
   activeStory?: Story;
   workspace?: WorkspaceSkeletonInput;
+  extraSecrets?: readonly string[];
 }
 
 export interface DiagnosticCollectorOptions {
@@ -1206,7 +1207,24 @@ export function createDiagnosticCollector(
       const trigger = DIAGNOSTIC_BUNDLE_TRIGGERS.has(bundleOptions.trigger as DiagnosticBundleTrigger)
         ? bundleOptions.trigger!
         : 'settings_manual';
-      const userNote = sanitizeSingleLineText(bundleOptions.userNote, MAX_USER_NOTE_CHARS);
+      const extraSecrets = Array.from(
+        new Set(
+          (bundleOptions.extraSecrets ?? [])
+            .map((secret) => (typeof secret === 'string' ? secret.trim() : ''))
+            .filter((secret) => secret.length >= 6),
+        ),
+      );
+      const scrubExtraSecrets = (value: string): string => {
+        let scrubbed = value;
+        for (const secret of extraSecrets) {
+          if (scrubbed.includes(secret)) {
+            scrubbed = scrubbed.split(secret).join('[REDACTED_KEY]');
+          }
+        }
+        return scrubbed;
+      };
+      const rawUserNote = sanitizeSingleLineText(bundleOptions.userNote, MAX_USER_NOTE_CHARS);
+      const userNote = rawUserNote ? scrubExtraSecrets(rawUserNote) : undefined;
       const activeStorySkeleton = bundleOptions.activeStory
         ? buildRedactedStorySkeleton(bundleOptions.activeStory)
         : undefined;
@@ -1229,6 +1247,15 @@ export function createDiagnosticCollector(
           .filter((event): event is DiagnosticEvent => event !== null)
           .map(({ ts, ...event }) => ({
             ...event,
+            ...(event.sanitizedReason
+              ? { sanitizedReason: scrubExtraSecrets(event.sanitizedReason) }
+              : {}),
+            ...(event.sanitizedMessage
+              ? { sanitizedMessage: scrubExtraSecrets(event.sanitizedMessage) }
+              : {}),
+            ...(event.stackTop
+              ? { stackTop: event.stackTop.map(scrubExtraSecrets) }
+              : {}),
             tsOffsetSec: Math.round((ts - currentTs) / 1000),
           })),
         ...(userNote ? { userNote } : {}),

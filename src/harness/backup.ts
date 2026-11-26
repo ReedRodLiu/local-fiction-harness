@@ -933,13 +933,28 @@ function mergeProviderLibraries(
     profiles.push(nextProfile);
   }
 
+  const currentResearch = current.publicResearch;
+  const restoredResearch = restored.publicResearch
+    ? {
+        ...cloneJson(restored.publicResearch),
+        ...(restored.publicResearch.deepseekProfileId &&
+        idRemap.has(restored.publicResearch.deepseekProfileId)
+          ? { deepseekProfileId: idRemap.get(restored.publicResearch.deepseekProfileId) }
+          : {}),
+      }
+    : undefined;
+  const mergedPublicResearch =
+    currentResearch && currentResearch.provider !== 'none'
+      ? cloneJson(currentResearch)
+      : restoredResearch ?? (currentResearch ? cloneJson(currentResearch) : undefined);
+
   return {
     library: {
       version: 2,
       activeProviderId: current.activeProviderId,
       profiles,
       ...(current.reasoningEffort !== undefined ? { reasoningEffort: current.reasoningEffort } : {}),
-      ...(current.publicResearch ? { publicResearch: cloneJson(current.publicResearch) } : {}),
+      ...(mergedPublicResearch ? { publicResearch: mergedPublicResearch } : {}),
     },
     idRemap,
   };

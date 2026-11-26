@@ -83,7 +83,6 @@ export interface SettingsPageProps {
   onDeleteProviderProfile?: (profileId: string) => void;
   onAddCustomModel?: (modelId: string) => void;
   onRemoveCustomModel?: (modelId: string) => void;
-  onUpdatePublicResearch?: (config: PublicResearchConfig) => void;
   promptPackLibrary?: PromptPackLibrary;
   workspaceUsageSummary?: WorkspaceUsageSummary;
   appUpdater?: AppUpdaterController;
@@ -199,7 +198,6 @@ export function SettingsPage({
   onDeleteProviderProfile,
   onAddCustomModel,
   onRemoveCustomModel,
-  onUpdatePublicResearch: _onUpdatePublicResearch,
   promptPackLibrary = createDefaultPromptPackLibrary(),
   workspaceUsageSummary,
   appUpdater,
@@ -401,6 +399,18 @@ export function SettingsPage({
               </p>
               <p className="wizard-privacy-note" data-testid="active-provider-research-status">
                 联网检索源：{activeResearchPreset.title}
+                {activeProfile && onOpenEditProviderWizard && (
+                  <>
+                    {' '}
+                    <button
+                      type="button"
+                      className="text-action"
+                      onClick={() => onOpenEditProviderWizard(activeProfile.id)}
+                    >
+                      配置
+                    </button>
+                  </>
+                )}
               </p>
             </div>
           )}
@@ -555,7 +565,7 @@ export function SettingsPage({
                       <span className="badge">{presetLabel}</span>
                       {isActive && (
                         <span className="badge badge-ok" aria-current="true">
-                          <Check size={12} strokeWidth={2} aria-hidden="true" /> 当前使用
+                          <Check size={16} strokeWidth={1.75} aria-hidden="true" /> 当前使用
                         </span>
                       )}
                     </div>
@@ -585,7 +595,7 @@ export function SettingsPage({
                           : onOpenSetupWizard()
                       }
                     >
-                      <Edit3 size={14} strokeWidth={1.75} aria-hidden="true" />
+                      <Edit3 size={16} strokeWidth={1.75} aria-hidden="true" />
                       <span>编辑</span>
                     </button>
                     {profiles.length > 1 && (

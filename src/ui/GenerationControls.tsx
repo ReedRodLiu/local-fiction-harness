@@ -435,7 +435,7 @@ export function GenerationControls({
                   </>
                 )}
                 <span className="composer-provider-model-label">{activeModelLabel}</span>
-                <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" />
+                <ChevronDown size={16} strokeWidth={1.75} aria-hidden="true" />
               </button>
 
               {providerMenuOpen && (
@@ -468,7 +468,7 @@ export function GenerationControls({
                                 {entry.label && <small>{entry.id}</small>}
                               </span>
                               {isSelected && (
-                                <Check size={14} strokeWidth={2} aria-hidden="true" />
+                                <Check size={16} strokeWidth={1.75} aria-hidden="true" />
                               )}
                             </button>
                           );

@@ -271,7 +271,7 @@ describe('Ticket #165: App multi-provider library integration, per-item override
     expect(appSource).toContain('onDeleteProviderProfile=');
     expect(appSource).toContain('onAddCustomModel=');
     expect(appSource).toContain('onRemoveCustomModel=');
-    expect(appSource).toContain('onUpdatePublicResearch=');
+    expect(appSource).toContain('extraSecrets');
     expect(appSource).toContain('supportsBalanceQuery');
     expect(appSource).toContain('providerLibrary,');
   });

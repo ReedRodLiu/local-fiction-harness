@@ -236,7 +236,9 @@ export function buildProviderSaveResultFromDraft(
   const baseModels = mergeProviderModels(draft.models, options?.discoveredModels ?? []);
   const models = trimmedModel ? mergeProviderModels(baseModels, [trimmedModel]) : baseModels;
   const defaultModel = isDeepSeek
-    ? preset.defaultModel
+    ? preset.models.some((m) => m.id === trimmedModel)
+      ? trimmedModel
+      : preset.defaultModel
     : trimmedModel || models[0]?.id || preset.defaultModel;
   const backgroundModel = draft.backgroundModel.trim() || undefined;
   const resolvedId =
@@ -943,7 +945,7 @@ export function ProviderSetupWizard({
                     rel="noopener noreferrer"
                   >
                     <span>前往获取免费 Search API Key</span>
-                    <ExternalLink size={14} strokeWidth={1.75} aria-hidden="true" />
+                    <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
                   </a>
                 )}
                 {activeSearchPreset.requiresApiKey && (

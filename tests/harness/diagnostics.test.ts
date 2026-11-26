@@ -894,8 +894,26 @@ describe('Spec #26 Slice 2: DeepSeek structure radar & breadcrumb wrappers', () 
       model: 'deepseek-ai/DeepSeek-V3',
       apiKey: 'sk-custom-CANARY987654',
       memoryOnly: false,
+    }, {
+      extraSecrets: ['bocha-unprefixed-secret-999'],
+    });
+    collector.recordError({
+      category: 'llm',
+      action: 'search_error',
+      error: new Error('Search request failed with bocha-unprefixed-secret-999'),
+    });
+    const bundleWithExtra = collector.buildBundle({
+      baseUrl: 'https://custom-gateway.example.org:8443/v1',
+      model: 'deepseek-ai/DeepSeek-V3',
+      apiKey: 'sk-custom-CANARY987654',
+      memoryOnly: false,
+    }, {
+      extraSecrets: ['bocha-unprefixed-secret-999'],
+      userNote: 'note with bocha-unprefixed-secret-999',
     });
     const json = JSON.stringify(bundle);
+    const jsonWithExtra = JSON.stringify(bundleWithExtra);
+    expect(jsonWithExtra).not.toContain('bocha-unprefixed-secret-999');
     expect(json).not.toContain('custom-gateway.example.org');
     expect(json).not.toContain('api.tavily.com');
     expect(json).not.toContain('tvly-dev-CANARY123456');

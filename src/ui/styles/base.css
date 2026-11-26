@@ -10,6 +10,7 @@
 }
 
 .field input,
+.field select,
 .field textarea {
   font: inherit;
   font-size: max(1rem, 0.95rem);
@@ -22,11 +23,16 @@
   color: var(--text-primary);
 }
 
+.field select {
+  min-height: 44px;
+}
+
 .field textarea {
   resize: vertical;
 }
 
 .field input:focus-visible,
+.field select:focus-visible,
 button:focus-visible,
 summary:focus-visible,
 a:focus-visible,

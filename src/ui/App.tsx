@@ -658,6 +658,10 @@ export function App({ runtime }: AppProps) {
     (trigger: DiagnosticBundleTrigger, extra?: { userNote?: string }) => {
       const envVersions = detectEnvironmentVersions();
       const { publicResearch: _omittedResearch, ...safeConfig } = config;
+      const extraSecrets = [
+        ...providerLibrary.profiles.map((p) => p.apiKey),
+        providerLibrary.publicResearch?.apiKey ?? '',
+      ].filter((secret) => secret.trim().length > 0);
       return runtime.diagnostics.buildBundle(
         {
           ...safeConfig,
@@ -665,6 +669,7 @@ export function App({ runtime }: AppProps) {
         },
         {
           trigger,
+          extraSecrets,
           ...(extra?.userNote ? { userNote: extra.userNote } : {}),
           ...(storyExists && !isWelcome ? { activeStory: story } : {}),
           workspace: {
@@ -690,6 +695,7 @@ export function App({ runtime }: AppProps) {
     [
       runtime,
       config,
+      providerLibrary,
       story,
       storyExists,
       isWelcome,
@@ -1465,14 +1471,6 @@ export function App({ runtime }: AppProps) {
     });
     updateProviderLibrary(
       { ...current, profiles },
-      { keepDevProxy: isWebDev && Boolean(devProxySessionRef.current) },
-    );
-  };
-
-  const handleUpdatePublicResearch = (publicResearch: PublicResearchConfig) => {
-    const current = providerLibraryRef.current;
-    updateProviderLibrary(
-      { ...current, publicResearch },
       { keepDevProxy: isWebDev && Boolean(devProxySessionRef.current) },
     );
   };
@@ -3599,7 +3597,7 @@ export function App({ runtime }: AppProps) {
                       {streamReasoning && (
                         <details className="reasoning-details" data-testid="reasoning-details" open>
                           <summary data-testid="reasoning-toggle">
-                            <Sparkles size={14} strokeWidth={1.75} aria-hidden="true" />
+                            <Sparkles size={16} strokeWidth={1.75} aria-hidden="true" />
                             <span>{activeWaitingPhrase}</span>
                           </summary>
                           <div className="reasoning-content">{streamReasoning}</div>
@@ -3881,7 +3879,6 @@ export function App({ runtime }: AppProps) {
                 onDeleteProviderProfile={handleDeleteProviderProfile}
                 onAddCustomModel={handleAddCustomModel}
                 onRemoveCustomModel={handleRemoveCustomModel}
-                onUpdatePublicResearch={handleUpdatePublicResearch}
                 promptPackLibrary={promptPackLibrary}
                 workspaceUsageSummary={workspaceUsageSummary}
                 appUpdater={appUpdater}

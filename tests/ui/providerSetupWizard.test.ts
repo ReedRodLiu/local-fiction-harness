@@ -13,6 +13,7 @@ import {
   ProviderSetupWizard,
   buildProviderSaveResultFromDraft,
   createWizardDraftFromPreset,
+  createWizardDraftFromProfile,
   validateWizardFallbackSave,
   verifyWizardDraftConnection,
 } from '../../src/ui/ProviderSetupWizard.tsx';
@@ -262,6 +263,18 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
     // Build preserves empty pricing when unset
     const cleanSave = buildProviderSaveResultFromDraft(localDraft);
     expect(cleanSave.profile.defaultPricing).toBeUndefined();
+
+    // Editing a DeepSeek profile set to deepseek-v4-pro preserves deepseek-v4-pro as defaultModel
+    const proDeepSeek = createProviderProfileFromPreset('deepseek', {
+      id: 'deepseek-official',
+      defaultModel: 'deepseek-v4-pro',
+      apiKey: 'sk-ds-pro',
+    });
+    const editedDsDraft = createWizardDraftFromProfile(proDeepSeek);
+    const editedDsSave = buildProviderSaveResultFromDraft(editedDsDraft, {
+      hasDeepSeekProfileInLibrary: true,
+    });
+    expect(editedDsSave.profile.defaultModel).toBe('deepseek-v4-pro');
   });
 
   it('never contains jailbreak or bypass prompt text in wizard source', () => {

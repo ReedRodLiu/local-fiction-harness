@@ -138,7 +138,6 @@ describe('Ticket #164 T5: SettingsPage multi-profile, global default model & uni
       onOpenEditProviderWizard: vi.fn(),
       onDeleteProviderProfile: vi.fn(),
       onAddCustomModel: vi.fn(),
-      onUpdatePublicResearch: vi.fn(),
     });
 
     // Multi-profile list shows both profiles with delete button (since profiles.length > 1)

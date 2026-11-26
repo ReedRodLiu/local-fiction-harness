@@ -318,6 +318,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       apiKey: config.apiKey,
       model: config.model,
       reasoningEffort,
+      ...(config.capabilities ? { capabilities: config.capabilities } : {}),
       messages,
       includeUsage: true,
       signal: callbacks?.signal,

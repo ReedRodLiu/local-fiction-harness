@@ -53,7 +53,7 @@ export function SessionUsageCard({
         {summary.recordedTurnCount === 0 ? (
           <>
             <div className="session-usage-header-meta">
-              <Activity size={14} strokeWidth={1.75} aria-hidden="true" />
+              <Activity size={16} strokeWidth={1.75} aria-hidden="true" />
               <span>等待首轮模型统计回传</span>
             </div>
             <p className="session-usage-empty" data-testid="session-usage-empty">
@@ -61,7 +61,7 @@ export function SessionUsageCard({
             </p>
             <div className="session-usage-unavailable" data-testid="session-usage-unavailable">
               <Info
-                size={15}
+                size={16}
                 strokeWidth={1.75}
                 className="session-usage-unavailable-icon"
                 aria-hidden="true"
@@ -131,9 +131,9 @@ export function SessionUsageCard({
                 <div className="session-usage-savings-header">
                   <span className="session-usage-savings-title">
                     {savings.estimatedSavingsUsd >= 0 ? (
-                      <TrendingDown size={15} strokeWidth={1.75} aria-hidden="true" />
+                      <TrendingDown size={16} strokeWidth={1.75} aria-hidden="true" />
                     ) : (
-                      <TrendingUp size={15} strokeWidth={1.75} aria-hidden="true" />
+                      <TrendingUp size={16} strokeWidth={1.75} aria-hidden="true" />
                     )}
                     {savings.estimatedSavingsUsd >= 0 ? '预计省费' : '费用增加'}
                   </span>
@@ -177,7 +177,7 @@ export function SessionUsageCard({
               >
                 <div className="session-usage-savings-header">
                   <span className="session-usage-savings-title">
-                    <TrendingDown size={15} strokeWidth={1.75} aria-hidden="true" />
+                    <TrendingDown size={16} strokeWidth={1.75} aria-hidden="true" />
                     累计节省输入估算
                   </span>
                   <strong className="session-usage-savings-title" data-testid="session-usage-savings-amount">
@@ -207,7 +207,7 @@ export function SessionUsageCard({
             ) : (
               <div className="session-usage-unavailable" data-testid="session-usage-unavailable">
                 <Info
-                  size={15}
+                  size={16}
                   strokeWidth={1.75}
                   className="session-usage-unavailable-icon"
                   aria-hidden="true"
