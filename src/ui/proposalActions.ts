@@ -9,6 +9,7 @@ import {
   type CreativeWorkspaceState,
   type DiagnosticCollector,
   type MarkdownDocument,
+  type StageAssetMode,
   type Story,
   type TurnNode,
   type TurnProposalRecord,
@@ -142,10 +143,22 @@ export interface CreatedAssetNotice {
 
 export type DerivedAssetTarget = 'character' | 'draft' | 'story';
 
+export interface CrossModeProposalConfirmPayload {
+  sourceMode: StageAssetMode;
+  targetMode: StageAssetMode;
+  targetTitle: string;
+  executeConfirm: () => Promise<void>;
+}
+
 export function isDerivedAssetTarget(
   target: string | undefined,
 ): target is DerivedAssetTarget {
   return target === 'character' || target === 'draft' || target === 'story';
+}
+
+export function derivedTargetToStageMode(target: DerivedAssetTarget): StageAssetMode {
+  if (target === 'character') return 'character';
+  return target === 'draft' ? 'writing' : 'story';
 }
 
 export function derivedAssetTargetLabel(target: DerivedAssetTarget): string {

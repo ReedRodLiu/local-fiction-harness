@@ -234,8 +234,6 @@ async function main() {
       '改成小说',
       '把这一段改成小说里的书信体。',
       '下一幕转成角色互动式对话',
-      '请切换到写故事，谢谢。',
-      '切换到角色互动',
     ]) {
       const requestCountBeforeTurn = stageInputs.length;
       await page.fill('#turn-input', prompt);
@@ -254,72 +252,115 @@ async function main() {
       assert.deepEqual(after.characterIds, before.characterIds, 'in-session messages must not clone into characters');
     }
 
-    // 1) Derive character from story via explicit ProposalCard + 去看看
+    // Explicit mode-switch commands in story chat trigger ModalDialog confirmation; canceling preserves state
+    for (const [prompt, expectedTarget] of [
+      ['请切换到写故事，谢谢。', '写故事'],
+      ['切换到角色互动', '角色互动'],
+    ]) {
+      await page.fill('#turn-input', prompt);
+      await page.getByRole('button', { name: '发送行动', exact: true }).click();
+      const dialog = page.getByTestId('mode-switch-confirm-dialog');
+      await dialog.waitFor({ state: 'visible' });
+      await dialog.getByTestId('mode-switch-source').getByText('文游', { exact: true }).waitFor();
+      await dialog.getByTestId('mode-switch-target').getByText(expectedTarget, { exact: true }).waitFor();
+      await dialog.getByTestId('mode-switch-cancel-btn').click();
+      await dialog.waitFor({ state: 'hidden' });
+      assert.equal(await page.inputValue('#turn-input'), prompt);
+      const afterCancel = await readPersistedState(page);
+      assert.deepEqual(afterCancel.storyIds, before.storyIds);
+      assert.deepEqual(afterCancel.workIds, before.workIds);
+      assert.deepEqual(afterCancel.characterIds, before.characterIds);
+    }
+
+    // 1) Derive character from story via ProposalCard + ModalDialog confirmation (cancel then confirm)
     await page.fill('#turn-input', '我要根据这个故事里的沈默创建一个角色互动对话');
     await page.getByRole('button', { name: '发送行动', exact: true }).click();
     const charProposal = page.locator('section[data-testid^="proposal-card-"]').filter({ hasText: '新建角色' }).last();
     await charProposal.waitFor();
     await charProposal.getByTestId('proposal-card-toggle').click();
     await charProposal.getByTestId('proposal-apply-btn').click();
+    const charConfirmDialog = page.getByTestId('mode-switch-confirm-dialog');
+    await charConfirmDialog.waitFor({ state: 'visible' });
+    await charConfirmDialog.getByTestId('mode-switch-cancel-btn').click();
+    await charConfirmDialog.waitFor({ state: 'hidden' });
+    const afterCharCancel = await readPersistedState(page);
+    assert.equal(afterCharCancel.characterIds.length, 0, 'canceling cross-mode proposal must not create character');
+
+    await charProposal.getByTestId('proposal-apply-btn').click();
+    await charConfirmDialog.waitFor({ state: 'visible' });
+    await charConfirmDialog.getByTestId('mode-switch-confirm-btn').click();
+    await charConfirmDialog.waitFor({ state: 'hidden' });
+    await page.getByTestId('character-page').waitFor();
     const afterCharDerive = await readPersistedState(page);
     assert.equal(afterCharDerive.storyIds.length, 1, 'deriving character must not duplicate source story');
     assert.equal(afterCharDerive.workIds.length, 0);
     assert.equal(afterCharDerive.characterIds.length, 1, 'confirming character proposal must create one character');
-
-    await page.getByRole('button', { name: '去看看', exact: true }).click();
-    await page.getByTestId('character-page').waitFor();
     await page.getByTestId('app-topbar').getByRole('heading', { name: '沈默', exact: true }).waitFor();
     assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0, 'TopBar must not render mode switcher in character view');
 
-    // In character mode, switch phrases stay in character chat without cloning
+    // In character mode, explicit switch phrase triggers ModalDialog; canceling keeps character chat untouched
     await page.getByLabel('发消息').fill('切换到文游');
     await page.getByRole('button', { name: '发送', exact: true }).click();
-    await page.getByTestId('character-timeline').getByText('已按当前模式继续处理：切换到文游', { exact: false }).waitFor();
+    const charSwitchDialog = page.getByTestId('mode-switch-confirm-dialog');
+    await charSwitchDialog.waitFor({ state: 'visible' });
+    await charSwitchDialog.getByTestId('mode-switch-source').getByText('角色互动', { exact: true }).waitFor();
+    await charSwitchDialog.getByTestId('mode-switch-target').getByText('文游', { exact: true }).waitFor();
+    await charSwitchDialog.getByTestId('mode-switch-cancel-btn').click();
+    await charSwitchDialog.waitFor({ state: 'hidden' });
     const afterCharSwitchPhrase = await readPersistedState(page);
     assert.equal(afterCharSwitchPhrase.storyIds.length, 1);
     assert.equal(afterCharSwitchPhrase.workIds.length, 0);
     assert.equal(afterCharSwitchPhrase.characterIds.length, 1);
 
-    // 2) Derive writing draft from character via explicit ProposalCard + 去看看
+    // 2) Derive writing draft from character via ProposalCard + ModalDialog confirmation
     await page.getByLabel('发消息').fill('按当前人设新开一篇写故事稿');
     await page.getByRole('button', { name: '发送', exact: true }).click();
     const draftProposal = page.locator('section[data-testid^="proposal-card-"]').filter({ hasText: '新开写故事' }).last();
     await draftProposal.waitFor();
     await draftProposal.getByTestId('proposal-card-toggle').click();
     await draftProposal.getByTestId('proposal-apply-btn').click();
+    const draftConfirmDialog = page.getByTestId('mode-switch-confirm-dialog');
+    await draftConfirmDialog.waitFor({ state: 'visible' });
+    await draftConfirmDialog.getByTestId('mode-switch-confirm-btn').click();
+    await draftConfirmDialog.waitFor({ state: 'hidden' });
+    await page.getByTestId('writing-page').waitFor();
     const afterDraftDerive = await readPersistedState(page);
     assert.equal(afterDraftDerive.characterIds.length, 1, 'deriving draft must not duplicate source character');
     assert.equal(afterDraftDerive.storyIds.length, 1);
     assert.equal(afterDraftDerive.workIds.length, 1, 'confirming draft proposal must create one work');
-
-    await page.getByRole('button', { name: '去看看', exact: true }).click();
-    await page.getByTestId('writing-page').waitFor();
     await page.getByTestId('app-topbar').getByRole('heading', { name: '站台外传', exact: true }).waitFor();
     assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0, 'TopBar must not render mode switcher in writing view');
 
-    // In writing mode, switch phrases stay in writing chat without cloning
+    // In writing mode, explicit switch phrase triggers ModalDialog; canceling keeps writing chat untouched
     await page.getByLabel('聊天内容').fill('切换到文游');
     await page.getByRole('button', { name: '发送', exact: true }).click();
-    await page.getByTestId('writing-discussion-timeline').getByText('已按当前模式继续处理：切换到文游', { exact: false }).waitFor();
+    const writingSwitchDialog = page.getByTestId('mode-switch-confirm-dialog');
+    await writingSwitchDialog.waitFor({ state: 'visible' });
+    await writingSwitchDialog.getByTestId('mode-switch-source').getByText('写故事', { exact: true }).waitFor();
+    await writingSwitchDialog.getByTestId('mode-switch-target').getByText('文游', { exact: true }).waitFor();
+    await writingSwitchDialog.getByTestId('mode-switch-cancel-btn').click();
+    await writingSwitchDialog.waitFor({ state: 'hidden' });
     const afterWritingSwitchPhrase = await readPersistedState(page);
     assert.equal(afterWritingSwitchPhrase.storyIds.length, 1);
     assert.equal(afterWritingSwitchPhrase.workIds.length, 1);
     assert.equal(afterWritingSwitchPhrase.characterIds.length, 1);
 
-    // 3) Derive interactive story from writing via explicit ProposalCard + 去看看
+    // 3) Derive interactive story from writing via ProposalCard + ModalDialog confirmation
     await page.getByLabel('聊天内容').fill('把这个设定开成互动文游');
     await page.getByRole('button', { name: '发送', exact: true }).click();
     const storyProposal = page.locator('section[data-testid^="proposal-card-"]').filter({ hasText: '新开文游' }).last();
     await storyProposal.waitFor();
     await storyProposal.getByTestId('proposal-card-toggle').click();
     await storyProposal.getByTestId('proposal-apply-btn').click();
+    const storyConfirmDialog = page.getByTestId('mode-switch-confirm-dialog');
+    await storyConfirmDialog.waitFor({ state: 'visible' });
+    await storyConfirmDialog.getByTestId('mode-switch-confirm-btn').click();
+    await storyConfirmDialog.waitFor({ state: 'hidden' });
+    await page.getByTestId('story-timeline').waitFor();
     const afterStoryDerive = await readPersistedState(page);
     assert.equal(afterStoryDerive.storyIds.length, 2, 'confirming story proposal must create one independent story');
     assert.equal(afterStoryDerive.workIds.length, 1, 'deriving story must not duplicate source work');
     assert.equal(afterStoryDerive.characterIds.length, 1);
-
-    await page.getByRole('button', { name: '去看看', exact: true }).click();
-    await page.getByTestId('story-timeline').waitFor();
     await page.getByTestId('app-topbar').getByRole('heading', { name: '站台夜航', exact: true }).waitFor();
     await page.getByTestId('story-timeline').getByText('雾夜末班车停靠站台，你手中握着半张旧车票。', { exact: false }).waitFor();
 
@@ -344,7 +385,7 @@ async function main() {
     await library.getByRole('button', { name: '文游', exact: true }).click();
     await library.getByTestId('story-select-button').filter({ hasText: '普通消息仍留在当前文游' }).click();
     await page.getByTestId('story-timeline').getByText('把这一段改成小说里的书信体。', { exact: true }).waitFor();
-    await page.getByTestId('story-timeline').getByText('请切换到写故事，谢谢。', { exact: true }).waitFor();
+    await page.getByTestId('story-timeline').getByText('下一幕转成角色互动式对话', { exact: true }).waitFor();
 
     await page.getByTestId('desktop-library-new-creation').click();
     await page.getByTestId('welcome-view').waitFor();
@@ -357,6 +398,10 @@ async function main() {
       inputElement.form.requestSubmit();
       inputElement.form.requestSubmit();
     });
+    const welcomeSwitchDialog = page.getByTestId('mode-switch-confirm-dialog');
+    await welcomeSwitchDialog.waitFor({ state: 'visible' });
+    await welcomeSwitchDialog.getByTestId('mode-switch-confirm-btn').click();
+    await welcomeSwitchDialog.waitFor({ state: 'hidden' });
     await page.getByTestId('writing-page').waitFor();
     await page.getByTestId('app-topbar').getByRole('heading', { name: '先随便聊聊', exact: true }).waitFor();
     const afterWelcomeSwitch = await readPersistedState(page);

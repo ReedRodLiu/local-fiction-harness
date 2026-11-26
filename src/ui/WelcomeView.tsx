@@ -1,5 +1,5 @@
-import { Sparkles } from 'lucide-react';
-import type { Story, TurnNode } from '../harness/index.ts';
+import { Lock, Sparkles } from 'lucide-react';
+import { STAGE_MODE_LABELS, type StageAssetMode, type Story, type TurnNode } from '../harness/index.ts';
 import { MessageContent } from './MessageContent.tsx';
 import { TurnRefusalNotices } from './TurnCard.tsx';
 import { useRotatingWaitingPhrase } from './waitingPhrases.ts';
@@ -15,6 +15,7 @@ export interface WelcomeViewProps {
   stories: Story[];
   recentCreative: RecentCreativeEntry[];
   neutralTurns: TurnNode[];
+  selectedMode?: StageAssetMode;
   isStreaming: boolean;
   streamContent: string;
   streamReasoning: string;
@@ -28,6 +29,7 @@ export function WelcomeView({
   stories,
   recentCreative,
   neutralTurns,
+  selectedMode = 'story',
   isStreaming,
   streamContent,
   streamReasoning,
@@ -36,6 +38,7 @@ export function WelcomeView({
   onRestoreRefusalOriginal,
   onContinuePartialRefusal,
 }: WelcomeViewProps) {
+  const lockedModeLabel = STAGE_MODE_LABELS[selectedMode];
   const recentStories = [...stories].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3);
   const hasAnyItems = recentStories.length > 0 || recentCreative.length > 0;
   const inNeutralChat = neutralTurns.length > 0 || isStreaming;
@@ -49,7 +52,11 @@ export function WelcomeView({
     return (
       <section className="timeline neutral-timeline" data-testid="neutral-timeline" aria-label="自然语言对话">
         <div className="neutral-stage-hint" data-testid="neutral-stage-hint" role="note">
-          尚未建档，聊清楚创作方向后会自动保存至对应分类
+          <span className="welcome-locked-mode-inline" data-testid="welcome-locked-mode">
+            <Lock size={13} strokeWidth={1.75} aria-hidden="true" />
+            <span>当前锁定模式：<strong>{lockedModeLabel}</strong></span>
+          </span>
+          <span> · 尚未建档，聊清楚创作方向后会自动保存至「{lockedModeLabel}」</span>
         </div>
         {neutralTurns.map((node) => (
           <article
@@ -119,8 +126,12 @@ export function WelcomeView({
   return (
     <section className="welcome-view welcome-creation" data-testid="welcome-view">
       <div className="welcome-content">
+        <div className="welcome-locked-mode" data-testid="welcome-locked-mode">
+          <Lock size={14} strokeWidth={1.75} aria-hidden="true" />
+          <span>当前锁定模式：<strong>{lockedModeLabel}</strong></span>
+        </div>
         <h2>从一句话开始</h2>
-        <p>想玩互动文游、一起写故事，还是找角色聊天？直接输入就行。</p>
+        <p>新建创作将直接归入「{lockedModeLabel}」（也可在书架切换分类，或在输入中明确要求切换模式）。</p>
 
         {!hasAnyItems && (
           <p className="welcome-empty-guidance" data-testid="welcome-empty-guidance">
