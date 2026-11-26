@@ -1,5 +1,58 @@
-import type { AbortSignalLike, FetchLike, LlmMessage, LlmTransport, ModelConfig, TurnNode } from './types.ts';
-import { createBackgroundModelConfig } from './keyConfig.ts';
+import type {
+  AbortSignalLike,
+  FetchLike,
+  LlmMessage,
+  LlmTransport,
+  ModelConfig,
+  PublicResearchConfig,
+  PublicResearchSearchPresetId,
+  TurnNode,
+} from './types.ts';
+import { createBackgroundModelConfig, isOfficialDeepSeekUrl } from './keyConfig.ts';
+
+export interface PublicResearchPresetMeta {
+  id: PublicResearchSearchPresetId;
+  title: string;
+  description: string;
+  quotaHint: string;
+  docsUrl?: string;
+  requiresApiKey: boolean;
+}
+
+export const PUBLIC_RESEARCH_PRESETS: Readonly<
+  Record<PublicResearchSearchPresetId, PublicResearchPresetMeta>
+> = {
+  none: {
+    id: 'none',
+    title: '不开启',
+    description: '仅使用模型自身知识推进设定与创作，不发起联网搜索',
+    quotaHint: '无需额外配置',
+    requiresApiKey: false,
+  },
+  deepseek_account: {
+    id: 'deepseek_account',
+    title: '复用已连 DeepSeek 账号',
+    description: '直接借用你已保存的 DeepSeek 档案密钥做原作与角色查证',
+    quotaHint: '按 DeepSeek 官方检索计费',
+    requiresApiKey: false,
+  },
+  tavily: {
+    id: 'tavily',
+    title: 'Tavily 搜索',
+    description: '专为 AI 整理的网页检索，适合查原作版本、剧情线与角色资料',
+    quotaHint: '免费版每月 1,000 次，足够日常同人使用',
+    docsUrl: 'https://app.tavily.com',
+    requiresApiKey: true,
+  },
+  bocha: {
+    id: 'bocha',
+    title: '博查 AI 搜索',
+    description: '中文网页与百科检索覆盖好，适合国内直连查设定与资料',
+    quotaHint: '注册即赠免费体验额度，日常低频查证够用',
+    docsUrl: 'https://open.bochaai.com',
+    requiresApiKey: true,
+  },
+};
 
 export interface PublicResearchIdentity {
   work: string;
@@ -390,9 +443,31 @@ export interface DeepSeekPublicResearchOptions {
   now?: () => number;
   maxSources?: number;
   timeoutMs?: number;
+  searchApiKey?: string;
+}
+
+export interface SearchApiPublicResearchOptions {
+  fetcher: FetchLike;
+  transport: LlmTransport;
+  apiKey?: string;
+  now?: () => number;
+  maxSources?: number;
+  timeoutMs?: number;
+}
+
+export interface RoutedPublicResearchOptions {
+  fetcher: FetchLike;
+  transport: LlmTransport;
+  resolveSearchConfig?: () => PublicResearchConfig | undefined;
+  resolveDeepSeekApiKey?: (profileId?: string) => string | undefined;
+  maxSources?: number;
+  timeoutMs?: number;
+  now?: () => number;
 }
 
 const DEEPSEEK_ORIGIN = 'https://api.deepseek.com';
+const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
+const BOCHA_SEARCH_URL = 'https://api.bochaai.com/v1/web-search';
 const MAX_RESEARCH_QUERY_CHARS = 128;
 
 function fitUnicode(text: string, maxChars: number): string {
@@ -786,8 +861,132 @@ async function withResearchTimeout<T>(
   }
 }
 
-export function createDeepSeekPublicResearchProvider(
-  options: DeepSeekPublicResearchOptions,
+function supportsDeepSeekBuiltinSearch(config: ModelConfig): boolean {
+  if (config.capabilities?.supportsBuiltinSearch !== undefined) {
+    return config.capabilities.supportsBuiltinSearch;
+  }
+  return isOfficialDeepSeekUrl(config.baseUrl);
+}
+
+async function synthesizePublicResearch(
+  request: PublicResearchRequest,
+  fetched: FetchedSource[],
+  transport: LlmTransport,
+  now: () => number,
+  signal: AbortSignalLike,
+): Promise<PublicResearchReference | null> {
+  if (fetched.length === 0) return null;
+  const characters = verifiedCharacters(request.identity, fetched);
+  if (characters.length === 0) return null;
+
+  const synthesisConfig = createBackgroundModelConfig(request.config);
+  let summary = '';
+  let finished = false;
+  for await (const delta of transport.streamChat({
+    baseUrl: synthesisConfig.baseUrl,
+    apiKey: synthesisConfig.apiKey.trim(),
+    model: synthesisConfig.model,
+    reasoningEffort: synthesisConfig.reasoningEffort,
+    ...(synthesisConfig.capabilities ? { capabilities: synthesisConfig.capabilities } : {}),
+    messages: researchSynthesisMessages({ ...request.identity, characters }, fetched),
+    signal,
+  })) {
+    if (delta.contentDelta) summary += delta.contentDelta;
+    if (delta.finishReason != null) finished = delta.finishReason === 'stop';
+  }
+  summary = fitUnicode(summary, 1600);
+  if (!finished || !summary || signal?.aborted) return null;
+
+  return {
+    identity: request.identity,
+    identityKey: publicResearchIdentityKey(request.identity),
+    summary,
+    sources: fetched.map(({ title, url }) => ({ title, url })),
+    fetchedAt: now(),
+  };
+}
+
+function collectFetchedSources(
+  rows: unknown[],
+  maxSources: number,
+  extract: (item: Record<string, unknown>) => { title?: string; content: string },
+): FetchedSource[] {
+  const output: FetchedSource[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const item = row as Record<string, unknown>;
+    if (typeof item.url !== 'string' || !isPublicHttpUrl(item.url) || seen.has(item.url)) {
+      continue;
+    }
+    const { title, content } = extract(item);
+    if (!content) continue;
+    seen.add(item.url);
+    output.push({ title: title || item.url, url: item.url, content });
+    if (output.length >= maxSources) break;
+  }
+  return output;
+}
+
+function parseTavilySources(raw: unknown, maxSources: number): FetchedSource[] {
+  if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { results?: unknown }).results)) {
+    return [];
+  }
+  return collectFetchedSources((raw as { results: unknown[] }).results, maxSources, (item) => ({
+    title: typeof item.title === 'string' && item.title.trim() ? item.title.trim() : undefined,
+    content:
+      (typeof item.content === 'string' && item.content.trim()) ||
+      (typeof item.raw_content === 'string' && item.raw_content.trim()) ||
+      '',
+  }));
+}
+
+function parseBochaSources(raw: unknown, maxSources: number): FetchedSource[] {
+  if (!raw || typeof raw !== 'object') return [];
+  const record = raw as Record<string, unknown>;
+  const data =
+    record.data && typeof record.data === 'object' ? (record.data as Record<string, unknown>) : undefined;
+  const webPages =
+    (data?.webPages && typeof data.webPages === 'object'
+      ? (data.webPages as Record<string, unknown>)
+      : undefined) ??
+    (record.webPages && typeof record.webPages === 'object'
+      ? (record.webPages as Record<string, unknown>)
+      : undefined);
+  const rows = Array.isArray(webPages?.value)
+    ? webPages.value
+    : Array.isArray(record.results)
+      ? record.results
+      : Array.isArray(data?.results)
+        ? data.results
+        : [];
+  return collectFetchedSources(rows, maxSources, (item) => ({
+    title:
+      (typeof item.name === 'string' && item.name.trim()) ||
+      (typeof item.title === 'string' && item.title.trim()) ||
+      undefined,
+    content:
+      (typeof item.summary === 'string' && item.summary.trim()) ||
+      (typeof item.snippet === 'string' && item.snippet.trim()) ||
+      (typeof item.content === 'string' && item.content.trim()) ||
+      '',
+  }));
+}
+
+function createBoundedSearchProvider(
+  options: {
+    transport: LlmTransport;
+    now?: () => number;
+    maxSources?: number;
+    timeoutMs?: number;
+  },
+  resolveSearchKey: (request: PublicResearchRequest) => string | undefined,
+  fetchSources: (
+    request: PublicResearchRequest,
+    searchApiKey: string,
+    maxSources: number,
+    signal: AbortSignalLike,
+  ) => Promise<FetchedSource[]>,
 ): PublicResearchProvider {
   const now = options.now ?? (() => Date.now());
   const maxSources = Math.max(1, Math.min(3, Math.floor(options.maxSources ?? 2)));
@@ -795,84 +994,205 @@ export function createDeepSeekPublicResearchProvider(
 
   return {
     async resolve(request) {
-      const apiKey = request.config.apiKey.trim();
-      if (!apiKey || request.signal?.aborted) return null;
+      if (request.signal?.aborted) return null;
+      const searchApiKey = resolveSearchKey(request)?.trim();
+      if (!searchApiKey) return null;
 
       return withResearchTimeout(request.signal, timeoutMs, async (signal) => {
         try {
-          const searchResponse = await options.fetcher(`${DEEPSEEK_ORIGIN}/v1/tools/search`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
-            },
-            body: JSON.stringify({
-              query: buildPublicResearchQuery(request.identity),
-              count: 5,
-              need_content: false,
-            }),
-            signal,
-          });
-          if (!searchResponse.ok) return null;
-          const candidates = parseSearchResults(JSON.parse(await searchResponse.text()), maxSources);
-          if (candidates.length === 0) return null;
-
-          const fetched: FetchedSource[] = [];
-          for (const candidate of candidates) {
-            if (signal?.aborted) return null;
-            const response = await options.fetcher(`${DEEPSEEK_ORIGIN}/v1/tools/fetch`, {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-              },
-              body: JSON.stringify({ url: candidate.url }),
-              signal,
-            });
-            if (!response.ok) continue;
-            const page = JSON.parse(await response.text()) as Record<string, unknown>;
-            if (typeof page.content !== 'string' || !page.content.trim()) continue;
-            fetched.push({
-              title: typeof page.title === 'string' && page.title.trim() ? page.title.trim() : candidate.title,
-              url: candidate.url,
-              content: page.content,
-            });
-          }
-          if (fetched.length === 0) return null;
-          const characters = verifiedCharacters(request.identity, fetched);
-          if (characters.length === 0) return null;
-
-          const synthesisConfig = createBackgroundModelConfig(request.config);
-          let summary = '';
-          let finished = false;
-          for await (const delta of options.transport.streamChat({
-            baseUrl: synthesisConfig.baseUrl,
-            apiKey,
-            model: synthesisConfig.model,
-            reasoningEffort: synthesisConfig.reasoningEffort,
-            messages: researchSynthesisMessages({ ...request.identity, characters }, fetched),
-            signal,
-          })) {
-            if (delta.contentDelta) summary += delta.contentDelta;
-            if (delta.finishReason != null) finished = delta.finishReason === 'stop';
-          }
-          summary = fitUnicode(summary, 1600);
-          if (!finished || !summary || signal?.aborted) return null;
-
-          return {
-            identity: request.identity,
-            identityKey: publicResearchIdentityKey(request.identity),
-            summary,
-            sources: fetched.map(({ title, url }) => ({ title, url })),
-            fetchedAt: now(),
-          };
+          const fetched = await fetchSources(request, searchApiKey, maxSources, signal);
+          return await synthesizePublicResearch(request, fetched, options.transport, now, signal);
         } catch (error) {
           if (request.signal?.aborted) throw error;
           return null;
         }
       });
+    },
+  };
+}
+
+export function createDeepSeekPublicResearchProvider(
+  options: DeepSeekPublicResearchOptions,
+): PublicResearchProvider {
+  return createBoundedSearchProvider(
+    options,
+    (request) => {
+      const overrideKey = options.searchApiKey?.trim();
+      if (overrideKey) return overrideKey;
+      if (!supportsDeepSeekBuiltinSearch(request.config)) return undefined;
+      return request.config.apiKey;
+    },
+    async (request, searchApiKey, maxSources, signal) => {
+      const searchResponse = await options.fetcher(`${DEEPSEEK_ORIGIN}/v1/tools/search`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${searchApiKey}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          query: buildPublicResearchQuery(request.identity),
+          count: 5,
+          need_content: false,
+        }),
+        signal,
+      });
+      if (!searchResponse.ok) return [];
+      const candidates = parseSearchResults(JSON.parse(await searchResponse.text()), maxSources);
+      if (candidates.length === 0) return [];
+
+      const fetched: FetchedSource[] = [];
+      for (const candidate of candidates) {
+        if (signal?.aborted) return [];
+        const response = await options.fetcher(`${DEEPSEEK_ORIGIN}/v1/tools/fetch`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${searchApiKey}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({ url: candidate.url }),
+          signal,
+        });
+        if (!response.ok) continue;
+        const page = JSON.parse(await response.text()) as Record<string, unknown>;
+        if (typeof page.content !== 'string' || !page.content.trim()) continue;
+        fetched.push({
+          title: typeof page.title === 'string' && page.title.trim() ? page.title.trim() : candidate.title,
+          url: candidate.url,
+          content: page.content,
+        });
+      }
+      return fetched;
+    },
+  );
+}
+
+export function createTavilyPublicResearchProvider(
+  options: SearchApiPublicResearchOptions,
+): PublicResearchProvider {
+  return createBoundedSearchProvider(
+    options,
+    (request) =>
+      options.apiKey?.trim() ||
+      (request.config.publicResearch?.provider === 'tavily'
+        ? request.config.publicResearch.apiKey
+        : undefined),
+    async (request, searchApiKey, maxSources, signal) => {
+      const response = await options.fetcher(TAVILY_SEARCH_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${searchApiKey}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          query: buildPublicResearchQuery(request.identity),
+          max_results: 5,
+          include_raw_content: false,
+        }),
+        signal,
+      });
+      if (!response.ok) return [];
+      return parseTavilySources(JSON.parse(await response.text()), maxSources);
+    },
+  );
+}
+
+export function createBochaPublicResearchProvider(
+  options: SearchApiPublicResearchOptions,
+): PublicResearchProvider {
+  return createBoundedSearchProvider(
+    options,
+    (request) =>
+      options.apiKey?.trim() ||
+      (request.config.publicResearch?.provider === 'bocha'
+        ? request.config.publicResearch.apiKey
+        : undefined),
+    async (request, searchApiKey, maxSources, signal) => {
+      const response = await options.fetcher(BOCHA_SEARCH_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${searchApiKey}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          query: buildPublicResearchQuery(request.identity),
+          count: 5,
+          summary: true,
+        }),
+        signal,
+      });
+      if (!response.ok) return [];
+      return parseBochaSources(JSON.parse(await response.text()), maxSources);
+    },
+  );
+}
+
+/**
+ * Routes public research across DeepSeek official builtin search, borrowed DeepSeek
+ * account credentials, Tavily, and Bocha while enforcing strict host isolation.
+ */
+export function createRoutedPublicResearchProvider(
+  options: RoutedPublicResearchOptions,
+): PublicResearchProvider {
+  return {
+    async resolve(request) {
+      if (request.signal?.aborted) return null;
+
+      if (supportsDeepSeekBuiltinSearch(request.config) && request.config.apiKey.trim()) {
+        return createDeepSeekPublicResearchProvider(options).resolve(request);
+      }
+
+      let searchConfig: PublicResearchConfig | undefined;
+      try {
+        searchConfig = request.config.publicResearch ?? options.resolveSearchConfig?.();
+      } catch (error) {
+        if (request.signal?.aborted) throw error;
+        return null;
+      }
+
+      if (!searchConfig || searchConfig.provider === 'none') {
+        return null;
+      }
+
+      if (searchConfig.provider === 'deepseek_account') {
+        let deepSeekKey = searchConfig.apiKey?.trim();
+        if (!deepSeekKey) {
+          try {
+            deepSeekKey = options.resolveDeepSeekApiKey?.(searchConfig.deepseekProfileId)?.trim();
+          } catch (error) {
+            if (request.signal?.aborted) throw error;
+            return null;
+          }
+        }
+        if (!deepSeekKey) return null;
+        return createDeepSeekPublicResearchProvider({
+          ...options,
+          searchApiKey: deepSeekKey,
+        }).resolve(request);
+      }
+
+      if (searchConfig.provider === 'tavily') {
+        const tavilyKey = searchConfig.apiKey?.trim();
+        if (!tavilyKey) return null;
+        return createTavilyPublicResearchProvider({
+          ...options,
+          apiKey: tavilyKey,
+        }).resolve(request);
+      }
+
+      if (searchConfig.provider === 'bocha') {
+        const bochaKey = searchConfig.apiKey?.trim();
+        if (!bochaKey) return null;
+        return createBochaPublicResearchProvider({
+          ...options,
+          apiKey: bochaKey,
+        }).resolve(request);
+      }
+
+      return null;
     },
   };
 }

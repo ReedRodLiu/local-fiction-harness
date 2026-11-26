@@ -2,9 +2,9 @@ import {
   createDiagnosticCollector,
   createDiagnosticStoryStorage,
   createDiagnosticTransport,
-  createDeepSeekPublicResearchProvider,
   createKeyValueSecretStore,
   createOpenAiTransport,
+  createRoutedPublicResearchProvider,
   createWebBinaryDownloader,
   type BackupExporter,
   type CreativeStorage,
@@ -100,7 +100,7 @@ export function createWebPlatformRuntime(options: WebRuntimeOptions = {}): Platf
     diagnostics,
     promptPackStorage: kvStorage,
     transport,
-    publicResearch: options.publicResearch ?? createDeepSeekPublicResearchProvider({
+    publicResearch: options.publicResearch ?? createRoutedPublicResearchProvider({
       fetcher: devAwareFetch,
       transport,
     }),

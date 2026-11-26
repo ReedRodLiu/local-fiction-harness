@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  createAndroidPlatformRuntime,
   createPlatformRuntime,
   createWebPlatformRuntime,
   detectRuntimePlatform,
 } from '../../src/platform/runtime.ts';
-import type { KeyValueStorage, StoryStorage } from '../../src/harness/index.ts';
+import type { KeyValueStorage, ModelConfig, StoryStorage } from '../../src/harness/index.ts';
 
 function createMemoryStorage(): KeyValueStorage {
   const map = new Map<string, string>();
@@ -140,5 +141,97 @@ describe('PlatformRuntime detection & Web adapter', () => {
     expect(anchor.download).toBe('story.lfh.json');
     expect(clickSpy).toHaveBeenCalledTimes(1);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test-backup');
+  });
+
+  it('wires layered routed publicResearch in both Web and Android runtimes without leaking third-party keys', async () => {
+    const fetchCalls: string[] = [];
+    const fetchSpy = vi.fn(async (url: string) => {
+      fetchCalls.push(url);
+      if (url === 'https://api.tavily.com/search') {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () =>
+            JSON.stringify({
+              results: [
+                { title: 'FMA Wiki', url: 'https://fma.example/ed', content: '爱德华·艾尔利克性格直率。' },
+              ],
+            }),
+          body: null,
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+        body: (async function* () {
+          yield new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"### 爱德华·艾尔利克\\n- 性格直率。"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+          );
+        })(),
+      };
+    });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      const kv = createMemoryStorage();
+      const webRuntime = createWebPlatformRuntime({
+        keyValueStorage: kv,
+        storyStorage: createNoopStoryStorage(),
+        fetchImpl: fetchSpy as unknown as Parameters<typeof createWebPlatformRuntime>[0]['fetchImpl'],
+      });
+      const androidRuntime = createAndroidPlatformRuntime({
+        promptPackStorage: kv,
+        diagnosticsStorage: kv,
+        transport: {
+          async *streamChat() {
+            yield { contentDelta: '### 爱德华·艾尔利克\n- 性格直率。', finishReason: 'stop' };
+          },
+        },
+      });
+
+      const identity = {
+        work: '钢之炼金术师',
+        version: '2003 动画版',
+        timeline: '第 51 集结局后',
+        characters: ['爱德华·艾尔利克'],
+      };
+      const thirdPartyNoSearch: ModelConfig = {
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o',
+        apiKey: 'sk-openai-secret',
+        memoryOnly: false,
+        capabilities: {
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+      };
+
+      await expect(
+        webRuntime.publicResearch!.resolve({ identity, config: thirdPartyNoSearch }),
+      ).resolves.toBeNull();
+      await expect(
+        androidRuntime.publicResearch!.resolve({ identity, config: thirdPartyNoSearch }),
+      ).resolves.toBeNull();
+      expect(fetchCalls).toEqual([]);
+
+      const tavilyConfig: ModelConfig = {
+        ...thirdPartyNoSearch,
+        publicResearch: { provider: 'tavily', apiKey: 'tvly-runtime-1' },
+      };
+      const webRef = await webRuntime.publicResearch!.resolve({ identity, config: tavilyConfig });
+      const androidRef = await androidRuntime.publicResearch!.resolve({ identity, config: tavilyConfig });
+      expect(webRef?.sources).toEqual([{ title: 'FMA Wiki', url: 'https://fma.example/ed' }]);
+      expect(androidRef?.sources).toEqual([{ title: 'FMA Wiki', url: 'https://fma.example/ed' }]);
+      expect(fetchCalls).not.toContain('https://api.deepseek.com/v1/tools/search');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
