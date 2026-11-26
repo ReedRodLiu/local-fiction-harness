@@ -243,6 +243,12 @@ async function runScenario(browser, scenario) {
     await page.getByTestId('welcome-view').waitFor();
     await page.fill('#turn-input', scenario.prompt);
     await page.getByRole('button', { name: '发送行动', exact: true }).click();
+    if (scenario.mode !== 'story') {
+      const switchDialog = page.getByTestId('mode-switch-confirm-dialog');
+      await switchDialog.waitFor({ state: 'visible' });
+      await switchDialog.getByTestId('mode-switch-confirm-btn').click();
+      await switchDialog.waitFor({ state: 'hidden' });
+    }
     await page.getByTestId(scenario.testId).waitFor();
 
     if (!scenario.research) {

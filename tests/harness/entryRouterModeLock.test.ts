@@ -36,6 +36,9 @@ describe('Issue #147: entryRouter mode lock & explicit switch detection', () => 
     expect(detectExplicitEntryModeSwitch('请切换到文游模式，开启雨夜车站')).toBe('story');
     expect(detectExplicitEntryModeSwitch('以写故事模式写一个关于灯塔的短篇')).toBe('writing');
     expect(detectExplicitEntryModeSwitch('不要角色互动，改成写故事模式')).toBe('writing');
+    expect(
+      detectExplicitEntryModeSwitch('写一篇《钢之炼金术师》2003 动画版第 51 集后的小说，从第一幕开始，不要写成文游'),
+    ).toBe('writing');
 
     // Topic-only or ambiguous openings must NOT count as explicit mode switches
     expect(detectExplicitEntryModeSwitch('一个雨夜车站的悬疑故事，主角是失忆的列车员')).toBeNull();

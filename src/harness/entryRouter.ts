@@ -247,6 +247,12 @@ export function detectExplicitEntryModeSwitch(input: string): StageAssetMode | n
       return candidate.mode;
     }
   }
+  if (
+    hasAffirmedIntent(trimmed, /(?:写(?:一篇|一部|个|本).{0,32}小说|写小说)/u) &&
+    /(?:不要|别|不用|并非|不是)(?:再)?写成?文游/u.test(trimmed)
+  ) {
+    return 'writing';
+  }
   return null;
 }
 
