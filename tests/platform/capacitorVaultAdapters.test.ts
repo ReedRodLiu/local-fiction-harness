@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createAsyncModelConfigStore,
+  createAsyncProviderLibraryStore,
   createDiagnosticCollector,
+  createProviderProfileFromPreset,
   type KeyValueStorage,
+  type ModelConfigMeta,
+  type ProviderLibrary,
   type Story,
 } from '../../src/harness/index.ts';
 import {
@@ -49,7 +53,7 @@ function makeStory(id: string, title: string, updatedAt: number): Story {
 }
 
 function createFakeNativeVault() {
-  let meta: { baseUrl: string; model: string; memoryOnly: boolean } | null = null;
+  let meta: ModelConfigMeta | null = null;
   let apiKey = '';
   const stories = new Map<string, Story>();
   let activeId: string | null = null;
@@ -60,11 +64,11 @@ function createFakeNativeVault() {
   const plugin: NativeVaultPluginLike = {
     async loadMeta() {
       callLog.push('loadMeta');
-      return { meta: meta ? { ...meta } : null };
+      return { meta: meta ? (JSON.parse(JSON.stringify(meta)) as ModelConfigMeta) : null };
     },
     async saveMeta(next) {
       callLog.push('saveMeta');
-      meta = { ...next };
+      meta = JSON.parse(JSON.stringify(next)) as ModelConfigMeta;
     },
     async loadApiKey() {
       callLog.push('loadApiKey');
@@ -165,6 +169,29 @@ describe('Android NativeVault TS adapters & PlatformRuntime parity', () => {
     expect(fake.getApiKey()).toBe('');
     const restarted = createAsyncModelConfigStore(secretStore);
     expect((await restarted.load()).apiKey).toBe('');
+
+    // Multi-provider ProviderLibrary round-trip via Android SecretStore
+    const libraryStore = createAsyncProviderLibraryStore(secretStore);
+    const multiLib: ProviderLibrary = {
+      version: 2,
+      activeProviderId: 'openai-1',
+      reasoningEffort: 'medium',
+      publicResearch: { provider: 'tavily', apiKey: 'tvly-android-1' },
+      profiles: [
+        createProviderProfileFromPreset('deepseek', { id: 'ds-1', apiKey: 'sk-ds-android' }),
+        createProviderProfileFromPreset('openai', { id: 'openai-1', apiKey: 'sk-openai-android' }),
+      ],
+    };
+    await libraryStore.save(multiLib);
+    expect(fake.getApiKey().startsWith('lfh-secrets-v2:')).toBe(true);
+
+    const restartedLibraryStore = createAsyncProviderLibraryStore(secretStore);
+    const loadedLib = await restartedLibraryStore.load();
+    expect(loadedLib.activeProviderId).toBe('openai-1');
+    expect(loadedLib.reasoningEffort).toBe('medium');
+    expect(loadedLib.publicResearch).toEqual({ provider: 'tavily', apiKey: 'tvly-android-1' });
+    expect(loadedLib.profiles.find((p) => p.id === 'ds-1')?.apiKey).toBe('sk-ds-android');
+    expect(loadedLib.profiles.find((p) => p.id === 'openai-1')?.apiKey).toBe('sk-openai-android');
   });
 
   it('serializes StoryStorage concurrent writes in strict FIFO order without losing updates', async () => {

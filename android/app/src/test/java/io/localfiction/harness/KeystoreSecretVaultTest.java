@@ -99,4 +99,79 @@ public class KeystoreSecretVaultTest {
         assertEquals("", vault.loadApiKey());
         assertFalse(backing.containsKey(SecretVault.KEY_API_KEY));
     }
+
+    @Test
+    public void roundTripsMultiProviderLibraryMetaAndV2SecretEnvelope() throws Exception {
+        Map<String, String> backing = new HashMap<>();
+        SecretVault.StringStore backingStore = new SecretVault.StringStore() {
+            @Override
+            public String get(String key) {
+                return backing.get(key);
+            }
+
+            @Override
+            public void put(String key, String value) {
+                backing.put(key, value);
+            }
+
+            @Override
+            public void remove(String key) {
+                backing.remove(key);
+            }
+        };
+
+        SecretVault vault = new SecretVault(backingStore, createInMemoryAesKeyProvider());
+
+        JSONObject deepseekProfile = new JSONObject()
+            .put("id", "ds-1")
+            .put("name", "DeepSeek 官方")
+            .put("presetId", "deepseek")
+            .put("baseUrl", "https://api.deepseek.com")
+            .put("defaultModel", "deepseek-flash")
+            .put("backgroundModel", "deepseek-flash");
+
+        JSONObject openaiProfile = new JSONObject()
+            .put("id", "openai-1")
+            .put("name", "OpenAI")
+            .put("presetId", "openai")
+            .put("baseUrl", "https://api.openai.com/v1")
+            .put("defaultModel", "gpt-4o");
+
+        JSONObject providerLibrary = new JSONObject()
+            .put("version", 2)
+            .put("activeProviderId", "openai-1")
+            .put("reasoningEffort", "medium")
+            .put("profiles", new org.json.JSONArray().put(deepseekProfile).put(openaiProfile))
+            .put("publicResearch", new JSONObject().put("provider", "tavily"));
+
+        JSONObject rawInputMeta = new JSONObject()
+            .put("providerId", "openai-1")
+            .put("providerPresetId", "openai")
+            .put("reasoningEffort", "medium")
+            .put("providerLibrary", providerLibrary);
+
+        JSONObject normalizedMeta = NativeVaultPlugin.normalizeMetaPayload(rawInputMeta);
+        assertEquals("", normalizedMeta.getString("baseUrl"));
+        assertEquals("", normalizedMeta.getString("model"));
+        assertFalse(normalizedMeta.getBoolean("memoryOnly"));
+
+        vault.saveMeta(normalizedMeta);
+        String envelope = "lfh-secrets-v2:{\"providers\":{\"ds-1\":\"sk-ds-vault\",\"openai-1\":\"sk-openai-vault\"},\"searchApiKey\":\"tvly-vault-1\"}";
+        vault.saveApiKey(envelope);
+
+        for (String val : backing.values()) {
+            assertFalse(val.contains("sk-ds-vault"));
+            assertFalse(val.contains("sk-openai-vault"));
+            assertFalse(val.contains("tvly-vault-1"));
+        }
+
+        JSONObject loadedMeta = vault.loadMeta();
+        JSONObject loadedLibrary = loadedMeta.getJSONObject("providerLibrary");
+        assertEquals(2, loadedLibrary.getInt("version"));
+        assertEquals("openai-1", loadedLibrary.getString("activeProviderId"));
+        assertEquals("medium", loadedLibrary.getString("reasoningEffort"));
+        assertEquals(2, loadedLibrary.getJSONArray("profiles").length());
+        assertEquals("tavily", loadedLibrary.getJSONObject("publicResearch").getString("provider"));
+        assertEquals(envelope, vault.loadApiKey());
+    }
 }
