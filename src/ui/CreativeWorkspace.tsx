@@ -4,12 +4,14 @@ import type {
   ModelConfig,
   PlatformRuntime,
   PromptPackLibrary,
+  StageAssetMode,
   Story,
 } from '../harness/index.ts';
 import { CharacterPane } from './CharacterPane.tsx';
 import type { DocumentEdit } from './DocumentDialog.tsx';
 import { DraftPane } from './DraftPane.tsx';
 import { BannerAlert } from './primitives/BannerAlert.tsx';
+import type { CrossModeProposalConfirmPayload } from './proposalActions.ts';
 import type { RequestModel } from './useCreativeReply.ts';
 import type { SaveWorkspace } from './useCreativeWorkspace.ts';
 
@@ -32,6 +34,12 @@ interface Props {
   onSwitchToChat?: () => void;
   onSaveDerivedStory?: (story: Story) => Promise<void>;
   onNavigateCreatedAsset?: (kind: 'character' | 'work' | 'story', id: string) => void;
+  onRequestModeSwitch?: (
+    input: string,
+    fromMode: StageAssetMode,
+    restoreInput: (text: string) => void,
+  ) => boolean;
+  onRequestCrossModeProposalConfirm?: (payload: CrossModeProposalConfirmPayload) => void;
   initialTurn: { id: string; prompt: string } | null;
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;

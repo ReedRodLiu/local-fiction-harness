@@ -310,23 +310,30 @@ export async function verifyIssue126ModeConversion(browser, port, helpers) {
     assert.equal(typeof originalStoryId, 'string');
     assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0);
 
-    // Mode-switch phrases inside an active story stay in the story without cloning.
+    // Explicit mode-switch phrase inside an active story triggers ModalDialog confirmation; canceling preserves state.
     await page.fill('#turn-input', '切换到角色互动');
     await page.getByRole('button', { name: '发送行动' }).click();
-    await page.getByTestId('story-timeline').getByText(STORY_REPLY, { exact: true }).nth(1).waitFor();
+    const switchDialog = page.getByTestId('mode-switch-confirm-dialog');
+    await switchDialog.waitFor({ state: 'visible' });
+    await switchDialog.getByTestId('mode-switch-source').getByText('文游', { exact: true }).waitFor();
+    await switchDialog.getByTestId('mode-switch-target').getByText('角色互动', { exact: true }).waitFor();
+    await switchDialog.getByTestId('mode-switch-cancel-btn').click();
+    await switchDialog.waitFor({ state: 'hidden' });
     const afterSwitchPhrase = await readStoredState(page);
     assert.equal(afterSwitchPhrase.stories.length, beforeDerivation.stories.length);
     assert.equal(afterSwitchPhrase.workspace?.characters?.length ?? 0, 0);
     assert.equal(afterSwitchPhrase.workspace?.works?.length ?? 0, 0);
 
-    // Explicit derivation via lfh-proposal target: character creates an independent character.
+    // Explicit derivation via lfh-proposal target: character creates an independent character after ModalDialog confirmation.
     await page.fill('#turn-input', '根据当前故事新建角色互动');
     await page.getByRole('button', { name: '发送行动' }).click();
     const charProposal = page.locator('section[data-testid^="proposal-card-"]').last();
     await charProposal.waitFor();
     await charProposal.getByTestId('proposal-card-toggle').click();
     await charProposal.getByTestId('proposal-apply-btn').click();
-    await page.getByRole('button', { name: '去看看' }).click();
+    await switchDialog.waitFor({ state: 'visible' });
+    await switchDialog.getByTestId('mode-switch-confirm-btn').click();
+    await switchDialog.waitFor({ state: 'hidden' });
 
     await page.getByTestId('character-page').waitFor();
     assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0);
@@ -353,14 +360,16 @@ export async function verifyIssue126ModeConversion(browser, port, helpers) {
     await page.getByTestId('character-timeline').getByText(CHARACTER_REPLY, { exact: true }).waitFor();
     assert.equal(await page.getByTestId('main-error-banner').count(), 0);
 
-    // Explicit derivation via lfh-proposal target: story creates an independent story without modifying character.
+    // Explicit derivation via lfh-proposal target: story creates an independent story after ModalDialog confirmation.
     await page.getByLabel('发消息').fill('把这个角色开成文游');
     await page.getByRole('button', { name: '发送', exact: true }).click();
     const storyProposal = page.locator('section[data-testid^="proposal-card-"]').last();
     await storyProposal.waitFor();
     await storyProposal.getByTestId('proposal-card-toggle').click();
     await storyProposal.getByTestId('proposal-apply-btn').click();
-    await page.getByRole('button', { name: '去看看' }).click();
+    await switchDialog.waitFor({ state: 'visible' });
+    await switchDialog.getByTestId('mode-switch-confirm-btn').click();
+    await switchDialog.waitFor({ state: 'hidden' });
 
     await page.getByTestId('story-timeline').waitFor();
     assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0);

@@ -418,10 +418,13 @@ export async function verifyThreeModes(browser, port, helpers) {
     await dialog.getByRole('button', { name: '取消' }).click();
     await page.getByTestId('settings-page').getByRole('button', { name: '返回' }).click();
 
-    // 2. Welcome single natural-language input: no mode pills, weak key hint, ambiguous neutral chat -> auto-materialization
+    // 2. Welcome single natural-language input: no mode pills, locked mode indicator synced with library, ambiguous neutral chat -> auto-materialization
     const welcome = page.getByTestId('welcome-view');
     await welcome.waitFor();
     assert.equal(await page.locator('[data-testid^="welcome-mode-pill"]').count(), 0);
+    await page.getByTestId('welcome-locked-mode').getByText('文游', { exact: true }).waitFor();
+    await page.getByTestId('desktop-library').getByRole('button', { name: '写故事', exact: true }).click();
+    await page.getByTestId('welcome-locked-mode').getByText('写故事', { exact: true }).waitFor();
     await page.getByTestId('welcome-key-hint').waitFor();
     await page.getByTestId('welcome-plus-menu-trigger').waitFor();
     assert.equal(await page.getByRole('heading', { level: 1 }).count(), 1);
@@ -449,11 +452,15 @@ export async function verifyThreeModes(browser, port, helpers) {
     const writingCategoryBtn = page.getByTestId('desktop-library').getByRole('button', { name: '写故事', exact: true });
     assert.equal(await writingCategoryBtn.getAttribute('aria-pressed'), 'true');
 
-    // 3. Strict mode isolation: no TopBar mode switcher, and in-session switch phrases stay in active writing mode without cloning
+    // 3. Strict mode isolation: no TopBar mode switcher, and in-session switch phrases prompt ModalDialog; canceling keeps active writing mode untouched
     assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0);
     await page.getByLabel('聊天内容').fill('切换成文游');
     await button('发送').click();
-    await writing.getByTestId('writing-discussion-timeline').getByText('接续：切换成文游', { exact: true }).waitFor();
+    const writingSwitchDialog = page.getByTestId('mode-switch-confirm-dialog');
+    await writingSwitchDialog.waitFor({ state: 'visible' });
+    await writingSwitchDialog.getByTestId('mode-switch-cancel-btn').click();
+    await writingSwitchDialog.waitFor({ state: 'hidden' });
+    await page.getByLabel('聊天内容').fill('');
     assert.equal(await writingCategoryBtn.getAttribute('aria-pressed'), 'true');
     await page.getByTestId('desktop-library').getByRole('button', { name: '文游', exact: true }).click();
     assert.equal(await page.getByTestId('desktop-library').getByTestId('story-list-item').count(), 0);
@@ -630,6 +637,9 @@ export async function verifyThreeModes(browser, port, helpers) {
     // 5. 角色互动: zero binary sub-toggles, unified conversation, inline ProposalCard conflict/rebase, 2-tab companion sheet
     await page.getByTestId('desktop-library-new-creation').click();
     await welcome.waitFor();
+    await page.getByTestId('welcome-locked-mode').getByText('写故事', { exact: true }).waitFor();
+    await page.getByTestId('desktop-library').getByRole('button', { name: '角色互动', exact: true }).click();
+    await page.getByTestId('welcome-locked-mode').getByText('角色互动', { exact: true }).waitFor();
     await page.fill('#turn-input', '名称：岑灯\n退役夜航员，寡言。PERSONA-UNIQUE');
     await button('发送行动').click();
     await character.waitFor();
@@ -767,7 +777,10 @@ export async function verifyThreeModes(browser, port, helpers) {
     await charProposal.waitFor();
     await charProposal.getByTestId('proposal-card-toggle').click();
     await charProposal.getByTestId('proposal-apply-btn').click();
-    await page.getByRole('button', { name: '去看看' }).click();
+    const storyToCharDialog = page.getByTestId('mode-switch-confirm-dialog');
+    await storyToCharDialog.waitFor({ state: 'visible' });
+    await storyToCharDialog.getByTestId('mode-switch-confirm-btn').click();
+    await storyToCharDialog.waitFor({ state: 'hidden' });
     await page.getByTestId('app-topbar').getByRole('heading', { name: '收灯人', exact: true }).waitFor();
 
     // 7. Manuscript suggestion adoption + autosave + reload persistence
@@ -858,7 +871,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     const v3Path = await v3Backup.path();
     const v3Json = JSON.parse(fs.readFileSync(v3Path, 'utf8'));
     assert.equal(v3Json.schemaVersion, 3);
-    assert.equal(v3Json.appVersion, '0.4.3');
+    assert.equal(v3Json.appVersion, '0.4.5');
     assert.ok(v3Json.stories.some((s) => s.title === '浮灯渡口'));
     assert.ok(v3Json.workspace.works.some((w) => w.title === '纸月车站'));
     assert.ok(v3Json.workspace.characters.some((c) => c.name === '岑灯'));

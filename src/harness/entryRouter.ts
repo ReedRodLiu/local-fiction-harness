@@ -58,6 +58,12 @@ import type {
 export type StageAssetMode = 'story' | 'writing' | 'character';
 export type EntryRouteMode = StageAssetMode | 'ambiguous';
 
+export const STAGE_MODE_LABELS: Record<StageAssetMode, string> = {
+  story: '文游',
+  writing: '写故事',
+  character: '角色互动',
+};
+
 export interface EntryRouteResult {
   mode: EntryRouteMode;
   title: string;
@@ -209,13 +215,75 @@ function hasAffirmedIntent(text: string, pattern: RegExp): boolean {
 
 const WRITING_INTENT_PATTERN = /(?:写故事|写小说|同人|大纲|写正文|开书|小说草稿|稿纸|写一篇|(?:按|以|用).{0,4}小说(?:来|写|创作))/u;
 
+const ENTRY_EXPLICIT_SWITCH_PATTERNS: ReadonlyArray<{ mode: StageAssetMode; pattern: RegExp }> = [
+  {
+    mode: 'writing',
+    pattern:
+      /(?:(?:以|用|按|进入|开启|切到|切换(?:到|成|为)|改(?:成|为|用)|转(?:成|为))(?:「)?(?:写故事|写小说)(?:」)?(?:模式)?|(?:以|用|按|进入|开启|切到|切换(?:到|成|为)|改(?:成|为|用)|转(?:成|为))(?:「)?小说(?:」)?模式|(?:开(?:一个|个)?|建(?:一个|个)?|来(?:一个|个)?|开启(?:一个|个)?)(?:「)?写故事(?:」)?(?:模式)?)/u,
+  },
+  {
+    mode: 'character',
+    pattern:
+      /(?:(?:以|用|按|进入|开启|切到|切换(?:到|成|为)|改(?:成|为|用)|转(?:成|为))(?:「)?(?:角色互动|角色聊天)(?:」)?(?:模式)?|(?:开(?:一个|个)?|建(?:一个|个)?|来(?:一个|个)?|开启(?:一个|个)?)(?:「)?(?:角色互动|角色聊天)(?:」)?(?:模式)?)/u,
+  },
+  {
+    mode: 'story',
+    pattern:
+      /(?:(?:以|用|按|进入|开启|切到|切换(?:到|成|为)|改(?:成|为|用)|转(?:成|为))(?:「)?(?:文游|互动叙事|互动故事|互动小说)(?:」)?(?:模式)?|(?:开(?:一个|个)?|建(?:一个|个)?|来(?:一个|个)?|开启(?:一个|个)?)(?:「)?(?:文游|互动叙事|互动故事|互动小说)(?:」)?(?:模式)?)/u,
+  },
+];
+
+/**
+ * Recognizes explicit natural-language directives on the entry/welcome screen
+ * that unambiguously request a specific mode (including prompts with trailing task text).
+ */
+export function detectExplicitEntryModeSwitch(input: string): StageAssetMode | null {
+  const direct = detectNaturalModeSwitchIntent(input);
+  if (direct) return direct;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  for (const candidate of ENTRY_EXPLICIT_SWITCH_PATTERNS) {
+    if (hasAffirmedIntent(trimmed, candidate.pattern)) {
+      return candidate.mode;
+    }
+  }
+  return null;
+}
+
+function isShortAmbiguousEntryInput(userInput: string, historyLength: number): boolean {
+  const trimmed = userInput.trim();
+  if (
+    trimmed.length < 18 &&
+    /^(?:你好|您好|嗨|hi|hello|在吗|有人吗|随便聊聊|不知道|迷茫|想聊聊|试试|测试|嗯+|啊+|\?+|？+)$/i.test(
+      trimmed,
+    )
+  ) {
+    return true;
+  }
+  if (trimmed.length < 12 && historyLength === 0 && /[?？]$/.test(trimmed)) {
+    return true;
+  }
+  return trimmed.length < 8 && historyLength === 0;
+}
+
 /**
  * Heuristic fallback classifier when LLM output does not include an `lfh-route` metadata block.
  */
 export function classifyEntryHeuristic(
   userInput: string,
   history: readonly TurnNode[] = [],
+  lockedMode?: StageAssetMode,
 ): EntryRouteMode {
+  if (lockedMode) {
+    const explicitEntrySwitch = detectExplicitEntryModeSwitch(userInput);
+    if (explicitEntrySwitch) return explicitEntrySwitch;
+    const combined = [...history.map((n) => n.content), userInput].join('\n').trim();
+    if (!combined || isShortAmbiguousEntryInput(userInput, history.length)) {
+      return 'ambiguous';
+    }
+    return lockedMode;
+  }
+
   const explicitSwitch = detectNaturalModeSwitchIntent(userInput);
   if (explicitSwitch) return explicitSwitch;
 
@@ -235,19 +303,7 @@ export function classifyEntryHeuristic(
     return 'story';
   }
 
-  const trimmed = userInput.trim();
-  if (
-    trimmed.length < 18 &&
-    /^(?:你好|您好|嗨|hi|hello|在吗|有人吗|随便聊聊|不知道|迷茫|想聊聊|试试|测试|嗯+|啊+|\?+|？+)$/i.test(
-      trimmed,
-    )
-  ) {
-    return 'ambiguous';
-  }
-  if (trimmed.length < 12 && history.length === 0 && /[?？]$/.test(trimmed)) {
-    return 'ambiguous';
-  }
-  if (trimmed.length < 8 && history.length === 0) {
+  if (isShortAmbiguousEntryInput(userInput, history.length)) {
     return 'ambiguous';
   }
 
@@ -342,11 +398,24 @@ function parseEntryRouteMode(rawMode: string | undefined): EntryRouteMode | null
   return null;
 }
 
+function resolveModeLockedEntryMode(
+  parsedMode: EntryRouteMode,
+  userInput: string,
+  lockedMode?: StageAssetMode,
+): EntryRouteMode {
+  if (!lockedMode) return parsedMode;
+  const explicitSwitch = detectExplicitEntryModeSwitch(userInput);
+  if (explicitSwitch) return explicitSwitch;
+  if (parsedMode === 'ambiguous') return 'ambiguous';
+  return lockedMode;
+}
+
 export function parseEntryRouteReply(
   rawContent: string,
   userInput: string,
   neutralHistory: readonly TurnNode[] = [],
   reasoningContent = '',
+  lockedMode?: StageAssetMode,
 ): EntryRouteResult {
   const cleanedHistory = excludeRefusedTurns(neutralHistory);
   const { fence, outsideContent } = extractLeadingRouteFence(rawContent);
@@ -362,8 +431,9 @@ export function parseEntryRouteReply(
       const m = /^([a-zA-Z_-]+)\s*[:：]\s*(.*)$/.exec(line.trim());
       if (m) fields[m[1].toLowerCase()] = m[2].trim();
     }
-    const parsedMode = parseEntryRouteMode(fields.mode);
-    if (parsedMode) {
+    const rawParsedMode = parseEntryRouteMode(fields.mode);
+    if (rawParsedMode) {
+      const parsedMode = resolveModeLockedEntryMode(rawParsedMode, userInput, lockedMode);
       const fallbackModeTitle =
         parsedMode === 'story' ? '新故事' : parsedMode === 'writing' ? '未命名作品' : '未命名角色';
       const title =
@@ -375,13 +445,17 @@ export function parseEntryRouteReply(
         parsedMode === 'ambiguous'
           ? ''
           : bodyMd || [...cleanedHistory.filter((n) => n.role === 'user').map((n) => n.content), userInput].join('\n\n');
+      const resolvedCharacterName =
+        parsedMode === 'character'
+          ? fields.character_name?.trim() || title
+          : undefined;
       return {
         mode: parsedMode,
         title,
         settingMarkdown,
         assistantReply: cleanedReply || '好的，我们从这里开始。',
         ...(parsedProposals.turnSummary ? { turnSummary: parsedProposals.turnSummary } : {}),
-        ...(fields.character_name?.trim() ? { characterName: fields.character_name.trim() } : {}),
+        ...(resolvedCharacterName ? { characterName: resolvedCharacterName } : {}),
         reasoningContent,
         proposals: parsedProposals.proposals,
         unparsedBlocks: parsedProposals.unparsedBlocks,
@@ -390,7 +464,7 @@ export function parseEntryRouteReply(
     }
   }
 
-  const mode = classifyEntryHeuristic(userInput, cleanedHistory);
+  const mode = classifyEntryHeuristic(userInput, cleanedHistory, lockedMode);
   const fallbackTitle =
     mode === 'story' ? '新故事' : mode === 'writing' ? '未命名作品' : mode === 'character' ? '未命名角色' : '新对话';
   const title = deriveEntryTitle(userInput, fallbackTitle);
@@ -427,6 +501,7 @@ export function buildEntryRouteMessages(
   publicMemoryMarkdown = '',
   promptPackOrResearch?: PromptPackContextOptions | PublicResearchReference,
   publicResearchArg?: PublicResearchReference,
+  lockedMode?: StageAssetMode,
 ): LlmMessage[] {
   const promptPackOptions = isEntryPublicResearchReference(promptPackOrResearch)
     ? undefined
@@ -439,6 +514,12 @@ export function buildEntryRouteMessages(
     ENTRY_ROUTE_SYSTEM_PROMPT,
     effectivePromptPack,
   );
+  if (lockedMode) {
+    messages.push({
+      role: 'system',
+      content: `当前用户已在界面锁定新建创作为「${STAGE_MODE_LABELS[lockedMode]}」（mode: ${lockedMode}）。除非用户在输入中显式、无歧义地要求切换到另一种模式（如“改为写故事模式”“用角色互动模式开启”“切换到文游”），否则 \`\`\`lfh-route 的 mode 必须严格输出 ${lockedMode}，不得仅凭题材或内容猜测漂移到其他模式；若用户仅在寒暄试探且无法进入创作，仍可输出 ambiguous。`,
+    });
+  }
   if (publicMemoryMarkdown.trim()) {
     messages.push({
       role: 'system',
@@ -462,6 +543,7 @@ export function buildEntryRouteMessages(
 
 export interface EntryRouteOptions {
   publicResearch?: PublicResearchProvider;
+  lockedMode?: StageAssetMode;
 }
 
 const ENTRY_RESEARCH_HISTORY_MAX_USER_TURNS = 12;
@@ -505,9 +587,15 @@ export async function routeEntryMessage(
   refusalOrOptions?: EntryRouteRefusalOptions & EntryRouteOptions,
   extraOptions?: EntryRouteOptions,
 ): Promise<EntryRouteResult> {
+  const lockedMode =
+    extraOptions?.lockedMode ??
+    refusalOrOptions?.lockedMode ??
+    (promptPackOrOptions && 'lockedMode' in promptPackOrOptions
+      ? promptPackOrOptions.lockedMode
+      : undefined);
   const cleanedHistory = excludeRefusedTurns(neutralHistory);
   const recentUserHistory = recentUserEntryHistory(cleanedHistory);
-  const heuristicMode = classifyEntryHeuristic(userInput, recentUserHistory);
+  const heuristicMode = classifyEntryHeuristic(userInput, recentUserHistory, lockedMode);
   const canResolveResearch = heuristicMode !== 'ambiguous' &&
     (heuristicMode !== 'writing' || hasExplicitStageIntent(userInput));
   const publicResearchProvider =
@@ -536,6 +624,7 @@ export async function routeEntryMessage(
     publicMemoryMarkdown,
     effectivePromptPackOptions,
     publicResearch.reference ?? undefined,
+    lockedMode,
   );
   const reasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
   const routePrefillMode = heuristicMode === 'ambiguous' ? 'story' : heuristicMode;
@@ -560,7 +649,13 @@ export async function routeEntryMessage(
   if (result.finishReason !== 'stop' && !result.content.trim()) {
     throw new Error('回复未完成，请重试。');
   }
-  const parsed = parseEntryRouteReply(result.content, userInput, cleanedHistory, result.reasoningContent);
+  const parsed = parseEntryRouteReply(
+    result.content,
+    userInput,
+    cleanedHistory,
+    result.reasoningContent,
+    lockedMode,
+  );
   const retainsPublicResearch = parsed.mode === 'story' || parsed.mode === 'character';
   return {
     ...parsed,

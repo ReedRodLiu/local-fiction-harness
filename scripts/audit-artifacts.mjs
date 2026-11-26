@@ -7,6 +7,11 @@ const MAX_APK_BYTES = 20 * 1024 * 1024;
 const ALLOWED_PERMISSIONS = new Set([
   'android.permission.INTERNET',
   'android.permission.REQUEST_INSTALL_PACKAGES',
+  // Active SSE stream dataSync ForegroundService + bounded PARTIAL_WAKE_LOCK keepalive (ADR-0005).
+  'android.permission.FOREGROUND_SERVICE',
+  'android.permission.FOREGROUND_SERVICE_DATA_SYNC',
+  'android.permission.WAKE_LOCK',
+  'android.permission.POST_NOTIFICATIONS',
   'io.localfiction.harness.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION',
 ]);
 const FORBIDDEN_ASSET_MARKERS = [

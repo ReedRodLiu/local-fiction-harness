@@ -25,12 +25,16 @@ describe('Offline artifact & minimal-permission audit', () => {
     expect(secrets).toEqual(['sk-test-secret-123456']);
   });
 
-  it('allows minimal INTERNET and REQUEST_INSTALL_PACKAGES manifest and rejects extra permissions or allowBackup=true', () => {
+  it('allows minimal INTERNET, REQUEST_INSTALL_PACKAGES, and SSE foreground-service keepalive permissions and rejects extra permissions or allowBackup=true', () => {
     const cleanManifest = `
       <manifest xmlns:android="http://schemas.android.com/apk/res/android">
         <application android:allowBackup="false"></application>
         <uses-permission android:name="android.permission.INTERNET" />
         <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+        <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+        <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+        <uses-permission android:name="android.permission.WAKE_LOCK" />
+        <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
       </manifest>
     `;
     expect(() => auditManifestXml(cleanManifest)).not.toThrow();

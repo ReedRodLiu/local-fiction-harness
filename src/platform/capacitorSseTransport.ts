@@ -57,6 +57,7 @@ export function createCapacitorSseTransport(
       let waiter: (() => void) | null = null;
       let streamDone = false;
       let streamError: Error | null = null;
+      let nativeFinished = false;
       let started = false;
 
       const wake = () => {
@@ -92,12 +93,16 @@ export function createCapacitorSseTransport(
             wake();
           }),
           plugin.addListener('sseComplete', (ev) => {
-            if (ev.requestId !== requestId || streamDone || streamError) return;
+            if (ev.requestId !== requestId) return;
+            nativeFinished = true;
+            if (streamDone || streamError) return;
             streamDone = true;
             wake();
           }),
           plugin.addListener('sseError', (ev) => {
-            if (ev.requestId !== requestId || streamDone || streamError) return;
+            if (ev.requestId !== requestId) return;
+            nativeFinished = true;
+            if (streamDone || streamError) return;
             if (ev.aborted) {
               streamError = createAbortError(ev.message || '操作已中止。');
             } else {
@@ -154,7 +159,7 @@ export function createCapacitorSseTransport(
         );
       } finally {
         unbind();
-        if (started && !streamDone && !streamError) {
+        if (started && !nativeFinished) {
           void plugin.abortStream({ requestId }).catch(() => {});
         }
         await Promise.allSettled(handles.map((h) => h.remove()));

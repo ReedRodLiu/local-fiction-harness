@@ -368,4 +368,78 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
     fake.emitComplete('req-mid-2');
     await expect(sseErrRun).rejects.toThrow(/Upstream overloaded/);
   });
+
+  it('drains synchronous resume-burst partial chunks before surfacing CONNECTION_ABORTED and aborts native stream on local decode errors', async () => {
+    const fake = createFakeNativeSsePlugin();
+    let seq = 0;
+    const transport = createCapacitorSseTransport(fake.plugin, () => `req-burst-${++seq}`);
+
+    // 1. Synchronous burst replay (simulating NativeSsePlugin.handleOnResume flushing buffered chunks + CONNECTION_ABORTED)
+    const burstDeltas: string[] = [];
+    let burstErr: unknown;
+    const burstRun = (async () => {
+      try {
+        for await (const delta of transport.streamChat({
+          baseUrl: 'https://example.invalid/v1',
+          apiKey: 'k',
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+        })) {
+          if (delta.contentDelta) burstDeltas.push(delta.contentDelta);
+        }
+      } catch (err) {
+        burstErr = err;
+      }
+    })();
+
+    await vi.waitFor(() => expect(fake.started).toHaveLength(1));
+    fake.emitChunk('req-burst-1', new TextEncoder().encode('data: {"choices":[{"delta":{"content":"第一段"}}]}\n\n'));
+    fake.emitChunk('req-burst-1', new TextEncoder().encode('data: {"choices":[{"delta":{"content":"第二段"}}]}\n\n'));
+    fake.emitError('req-burst-1', '网络连接中断（断线前已接收 128 B）', { code: 'CONNECTION_ABORTED' });
+
+    await burstRun;
+    expect(burstDeltas).toEqual(['第一段', '第二段']);
+    expect(burstErr).toMatchObject({
+      code: 'CONNECTION_ABORTED',
+      message: '网络连接中断（断线前已接收 128 B）',
+    });
+
+    // 2. Local decode failure must call abortStream so native foreground keepalive releases
+    const badChunk = '!!!invalid-base64!!!';
+    await expect(
+      (async () => {
+        const badFake = createFakeNativeSsePlugin();
+        let capturedChunkListener: ((ev: NativeSseEventMap['sseChunk']) => void) | undefined;
+        const wrappedPlugin: NativeSsePluginLike = {
+          async addListener(eventName, listener) {
+            if (eventName === 'sseChunk') {
+              capturedChunkListener = listener as (ev: NativeSseEventMap['sseChunk']) => void;
+            }
+            return badFake.plugin.addListener(eventName, listener);
+          },
+          startStream: badFake.plugin.startStream,
+          abortStream: badFake.plugin.abortStream,
+        };
+        const badTransport = createCapacitorSseTransport(wrappedPlugin, () => 'req-bad-b64');
+        const p = (async () => {
+          for await (const _ of badTransport.streamChat({
+            baseUrl: 'https://example.invalid/v1',
+            apiKey: 'k',
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+          })) {
+            // no-op
+          }
+        })();
+        await vi.waitFor(() => expect(badFake.started).toHaveLength(1));
+        capturedChunkListener?.({ requestId: 'req-bad-b64', chunkBase64: badChunk });
+        try {
+          await p;
+        } finally {
+          expect(badFake.aborted).toContain('req-bad-b64');
+          expect(badFake.listenerCounts()).toEqual({ chunk: 0, complete: 0, error: 0 });
+        }
+      })(),
+    ).rejects.toThrow(/原生 SSE 分块数据/);
+  });
 });

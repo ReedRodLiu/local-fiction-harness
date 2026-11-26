@@ -22,6 +22,7 @@ export interface LibraryItemActions {
 export interface StoryLibraryProps {
   stories: Story[];
   activeCategory?: 'story' | 'work' | 'character';
+  onSelectCategory?: (category: 'story' | 'work' | 'character') => void;
   works?: LibraryItem[];
   characters?: LibraryItem[];
   activeWorkId?: string;
@@ -38,6 +39,7 @@ export interface StoryLibraryProps {
 export function StoryLibrary({
   stories,
   activeCategory = 'story',
+  onSelectCategory,
   works = [],
   characters = [],
   activeWorkId,
@@ -157,6 +159,7 @@ export function StoryLibrary({
             closeMenu(false);
             setRenamingId(null);
             setCategory(key);
+            onSelectCategory?.(key);
           }}>{config[key].label}</button>
         ))}
       </div>
