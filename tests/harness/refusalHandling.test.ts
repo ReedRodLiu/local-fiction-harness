@@ -200,6 +200,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
       ]),
     ]);
     const result = await streamWithRefusalHandling(baseOptions(transport, {
+      config: { ...config, reasoningEffort: 'high' },
       callbacks: {
         onReasoningDelta: (delta) => events.push(`r:${delta}`),
         onContentDelta: (delta) => events.push(`c:${delta}`),
@@ -222,6 +223,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
     ]);
 
     const result = await streamWithRefusalHandling(baseOptions(transport, {
+      config: { ...config, reasoningEffort: 'high' },
       callbacks: { onContentDelta: (delta) => visible.push(delta) },
       onDiagnostic: (event) => actions.push(event.action),
     }));
@@ -422,6 +424,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
     ]);
 
     const result = await streamWithRefusalHandling(baseOptions(transport, {
+      config: { ...config, reasoningEffort: 'high' },
       callbacks: { onContentDelta: (delta) => visible.push(delta) },
       onDiagnostic: (event) => actions.push(event.action),
     }));
@@ -796,6 +799,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
     ]);
 
     const result = await streamWithRefusalHandling(baseOptions(transport, {
+      config: { ...config, reasoningEffort: 'high' },
       callbacks: { onContentDelta: (delta) => visible.push(delta) },
       onDiagnostic: (event) => actions.push(event.action),
     }));
@@ -881,6 +885,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
     ]);
 
     const result = await streamWithRefusalHandling(baseOptions(transport, {
+      config: { ...config, reasoningEffort: 'high' },
       callbacks: { onContentDelta: (delta) => visible.push(delta) },
       onDiagnostic: (event) => actions.push(event.action),
     }));
@@ -950,6 +955,7 @@ describe('Spec #132 120-character refusal wrapper', () => {
     ]);
 
     const result = await streamWithRefusalHandling(baseOptions(transport, {
+      config: { ...config, reasoningEffort: 'high' },
       callbacks: { onContentDelta: (delta) => visible.push(delta) },
       onDiagnostic: (event) => actions.push(event.action),
     }));
@@ -1835,6 +1841,86 @@ describe('Spec #132 exhaustion isolation integration', () => {
     expect(partialResult.diagnostics).toMatchObject({
       refusalRoute: 'partial_refused',
       matchedRuleId: 'L1-02',
+    });
+  });
+
+  it('forwards capabilities and suppresses prefixCompletion when prefixProtocol is none while keeping refusal retry intact', async () => {
+    const capabilities = {
+      thinkingProtocol: 'openai_reasoning_effort' as const,
+      prefixProtocol: 'none' as const,
+      supportsBalanceQuery: false,
+      supportsBuiltinSearch: false,
+      supportsBuiltinPricing: false,
+    };
+    const thirdPartyConfig: ModelConfig = {
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-openai-test',
+      model: 'gpt-4o',
+      reasoningEffort: 'none',
+      memoryOnly: true,
+      capabilities,
+    };
+    const passTransport = scriptedTransport([
+      () => stream([{ contentDelta: '直通正文。', finishReason: 'stop' }]),
+    ]);
+    await streamWithRefusalHandling(baseOptions(passTransport, {
+      config: thirdPartyConfig,
+      promptPackOptions: { promptPackLibrary: library, generationPreference: { promptPackMode: 'off' } },
+    }));
+    expect(passTransport.requests[0]?.capabilities).toEqual(capabilities);
+
+    const retryTransport = scriptedTransport([
+      () => stream([{ contentDelta: '抱歉，我不能帮你写这段内容。', finishReason: 'stop' }]),
+      () => stream([{ contentDelta: '雨夜里他推开旧门，屋檐滴水声不断。', finishReason: 'stop' }]),
+    ]);
+    const retryResult = await streamWithRefusalHandling(baseOptions(retryTransport, {
+      config: thirdPartyConfig,
+      promptPackOptions: {
+        promptPackLibrary: library,
+        generationPreference: { prefixCompletion: 'always' },
+      },
+    }));
+    expect(retryTransport.requests).toHaveLength(2);
+    expect(retryTransport.requests[0]?.capabilities).toEqual(capabilities);
+    expect(retryTransport.requests[0]?.prefixCompletion).toBeUndefined();
+    expect(retryTransport.requests[1]?.capabilities).toEqual(capabilities);
+    expect(retryTransport.requests[1]?.prefixCompletion).toBeUndefined();
+    expect(retryTransport.requests[1]?.messages.some((m) => m.role === 'system' && m.content === 'PACK_TAIL')).toBe(true);
+    expect(retryResult.diagnostics).toMatchObject({
+      refusalRoute: 'retry',
+      retriedWithPrefix: false,
+    });
+  });
+
+  it('allows prefixCompletion on retry when third-party capability enables standard_assistant_prefill', async () => {
+    const capabilities = {
+      thinkingProtocol: 'openai_reasoning_effort' as const,
+      prefixProtocol: 'standard_assistant_prefill' as const,
+      supportsBalanceQuery: false,
+      supportsBuiltinSearch: false,
+      supportsBuiltinPricing: false,
+    };
+    const thirdPartyPrefillConfig: ModelConfig = {
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-example',
+      model: 'custom-model',
+      reasoningEffort: 'none',
+      memoryOnly: true,
+      capabilities,
+    };
+    const transport = scriptedTransport([
+      () => stream([{ contentDelta: '抱歉，我不能帮你写这段内容。', finishReason: 'stop' }]),
+      () => stream([{ contentDelta: `${buildModePrefill('story')}窗外的灯火亮了起来。`, finishReason: 'stop' }]),
+    ]);
+    const result = await streamWithRefusalHandling(baseOptions(transport, {
+      config: thirdPartyPrefillConfig,
+    }));
+    expect(transport.requests[0]?.prefixCompletion).toBeUndefined();
+    expect(transport.requests[1]?.capabilities).toEqual(capabilities);
+    expect(transport.requests[1]?.prefixCompletion).toEqual({ content: buildModePrefill('story') });
+    expect(result.diagnostics).toMatchObject({
+      refusalRoute: 'retry',
+      retriedWithPrefix: true,
     });
   });
 });
