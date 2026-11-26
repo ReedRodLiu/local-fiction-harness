@@ -271,5 +271,97 @@ public class SseStreamClientTest {
             new EOFException("Unexpected end of stream")
         );
         assertEquals("STREAM_EOF", eofErr.code);
+
+        SseStreamClient.ClassifiedError wrappedAbortErr = SseStreamClient.classifyException(
+            new java.io.IOException("Stream failed", new SocketException("Software caused connection abort"))
+        );
+        assertEquals("CONNECTION_ABORTED", wrappedAbortErr.code);
+    }
+
+    @Test
+    public void preservesPartialChunksAndAnnotatesReceivedByteCountOnMidStreamDisconnect() throws Exception {
+        CountDownLatch firstChunkDelivered = new CountDownLatch(1);
+        CountDownLatch finished = new CountDownLatch(1);
+        List<String> chunks = new CopyOnWriteArrayList<>();
+        AtomicReference<String> errCode = new AtomicReference<>("");
+        AtomicReference<String> errMsg = new AtomicReference<>("");
+
+        try (ServerSocket server = new ServerSocket(0, 5, InetAddress.getByName("127.0.0.1"))) {
+            Thread serverThread = new Thread(() -> {
+                try (Socket conn = server.accept()) {
+                    readRequestPath(conn);
+                    OutputStream os = conn.getOutputStream();
+                    os.write(
+                        (
+                            "HTTP/1.1 200 OK\r\n"
+                                + "Content-Type: text/event-stream; charset=utf-8\r\n"
+                                + "Transfer-Encoding: chunked\r\n\r\n"
+                        ).getBytes(StandardCharsets.UTF_8)
+                    );
+                    byte[] sseFrame = "data: {\"choices\":[{\"delta\":{\"content\":\"前段内容\"}}]}\n\n"
+                        .getBytes(StandardCharsets.UTF_8);
+                    os.write((Integer.toHexString(sseFrame.length) + "\r\n").getBytes(StandardCharsets.UTF_8));
+                    os.write(sseFrame);
+                    os.write("\r\n".getBytes(StandardCharsets.UTF_8));
+                    os.flush();
+                    firstChunkDelivered.await(5, TimeUnit.SECONDS);
+                    // Close socket abruptly without chunked terminator 0\r\n\r\n to simulate mid-stream drop
+                    conn.setSoLinger(true, 0);
+                } catch (Exception ignored) {
+                }
+            });
+            serverThread.setDaemon(true);
+            serverThread.start();
+
+            SseStreamClient client = new SseStreamClient();
+            try {
+                String url = "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions";
+                client.startStream(
+                    "r-mid-drop",
+                    url,
+                    Map.of(),
+                    "{}",
+                    new SseStreamClient.Listener() {
+                        @Override
+                        public void onChunk(String requestId, byte[] chunk, int length) {
+                            chunks.add(new String(chunk, 0, length, StandardCharsets.UTF_8));
+                            firstChunkDelivered.countDown();
+                        }
+
+                        @Override
+                        public void onComplete(String requestId) {
+                            finished.countDown();
+                        }
+
+                        @Override
+                        public void onError(String requestId, int status, String message, boolean aborted) {
+                            errMsg.set(message);
+                            finished.countDown();
+                        }
+
+                        @Override
+                        public void onError(
+                            String requestId,
+                            int status,
+                            String code,
+                            String message,
+                            boolean aborted
+                        ) {
+                            errCode.set(code);
+                            errMsg.set(message);
+                            finished.countDown();
+                        }
+                    }
+                );
+
+                assertTrue(firstChunkDelivered.await(5, TimeUnit.SECONDS));
+                assertTrue(finished.await(5, TimeUnit.SECONDS));
+                assertTrue(String.join("", chunks).contains("前段内容"));
+                assertFalse(errCode.get().isEmpty());
+                assertTrue(errMsg.get().contains("已接收"));
+            } finally {
+                client.shutdown();
+            }
+        }
     }
 }
