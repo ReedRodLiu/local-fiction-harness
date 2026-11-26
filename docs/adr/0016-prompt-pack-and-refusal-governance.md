@@ -5,6 +5,8 @@ status: accepted
 # 叙事提示词包模块与本地拒答治理机制边界
 
 > 部分修订 [ADR 0009](0009-deepseek-official-guided-byok.md) 与 [ADR 0014](0014-deepseek-model-selection-and-reasoning-effort.md)：保留官方地址锁定与引导式 BYOK 原则，明确官方 `/beta` 地址族在请求拼装层的派生契约，并在不内置第三方规避正文的前提下提供用户自维护的叙事提示词包与本地拒答治理能力。
+>
+> 部分修订：`baseUrl` 锁定与 `/beta` 派生已由 [ADR 0018](0018-multi-provider-openai-compatible-architecture.md) 扩展为多服务商能力驱动续写与兼容探测，同时继续严守不内置第三方破甲提示词边界。
 
 ## Decision
 
