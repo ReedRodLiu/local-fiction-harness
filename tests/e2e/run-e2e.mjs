@@ -1608,7 +1608,11 @@ async function openSettings(page) {
       await drawer.waitFor({ state: 'hidden' });
     }
   }
-  await page.getByTestId('settings-page').waitFor({ state: 'visible' });
+  const settingsPage = page.getByTestId('settings-page');
+  await settingsPage.waitFor({ state: 'visible' });
+  await settingsPage.evaluate((el) =>
+    Promise.all((el.closest('.app-overlay-stage') ?? el).getAnimations({ subtree: true }).map((a) => a.finished.catch(() => {}))),
+  );
 }
 
 async function closeSettings(page) {
