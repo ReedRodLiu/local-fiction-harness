@@ -1,6 +1,6 @@
 {
   "name": "local-fiction-harness",
-  "version": "0.4.3",
+  "version": "0.4.5",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,6 +15,7 @@
     "test:e2e:issue-127": "node tests/e2e/issue-127-mode-intent.mjs",
     "test:e2e:issue-125": "node tests/e2e/issue-125-story-tree.mjs",
     "test:e2e:issue-122": "node tests/e2e/issue-122-public-research.mjs",
+    "test:e2e:issue-147": "node tests/e2e/issue-147-mode-lock.mjs",
     "test:e2e:markdown": "node tests/e2e/markdown-message-rendering.mjs",
     "test:ui-impl-05:dev": "LFH_UI_IMPL_05_ONLY=1 node tests/e2e/run-e2e.mjs",
     "test:ui-impl-05:production": "LFH_E2E_PRODUCTION=1 LFH_UI_IMPL_05_PRODUCTION_ONLY=1 node tests/e2e/run-e2e.mjs",
@@ -26,7 +27,7 @@
     "audit:artifacts": "node scripts/audit-artifacts.mjs",
     "audit:ui": "node scripts/audit-ui-tokens.mjs",
     "audit:version": "node scripts/check-version-sync.mjs",
-    "verify:all": "npm run audit:version && npm run typecheck:harness && npm run typecheck && npm run build && npm run test:ui-impl-05:dev && npm run test:ui-impl-05:production && npm test && npm run test:e2e && npm run test:e2e:issue-127 && npm run test:e2e:issue-125 && npm run test:e2e:issue-122 && npm run test:e2e:markdown && npm run android:build && npm run audit:artifacts && npm run audit:ui"
+    "verify:all": "npm run audit:version && npm run typecheck:harness && npm run typecheck && npm run build && npm run test:ui-impl-05:dev && npm run test:ui-impl-05:production && npm test && npm run test:e2e && npm run test:e2e:issue-127 && npm run test:e2e:issue-125 && npm run test:e2e:issue-122 && npm run test:e2e:issue-147 && npm run test:e2e:markdown && npm run android:build && npm run audit:artifacts && npm run audit:ui"
   },
   "dependencies": {
     "@capacitor/android": "^8.6.2",
