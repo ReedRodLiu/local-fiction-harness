@@ -1,6 +1,12 @@
+import type {
+  CreativeWorkspaceState,
+  DraftWork,
+  LocalCharacter,
+} from './creative.ts';
 import { classifyAndRedactHost } from './diagnostics.ts';
 import type {
   LlmUsage,
+  Story,
   TurnNode,
   TurnUsageTelemetry,
   UsageProviderKind,
@@ -70,6 +76,27 @@ export interface SessionUsageSummary {
   actualCostUsd: number | null;
   models: string[];
   savings: SessionSavingsResult;
+}
+
+export type WorkspaceUsageMode = 'story' | 'writing' | 'character';
+
+export interface WorkspaceModeUsageSummary extends SessionUsageSummary {
+  mode: WorkspaceUsageMode;
+  itemCount: number;
+  conversationCount: number;
+}
+
+export interface WorkspaceUsageSummary {
+  total: SessionUsageSummary;
+  modes: Record<WorkspaceUsageMode, WorkspaceModeUsageSummary>;
+  itemCount: number;
+}
+
+export interface WorkspaceUsageInput {
+  stories?: readonly Story[];
+  creativeWorkspace?: Pick<CreativeWorkspaceState, 'works' | 'characters'> | null;
+  works?: readonly DraftWork[];
+  characters?: readonly LocalCharacter[];
 }
 
 function isNonNegativeInt(value: unknown): value is number {
@@ -434,5 +461,100 @@ export function computeSessionUsageSummary(
     actualCostUsd,
     models: [...models],
     savings,
+  };
+}
+
+function deduplicateById<T extends { id: string }>(items: readonly T[]): T[] {
+  const byId = new Map<string, T>();
+  for (const item of items) {
+    byId.set(item.id, item);
+  }
+  return [...byId.values()];
+}
+
+function collectDraftWorkNodes(work: DraftWork): TurnNode[] {
+  const byId = new Map<string, TurnNode>();
+  for (const node of work.discussion) {
+    byId.set(node.id, node);
+  }
+  if (work.discussionNodes) {
+    for (const node of Object.values(work.discussionNodes)) {
+      byId.set(node.id, node);
+    }
+  }
+  return [...byId.values()];
+}
+
+/**
+ * Aggregates historical TurnNode telemetry across all stories (including branches/retries),
+ * writing works, and character conversations without double-counting.
+ */
+export function computeWorkspaceUsageSummary(
+  input: WorkspaceUsageInput,
+  options: { nowMs?: number; scheduleOverride?: DeepSeekPricingSchedule } = {},
+): WorkspaceUsageSummary {
+  const computeOptions = {
+    nowMs: options.nowMs ?? Date.now(),
+    ...(options.scheduleOverride ? { scheduleOverride: options.scheduleOverride } : {}),
+  };
+
+  const stories = deduplicateById(input.stories ?? []);
+  const works = deduplicateById(input.works ?? input.creativeWorkspace?.works ?? []);
+  const characters = deduplicateById(input.characters ?? input.creativeWorkspace?.characters ?? []);
+
+  const storyNodes: TurnNode[] = [];
+  for (const story of stories) {
+    storyNodes.push(...Object.values(story.nodes));
+  }
+
+  const writingNodes: TurnNode[] = [];
+  for (const work of works) {
+    writingNodes.push(...collectDraftWorkNodes(work));
+  }
+
+  const characterNodes: TurnNode[] = [];
+  let characterConversationCount = 0;
+  for (const character of characters) {
+    const conversations = deduplicateById(character.conversations);
+    characterConversationCount += conversations.length;
+    for (const conversation of conversations) {
+      characterNodes.push(...Object.values(conversation.nodes));
+    }
+  }
+
+  const storySummary: WorkspaceModeUsageSummary = {
+    mode: 'story',
+    itemCount: stories.length,
+    conversationCount: stories.length,
+    ...computeSessionUsageSummary(storyNodes, computeOptions),
+  };
+
+  const writingSummary: WorkspaceModeUsageSummary = {
+    mode: 'writing',
+    itemCount: works.length,
+    conversationCount: works.length,
+    ...computeSessionUsageSummary(writingNodes, computeOptions),
+  };
+
+  const characterSummary: WorkspaceModeUsageSummary = {
+    mode: 'character',
+    itemCount: characters.length,
+    conversationCount: characterConversationCount,
+    ...computeSessionUsageSummary(characterNodes, computeOptions),
+  };
+
+  const total = computeSessionUsageSummary(
+    [...storyNodes, ...writingNodes, ...characterNodes],
+    computeOptions,
+  );
+
+  return {
+    total,
+    modes: {
+      story: storySummary,
+      writing: writingSummary,
+      character: characterSummary,
+    },
+    itemCount: stories.length + works.length + characters.length,
   };
 }

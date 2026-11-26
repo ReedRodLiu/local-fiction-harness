@@ -76,6 +76,19 @@ function routeReply({ mode, title, characterName, settingMarkdown = '', body }) 
   ].join('\n');
 }
 
+function proposalReply({ target, summary, name, body }) {
+  return [
+    '```lfh-proposal',
+    `target: ${target}`,
+    'op: full',
+    `summary: ${summary}`,
+    ...(name ? [`name: ${name}`] : []),
+    '---',
+    body,
+    '```',
+  ].join('\n');
+}
+
 async function readPersistedState(page) {
   return page.evaluate(async () => {
     const db = await new Promise((resolve, reject) => {
@@ -138,6 +151,8 @@ async function main() {
         memoryOnly: false,
       }));
       localStorage.setItem('lfh.model_config.api_key', 'sk-e2e-issue-127');
+      localStorage.setItem('folio.tutorial.mainDone', 'true');
+      localStorage.setItem('folio.tutorial.settingsDone', 'true');
     });
 
     const stageInputs = [];
@@ -162,9 +177,33 @@ async function main() {
               settingMarkdown: '## 故事设定\n\n雨夜站台上，两人正等待末班车。',
               body: '第一幕开始，站台广播忽然中断。',
             });
+      } else if (input.includes('创建一个角色互动对话')) {
+        stageInputs.push(input);
+        content = `已为你草拟角色互动人设。\n${proposalReply({
+          target: 'character',
+          summary: '根据雨夜站台故事新建角色「沈默」',
+          name: '沈默',
+          body: '## 角色设定\n\n雨夜站台的旧表匠沈默。',
+        })}\n\n\`\`\`lfh-summary\n整理沈默角色设定提案\n\`\`\``;
+      } else if (input.includes('新开一篇写故事稿')) {
+        stageInputs.push(input);
+        content = `已为你整理新作品大纲。\n${proposalReply({
+          target: 'draft',
+          summary: '根据沈默人设新开写故事稿「站台外传」',
+          name: '站台外传',
+          body: '## 作品设定\n\n围绕雨夜站台旧表匠展开的短篇大纲。',
+        })}\n\n\`\`\`lfh-summary\n整理站台外传写故事提案\n\`\`\``;
+      } else if (input.includes('开成互动文游')) {
+        stageInputs.push(input);
+        content = `已为你整理互动文游设定。\n${proposalReply({
+          target: 'story',
+          summary: '根据外传设定新开互动文游「站台夜航」',
+          name: '站台夜航',
+          body: '## 故事设定\n\n雾夜末班车停靠站台，你手中握着半张旧车票。',
+        })}\n\n\`\`\`lfh-summary\n整理站台夜航文游提案\n\`\`\``;
       } else {
         stageInputs.push(input);
-        content = `已按当前文游继续处理：${input}\n\n\`\`\`lfh-summary\n继续推演站台上的当前场景\n\`\`\``;
+        content = `已按当前模式继续处理：${input}\n\n\`\`\`lfh-summary\n继续推演站台上的当前场景\n\`\`\``;
       }
       await route.fulfill({
         status: 200,
@@ -186,6 +225,8 @@ async function main() {
     const before = await readPersistedState(page);
     assert.equal(before.storyIds.length, 1, 'welcome first-message routing should create one story');
     assert.equal(before.workIds.length, 0);
+    assert.equal(before.characterIds.length, 0);
+    assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0, 'TopBar must not render mode switcher in story view');
 
     for (const prompt of [
       '请帮我改成小说',
@@ -193,92 +234,117 @@ async function main() {
       '改成小说',
       '把这一段改成小说里的书信体。',
       '下一幕转成角色互动式对话',
+      '请切换到写故事，谢谢。',
+      '切换到角色互动',
     ]) {
       const requestCountBeforeTurn = stageInputs.length;
       await page.fill('#turn-input', prompt);
       await page.getByRole('button', { name: '发送行动', exact: true }).click();
-      await page.getByTestId('turn-assistant').last().getByText(`已按当前文游继续处理：${prompt}`, {
+      await page.getByTestId('turn-assistant').last().getByText(`已按当前模式继续处理：${prompt}`, {
         exact: false,
       }).waitFor();
       assert.ok(
         stageInputs.slice(requestCountBeforeTurn).some((input) => input.includes(prompt)),
-        'the normal stage request should carry the exact user message',
+        'the normal stage request should carry the exact user message without in-session cloning interception',
       );
       const after = await readPersistedState(page);
-      assert.deepEqual(after.storyIds, before.storyIds, 'ordinary stage instructions must not create a story');
-      assert.equal(after.activeStoryId, before.activeStoryId, 'ordinary stage instructions must keep the story active');
-      assert.deepEqual(after.workIds, before.workIds, 'ordinary stage instructions must not create a work');
-      assert.deepEqual(after.characterIds, before.characterIds, 'ordinary stage instructions must not create a character');
+      assert.deepEqual(after.storyIds, before.storyIds, 'in-session messages must not create a story');
+      assert.equal(after.activeStoryId, before.activeStoryId, 'in-session messages must keep the story active');
+      assert.deepEqual(after.workIds, before.workIds, 'in-session messages must not clone into works');
+      assert.deepEqual(after.characterIds, before.characterIds, 'in-session messages must not clone into characters');
     }
 
-    await page.getByTestId('topbar-mode-switcher').click();
-    await page.getByTestId('topbar-mode-option-writing').click();
-    await page.getByTestId('writing-page').waitFor();
-    const afterTopBar = await readPersistedState(page);
-    assert.deepEqual(afterTopBar.storyIds, before.storyIds, 'top-bar conversion must preserve the source story');
-    assert.equal(afterTopBar.workIds.length, 1, 'top-bar conversion should create one target work');
-
-    await page.getByTestId('topbar-mode-switcher').click();
-    await page.getByTestId('topbar-mode-option-story').click();
-    await page.getByTestId('story-timeline').waitFor();
-    await page.fill('#turn-input', '请切换到写故事，谢谢。');
+    // 1) Derive character from story via explicit ProposalCard + 去看看
+    await page.fill('#turn-input', '我要根据这个故事里的沈默创建一个角色互动对话');
     await page.getByRole('button', { name: '发送行动', exact: true }).click();
-    await page.getByTestId('writing-page').waitFor();
-    const afterExplicitSwitch = await readPersistedState(page);
-    assert.equal(afterExplicitSwitch.workIds.length, 2, 'an explicit natural-language switch should create one target work');
+    const charProposal = page.locator('section[data-testid^="proposal-card-"]').filter({ hasText: '新建角色' }).last();
+    await charProposal.waitFor();
+    await charProposal.getByTestId('proposal-card-toggle').click();
+    await charProposal.getByTestId('proposal-apply-btn').click();
+    const afterCharDerive = await readPersistedState(page);
+    assert.equal(afterCharDerive.storyIds.length, 1, 'deriving character must not duplicate source story');
+    assert.equal(afterCharDerive.workIds.length, 0);
+    assert.equal(afterCharDerive.characterIds.length, 1, 'confirming character proposal must create one character');
 
+    await page.getByRole('button', { name: '去看看', exact: true }).click();
+    await page.getByTestId('character-page').waitFor();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '沈默', exact: true }).waitFor();
+    assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0, 'TopBar must not render mode switcher in character view');
+
+    // In character mode, switch phrases stay in character chat without cloning
+    await page.getByLabel('发消息').fill('切换到文游');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await page.getByTestId('character-timeline').getByText('已按当前模式继续处理：切换到文游', { exact: false }).waitFor();
+    const afterCharSwitchPhrase = await readPersistedState(page);
+    assert.equal(afterCharSwitchPhrase.storyIds.length, 1);
+    assert.equal(afterCharSwitchPhrase.workIds.length, 0);
+    assert.equal(afterCharSwitchPhrase.characterIds.length, 1);
+
+    // 2) Derive writing draft from character via explicit ProposalCard + 去看看
+    await page.getByLabel('发消息').fill('按当前人设新开一篇写故事稿');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    const draftProposal = page.locator('section[data-testid^="proposal-card-"]').filter({ hasText: '新开写故事' }).last();
+    await draftProposal.waitFor();
+    await draftProposal.getByTestId('proposal-card-toggle').click();
+    await draftProposal.getByTestId('proposal-apply-btn').click();
+    const afterDraftDerive = await readPersistedState(page);
+    assert.equal(afterDraftDerive.characterIds.length, 1, 'deriving draft must not duplicate source character');
+    assert.equal(afterDraftDerive.storyIds.length, 1);
+    assert.equal(afterDraftDerive.workIds.length, 1, 'confirming draft proposal must create one work');
+
+    await page.getByRole('button', { name: '去看看', exact: true }).click();
+    await page.getByTestId('writing-page').waitFor();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '站台外传', exact: true }).waitFor();
+    assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0, 'TopBar must not render mode switcher in writing view');
+
+    // In writing mode, switch phrases stay in writing chat without cloning
+    await page.getByLabel('聊天内容').fill('切换到文游');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await page.getByTestId('writing-discussion-timeline').getByText('已按当前模式继续处理：切换到文游', { exact: false }).waitFor();
+    const afterWritingSwitchPhrase = await readPersistedState(page);
+    assert.equal(afterWritingSwitchPhrase.storyIds.length, 1);
+    assert.equal(afterWritingSwitchPhrase.workIds.length, 1);
+    assert.equal(afterWritingSwitchPhrase.characterIds.length, 1);
+
+    // 3) Derive interactive story from writing via explicit ProposalCard + 去看看
+    await page.getByLabel('聊天内容').fill('把这个设定开成互动文游');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    const storyProposal = page.locator('section[data-testid^="proposal-card-"]').filter({ hasText: '新开文游' }).last();
+    await storyProposal.waitFor();
+    await storyProposal.getByTestId('proposal-card-toggle').click();
+    await storyProposal.getByTestId('proposal-apply-btn').click();
+    const afterStoryDerive = await readPersistedState(page);
+    assert.equal(afterStoryDerive.storyIds.length, 2, 'confirming story proposal must create one independent story');
+    assert.equal(afterStoryDerive.workIds.length, 1, 'deriving story must not duplicate source work');
+    assert.equal(afterStoryDerive.characterIds.length, 1);
+
+    await page.getByRole('button', { name: '去看看', exact: true }).click();
+    await page.getByTestId('story-timeline').waitFor();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: '站台夜航', exact: true }).waitFor();
+    await page.getByTestId('story-timeline').getByText('雾夜末班车停靠站台，你手中握着半张旧车票。', { exact: false }).waitFor();
+
+    const diagnosticsEvents = await page.evaluate(() => {
+      const raw = localStorage.getItem('lfh.diagnostics.v2');
+      return raw ? JSON.parse(raw).events ?? [] : [];
+    });
+    const derivedEvents = diagnosticsEvents.filter((event) => event.action === 'asset_derived_from_proposal');
+    assert.deepEqual(
+      derivedEvents.map((event) => event.meta?.target),
+      ['character', 'draft', 'story'],
+      'diagnostics should record zero-content asset_derived_from_proposal breadcrumbs for each derived target',
+    );
+    assert.equal(
+      diagnosticsEvents.filter((event) => event.action === 'entry_misroute_corrected').length,
+      0,
+      'proposal-based derivation must not overload entry_misroute_corrected',
+    );
+
+    // Source story remains intact in library with its original turns
     const library = page.getByTestId('desktop-library');
     await library.getByRole('button', { name: '文游', exact: true }).click();
-    await library.getByTestId('story-select-button').first().click();
-    await page.getByTestId('story-timeline').waitFor();
-
-    await page.getByTestId('topbar-mode-switcher').click();
-    const writingOption = page.getByTestId('topbar-mode-option-writing');
-    await writingOption.evaluate((button) => {
-      button.click();
-      button.click();
-    });
-    await page.getByTestId('writing-page').waitFor();
-    await page.getByTestId('status-notice-banner').getByText('已切换为「写故事」', { exact: false }).waitFor();
-    const afterDuplicateDispatch = await readPersistedState(page);
-    assert.equal(
-      afterDuplicateDispatch.workIds.length,
-      afterExplicitSwitch.workIds.length + 1,
-      'duplicate dispatch of one conversion must persist one target work',
-    );
-    assert.deepEqual(
-      afterDuplicateDispatch.characterIds,
-      afterExplicitSwitch.characterIds,
-      'duplicate story-to-writing dispatch must not create another mode',
-    );
-
-    await library.getByRole('button', { name: '写故事', exact: true }).click();
-    const sameNameRows = library.getByTestId('story-list-item').filter({ hasText: '普通消息仍留在当前文游' });
-    assert.equal(await sameNameRows.count(), 3, 'independently created same-title works should all remain listed');
-    const openedWorkIds = [];
-    for (let index = 0; index < 3; index += 1) {
-      await sameNameRows.nth(index).getByTestId('story-select-button').click();
-      await page.getByTestId('writing-page').waitFor();
-      await page.getByText('下一幕转成角色互动式对话', { exact: true }).waitFor();
-      await page.waitForTimeout(120);
-      openedWorkIds.push((await readPersistedState(page)).activeWorkId);
-    }
-    assert.equal(new Set(openedWorkIds).size, 3, 'each same-title work must remain independently openable');
-    assert.deepEqual(
-      [...openedWorkIds].sort(),
-      [...afterDuplicateDispatch.workIds].sort(),
-      'opening same-title works should address stable distinct IDs',
-    );
-
-    await library.getByRole('button', { name: '文游', exact: true }).click();
-    const sameNameStoryRows = library.getByTestId('story-list-item').filter({ hasText: '普通消息仍留在当前文游' });
-    assert.equal(await sameNameStoryRows.count(), 2, 'both source stories should remain available after conversions');
-    for (let index = 0; index < 2; index += 1) {
-      await sameNameStoryRows.nth(index).getByTestId('story-select-button').click();
-      await page.getByTestId('story-timeline').waitFor();
-      await page.getByTestId('story-timeline').getByText('把这一段改成小说里的书信体。', { exact: true }).waitFor();
-      await page.getByTestId('story-timeline').getByText('下一幕转成角色互动式对话', { exact: true }).waitFor();
-    }
+    await library.getByTestId('story-select-button').filter({ hasText: '普通消息仍留在当前文游' }).click();
+    await page.getByTestId('story-timeline').getByText('把这一段改成小说里的书信体。', { exact: true }).waitFor();
+    await page.getByTestId('story-timeline').getByText('请切换到写故事，谢谢。', { exact: true }).waitFor();
 
     await page.getByTestId('desktop-library-new-creation').click();
     await page.getByTestId('welcome-view').waitFor();

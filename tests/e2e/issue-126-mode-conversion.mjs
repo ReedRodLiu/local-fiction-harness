@@ -10,6 +10,17 @@ const NOTE_FIRST = '## 当前进度\n\n第一版分支笔记，渡口仍然有�
 const NOTE_SECOND = '## 当前进度\n\n第二版分支笔记，灯塔重新亮起。';
 const IMPORTED_CONTINUATION = '导入修复后，角色互动仍可继续。';
 
+const proposalReply = ({ target, summary, name, body }) => [
+  `${fence}lfh-proposal`,
+  `target: ${target}`,
+  'op: full',
+  `summary: ${summary}`,
+  ...(name ? [`name: ${name}`] : []),
+  '---',
+  body,
+  fence,
+].join('\n');
+
 const routeReply = ({ mode, title, characterName, settingMarkdown = '', body }) => [
   `${fence}lfh-route`,
   `mode: ${mode}`,
@@ -81,24 +92,20 @@ function assertDocumentReferences(container, conversation, label) {
 }
 
 function assertStoryDocumentReferences(story, label) {
-  assert.ok(story.activeLeafNodeId, `${label} has no active leaf`);
   for (const [id, node] of Object.entries(story.nodes)) {
     assert.ok(story.documents?.container?.versions?.[node.documents?.container], `${label} node ${id} container reference is missing`);
     assert.ok(story.documents?.local?.versions?.[node.documents?.local], `${label} node ${id} local reference is missing`);
   }
-  const editVersion = story.documents?.edits?.[story.activeLeafNodeId];
-  const nodeVersion = story.nodes[story.activeLeafNodeId]?.documents?.local;
-  const effectiveVersion = editVersion ?? nodeVersion ?? story.documents?.local?.head;
-  assert.ok(story.documents?.local?.versions?.[effectiveVersion], `${label} effective note version is missing`);
-  return effectiveVersion;
-}
-
-async function switchTopbarMode(page, target) {
-  const switcher = page.getByTestId('topbar-mode-switcher');
-  await switcher.waitFor({ state: 'visible' });
-  await switcher.click();
-  await page.getByTestId('topbar-mode-menu').waitFor();
-  await page.getByTestId(`topbar-mode-option-${target}`).click();
+  assert.ok(story.documents?.container?.versions?.[story.documents.container.head], `${label} container head is missing`);
+  assert.ok(story.documents?.local?.versions?.[story.documents.local.head], `${label} local head is missing`);
+  if (story.activeLeafNodeId) {
+    const editVersion = story.documents?.edits?.[story.activeLeafNodeId];
+    const nodeVersion = story.nodes[story.activeLeafNodeId]?.documents?.local;
+    const effectiveVersion = editVersion ?? nodeVersion ?? story.documents?.local?.head;
+    assert.ok(story.documents?.local?.versions?.[effectiveVersion], `${label} effective note version is missing`);
+    return effectiveVersion;
+  }
+  return story.documents.local.head;
 }
 
 async function closeStoryCompanion(page) {
@@ -107,15 +114,9 @@ async function closeStoryCompanion(page) {
   await sheet.waitFor({ state: 'hidden' });
 }
 
-async function closeCharacterCompanion(page) {
-  const sheet = page.getByTestId('creative-companion');
-  await sheet.getByRole('button', { name: '关闭历史对话与设定面板' }).click();
-  await sheet.waitFor({ state: 'hidden' });
-}
-
 async function openStoredCharacter(page, title) {
   const library = page.getByTestId('desktop-library');
-  await library.getByRole('button', { name: '角色', exact: true }).click();
+  await library.getByRole('button', { name: '角色互动', exact: true }).click();
   const row = library.getByTestId('story-select-button').filter({ hasText: title }).first();
   await row.waitFor();
   await row.click();
@@ -250,6 +251,20 @@ export async function verifyIssue126ModeConversion(browser, port, helpers) {
           settingMarkdown: '## 故事设定\n\n雾港只有一座灯塔。',
           body: '故事开场：雾里传来第一声钟响。',
         });
+      } else if (input.includes('新建角色互动')) {
+        content = `已为你草拟独立角色人设。\n${proposalReply({
+          target: 'character',
+          summary: `根据故事建立角色「${TITLE} 守夜人」`,
+          name: `${TITLE} 守夜人`,
+          body: '## 角色设定\n\n雾港灯塔的守夜人。',
+        })}`;
+      } else if (input.includes('开成文游')) {
+        content = `已为你整理互动文游开局设定。\n${proposalReply({
+          target: 'story',
+          summary: `把角色开成文游「${TITLE} 衍生文游」`,
+          name: `${TITLE} 衍生文游`,
+          body: '## 故事设定\n\n守夜人在大雾夜重回塔顶。',
+        })}`;
       } else if (system.includes('你是该角色本人')) {
         content = CHARACTER_REPLY;
       } else if (system.includes('你是文游的叙事者')) {
@@ -290,91 +305,87 @@ export async function verifyIssue126ModeConversion(browser, port, helpers) {
     await documentDialog.waitFor({ state: 'hidden' });
     await closeStoryCompanion(page);
 
-    const beforeConversion = await readStoredState(page);
-    const originalStoryId = beforeConversion.activeStoryId;
+    const beforeDerivation = await readStoredState(page);
+    const originalStoryId = beforeDerivation.activeStoryId;
     assert.equal(typeof originalStoryId, 'string');
+    assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0);
 
-    await switchTopbarMode(page, 'character');
+    // Mode-switch phrases inside an active story stay in the story without cloning.
+    await page.fill('#turn-input', '切换到角色互动');
+    await page.getByRole('button', { name: '发送行动' }).click();
+    await page.getByTestId('story-timeline').getByText(STORY_REPLY, { exact: true }).nth(1).waitFor();
+    const afterSwitchPhrase = await readStoredState(page);
+    assert.equal(afterSwitchPhrase.stories.length, beforeDerivation.stories.length);
+    assert.equal(afterSwitchPhrase.workspace?.characters?.length ?? 0, 0);
+    assert.equal(afterSwitchPhrase.workspace?.works?.length ?? 0, 0);
+
+    // Explicit derivation via lfh-proposal target: character creates an independent character.
+    await page.fill('#turn-input', '根据当前故事新建角色互动');
+    await page.getByRole('button', { name: '发送行动' }).click();
+    const charProposal = page.locator('section[data-testid^="proposal-card-"]').last();
+    await charProposal.waitFor();
+    await charProposal.getByTestId('proposal-card-toggle').click();
+    await charProposal.getByTestId('proposal-apply-btn').click();
+    await page.getByRole('button', { name: '去看看' }).click();
+
     await page.getByTestId('character-page').waitFor();
-    await page.getByTestId('status-notice-banner').getByText('已切换为「角色互动」', { exact: false }).waitFor();
+    assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0);
     assert.equal(await page.getByTestId('main-error-banner').count(), 0);
-    await page.getByTestId('character-timeline').getByText('故事开场：雾里传来第一声钟响。', { exact: true }).waitFor();
-    await page.getByTestId('character-timeline').getByText(STORY_REPLY, { exact: true }).waitFor();
 
-    const afterStoryConversion = await readStoredState(page);
-    assert.ok(afterStoryConversion.stories.some((story) => story.id === originalStoryId), 'source story disappeared');
-    const character = afterStoryConversion.workspace.characters.find(
-      (item) => item.id === afterStoryConversion.activeCharacterId,
+    const afterCharDerivation = await readStoredState(page);
+    assert.ok(afterCharDerivation.stories.some((story) => story.id === originalStoryId), 'source story disappeared');
+    assert.equal(afterCharDerivation.stories.length, beforeDerivation.stories.length, 'source story must not duplicate');
+    const character = afterCharDerivation.workspace.characters.find(
+      (item) => item.id === afterCharDerivation.activeCharacterId,
     );
-    assert.ok(character, 'converted character was not persisted');
+    assert.ok(character, 'derived character was not persisted');
+    assert.equal(character.name, `${TITLE} 守夜人`);
     const conversation = character.conversations.find((item) => item.id === character.activeConversationId);
-    assert.ok(conversation, 'converted conversation was not persisted');
-    const effectiveNoteVersion = assertDocumentReferences(character.document, conversation, 'converted character');
-    const noteLineage = [];
-    let cursor = effectiveNoteVersion;
-    while (cursor) {
-      const version = conversation.document.versions[cursor];
-      noteLineage.push(version.markdown);
-      cursor = version.previous;
-    }
-    assert.ok(noteLineage.some((markdown) => markdown.includes('第一版分支笔记')));
-    assert.ok(noteLineage.some((markdown) => markdown.includes('第二版分支笔记')));
-
-    await page.getByTestId('open-companion-sheet').click();
-    const characterSheet = page.getByTestId('creative-companion');
-    await characterSheet.waitFor();
-    await characterSheet.getByTestId('character-tab-profile').click();
-    await characterSheet.getByTestId('branch-note-details').getByText('分支笔记', { exact: true }).click();
-    await characterSheet.getByText('第二版分支笔记', { exact: false }).waitFor();
-    await characterSheet.getByRole('button', { name: '编辑分支笔记' }).click();
-    await page.waitForFunction(() =>
-      document.querySelector('[data-testid="markdown-document"] textarea')?.value.includes('第二版分支笔记'),
-    );
-    await documentDialog.getByText('历史版本', { exact: true }).click();
-    assert.ok(await documentDialog.getByRole('button', { name: '查看并恢复此版' }).count() > 0);
-    await documentDialog.getByRole('button', { name: '取消' }).click();
-    await documentDialog.waitFor({ state: 'hidden' });
-    await closeCharacterCompanion(page);
+    assert.ok(conversation, 'derived character conversation was not initialized');
+    assert.ok(character.document.versions?.[character.document.head]?.markdown.includes('守夜人'));
 
     await page.getByLabel('发消息').fill(CHARACTER_TURN);
     await page.getByRole('button', { name: '发送', exact: true }).click();
     await page.getByTestId('character-timeline').getByText(CHARACTER_REPLY, { exact: true }).waitFor();
 
     await page.reload({ waitUntil: 'networkidle' });
-    await openStoredCharacter(page, TITLE);
+    await openStoredCharacter(page, `${TITLE} 守夜人`);
     await page.getByTestId('character-timeline').getByText(CHARACTER_REPLY, { exact: true }).waitFor();
     assert.equal(await page.getByTestId('main-error-banner').count(), 0);
 
-    await switchTopbarMode(page, 'story');
-    await page.getByTestId('story-timeline').waitFor();
-    await page.getByTestId('status-notice-banner').getByText('已切换为「文游」', { exact: false }).waitFor();
-    assert.equal(await page.getByTestId('main-error-banner').count(), 0);
-    await page.getByTestId('story-timeline').getByText(CHARACTER_REPLY, { exact: true }).waitFor();
+    // Explicit derivation via lfh-proposal target: story creates an independent story without modifying character.
+    await page.getByLabel('发消息').fill('把这个角色开成文游');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    const storyProposal = page.locator('section[data-testid^="proposal-card-"]').last();
+    await storyProposal.waitFor();
+    await storyProposal.getByTestId('proposal-card-toggle').click();
+    await storyProposal.getByTestId('proposal-apply-btn').click();
+    await page.getByRole('button', { name: '去看看' }).click();
 
-    const afterCharacterConversion = await readStoredState(page);
-    assert.notEqual(afterCharacterConversion.activeStoryId, originalStoryId);
-    assert.ok(afterCharacterConversion.workspace.characters.some((item) => item.id === character.id));
-    assert.equal(afterCharacterConversion.stories.length >= 2, true);
-    const convertedStory = afterCharacterConversion.stories.find(
-      (story) => story.id === afterCharacterConversion.activeStoryId,
+    await page.getByTestId('story-timeline').waitFor();
+    assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0);
+    assert.equal(await page.getByTestId('main-error-banner').count(), 0);
+    await page.getByTestId('story-timeline').getByText('守夜人在大雾夜重回塔顶。', { exact: false }).waitFor();
+
+    const afterStoryDerivation = await readStoredState(page);
+    assert.notEqual(afterStoryDerivation.activeStoryId, originalStoryId);
+    assert.ok(afterStoryDerivation.workspace.characters.some((item) => item.id === character.id));
+    assert.equal(afterStoryDerivation.stories.length, beforeDerivation.stories.length + 1);
+    const derivedStory = afterStoryDerivation.stories.find(
+      (story) => story.id === afterStoryDerivation.activeStoryId,
     );
-    assertStoryDocumentReferences(convertedStory, 'converted story');
+    assert.ok(derivedStory, 'derived story was not persisted');
+    assertStoryDocumentReferences(derivedStory, 'derived story');
 
     await page.reload({ waitUntil: 'networkidle' });
-    await page.getByTestId('app-topbar').getByRole('heading', { name: TITLE, exact: true }).waitFor();
+    await page.getByTestId('app-topbar').getByRole('heading', { name: `${TITLE} 衍生文游`, exact: true }).waitFor();
     assert.equal(await page.getByTestId('main-error-banner').count(), 0);
 
     const library = page.getByTestId('desktop-library');
-    const activeConvertedRow = library.locator('[data-testid="story-list-item"][data-active="true"]');
-    await activeConvertedRow.getByTestId('story-menu-trigger').click();
-    await activeConvertedRow.getByRole('menuitem', { name: '重命名' }).click();
-    await library.getByRole('textbox', { name: '重命名故事标题' }).fill(`${TITLE} 转换目标`);
-    await library.getByRole('button', { name: '保存', exact: true }).click();
-    await library.getByText(`${TITLE} 转换目标`, { exact: true }).waitFor();
     await library.getByRole('button', { name: '文游', exact: true }).click();
     const originalStoryRow = library.getByTestId('story-select-button')
       .filter({ hasText: TITLE })
-      .filter({ hasNotText: '转换目标' });
+      .filter({ hasNotText: '衍生文游' });
     await originalStoryRow.click();
     await page.waitForFunction(async (expectedId) => {
       const db = await new Promise((resolve, reject) => {
@@ -390,10 +401,10 @@ export async function verifyIssue126ModeConversion(browser, port, helpers) {
       db.close();
       return entry?.value === expectedId;
     }, originalStoryId);
-    await page.getByTestId('story-timeline').getByText(STORY_REPLY, { exact: true }).waitFor();
+    await page.getByTestId('story-timeline').getByText(STORY_REPLY, { exact: true }).first().waitFor();
     assert.equal(await page.getByTestId('story-timeline').getByText(CHARACTER_REPLY, { exact: true }).count(), 0);
 
-    await openStoredCharacter(page, TITLE);
+    await openStoredCharacter(page, `${TITLE} 守夜人`);
     await page.getByTestId('character-timeline').getByText(CHARACTER_REPLY, { exact: true }).waitFor();
 
     await context.close();

@@ -53,6 +53,7 @@ describe('ProposalCard', () => {
       { target: 'memory', expectedBadge: '我的记忆' },
       { target: 'note', expectedBadge: '分支笔记' },
       { target: 'draft', expectedBadge: '新开写故事' },
+      { target: 'story', expectedBadge: '新开文游' },
       { target: 'character', expectedBadge: '新建角色' },
     ];
 
@@ -178,6 +179,18 @@ describe('ProposalCard', () => {
       'v2',
     );
     expect(fullDrift.hasConflict).toBe(true);
+
+    // Creation targets (character / draft / story) ignore baseVersionId drift and compute diff against empty doc
+    for (const target of ['character', 'draft', 'story'] as const) {
+      const creationState = computeProposalCardState(
+        makeProposal({ target, op: 'full', baseVersionId: 'stale-v0', body: '# 新资产\n设定正文' }),
+        conflictedDoc,
+        'v2',
+      );
+      expect(creationState.hasVersionDrift).toBe(false);
+      expect(creationState.hasConflict).toBe(false);
+      expect(creationState.resolvedMarkdown).toBe('# 新资产\n设定正文');
+    }
   });
 
   it('supports applied (with immediate 撤销此改动), reverted, dismissed, and needs_review states', () => {

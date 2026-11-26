@@ -127,7 +127,6 @@ describe('Issue #99: tap highlight suppression, rounded hit targets, and :active
     expect(shellCss).toMatch(/\.btn-primary:active:not\(:disabled\)\s*\{[^}]*var\(--action-primary-active-bg\)/s);
     expect(shellCss).toMatch(/\.icon-button:active:not\(:disabled\)\s*\{[^}]*var\(--bg-surface-active\)/s);
     expect(shellCss).toMatch(/\.branch-badge:active:not\(:disabled\)\s*\{[^}]*var\(--accent-fiction-active\)/s);
-    expect(shellCss).toMatch(/\.topbar-mode-chip:active:not\(:disabled\)\s*\{[^}]*var\(--bg-surface-active\)/s);
     expect(shellCss).toMatch(/\.topbar-segment-btn:active:not\(:disabled\)\s*\{[^}]*var\(--bg-surface-active\)/s);
     expect(libraryDrawerCss).toMatch(/\.library-categories button:active:not\(:disabled\)\s*\{[^}]*var\(--bg-surface-active\)/s);
     expect(baseCss).toMatch(/\.story-tree-span-toggle:active:not\(:disabled\)\s*\{[^}]*var\(--bg-surface-active\)/s);
@@ -153,7 +152,7 @@ describe('Issue #99: tap highlight suppression, rounded hit targets, and :active
     expect(hudCollapseBlock).toMatch(/border-radius:\s*50%/);
   });
 
-  it('removes dead V0.1 welcome mode-pill CSS rules from shell.css', () => {
+  it('removes dead V0.1 welcome mode-pill and retired TopBar mode-switcher CSS rules from shell.css', () => {
     const shellCss = readStyle('shell.css');
     for (const deadSelector of [
       '.welcome-mode-controls',
@@ -162,8 +161,12 @@ describe('Issue #99: tap highlight suppression, rounded hit targets, and :active
       '.welcome-quick-actions',
       '.welcome-quick-pill',
       '.welcome-character-name',
+      '.topbar-mode-switcher',
+      '.topbar-mode-chip',
+      '.topbar-mode-menu',
+      '.topbar-mode-menu-item',
     ]) {
-      expect(shellCss, `Dead V0.1 selector ${deadSelector} should be removed`).not.toContain(deadSelector);
+      expect(shellCss, `Dead selector ${deadSelector} should be removed`).not.toContain(deadSelector);
     }
   });
 });

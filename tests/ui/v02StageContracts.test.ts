@@ -64,6 +64,7 @@ describe('Folio V0.2 UI contracts & jargon purge', () => {
       '引用讨论',
       '本人聊天',
       '扮演对戏',
+      '推进量级',
     ];
 
     for (const file of activeUiFiles) {
@@ -72,6 +73,10 @@ describe('Folio V0.2 UI contracts & jargon purge', () => {
         expect(source, `${file} should not contain "${term}"`).not.toContain(term);
       }
     }
+
+    const storyTreeSource = readUiSource('StoryTree.tsx');
+    expect(storyTreeSource).toContain('最近游玩');
+    expect(storyTreeSource).toContain('最多轮次');
   });
 
   it('renders Welcome neutral unpersisted timeline and empty guidance without mode pills', () => {
@@ -121,27 +126,38 @@ describe('Folio V0.2 UI contracts & jargon purge', () => {
     expect(neutralMarkup).toContain('随时都可以');
   });
 
-  it('renders TopBar with subtle mode switcher and zero summary progress text', () => {
-    const markup = renderToStaticMarkup(createElement(TopBar, {
-      title: '雨夜车站',
-      stageMode: 'story',
-      showModeSwitcher: true,
-      onSwitchStageMode: () => undefined,
-      hasStory: true,
-      onOpenCreativeCompanion: () => undefined,
-      canOpenCreativeCompanion: false,
-      branchLabel: '主线',
-      forkCount: 1,
-      libraryCollapsed: false,
-      onOpenLibrary: () => undefined,
-      onToggleLibrary: () => undefined,
-      onOpenStoryTree: () => undefined,
-    }));
+  it('renders TopBar without mode switcher dropdown across story, writing, and character views and with zero summary progress text', () => {
+    for (const stageMode of ['story', 'writing', 'character'] as const) {
+      const markup = renderToStaticMarkup(createElement(TopBar, {
+        title: '雨夜车站',
+        stageMode,
+        hasStory: stageMode === 'story',
+        hideStoryTools: stageMode !== 'story',
+        onOpenCreativeCompanion: () => undefined,
+        canOpenCreativeCompanion: stageMode !== 'story',
+        branchLabel: '主线',
+        forkCount: 1,
+        libraryCollapsed: false,
+        onOpenLibrary: () => undefined,
+        onToggleLibrary: () => undefined,
+        onOpenStoryTree: () => undefined,
+      }));
 
-    expect(markup).toContain('data-testid="topbar-mode-switcher"');
-    expect(markup).toContain('data-testid="open-companion-sheet"');
-    expect(markup).not.toContain('summary-progress');
-    expect(markup).not.toContain('补算摘要中');
+      expect(markup).not.toContain('topbar-mode-switcher');
+      expect(markup).not.toContain('topbar-mode-menu');
+      expect(markup).toContain('data-testid="open-companion-sheet"');
+      expect(markup).not.toContain('summary-progress');
+      expect(markup).not.toContain('补算摘要中');
+    }
+
+    for (const file of ['App.tsx', 'DraftPane.tsx', 'CharacterPane.tsx', 'CreativeWorkspace.tsx']) {
+      const source = readUiSource(file);
+      expect(source).not.toContain('handleConvertStageMode');
+      expect(source).not.toContain('convertActiveAssetMode');
+      expect(source).not.toContain('onSwitchStageMode');
+    }
+    expect(readUiSource('DraftPane.tsx')).not.toContain('detectNaturalModeSwitchIntent');
+    expect(readUiSource('CharacterPane.tsx')).not.toContain('detectNaturalModeSwitchIntent');
   });
 
   it('auto-syncs StoryLibrary active category and renders unified .md export in overflow', () => {
@@ -177,9 +193,32 @@ describe('Folio V0.2 UI contracts & jargon purge', () => {
       onExportStoryBackup: () => undefined,
     }));
 
+    expect(markup).toContain('>文游</button>');
+    expect(markup).toContain('>写故事</button>');
+    expect(markup).toContain('>角色互动</button>');
+    expect(markup).not.toContain('>角色</button>');
     expect(markup).toContain('我的作品');
     expect(markup).toContain('长篇草稿');
     expect(markup).not.toContain('.lfh.json');
+
+    const characterMarkup = renderToStaticMarkup(createElement(StoryLibrary, {
+      stories: [story],
+      characters: [{ id: 'c1', title: '岑灯', subtitle: '2 条对话' }],
+      activeCategory: 'character',
+      activeCharacterId: 'c1',
+      activeStoryId: '',
+      onSelectStory: () => undefined,
+      onRenameStory: () => undefined,
+      onDeleteStory: () => undefined,
+      onExportStoryBackup: () => undefined,
+    }));
+    expect(characterMarkup).toContain('<h2>我的角色</h2>');
+    expect(characterMarkup).toContain('aria-pressed="true">角色互动</button>');
+
+    const libraryDrawerCss = readUiSource('styles/library-drawer.css');
+    expect(libraryDrawerCss).toMatch(/\.library-categories button\s*\{[^}]*min-height:\s*44px;/s);
+    expect(libraryDrawerCss).toMatch(/\.library-categories button\s*\{[^}]*white-space:\s*nowrap;/s);
+    expect(libraryDrawerCss).toMatch(/\.library-categories button\s*\{[^}]*font-size:\s*1[234]px;/s);
   });
 
   it('renders TurnCard inline ProposalCard without duplicate PencilLine writeFrom button', () => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { ArrowUp, ChevronRight, Download, Edit3, RotateCcw, Sparkles, Square, X } from 'lucide-react';
 import {
   adoptSuggestion,
@@ -7,7 +7,6 @@ import {
   buildTurnProposalRecords,
   buildTurnUsageTelemetry,
   createDefaultId,
-  detectNaturalModeSwitchIntent,
   documentLineage,
   documentVersion,
   findLeafForTurnTreeNode,
@@ -42,7 +41,7 @@ import {
   type ModelConfig,
   type PlatformRuntime,
   type PromptPackLibrary,
-  type StageAssetMode,
+  type Story,
   type TurnNode,
   type TurnProposalRecord,
   type WritingSuggestion,
@@ -58,11 +57,17 @@ import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
 import {
+  createAndSaveDerivedStory,
   createDerivedAssetInWorkspace,
+  derivedAssetTargetLabel,
+  isDerivedAssetTarget,
+  recordDerivedAssetDiagnostic,
   recordProposalCreationBreadcrumbs,
   recordProposalDiagnostic,
   revertDocumentToVersion,
+  toCreatedAssetNotice,
   updateTurnNodeProposal,
+  type CreatedAssetNotice,
 } from './proposalActions.ts';
 import {
   finalizePrefixContinuation,
@@ -101,12 +106,13 @@ interface DraftPaneProps {
   manuscript?: boolean;
   onStartManuscript?: () => void;
   onSwitchToChat?: () => void;
-  onSwitchStageMode?: (targetMode: StageAssetMode) => void;
-  onNavigateCreatedAsset?: (kind: 'character' | 'work', id: string) => void;
+  onSaveDerivedStory?: (story: Story) => Promise<void>;
+  onNavigateCreatedAsset?: (kind: 'character' | 'work' | 'story', id: string) => void;
   initialTurn: { id: string; prompt: string } | null;
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;
   setCompanionOpen: (open: boolean) => void;
+  scrollContainerRef?: RefObject<HTMLElement | null>;
 }
 
 export function DraftPane(props: DraftPaneProps) {
@@ -142,7 +148,7 @@ export function DraftPane(props: DraftPaneProps) {
     proposalId: string;
   } | null>(null);
   const [createdAssetNotice, setCreatedAssetNotice] = useState<{
-    kind: 'character' | 'work';
+    kind: 'character' | 'work' | 'story';
     id: string;
     label: string;
   } | null>(null);
@@ -222,6 +228,9 @@ export function DraftPane(props: DraftPaneProps) {
     isStreaming: reply.busy && !editing,
     streamPulse: `${reply.output.length}:${reply.reasoning.length}:${reply.error}:${autosave.saveError ?? ''}`,
     paused: editing || companionOpen,
+    scrollContainerRef: props.scrollContainerRef,
+    diagnosticMode: 'writing',
+    diagnostics: runtime.diagnostics,
   });
 
   const latestSuggestion = [...work.suggestions].reverse().find((item) => Boolean(item.text));
@@ -317,14 +326,8 @@ export function DraftPane(props: DraftPaneProps) {
     const input = value.trim();
     if (!input || reply.busy) return;
 
-    const switchTarget = detectNaturalModeSwitchIntent(input);
-    if (switchTarget && switchTarget !== 'writing' && props.onSwitchStageMode) {
-      setDiscussionInput('');
-      props.onSwitchStageMode(switchTarget);
-      return;
-    }
-
     const startedAt = performance.now();
+    autoScroll.resumeFollow();
     reply.start(options.label ?? '继续写故事聊天', async (request, signal, config) => {
       const { state, live } = await currentWork();
       if (signal.aborted) return;
@@ -743,6 +746,7 @@ export function DraftPane(props: DraftPaneProps) {
     if (!userNode || userNode.role !== 'user') return;
 
     const startedAt = performance.now();
+    autoScroll.resumeFollow();
     reply.start('重新生成回复', async (request, signal, config) => {
       const { state, live } = await currentWork();
       if (signal.aborted) return;
@@ -840,6 +844,7 @@ export function DraftPane(props: DraftPaneProps) {
   };
 
   const continuePartialDiscussion = (nodeId: string) => {
+    autoScroll.resumeFollow();
     reply.start('继续追要半拒绝内容', async (_request, signal, config, setStreamText, appendReasoning) => {
       const { state, live } = await currentWork();
       if (signal.aborted) return;
@@ -943,8 +948,11 @@ export function DraftPane(props: DraftPaneProps) {
         targetLabel: '作品正文',
       };
     }
-    if (normalized === 'character' || normalized === 'draft') {
-      return { currentMarkdown: '', targetLabel: normalized === 'character' ? '新建角色' : '新开写故事' };
+    if (isDerivedAssetTarget(normalized)) {
+      return {
+        currentMarkdown: '',
+        targetLabel: derivedAssetTargetLabel(normalized),
+      };
     }
     const settingVer = documentVersion(work.document);
     return { currentMarkdown: settingVer.markdown, currentVersionId: settingVer.id, targetLabel: '作品设定' };
@@ -956,7 +964,7 @@ export function DraftPane(props: DraftPaneProps) {
     resolvedMarkdown: string,
   ) => {
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
-    let createdAsset: { kind: 'character' | 'work'; id: string; label: string } | null = null;
+    let createdAsset: CreatedAssetNotice | null = null;
     try {
       if (normalized === 'manuscript') {
         const prevRev = String(work.bodyRevision);
@@ -988,6 +996,15 @@ export function DraftPane(props: DraftPaneProps) {
         return;
       }
 
+      if (normalized === 'story') {
+        createdAsset = await createAndSaveDerivedStory({
+          workspace,
+          proposal,
+          resolvedMarkdown,
+          saveStory: props.onSaveDerivedStory ?? ((derivedStory) => runtime.storyStorage.saveStory(derivedStory)),
+        });
+      }
+
       await save((state) => {
         if (normalized === 'memory') {
           const prevId = state.publicDocument.head;
@@ -1010,9 +1027,24 @@ export function DraftPane(props: DraftPaneProps) {
           return { ...state, publicDocument: nextPublicDoc, works: nextWorks };
         }
 
+        if (normalized === 'story') {
+          return updateWork(state, work.id, (live) => {
+            const tree = getWorkDiscussionTree(live);
+            const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
+              ...p,
+              status: 'applied',
+            }));
+            return {
+              ...live,
+              discussionNodes: nextNodes,
+              discussion: getActiveBranchNodes({ nodes: nextNodes, activeLeafNodeId: tree.activeLeafNodeId }, tree.activeLeafNodeId),
+            };
+          });
+        }
+
         if (normalized === 'character' || normalized === 'draft') {
           const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
-          createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+          createdAsset = toCreatedAssetNotice(derived);
           return updateWork(derived.nextState, work.id, (live) => {
             const tree = getWorkDiscussionTree(live);
             const nextNodes = updateTurnNodeProposal(tree.nodes, nodeId, proposal.id, (p) => ({
@@ -1050,7 +1082,10 @@ export function DraftPane(props: DraftPaneProps) {
         recordProposalDiagnostic(runtime.diagnostics, 'patch_reapplied', proposal);
       }
       recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
-      if (createdAsset) setCreatedAssetNotice(createdAsset);
+      if (createdAsset) {
+        recordDerivedAssetDiagnostic(runtime.diagnostics, proposal);
+        setCreatedAssetNotice(createdAsset);
+      }
     } catch (err) {
       reply.fail(err);
     }

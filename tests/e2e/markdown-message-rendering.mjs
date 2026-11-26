@@ -184,6 +184,10 @@ async function startViteServer(port) {
 async function newOfflineContext(browser, port, viewport) {
   const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
   context.setDefaultTimeout(12000);
+  await context.addInitScript(() => {
+    localStorage.setItem('folio.tutorial.mainDone', 'true');
+    localStorage.setItem('folio.tutorial.settingsDone', 'true');
+  });
   await context.route('**/*', (route) =>
     new URL(route.request().url()).origin === `http://localhost:${port}`
       ? route.continue()
@@ -477,7 +481,7 @@ async function reopenSavedMode(page, mode) {
   const category = mode.expectedMode === 'writing'
     ? '写故事'
     : mode.expectedMode === 'character'
-      ? '角色'
+      ? '角色互动'
       : '文游';
   const library = page.getByTestId('desktop-library');
   await library.getByRole('button', { name: category, exact: true }).click();

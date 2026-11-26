@@ -17,6 +17,7 @@ interface ModalDialogProps {
   label: string;
   className?: string;
   testId?: string;
+  dataStepId?: string;
   closeDisabled?: boolean;
   closeOnSurfaceClick?: boolean;
   swipePreview?: boolean;
@@ -32,6 +33,7 @@ export function ModalDialog({
   label,
   className = 'modal-dialog',
   testId,
+  dataStepId,
   closeDisabled = false,
   closeOnSurfaceClick = false,
   swipePreview = false,
@@ -76,6 +78,7 @@ export function ModalDialog({
       className={className}
       aria-label={label}
       data-testid={testId}
+      data-step-id={dataStepId}
       data-swipe-preview={swipePreview && !open ? 'true' : undefined}
       onCancel={(event) => {
         event.stopPropagation();

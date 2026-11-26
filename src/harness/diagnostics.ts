@@ -118,6 +118,7 @@ const DIAGNOSTIC_ACTIONS = new Set([
   'proposal_reverted',
   'patch_reapplied',
   'patch_conflict',
+  'asset_derived_from_proposal',
   // V0.2 background silent summary
   'summary_background_done',
   'summary_background_skipped',
@@ -156,6 +157,14 @@ const DIAGNOSTIC_ACTIONS = new Set([
   'update_install_permission_needed',
   'update_install_launched',
   'update_install_failed',
+  // V0.4.2 auto-scroll anomalies & transitions (zero-content metrics only)
+  'autoscroll_target_missing',
+  'autoscroll_target_non_scrollable',
+  'autoscroll_follow_transition',
+  'autoscroll_follow_anomaly',
+  // UI swipe gesture diagnostics (zero-content surface/reason only)
+  'swipe_gesture_canceled',
+  'swipe_gesture_rejected',
   'other',
 ]);
 const REFUSAL_DIAGNOSTIC_ACTIONS = new Set([
@@ -204,6 +213,10 @@ const SAFE_NUMERIC_METRICS = new Set([
   'migratedCount',
   'retryCount',
   'updateBytes',
+  'scrollTop',
+  'scrollHeight',
+  'clientHeight',
+  'scrollGapPx',
 ]);
 const SAFE_ENUM_METRICS: Record<string, ReadonlySet<string>> = {
   target: new Set([
@@ -211,6 +224,8 @@ const SAFE_ENUM_METRICS: Record<string, ReadonlySet<string>> = {
     'container',
     'local',
     'character',
+    'draft',
+    'story',
     'setting',
     'memory',
     'branch_note',
@@ -229,6 +244,9 @@ const SAFE_ENUM_METRICS: Record<string, ReadonlySet<string>> = {
     'unknown',
   ]),
   routeMode: new Set(['story', 'writing', 'character', 'neutral', 'ambiguous', 'unknown']),
+  scrollMode: new Set(['story', 'writing', 'character', 'welcome', 'unknown']),
+  scrollState: new Set(['following', 'user_paused', 'overlay_paused', 'unknown']),
+  scrollOverflowY: new Set(['auto', 'scroll', 'overlay', 'visible', 'hidden', 'clip', 'unknown']),
   reasoningEffort: new Set(['none', 'low', 'high', 'max']),
   prefixMode: new Set(['off', 'on_retry', 'always']),
   refusalRoute: new Set(['pass', 'retry', 'retry-skeleton', 'partial_refused', 'refused_exhausted']),
@@ -241,6 +259,7 @@ const SAFE_ENUM_METRICS: Record<string, ReadonlySet<string>> = {
     'installed',
     'browser_fallback',
   ]),
+  swipeSurface: new Set(['drawer_open', 'drawer_close', 'overlay_back']),
 };
 const SAFE_REASON_CODE_UPPER_ALLOWLIST = new Set([
   'TIMEOUT',
@@ -433,6 +452,73 @@ export function recordRefusalOriginalRestoredDiagnostic(
       ...(retryCount !== undefined ? { retryCount } : {}),
     },
   });
+}
+
+export type AutoScrollDiagnosticAction =
+  | 'autoscroll_target_missing'
+  | 'autoscroll_target_non_scrollable'
+  | 'autoscroll_follow_transition'
+  | 'autoscroll_follow_anomaly';
+
+export interface AutoScrollDiagnosticMetrics {
+  scrollMode?: 'story' | 'writing' | 'character' | 'welcome' | 'unknown';
+  scrollState?: 'following' | 'user_paused' | 'overlay_paused' | 'unknown';
+  scrollOverflowY?: 'auto' | 'scroll' | 'overlay' | 'visible' | 'hidden' | 'clip' | 'unknown';
+  scrollTop?: number;
+  scrollHeight?: number;
+  clientHeight?: number;
+  scrollGapPx?: number;
+  reasonCode?: string;
+}
+
+export interface AutoScrollDiagnosticEvent {
+  level?: 'info' | 'warn';
+  action: AutoScrollDiagnosticAction;
+  metrics?: AutoScrollDiagnosticMetrics;
+}
+
+/** Records one zero-content auto-scroll breadcrumb through the fail-closed allowlist. */
+export function recordAutoScrollDiagnostic(
+  collector: DiagnosticCollector | undefined,
+  event: AutoScrollDiagnosticEvent,
+): void {
+  if (!collector) return;
+  try {
+    collector.recordEvent({
+      level: event.level ?? (event.action === 'autoscroll_follow_transition' ? 'info' : 'warn'),
+      category: 'ui',
+      action: event.action,
+      meta: event.metrics as unknown as Record<string, DiagnosticMetaValue>,
+    });
+  } catch {
+    // Diagnostics must never alter scroll behavior.
+  }
+}
+
+export interface SwipeDiagnosticInput {
+  action: 'swipe_gesture_canceled' | 'swipe_gesture_rejected';
+  surface: 'drawer_open' | 'drawer_close' | 'overlay_back';
+  reasonCode: 'pointer_cancel_pending' | 'pointer_cancel_horizontal' | 'below_threshold';
+}
+
+/** Records one zero-content UI swipe breadcrumb through the fail-closed diagnostics allowlist. */
+export function recordSwipeDiagnostic(
+  collector: Pick<DiagnosticCollector, 'recordEvent'>,
+  event: SwipeDiagnosticInput,
+): void {
+  try {
+    collector.recordEvent({
+      level: event.action === 'swipe_gesture_canceled' ? 'warn' : 'info',
+      category: 'ui',
+      action: event.action,
+      meta: {
+        swipeSurface: event.surface,
+        reasonCode: event.reasonCode,
+      },
+    });
+  } catch {
+    // Diagnostics must never interfere with UI touch handling.
+  }
 }
 
 export function formatDiagnosticBundleFileName(date: Date = new Date()): string {

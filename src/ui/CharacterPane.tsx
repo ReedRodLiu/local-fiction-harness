@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { ArrowUp, ChevronRight, Download, Edit3, Plus, Sparkles, Square } from 'lucide-react';
 import {
   buildPromptPackContextOptions,
@@ -7,7 +7,6 @@ import {
   characterContext,
   conversationExport,
   conversationLocalVersion,
-  detectNaturalModeSwitchIntent,
   documentLineage,
   documentVersion,
   findLeafForTurnTreeNode,
@@ -36,7 +35,7 @@ import {
   type PromptPackLibrary,
   type PublicResearchFailure,
   type PublicResearchReference,
-  type StageAssetMode,
+  type Story,
   type TurnNode,
   type TurnProposalRecord,
 } from '../harness/index.ts';
@@ -51,11 +50,17 @@ import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { ModalDialog } from './primitives/ModalDialog.tsx';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
 import {
+  createAndSaveDerivedStory,
   createDerivedAssetInWorkspace,
+  derivedAssetTargetLabel,
+  isDerivedAssetTarget,
+  recordDerivedAssetDiagnostic,
   recordProposalCreationBreadcrumbs,
   recordProposalDiagnostic,
   revertDocumentToVersion,
+  toCreatedAssetNotice,
   updateTurnNodeProposal,
+  type CreatedAssetNotice,
 } from './proposalActions.ts';
 import {
   finalizePrefixContinuation,
@@ -91,12 +96,13 @@ interface CharacterPaneProps {
   openPublic: (proposal?: string, expected?: string) => void;
   openDocument: (edit: DocumentEdit) => void;
   onOpenNarrativePresets?: () => void;
-  onSwitchStageMode?: (targetMode: StageAssetMode) => void;
-  onNavigateCreatedAsset?: (kind: 'character' | 'work', id: string) => void;
+  onSaveDerivedStory?: (story: Story) => Promise<void>;
+  onNavigateCreatedAsset?: (kind: 'character' | 'work' | 'story', id: string) => void;
   initialTurn: { id: string; prompt: string } | null;
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;
   setCompanionOpen: (open: boolean) => void;
+  scrollContainerRef?: RefObject<HTMLElement | null>;
 }
 
 function formatConversationTimestamp(conversation: CharacterConversation): string {
@@ -138,7 +144,7 @@ export function CharacterPane(props: CharacterPaneProps) {
     ? '正在重新构思落笔…'
     : characterWaitingPhrase;
   const [createdAssetNotice, setCreatedAssetNotice] = useState<{
-    kind: 'character' | 'work';
+    kind: 'character' | 'work' | 'story';
     id: string;
     label: string;
   } | null>(null);
@@ -156,6 +162,9 @@ export function CharacterPane(props: CharacterPaneProps) {
     isStreaming: reply.busy,
     streamPulse: `${reply.output.length}:${reply.reasoning.length}:${reply.error}:${createdAssetNotice?.id ?? ''}`,
     paused: companionOpen || Boolean(confirm),
+    scrollContainerRef: props.scrollContainerRef,
+    diagnosticMode: 'character',
+    diagnostics: runtime.diagnostics,
   });
 
   const activeLeafNode = path.at(-1);
@@ -277,16 +286,9 @@ export function CharacterPane(props: CharacterPaneProps) {
     } = {},
   ) {
     const trimmed = contents.trim();
-    if (trimmed) {
-      const switchTarget = detectNaturalModeSwitchIntent(trimmed);
-      if (switchTarget && switchTarget !== 'character' && props.onSwitchStageMode) {
-        setInput('');
-        props.onSwitchStageMode(switchTarget);
-        return;
-      }
-    }
 
     const startedAt = performance.now();
+    autoScroll.resumeFollow();
     reply.start(options.label ?? (trimmed ? '继续角色互动' : '生成角色开场'), async (request, signal, config) => {
       const state = await read();
       const current = state.characters.find((item) => item.id === character.id);
@@ -480,6 +482,7 @@ export function CharacterPane(props: CharacterPaneProps) {
     if (!userNode || userNode.role !== 'user') return;
 
     const startedAt = performance.now();
+    autoScroll.resumeFollow();
     reply.start('重新生成回复', async (request, signal, config) => {
       const state = await read();
       const current = state.characters.find((item) => item.id === character.id);
@@ -619,6 +622,7 @@ export function CharacterPane(props: CharacterPaneProps) {
 
   const continuePartialCharacter = (nodeId: string) => {
     if (!conversation) return;
+    autoScroll.resumeFollow();
     reply.start('继续追要半拒绝内容', async (_request, signal, config, setStreamText, appendReasoning) => {
       const state = await read();
       const current = state.characters.find((item) => item.id === character.id);
@@ -719,8 +723,11 @@ export function CharacterPane(props: CharacterPaneProps) {
       const note = documentVersion(conversation.document, localId);
       return { currentMarkdown: note.markdown, currentVersionId: note.id, targetLabel: '分支笔记' };
     }
-    if (normalized === 'character' || normalized === 'draft') {
-      return { currentMarkdown: '', targetLabel: normalized === 'character' ? '新建角色' : '新开写故事' };
+    if (isDerivedAssetTarget(normalized)) {
+      return {
+        currentMarkdown: '',
+        targetLabel: derivedAssetTargetLabel(normalized),
+      };
     }
     const charDoc = documentVersion(character.document);
     return { currentMarkdown: charDoc.markdown, currentVersionId: charDoc.id, targetLabel: '角色设定' };
@@ -733,9 +740,18 @@ export function CharacterPane(props: CharacterPaneProps) {
   ) => {
     if (!conversation) return;
     const normalized = normalizeProposalTarget(proposal.target) ?? 'setting';
-    let createdAsset: { kind: 'character' | 'work'; id: string; label: string } | null = null;
+    let createdAsset: CreatedAssetNotice | null = null;
 
     try {
+      if (normalized === 'story') {
+        createdAsset = await createAndSaveDerivedStory({
+          workspace,
+          proposal,
+          resolvedMarkdown,
+          saveStory: props.onSaveDerivedStory ?? ((derivedStory) => runtime.storyStorage.saveStory(derivedStory)),
+        });
+      }
+
       await save((state) => {
         if (normalized === 'memory') {
           const prevId = state.publicDocument.head;
@@ -756,9 +772,21 @@ export function CharacterPane(props: CharacterPaneProps) {
           );
         }
 
+        if (normalized === 'story') {
+          return updateCharacter(state, character.id, (live) =>
+            updateConversation(live, conversation.id, (conv) => ({
+              ...conv,
+              nodes: updateTurnNodeProposal(conv.nodes, nodeId, proposal.id, (p) => ({
+                ...p,
+                status: 'applied',
+              })),
+            })),
+          );
+        }
+
         if (normalized === 'character' || normalized === 'draft') {
           const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
-          createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
+          createdAsset = toCreatedAssetNotice(derived);
           return updateCharacter(derived.nextState, character.id, (live) =>
             updateConversation(live, conversation.id, (conv) => ({
               ...conv,
@@ -811,7 +839,10 @@ export function CharacterPane(props: CharacterPaneProps) {
       });
 
       recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
-      if (createdAsset) setCreatedAssetNotice(createdAsset);
+      if (createdAsset) {
+        recordDerivedAssetDiagnostic(runtime.diagnostics, proposal);
+        setCreatedAssetNotice(createdAsset);
+      }
     } catch (err) {
       reply.fail(err);
     }

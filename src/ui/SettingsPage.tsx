@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Download, ExternalLink, FileUp, LifeBuoy, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ChevronRight, Download, ExternalLink, FileUp, LifeBuoy, RefreshCw, RotateCcw, ShieldCheck } from 'lucide-react';
 import {
   DEEPSEEK_DEV_PROXY_BALANCE_NOTICE,
   DEEPSEEK_OFFICIAL_TOP_UP_DECLARATION,
   DEEPSEEK_OFFICIAL_TOP_UP_URL,
   REASONING_EFFORTS,
+  computeWorkspaceUsageSummary,
   maskApiKey,
   normalizeOfficialDeepSeekModel,
   normalizeReasoningEffort,
@@ -13,6 +14,7 @@ import {
   type OfficialDeepSeekModel,
   type PromptPackLibrary,
   type ReasoningEffort,
+  type WorkspaceUsageSummary,
 } from '../harness/index.ts';
 import {
   DISPLAY_FONT_SIZES,
@@ -21,6 +23,7 @@ import {
 } from './displayPreferences.ts';
 import { InsetGroup } from './primitives/InsetGroup.tsx';
 import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
+import { WorkspaceUsageSummaryCard } from './WorkspaceUsageSummaryCard.tsx';
 import type { AppUpdaterController } from './useAppUpdater.ts';
 import type { SettingsBalanceState } from './useDeepSeekBalance.ts';
 
@@ -53,7 +56,9 @@ export interface SettingsPageProps {
   onDefaultModelChange?: (model: OfficialDeepSeekModel) => void;
   onDefaultReasoningEffortChange?: (effort: ReasoningEffort) => void;
   promptPackLibrary?: PromptPackLibrary;
+  workspaceUsageSummary?: WorkspaceUsageSummary;
   appUpdater?: AppUpdaterController;
+  onReplayTutorial?: () => void;
 }
 
 const MODEL_OPTIONS: Array<{
@@ -131,8 +136,11 @@ export function SettingsPage({
   onDefaultModelChange,
   onDefaultReasoningEffortChange,
   promptPackLibrary = createDefaultPromptPackLibrary(),
+  workspaceUsageSummary,
   appUpdater,
+  onReplayTutorial,
 }: SettingsPageProps) {
+  const resolvedUsageSummary = workspaceUsageSummary ?? computeWorkspaceUsageSummary({});
   const backupInputRef = useRef<HTMLInputElement>(null);
   const [storageStatus, setStorageStatus] = useState('正在读取本地占用…');
   const activeModel = normalizeOfficialDeepSeekModel(config.model);
@@ -373,6 +381,14 @@ export function SettingsPage({
       </InsetGroup>
 
       <InsetGroup
+        title="省 Token 与用量总览"
+        description="统计本地全部文游、写故事与角色互动的历史实测用量（含分支与重试轮次）。"
+        testId="settings-usage-overview"
+      >
+        <WorkspaceUsageSummaryCard summary={resolvedUsageSummary} />
+      </InsetGroup>
+
+      <InsetGroup
         title="阅读与外观"
         description="主题与字号会立即应用到当前设备，重启后仍会保留。"
         testId="settings-appearance-group"
@@ -501,6 +517,21 @@ export function SettingsPage({
         />
         <button type="button" className="btn" data-testid="restore-backup-btn" onClick={() => backupInputRef.current?.click()}>
           <FileUp size={18} strokeWidth={1.75} /> 从备份恢复
+        </button>
+      </InsetGroup>
+
+      <InsetGroup
+        title="引导教程"
+        description="随时重置主界面与设置页的新手引导进度并重新查看。"
+        testId="settings-tutorial-group"
+      >
+        <button
+          type="button"
+          className="btn"
+          data-testid="replay-tutorial-btn"
+          onClick={onReplayTutorial}
+        >
+          <RotateCcw size={18} strokeWidth={1.75} aria-hidden="true" /> 重新查看引导教程
         </button>
       </InsetGroup>
 

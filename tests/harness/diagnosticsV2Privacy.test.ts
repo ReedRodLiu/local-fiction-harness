@@ -148,6 +148,7 @@ describe('Folio V0.2 Ticket #92: Diagnostics v2 collector, sanitized error reaso
       ['ui', 'proposal_reverted'],
       ['ui', 'patch_reapplied'],
       ['ui', 'patch_conflict'],
+      ['ui', 'asset_derived_from_proposal'],
       ['llm', 'summary_background_done'],
       ['llm', 'summary_background_skipped'],
       ['llm', 'summary_background_failed'],
@@ -226,6 +227,23 @@ describe('Folio V0.2 Ticket #92: Diagnostics v2 collector, sanitized error reaso
     for (const [, action] of v2Actions) {
       expect(bundle.events.some((e) => e.action === action)).toBe(true);
     }
+
+    // Cross-mode derivation metrics (draft / story / character targets) pass allowlist without content
+    for (const target of ['character', 'draft', 'story'] as const) {
+      collector.recordEvent({
+        level: 'info',
+        category: 'ui',
+        action: 'asset_derived_from_proposal',
+        meta: {
+          routeMode: target === 'draft' ? 'writing' : target,
+          target,
+        },
+      });
+    }
+    const derivedBundle = collector.buildBundle({ baseUrl: '', model: 'deepseek-chat', memoryOnly: true });
+    expect(
+      derivedBundle.events.filter((e) => e.action === 'asset_derived_from_proposal').map((e) => e.meta?.target),
+    ).toEqual(['container', 'character', 'draft', 'story']);
 
     const firstMeta = bundle.events[0]?.meta;
     expect(firstMeta).toEqual({

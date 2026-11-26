@@ -486,10 +486,12 @@ export async function runIssue113PromptPackRefusalE2E(browser, port, helpers) {
     }
 
     // Validate Writing mode refusal retry end-to-end (useCreativeReply 5th-arg refusalOptions fix)
-    await page.getByTestId('topbar-mode-switcher').click();
-    await page.getByTestId('topbar-mode-option-writing').click();
+    await page.getByTestId('desktop-library-new-creation').click();
+    await page.getByTestId('welcome-plus-menu-trigger').click();
+    await page.getByTestId('welcome-blank-manuscript').click();
     const writingPage = page.getByTestId('writing-page');
     await writingPage.waitFor();
+    await page.getByRole('group', { name: '作品视图' }).getByRole('button', { name: '聊天' }).click();
     await writingPage.locator('#writing-discussion-input').fill('写故事模式拒答恢复测试');
     await writingPage.getByRole('button', { name: '发送', exact: true }).click();
     await creativeRetryArrived.promise;

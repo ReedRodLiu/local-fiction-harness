@@ -363,12 +363,29 @@ export async function verifyThreeModes(browser, port, helpers) {
         ].join('\n');
       } else if (input.includes('私密文本')) {
         content = '我记住你刚刚说的话了。';
+      } else if (input.includes('长篇月台描写') || input.includes('长回复测试') || input.includes('继续写下一段')) {
+        content = Array.from({ length: 14 }, (_, idx) => `第${idx + 1}段：夜风拂过月台与灯影，铁轨尽头亮起微光。`).join('\n\n') + `\n\n尾段完成：${input}`;
       } else if (input.includes('空白后第一句')) {
         content = '初次见面。';
       } else if (input.includes('邮差重访')) {
         content = '岑灯接过信，问起你的名字。';
       } else if (input.includes('敲钟')) {
         content = '渡口灯亮，第二声钟响。';
+      }
+
+      if (input.includes('长篇月台描写') || input.includes('长回复测试') || input.includes('继续写下一段')) {
+        const chunks = [];
+        for (let i = 0; i < content.length; i += 24) {
+          const slice = content.slice(i, i + 24);
+          const isLast = i + 24 >= content.length;
+          chunks.push({ choices: [{ delta: { content: slice }, ...(isLast ? { finish_reason: 'stop' } : {}) }] });
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: sseResponse(chunks),
+        });
+        return;
       }
 
       await route.fulfill({
@@ -432,19 +449,15 @@ export async function verifyThreeModes(browser, port, helpers) {
     const writingCategoryBtn = page.getByTestId('desktop-library').getByRole('button', { name: '写故事', exact: true });
     assert.equal(await writingCategoryBtn.getAttribute('aria-pressed'), 'true');
 
-    // 3. Dual-channel mode correction: TopBar mode switcher + natural-language chat command
-    await page.getByTestId('topbar-mode-switcher').click();
-    await page.getByTestId('topbar-mode-option-story').click();
-    await page.getByTestId('story-timeline').waitFor();
-    await page.getByTestId('status-notice-banner').getByText('已切换为「文游」', { exact: false }).waitFor();
-    assert.equal(
-      await page.getByTestId('desktop-library').getByRole('button', { name: '文游', exact: true }).getAttribute('aria-pressed'),
-      'true',
-    );
-    await page.fill('#turn-input', '切换成写故事');
-    await button('发送行动').click();
-    await writing.waitFor();
+    // 3. Strict mode isolation: no TopBar mode switcher, and in-session switch phrases stay in active writing mode without cloning
+    assert.equal(await page.getByTestId('topbar-mode-switcher').count(), 0);
+    await page.getByLabel('聊天内容').fill('切换成文游');
+    await button('发送').click();
+    await writing.getByTestId('writing-discussion-timeline').getByText('接续：切换成文游', { exact: true }).waitFor();
     assert.equal(await writingCategoryBtn.getAttribute('aria-pressed'), 'true');
+    await page.getByTestId('desktop-library').getByRole('button', { name: '文游', exact: true }).click();
+    assert.equal(await page.getByTestId('desktop-library').getByTestId('story-list-item').count(), 0);
+    await writingCategoryBtn.click();
 
     // 4. 写故事: zero V0.1 citation/jargon, inline ProposalCard + Diff/Preview + Save + Undo, Chat-to-Manuscript push, Manuscript intent routing
     const writingText = await writing.innerText();
@@ -511,6 +524,29 @@ export async function verifyThreeModes(browser, port, helpers) {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goBack();
     await writingSheet.waitFor({ state: 'hidden' });
+
+    // Writing chat auto-scroll across multi-chunk stream & submit-after-scroll-up (Issue #146)
+    await page.setViewportSize({ width: 390, height: 600 });
+    await page.getByLabel('聊天内容').fill('写一段长篇月台描写');
+    await button('发送').click();
+    await writing.getByTestId('writing-discussion-timeline').getByText('尾段完成：写一段长篇月台描写', { exact: false }).waitFor();
+    await page.waitForFunction(() => {
+      const stage = document.querySelector('[data-testid="main-stage"]');
+      return stage && stage.scrollHeight > stage.clientHeight && stage.scrollHeight - stage.scrollTop - stage.clientHeight <= 80;
+    });
+    const writingStage = page.getByTestId('main-stage');
+    await writingStage.hover({ position: { x: 80, y: 160 } });
+    await page.mouse.wheel(0, -800);
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'visible' });
+    await page.getByLabel('聊天内容').fill('继续写下一段');
+    await button('发送').click();
+    await writing.getByTestId('writing-discussion-timeline').getByText('尾段完成：继续写下一段', { exact: false }).waitFor();
+    await page.waitForFunction(() => {
+      const stage = document.querySelector('[data-testid="main-stage"]');
+      return stage && stage.scrollHeight - stage.scrollTop - stage.clientHeight <= 80;
+    });
+    await page.getByTestId('scroll-to-bottom').waitFor({ state: 'hidden' });
+    await page.setViewportSize({ width: 1280, height: 800 });
 
     // Chat-to-manuscript trial writing via target: manuscript ProposalCard
     await page.getByLabel('聊天内容').fill('试写一段车站开头');
@@ -635,6 +671,17 @@ export async function verifyThreeModes(browser, port, helpers) {
     assert.match(lastRequest(), /PERSONA-UNIQUE/);
     await character.getByTestId('turn-history-toggle').first().click();
     await character.getByRole('button', { name: '回溯至此' }).first().waitFor();
+
+    // Character chat auto-scroll across multi-chunk stream (Issue #146)
+    await page.setViewportSize({ width: 390, height: 600 });
+    await page.getByLabel('发消息').fill('长回复测试');
+    await button('发送').click();
+    await character.getByTestId('character-timeline').getByText('尾段完成：长回复测试', { exact: false }).waitFor();
+    await page.waitForFunction(() => {
+      const stage = document.querySelector('[data-testid="main-stage"]');
+      return stage && stage.scrollHeight > stage.clientHeight && stage.scrollHeight - stage.scrollTop - stage.clientHeight <= 80;
+    });
+    await page.setViewportSize({ width: 1280, height: 800 });
 
     await page.getByTestId('open-companion-sheet').click();
     const characterSheet = page.getByTestId('character-companion-sheet');
@@ -778,7 +825,7 @@ export async function verifyThreeModes(browser, port, helpers) {
         for (const [name, category, title, target, actionLabel] of [
           ['文游', '文游', '浮灯渡口', page.getByTestId('story-timeline'), '打开分支与设定'],
           ['写故事', '写故事', '纸月车站', writing, '打开灵感与设定'],
-          ['角色互动', '角色', '岑灯', character, '打开历史对话与设定'],
+          ['角色互动', '角色互动', '岑灯', character, '打开历史对话与设定'],
         ]) {
           if (viewport.width < 960) await page.getByTestId('library-drawer-trigger').click();
           const activeLib = page.getByTestId(viewport.width < 960 ? 'mobile-library-dialog' : 'desktop-library');
@@ -811,7 +858,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     const v3Path = await v3Backup.path();
     const v3Json = JSON.parse(fs.readFileSync(v3Path, 'utf8'));
     assert.equal(v3Json.schemaVersion, 3);
-    assert.equal(v3Json.appVersion, '0.4.2');
+    assert.equal(v3Json.appVersion, '0.4.3');
     assert.ok(v3Json.stories.some((s) => s.title === '浮灯渡口'));
     assert.ok(v3Json.workspace.works.some((w) => w.title === '纸月车站'));
     assert.ok(v3Json.workspace.characters.some((c) => c.name === '岑灯'));
@@ -870,7 +917,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     assert.match(workExport.suggestedFilename(), /纸月车站改名\.md$/);
     assert.match(fs.readFileSync(await workExport.path(), 'utf8'), /第三声钟响/);
 
-    await library.getByRole('button', { name: '角色', exact: true }).click();
+    await library.getByRole('button', { name: '角色互动', exact: true }).click();
     const charRow = library.getByTestId('story-list-item').filter({ hasText: '岑灯' }).first();
     await charRow.getByTestId('story-menu-trigger').click();
     const [charExport] = await Promise.all([

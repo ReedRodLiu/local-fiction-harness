@@ -1,5 +1,6 @@
 import { ArrowLeft } from 'lucide-react';
 import {
+  useContext,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -9,12 +10,17 @@ import {
 } from 'react';
 import {
   PAGE_BACK_SNAP_RATIO,
+  SwipeDiagnosticContext,
+  captureSwipePointer,
   createVelocityTracker,
   hasOpenTopLayerDialog,
+  releaseSwipePointer,
+  reportSwipeOutcome,
   resolveSwipeAxisLock,
   shouldCommitHorizontalSwipe,
   shouldIgnoreSwipeStart,
   type GestureAxisLock,
+  type SwipeDiagnosticReporter,
   type VelocityTracker,
 } from '../swipeGesture.ts';
 
@@ -46,8 +52,9 @@ export function createOverlaySwipeBackHandlers(options: {
   backDisabled?: boolean;
   isBackDisabled?: () => boolean;
   onBack: () => void;
+  onDiagnostic?: SwipeDiagnosticReporter;
 }) {
-  const { shellRef, onBack } = options;
+  const { shellRef, onBack, onDiagnostic } = options;
   const checkDisabled = () =>
     options.isBackDisabled ? options.isBackDisabled() : Boolean(options.backDisabled);
   let activeGesture: ActiveBackGesture | null = null;
@@ -118,6 +125,7 @@ export function createOverlaySwipeBackHandlers(options: {
         activeGesture = null;
         return;
       }
+      captureSwipePointer(event.currentTarget ?? shellRef.current, event.pointerId);
     }
 
     const { stage, layer, backdrop, underlay } = getElements();
@@ -136,8 +144,12 @@ export function createOverlaySwipeBackHandlers(options: {
 
   const onPointerUp = (event: PointerEvent<HTMLElement>) => {
     const gesture = activeGesture;
+    if (!gesture || gesture.pointerId !== event.pointerId) {
+      return;
+    }
     activeGesture = null;
-    if (!gesture || gesture.pointerId !== event.pointerId || gesture.lock !== 'horizontal') {
+    releaseSwipePointer(event.currentTarget ?? shellRef.current, event.pointerId);
+    if (gesture.lock !== 'horizontal') {
       clearDragStyles();
       return;
     }
@@ -174,11 +186,20 @@ export function createOverlaySwipeBackHandlers(options: {
       return;
     }
 
+    reportSwipeOutcome(onDiagnostic, 'overlay_back', 'rejected');
     clearDragStyles();
   };
 
-  const onPointerCancel = () => {
+  const onPointerCancel = (event?: PointerEvent<HTMLElement>) => {
+    const gesture = activeGesture;
+    if (event && gesture && gesture.pointerId !== event.pointerId) return;
     activeGesture = null;
+    if (event) {
+      releaseSwipePointer(event.currentTarget ?? shellRef.current, event.pointerId);
+    }
+    if (gesture) {
+      reportSwipeOutcome(onDiagnostic, 'overlay_back', 'canceled', gesture.lock);
+    }
     clearDragStyles();
   };
 
@@ -207,6 +228,9 @@ export function OverlayPageShell({
   backDisabledRef.current = backDisabled;
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
+  const contextOnDiagnostic = useContext(SwipeDiagnosticContext);
+  const onDiagnosticRef = useRef(contextOnDiagnostic);
+  onDiagnosticRef.current = contextOnDiagnostic;
 
   const swipeHandlers = useMemo(
     () =>
@@ -214,6 +238,7 @@ export function OverlayPageShell({
         shellRef,
         isBackDisabled: () => backDisabledRef.current,
         onBack: () => onBackRef.current(),
+        onDiagnostic: (event) => onDiagnosticRef.current?.(event),
       }),
     [],
   );

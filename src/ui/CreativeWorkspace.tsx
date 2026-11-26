@@ -1,9 +1,10 @@
+import type { RefObject } from 'react';
 import type {
   CreativeWorkspaceState,
   ModelConfig,
   PlatformRuntime,
   PromptPackLibrary,
-  StageAssetMode,
+  Story,
 } from '../harness/index.ts';
 import { CharacterPane } from './CharacterPane.tsx';
 import type { DocumentEdit } from './DocumentDialog.tsx';
@@ -29,12 +30,13 @@ interface Props {
   manuscript?: boolean;
   onStartManuscript?: () => void;
   onSwitchToChat?: () => void;
-  onSwitchStageMode?: (targetMode: StageAssetMode) => void;
-  onNavigateCreatedAsset?: (kind: 'character' | 'work', id: string) => void;
+  onSaveDerivedStory?: (story: Story) => Promise<void>;
+  onNavigateCreatedAsset?: (kind: 'character' | 'work' | 'story', id: string) => void;
   initialTurn: { id: string; prompt: string } | null;
   onConsumeInitialTurn: () => void;
   companionOpen: boolean;
   setCompanionOpen: (open: boolean) => void;
+  scrollContainerRef?: RefObject<HTMLElement | null>;
 }
 
 export function CreativeWorkspace(props: Props) {

@@ -7,8 +7,8 @@ import {
   buildPromptPackContextOptions,
   buildTurnProposalRecords,
   computeActiveReviewState,
+  computeWorkspaceUsageSummary,
   conversationExport,
-  convertActiveAssetMode,
   createAsyncModelConfigStore,
   createDefaultBlueprint,
   createDefaultId,
@@ -42,6 +42,7 @@ import {
   projectStoryTreeSpine,
   recordRefusalDiagnostic,
   recordRefusalOriginalRestoredDiagnostic,
+  recordSwipeDiagnostic,
   resolveEffectiveModelConfig,
   routeEntryMessage,
   savePromptPackLibrary,
@@ -91,6 +92,7 @@ import { MarkdownView } from './MarkdownView.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { PromptPackSheet } from './PromptPackSheet.tsx';
 import { SettingsPage } from './SettingsPage.tsx';
+import { SpotlightTutorial } from './SpotlightTutorial.tsx';
 import { TopBar } from './TopBar.tsx';
 import { TurnCard, type ResolvedProposalTargetState } from './TurnCard.tsx';
 import { WelcomeView } from './WelcomeView.tsx';
@@ -107,14 +109,33 @@ import { BannerAlert } from './primitives/BannerAlert.tsx';
 import { OverlayPageShell } from './primitives/OverlayPageShell.tsx';
 import { waitForExitAnimation } from './primitives/waitForExitAnimation.ts';
 import {
+  createAndSaveDerivedStory,
   createDerivedAssetInWorkspace,
+  derivedAssetTargetLabel,
+  isDerivedAssetTarget,
+  recordDerivedAssetDiagnostic,
   recordProposalCreationBreadcrumbs,
   recordProposalDiagnostic,
   revertDocumentToVersion,
+  toCreatedAssetNotice,
   updateTurnNodeProposal,
+  type CreatedAssetNotice,
 } from './proposalActions.ts';
 import { mergeBranchRenameResult } from './storyConcurrency.ts';
+import { SwipeDiagnosticContext, type SwipeDiagnosticEvent } from './swipeGesture.ts';
 import { toErrorMessage } from './textHelpers.ts';
+import {
+  persistTutorialStageDone,
+  readTutorialState,
+  resetTutorialState,
+  shouldShowMainTutorial,
+  type TutorialStage,
+  type TutorialState,
+} from './tutorialState.ts';
+import {
+  buildMainTutorialSteps,
+  buildSettingsTutorialSteps,
+} from './tutorialSteps.ts';
 import { useAppOverlayHistory } from './useAppOverlayHistory.ts';
 import { restoreVisibleFocus } from './useWebHistoryLayer.ts';
 import { useAppUpdater } from './useAppUpdater.ts';
@@ -242,12 +263,13 @@ export function App({ runtime }: AppProps) {
   const [initialCreativeTurn, setInitialCreativeTurn] = useState<{ id: string; prompt: string } | null>(null);
   const creationPending = useRef(false);
   const focusNewCreation = useRef(false);
+  const mainStageRef = useRef<HTMLElement | null>(null);
   const [creating, setCreating] = useState(false);
   const [creativeCompanionOpen, setCreativeCompanionOpen] = useState(false);
   const [documentEdit, setDocumentEdit] = useState<DocumentEdit | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [createdAssetNotice, setCreatedAssetNotice] = useState<{
-    kind: 'character' | 'work';
+    kind: 'character' | 'work' | 'story';
     id: string;
     label: string;
   } | null>(null);
@@ -337,6 +359,13 @@ export function App({ runtime }: AppProps) {
   const [diagnosticsMounted, setDiagnosticsMounted] = useState(false);
   const [diagnosticsRevision, setDiagnosticsRevision] = useState(0);
   const [diagnosticTrigger, setDiagnosticTrigger] = useState<DiagnosticBundleTrigger>('settings_manual');
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [tutorialState, setTutorialState] = useState<TutorialState>(() => readTutorialState());
+  const [tutorialMounted, setTutorialMounted] = useState(false);
+  const [renderedTutorialStage, setRenderedTutorialStage] = useState<TutorialStage>('main');
+  const [activeTutorialStage, setActiveTutorialStage] = useState<TutorialStage | null>(null);
+  const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
+  const [settingsTutorialReady, setSettingsTutorialReady] = useState(false);
   const {
     displayPreferences,
     setThemePreference,
@@ -367,6 +396,10 @@ export function App({ runtime }: AppProps) {
 
   const isNavigationCurrent = (storySeq: number, overlaySeq: number) =>
     storyOpSeqRef.current === storySeq && overlayNavigationSeqRef.current === overlaySeq;
+  const reportSwipeDiagnostic = useCallback(
+    (event: SwipeDiagnosticEvent) => recordSwipeDiagnostic(runtime.diagnostics, event),
+    [runtime.diagnostics],
+  );
   const edgeSwipe = useEdgeSwipeToOpen(
     !showImport &&
       !showSettings &&
@@ -375,8 +408,10 @@ export function App({ runtime }: AppProps) {
       !creativeCompanionOpen &&
       !wizardOpen &&
       !diagnosticsOpen &&
-      !documentEdit,
+      !documentEdit &&
+      !activeTutorialStage,
     () => setMobileLibraryOpen(true),
+    reportSwipeDiagnostic,
   );
   const activeOverlay: 'settings' | 'import' | null = showSettings
     ? 'settings'
@@ -595,6 +630,10 @@ export function App({ runtime }: AppProps) {
         if (!cancelled && configEditSeqRef.current === editSeqAtStart) {
           setErrorMsg(toErrorMessage(err, '读取连接配置失败。'));
         }
+      } finally {
+        if (!cancelled) {
+          setConfigLoaded(true);
+        }
       }
     })();
     return () => {
@@ -799,6 +838,9 @@ export function App({ runtime }: AppProps) {
     isStreaming,
     streamPulse: `${streamContent.length}:${streamReasoning.length}:${errorMsg ?? ''}:${createdAssetNotice?.id ?? ''}`,
     paused: Boolean(renderedOverlay) || Boolean(creativePage),
+    scrollContainerRef: mainStageRef,
+    diagnosticMode: isWelcome ? 'welcome' : 'story',
+    diagnostics: runtime.diagnostics,
   });
 
   const runStreamingExecution = async (
@@ -967,6 +1009,109 @@ export function App({ runtime }: AppProps) {
     setWizardOpen(true);
   };
 
+  const isAppUpdateModalOpen =
+    appUpdater.enabled && appUpdater.modalOpen && appUpdater.availableRelease !== null;
+
+  const completeTutorialStage = useCallback((stage: TutorialStage) => {
+    setTutorialState(persistTutorialStageDone(stage, true));
+    setActiveTutorialStage(null);
+    setTutorialStepIndex(0);
+  }, []);
+
+  useEffect(() => {
+    if (!showSettings || renderedOverlay !== 'settings' || closingOverlay || settingsSubPage !== 'main') {
+      setSettingsTutorialReady(false);
+      return;
+    }
+    if (tutorialState.settingsDone) {
+      setSettingsTutorialReady(false);
+      return;
+    }
+    const reduced =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const timer = window.setTimeout(() => {
+      setSettingsTutorialReady(true);
+    }, reduced ? 60 : 340);
+    return () => window.clearTimeout(timer);
+  }, [closingOverlay, renderedOverlay, settingsSubPage, showSettings, tutorialState.settingsDone]);
+
+  useEffect(() => {
+    const hasBlockingModal =
+      wizardOpen ||
+      wizardMounted ||
+      diagnosticsOpen ||
+      diagnosticsMounted ||
+      Boolean(documentEdit) ||
+      isAppUpdateModalOpen ||
+      Boolean(document.querySelector('dialog[open]:not(.spotlight-dialog)'));
+
+    if (
+      renderedOverlay === 'settings' &&
+      showSettings &&
+      !closingOverlay &&
+      settingsSubPage === 'main' &&
+      settingsTutorialReady &&
+      !tutorialState.settingsDone &&
+      !hasBlockingModal
+    ) {
+      if (activeTutorialStage !== 'settings') {
+        setRenderedTutorialStage('settings');
+        setTutorialMounted(true);
+        setTutorialStepIndex(0);
+        setActiveTutorialStage('settings');
+      }
+      return;
+    }
+
+    if (
+      configLoaded &&
+      shouldShowMainTutorial(tutorialState, hasCredentials) &&
+      !renderedOverlay &&
+      !showImport &&
+      !showSettings &&
+      !mobileLibraryOpen &&
+      !storyTreeOpen &&
+      !creativeCompanionOpen &&
+      !isStreaming &&
+      !hasBlockingModal
+    ) {
+      if (activeTutorialStage !== 'main') {
+        setRenderedTutorialStage('main');
+        setTutorialMounted(true);
+        setTutorialStepIndex(0);
+        setActiveTutorialStage('main');
+      }
+      return;
+    }
+
+    if (activeTutorialStage !== null) {
+      setActiveTutorialStage(null);
+    }
+  }, [
+    activeTutorialStage,
+    closingOverlay,
+    configLoaded,
+    creativeCompanionOpen,
+    diagnosticsMounted,
+    diagnosticsOpen,
+    documentEdit,
+    hasCredentials,
+    isAppUpdateModalOpen,
+    isStreaming,
+    mobileLibraryOpen,
+    renderedOverlay,
+    settingsSubPage,
+    settingsTutorialReady,
+    showImport,
+    showSettings,
+    storyTreeOpen,
+    tutorialState,
+    wizardMounted,
+    wizardOpen,
+  ]);
+
   const openSetupWizard = () => {
     wizardReturnFocusRef.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
@@ -1024,6 +1169,33 @@ export function App({ runtime }: AppProps) {
 
   const openSettings = () => openSettingsOverlay('main');
   const openNarrativePresetSettings = () => openSettingsOverlay('narrative-presets');
+
+  const handleReplayTutorial = () => {
+    setTutorialState(resetTutorialState());
+    setTutorialStepIndex(0);
+    setActiveTutorialStage(null);
+    if (creativePage === 'writing' && showManuscript) {
+      openNewCreation();
+      return;
+    }
+    setSettingsSubPage('main');
+    setShowSettings(false);
+  };
+
+  const handleTutorialConnectAction = () => {
+    completeTutorialStage('main');
+    if (!hasCredentials) {
+      openSetupWizard();
+      return;
+    }
+    openSettings();
+  };
+
+  const mainTutorialSteps = useMemo(
+    () => buildMainTutorialSteps({ onConnectAction: handleTutorialConnectAction }),
+    [hasCredentials],
+  );
+  const settingsTutorialSteps = useMemo(() => buildSettingsTutorialSteps(), []);
 
   const toggleLibraryCollapsed = () => {
     setLibraryCollapsed((collapsed) => !collapsed);
@@ -1099,44 +1271,18 @@ export function App({ runtime }: AppProps) {
     }
   };
 
-  const handleConvertStageMode = async (targetMode: StageAssetMode) => {
-    if (isStreaming || branchSwitchBusyRef.current || modeConversionPendingRef.current) return;
-    const fromMode: StageAssetMode = creativePage ?? 'story';
-    if (fromMode === targetMode) return;
-    modeConversionPendingRef.current = true;
-    setErrorMsg(null);
+  const saveDerivedStory = async (derivedStory: Story) => {
+    await harness.saveStory(migrateStoryToV02(derivedStory));
+    await refreshStories();
+  };
 
-    try {
-      await flushActiveManuscripts();
-      const latestWorkspace = await creative.read();
-      const activeWorkNow = latestWorkspace.works.find((item) => item.id === latestWorkspace.activeWorkId);
-      const activeCharacterNow = latestWorkspace.characters.find((item) => item.id === latestWorkspace.activeCharacterId);
-      const converted = convertActiveAssetMode({
-        fromMode,
-        toMode: targetMode,
-        story,
-        work: activeWorkNow,
-        character: activeCharacterNow,
-        workspace: latestWorkspace,
-      });
-      await persistMaterializedAsset(targetMode, converted);
-      try {
-        runtime.diagnostics.recordEvent({
-          level: 'info',
-          category: 'ui',
-          action: 'entry_misroute_corrected',
-          meta: { routeMode: targetMode },
-        });
-      } catch {
-        // Ignore diagnostics failure.
-      }
-      const modeName = targetMode === 'story' ? '文游' : targetMode === 'writing' ? '写故事' : '角色互动';
-      setStatusNotice(`已切换为「${modeName}」，原有设定与对话已完整保留。`);
-    } catch (err) {
-      setErrorMsg(toErrorMessage(err, '模式切换失败。'));
-    } finally {
-      modeConversionPendingRef.current = false;
+  const navigateCreatedAsset = (kind: 'character' | 'work' | 'story', id: string) => {
+    setCreatedAssetNotice(null);
+    if (kind === 'story') {
+      void handleSelectStory(id);
+      return;
     }
+    void changeCreativeItem(kind === 'character' ? 'character' : 'writing', id, 'select');
   };
 
   const sendAction = (
@@ -1148,18 +1294,10 @@ export function App({ runtime }: AppProps) {
     if (
       !trimmed ||
       branchSwitchBusyRef.current ||
-      modeConversionPendingRef.current ||
       abortRef.current ||
       isStreaming ||
       isSummarizing
     ) return;
-
-    const switchTarget = detectNaturalModeSwitchIntent(trimmed);
-    if (switchTarget && switchTarget !== 'story') {
-      if (restoreOnError) setInput('');
-      void handleConvertStageMode(switchTarget);
-      return;
-    }
 
     withCredentials(
       '继续互动对话',
@@ -1168,6 +1306,7 @@ export function App({ runtime }: AppProps) {
         if (restoreOnError) {
           setInput('');
         }
+        autoScroll.resumeFollow();
         void runStreamingExecution(
           (callbacks) => {
             const latestStory = storyRef.current ?? story;
@@ -1199,6 +1338,7 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '编辑内容并生成新分支',
       (activeCfg) => {
+        autoScroll.resumeFollow();
         void runStreamingExecution((callbacks) => {
           const latestStory = storyRef.current ?? story;
           return harness.editAndBranch(
@@ -1222,6 +1362,7 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '重新生成回复',
       (activeCfg) => {
+        autoScroll.resumeFollow();
         void runStreamingExecution((callbacks) => {
           const latestStory = storyRef.current ?? story;
           return harness.regenerateNode(
@@ -1278,6 +1419,7 @@ export function App({ runtime }: AppProps) {
     }
     withCredentials('继续追要半拒绝内容', (activeCfg) => {
       if (creationPending.current || abortRef.current || isStreaming) return;
+      autoScroll.resumeFollow();
       const storySeqAtStart = ++storyOpSeqRef.current;
       const overlaySeqAtStart = overlayNavigationSeqRef.current;
       const controller = new AbortController();
@@ -1357,6 +1499,7 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '继续追要半拒绝内容',
       (activeCfg) => {
+        autoScroll.resumeFollow();
         void runStreamingExecution(async (callbacks) => {
           const latest = storyRef.current ?? story;
           const effectiveConfig = resolveEffectiveModelConfig(activeCfg, latest.generationPreference);
@@ -1488,6 +1631,7 @@ export function App({ runtime }: AppProps) {
 
     withCredentials('开始新的创作', (activeCfg) => {
       if (creationPending.current || abortRef.current || isStreaming) return;
+      autoScroll.resumeFollow();
       const storySeqAtStart = ++storyOpSeqRef.current;
       const overlaySeqAtStart = overlayNavigationSeqRef.current;
       const controller = new AbortController();
@@ -1692,6 +1836,7 @@ export function App({ runtime }: AppProps) {
     withCredentials(
       '开启第一幕',
       (activeCfg) => {
+        autoScroll.resumeFollow();
         void runStreamingExecution((callbacks) => {
           const latestStory =
             storyRef.current?.id === targetStory.id ? storyRef.current : targetStory;
@@ -1809,6 +1954,7 @@ export function App({ runtime }: AppProps) {
           setShowImport(false);
           setShowSettings(false);
           setCreativePage(null);
+          setCreatedAssetNotice(null);
           setMobileLibraryOpen(false);
         }
       }
@@ -2023,6 +2169,7 @@ export function App({ runtime }: AppProps) {
     setNeutralTurns([]);
     setPendingWelcomePref(undefined);
     setNewCreationOpen(true);
+    setCreatedAssetNotice(null);
     setInput('');
     setErrorMsg(null);
     const shouldFocus = closeOverlays && !mobileLibraryOpen;
@@ -2057,6 +2204,7 @@ export function App({ runtime }: AppProps) {
     setNeutralTurns([]);
     setPendingWelcomePref(undefined);
     setNewCreationOpen(true);
+    setCreatedAssetNotice(null);
     setInput('');
     setErrorMsg(null);
     focusNewCreation.current = true;
@@ -2217,8 +2365,11 @@ export function App({ runtime }: AppProps) {
       const note = documentVersion(scoped.documents.local, state.local);
       return { currentMarkdown: note.markdown, currentVersionId: note.id, targetLabel: '分支笔记' };
     }
-    if (normalized === 'character' || normalized === 'draft') {
-      return { currentMarkdown: '', targetLabel: normalized === 'character' ? '新建角色' : '新开写故事' };
+    if (isDerivedAssetTarget(normalized)) {
+      return {
+        currentMarkdown: '',
+        targetLabel: derivedAssetTargetLabel(normalized),
+      };
     }
     const scoped = migrateStoryDocuments(story) as Story & { documents: StoryDocuments };
     const state = storyDocumentState(scoped, scoped.activeLeafNodeId, true);
@@ -2257,13 +2408,22 @@ export function App({ runtime }: AppProps) {
       return;
     }
 
-    if (normalized === 'character' || normalized === 'draft') {
-      let createdAsset: { kind: 'character' | 'work'; id: string; label: string } | null = null;
-      await creative.save((state) => {
-        const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
-        createdAsset = { kind: derived.createdKind, id: derived.createdId, label: derived.label };
-        return derived.nextState;
-      });
+    if (isDerivedAssetTarget(normalized)) {
+      let createdAsset: CreatedAssetNotice | null = null;
+      if (normalized === 'story') {
+        createdAsset = await createAndSaveDerivedStory({
+          workspace: creative.workspace,
+          proposal,
+          resolvedMarkdown,
+          saveStory: saveDerivedStory,
+        });
+      } else {
+        await creative.save((state) => {
+          const derived = createDerivedAssetInWorkspace(state, proposal, resolvedMarkdown);
+          createdAsset = toCreatedAssetNotice(derived);
+          return derived.nextState;
+        });
+      }
       await enqueueStoryCommit((latest) => {
         if (!latest) return null;
         return {
@@ -2275,6 +2435,7 @@ export function App({ runtime }: AppProps) {
         };
       });
       recordProposalDiagnostic(runtime.diagnostics, 'proposal_applied', proposal);
+      recordDerivedAssetDiagnostic(runtime.diagnostics, proposal);
       if (createdAsset) setCreatedAssetNotice(createdAsset);
       return;
     }
@@ -2460,6 +2621,23 @@ export function App({ runtime }: AppProps) {
 
   const backupSummaryText = `包含 ${stories.length} 个故事、${creative.workspace.works.length} 部作品、${creative.workspace.characters.length} 位角色、${promptPackLibrary.packs.length} 个叙事预设与我的记忆（不含 API Key）`;
 
+  const workspaceStoriesForUsage = useMemo(() => {
+    if (!storyExists) return stories;
+    const hasActive = stories.some((item) => item.id === story.id);
+    return hasActive
+      ? stories.map((item) => (item.id === story.id ? story : item))
+      : [...stories, story];
+  }, [stories, story, storyExists]);
+
+  const workspaceUsageSummary = useMemo(
+    () =>
+      computeWorkspaceUsageSummary({
+        stories: workspaceStoriesForUsage,
+        creativeWorkspace: creative.workspace,
+      }),
+    [workspaceStoriesForUsage, creative.workspace],
+  );
+
   const effectiveComposerConfig = isWelcome
     ? resolveEffectiveModelConfig(config, pendingWelcomePref)
     : resolveEffectiveModelConfig(config, story.generationPreference);
@@ -2555,6 +2733,7 @@ export function App({ runtime }: AppProps) {
   ) : null;
 
   return (
+    <SwipeDiagnosticContext.Provider value={reportSwipeDiagnostic}>
     <div className="app-root">
       <div
         className={`app-shell-underlay${activeOverlay ? ' is-covered' : ''}`}
@@ -2568,9 +2747,6 @@ export function App({ runtime }: AppProps) {
               ? (activeCharacter?.name ?? 'Folio')
               : !isWelcome ? story.title : 'Folio'}
           stageMode={creativePage ?? 'story'}
-          showModeSwitcher={!isWelcome && (Boolean(creativePage) || storyExists)}
-          onSwitchStageMode={(targetMode) => void handleConvertStageMode(targetMode)}
-          modeSwitchDisabled={isStreaming || isSummarizing || isBranchSwitching}
           hasStory={storyExists && !isWelcome && !creativePage}
           hideStoryTools={Boolean(creativePage)}
           stageControls={creativePage === 'writing' && activeWork ? (
@@ -2646,7 +2822,10 @@ export function App({ runtime }: AppProps) {
         />
 
         <main
-          ref={autoScroll.stageRef}
+          ref={(element) => {
+            mainStageRef.current = element;
+            autoScroll.stageRef.current = element;
+          }}
           className={`main-stage${storyExists && !isWelcome && !creativePage ? ' is-playing' : ''}${creativePage ? ' is-creative' : ''}`}
           data-testid="main-stage"
           {...edgeSwipe.containerHandlers}
@@ -2692,10 +2871,11 @@ export function App({ runtime }: AppProps) {
                 manuscript={showManuscript}
                 onStartManuscript={() => void selectWritingView(true)}
                 onSwitchToChat={() => void selectWritingView(false)}
-                onSwitchStageMode={(targetMode) => void handleConvertStageMode(targetMode)}
-                onNavigateCreatedAsset={(kind, id) => void changeCreativeItem(kind === 'character' ? 'character' : 'writing', id, 'select')}
+                onSaveDerivedStory={saveDerivedStory}
+                onNavigateCreatedAsset={navigateCreatedAsset}
                 initialTurn={initialCreativeTurn}
                 onConsumeInitialTurn={() => setInitialCreativeTurn(null)}
+                scrollContainerRef={mainStageRef}
               />
               {errorMsg && !renderedOverlay && (
                 <BannerAlert
@@ -2852,11 +3032,7 @@ export function App({ runtime }: AppProps) {
                         <button
                           type="button"
                           className="text-action"
-                          onClick={() => {
-                            const { kind, id } = createdAssetNotice;
-                            setCreatedAssetNotice(null);
-                            void changeCreativeItem(kind === 'character' ? 'character' : 'writing', id, 'select');
-                          }}
+                          onClick={() => navigateCreatedAsset(createdAssetNotice.kind, createdAssetNotice.id)}
                         >
                           去看看
                         </button>
@@ -3078,7 +3254,9 @@ export function App({ runtime }: AppProps) {
                 onDefaultReasoningEffortChange={(reasoningEffort) =>
                   updateConfig({ ...config, reasoningEffort })}
                 promptPackLibrary={promptPackLibrary}
+                workspaceUsageSummary={workspaceUsageSummary}
                 appUpdater={appUpdater}
+                onReplayTutorial={handleReplayTutorial}
               />
             ) : (
               <ImportPanel
@@ -3202,6 +3380,23 @@ export function App({ runtime }: AppProps) {
         canExportBackup={canExportFullBackup}
         onExportBackup={handleExportFullBackup}
       />
+      {tutorialMounted && (
+        <SpotlightTutorial
+          open={activeTutorialStage !== null}
+          label={renderedTutorialStage === 'settings' ? '设置页功能引导' : 'Folio 新手引导'}
+          steps={renderedTutorialStage === 'settings' ? settingsTutorialSteps : mainTutorialSteps}
+          stepIndex={tutorialStepIndex}
+          onStepChange={setTutorialStepIndex}
+          onSkip={() => {
+            if (activeTutorialStage) completeTutorialStage(activeTutorialStage);
+          }}
+          onComplete={() => {
+            if (activeTutorialStage) completeTutorialStage(activeTutorialStage);
+          }}
+          onExitComplete={() => setTutorialMounted(false)}
+        />
+      )}
     </div>
+    </SwipeDiagnosticContext.Provider>
   );
 }
