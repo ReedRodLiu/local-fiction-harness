@@ -230,8 +230,8 @@ describe('Issue #108 Slice 1 & 2: DeepSeek official model whitelist, reasoning e
         messages: [{ role: 'user', content: 'hi' }],
       }).body,
     ) as Record<string, unknown>;
-    expect(defaultReq.thinking).toEqual({ type: 'enabled' });
-    expect(defaultReq.reasoning_effort).toBe('high');
+    expect(defaultReq.thinking).toEqual({ type: 'disabled' });
+    expect(defaultReq.reasoning_effort).toBe('none');
   });
 });
 
