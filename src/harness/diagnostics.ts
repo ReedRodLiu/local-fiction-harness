@@ -276,7 +276,7 @@ const SAFE_REASON_CODE_UPPER_ALLOWLIST = new Set([
   'RATE_LIMITED',
 ]);
 const SAFE_SNAKE_CODE_REGEX = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
-const CREDENTIAL_PREFIX_REGEX = /^(?:sk|rk|pk|key|token|secret|password|bearer|authorization)[_-]/i;
+const CREDENTIAL_PREFIX_REGEX = /^(?:sk|rk|pk|tvly|key|token|secret|password|bearer|authorization)[_-]/i;
 const SAFE_ERROR_NAME_REGEX = /^(?:Error|[A-Z][A-Za-z0-9]{0,47}(?:Error|Exception))$/;
 const SAFE_ERROR_CODE_REGEX = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/;
 const SAFE_ENV_VERSION_REGEX = /^[A-Za-z0-9][A-Za-z0-9._/+ -]{0,47}$/;
@@ -615,6 +615,7 @@ function sanitizeModel(rawModel: unknown, apiKey: string, baseUrl: string): stri
     (components.some((component) => component.split(':', 1)[0] === endpoint.host) ||
       (endpoint.host.length >= 4 && normalized.includes(endpoint.host)));
   if (
+    CREDENTIAL_PREFIX_REGEX.test(model) ||
     (apiKey && normalized.includes(apiKey.toLowerCase())) ||
     containsEndpointHost ||
     endpoint.values.some((value) => components.includes(value.toLowerCase()))
@@ -670,8 +671,8 @@ export function sanitizeDiagnosticText(raw: string, maxLen = MAX_MESSAGE_CHARS):
   let text = raw;
   // 1. Scrub Bearer tokens
   text = text.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]');
-  // 2. Scrub sk-* keys
-  text = text.replace(/\bsk-[A-Za-z0-9_-]{6,}\b/g, '[REDACTED_KEY]');
+  // 2. Scrub sk-* / tvly-* keys
+  text = text.replace(/\b(?:sk|tvly)-[A-Za-z0-9_-]{6,}\b/gi, '[REDACTED_KEY]');
   // 3. Scrub key/token query or header assignments
   text = text.replace(
     /\b((?:x-)?api[_-]?key|token|secret|password|authorization)\s*[:=]\s*[^\s&"',;]+/gi,
@@ -1042,7 +1043,7 @@ function normalizeSafeEnvVersion(value: unknown): string | undefined {
     collapsed.includes('..') ||
     /(?:^|\/)(?:Users|home|var|data|storage|sdcard)\b/i.test(collapsed) ||
     /(?:api[_-]?key|token|secret|password|authorization|bearer)/i.test(collapsed) ||
-    /\bsk-[A-Za-z0-9_-]{3,}/i.test(collapsed)
+    /\b(?:sk|tvly)-[A-Za-z0-9_-]{3,}/i.test(collapsed)
   ) {
     return undefined;
   }

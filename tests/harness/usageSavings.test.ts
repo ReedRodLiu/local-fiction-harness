@@ -63,8 +63,58 @@ describe('usageSavings telemetry & cost estimator', () => {
 
     expect(resolveUsageProviderKind('https://api.deepseek.com')).toBe('deepseek-official');
     expect(resolveUsageProviderKind('https://api.deepseek.com/v1')).toBe('deepseek-official');
+    expect(resolveUsageProviderKind('https://api.openai.com/v1')).toBe('other');
     expect(resolveUsageProviderKind('https://relay.example.com/v1')).toBe('other');
     expect(resolveUsageProviderKind('http://127.0.0.1:4173/api')).toBe('other');
+    expect(
+      resolveUsageProviderKind('https://api.siliconflow.cn/v1', {
+        pricing: { currency: 'CNY', inputPerMillion: 2, outputPerMillion: 8 },
+      }),
+    ).toBe('custom-priced');
+    expect(
+      resolveUsageProviderKind('https://custom.example.com/v1', {
+        supportsBuiltinPricing: true,
+      }),
+    ).toBe('deepseek-official');
+    expect(
+      resolveUsageProviderKind('https://custom.example.com/v1', {
+        capabilities: {
+          thinkingProtocol: 'deepseek',
+          prefixProtocol: 'deepseek_beta',
+          supportsBalanceQuery: true,
+          supportsBuiltinSearch: true,
+          supportsBuiltinPricing: true,
+        },
+      }),
+    ).toBe('deepseek-official');
+
+    const customTelemetry = buildTurnUsageTelemetry({
+      baseUrl: 'https://api.siliconflow.cn/v1',
+      model: 'deepseek-ai/DeepSeek-V3',
+      pricing: {
+        currency: 'CNY',
+        inputPerMillion: 2,
+        cacheHitInputPerMillion: 0.5,
+        outputPerMillion: 8,
+      },
+      generationUsage: { promptTokens: 100, completionTokens: 20 },
+    });
+    expect(customTelemetry.providerKind).toBe('custom-priced');
+    expect(customTelemetry.pricingSnapshot).toEqual({
+      currency: 'CNY',
+      inputPerMillion: 2,
+      cacheHitInputPerMillion: 0.5,
+      outputPerMillion: 8,
+    });
+
+    const invalidPricingTelemetry = buildTurnUsageTelemetry({
+      baseUrl: 'https://relay.example.com/v1',
+      model: 'gpt-4o-mini',
+      pricing: { currency: 'USD', inputPerMillion: -1, outputPerMillion: 2 },
+    });
+    expect(invalidPricingTelemetry.providerKind).toBe('other');
+    expect(invalidPricingTelemetry.pricingSnapshot).toBeUndefined();
+
     expect(resolveDeepSeekPricingSchedule(Date.parse('2026-11-24T17:00:00Z'))).toBe('off-peak');
     expect(resolveDeepSeekPricingSchedule(Date.parse('2026-11-24T12:00:00Z'))).toBe('peak');
   });
@@ -86,16 +136,25 @@ describe('usageSavings telemetry & cost estimator', () => {
             promptCacheMissTokens: 200,
             completionTokens: 150,
           },
+          summaryUsage: {
+            promptTokens: 300,
+            completionTokens: 50,
+          },
           uncompressedPromptChars: 8000,
           compressedPromptChars: 2000,
         }),
       ),
     ]);
-    expect(nonOfficial.promptTokens).toBe(700);
+    expect(nonOfficial.promptTokens).toBe(1000);
     expect(nonOfficial.actualCostUsd).toBeNull();
-    expect(nonOfficial.savings).toMatchObject({
-      status: 'unavailable',
-      reason: 'non-official-provider',
+    // omittedChars = 6000; ratio = clamp(700/2000 = 0.4..1.2) = 0.4 -> evicted = 2400; summaryOverhead = 350 -> net = 2050
+    expect(nonOfficial.savings).toEqual({
+      status: 'tokens-only',
+      evictedInputTokensEstimated: 2400,
+      summaryOverheadTokens: 350,
+      netSavedTokensEstimated: 2050,
+      compressedTurnCount: 1,
+      comparedTurnCount: 1,
     });
 
     const preCompression = computeSessionUsageSummary([
@@ -423,15 +482,13 @@ describe('usageSavings telemetry & cost estimator', () => {
       { scheduleOverride: 'off-peak' },
     );
     expect(mixed.modes.story.savings.status).toBe('available');
-    expect(mixed.modes.writing.savings).toMatchObject({
-      status: 'unavailable',
-      reason: 'non-official-provider',
-    });
+    expect(mixed.modes.writing.savings.status).toBe('tokens-only');
     expect(mixed.total.actualCostUsd).toBeNull();
     expect(mixed.total.promptTokens).toBe(1500);
     expect(mixed.total.savings).toMatchObject({
-      status: 'unavailable',
-      reason: 'non-official-provider',
+      status: 'tokens-only',
+      compressedTurnCount: 2,
+      comparedTurnCount: 2,
     });
 
     const preCompressionWork = newWork('未压缩作品');
@@ -491,5 +548,85 @@ describe('usageSavings telemetry & cost estimator', () => {
     if (costly.total.savings.status === 'available') {
       expect(costly.total.savings.estimatedSavingsUsd).toBeLessThan(0);
     }
+  });
+
+  it('computes custom-priced savings in CNY or USD and falls back to tokens-only when currencies mix', () => {
+    const cnyTurn = assistantTurn(
+      'cny-1',
+      buildTurnUsageTelemetry({
+        baseUrl: 'https://api.siliconflow.cn/v1',
+        model: 'deepseek-ai/DeepSeek-V3',
+        pricing: {
+          currency: 'CNY',
+          inputPerMillion: 2,
+          cacheHitInputPerMillion: 0.5,
+          outputPerMillion: 8,
+        },
+        generationUsage: {
+          promptCacheHitTokens: 1000,
+          promptCacheMissTokens: 1000,
+          completionTokens: 500,
+        },
+        summaryUsage: {
+          promptTokens: 500,
+          completionTokens: 100,
+        },
+        uncompressedPromptChars: 12000,
+        compressedPromptChars: 2000,
+      }),
+    );
+
+    const cnySummary = computeSessionUsageSummary([cnyTurn]);
+    expect(cnySummary.actualCostUsd).toBeNull();
+    expect(cnySummary.actualCostCurrency).toBe('CNY');
+    // gen cost: (1000*0.5 + 1000*2 + 500*8)/1e6 = 6500/1e6 = 0.0065
+    // sum cost: (500*2 + 100*8)/1e6 = 1800/1e6 = 0.0018 -> total actual = 0.0083
+    expect(cnySummary.actualCostAmount).toBeCloseTo(0.0083, 8);
+    expect(cnySummary.savings.status).toBe('available');
+    if (cnySummary.savings.status === 'available') {
+      expect(cnySummary.savings.currency).toBe('CNY');
+      expect(cnySummary.savings.pricingSource).toBe('custom');
+      expect(cnySummary.savings.actualCostUsd).toBeCloseTo(0.0083, 8);
+      // evicted = 10000 * clamp(2000/2000=1.0) = 10000; hitRatio = 0.5 -> eff rate = 0.5*0.5 + 0.5*2 = 1.25/M
+      // extraBaseline = 10000*1.25/1e6 = 0.0125; baseline = 0.0065 + 0.0125 = 0.019
+      expect(cnySummary.savings.baselineCostUsd).toBeCloseTo(0.019, 8);
+      expect(cnySummary.savings.estimatedSavingsUsd).toBeCloseTo(0.019 - 0.0083, 8);
+    }
+
+    const usdCustomTurn = assistantTurn(
+      'usd-1',
+      buildTurnUsageTelemetry({
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o-mini',
+        pricing: {
+          currency: 'USD',
+          inputPerMillion: 0.15,
+          outputPerMillion: 0.6,
+        },
+        generationUsage: {
+          promptTokens: 1000,
+          completionTokens: 200,
+        },
+        uncompressedPromptChars: 10000,
+        compressedPromptChars: 2000,
+      }),
+    );
+
+    const usdSummary = computeSessionUsageSummary([usdCustomTurn]);
+    expect(usdSummary.actualCostUsd).toBeCloseTo(0.00027, 8);
+    expect(usdSummary.actualCostCurrency).toBe('USD');
+    expect(usdSummary.savings.status).toBe('available');
+    if (usdSummary.savings.status === 'available') {
+      expect(usdSummary.savings.currency).toBe('USD');
+      expect(usdSummary.savings.pricingSource).toBe('custom');
+    }
+
+    const mixedCurrencies = computeSessionUsageSummary([cnyTurn, usdCustomTurn]);
+    expect(mixedCurrencies.actualCostUsd).toBeNull();
+    expect(mixedCurrencies.savings).toMatchObject({
+      status: 'tokens-only',
+      compressedTurnCount: 2,
+      comparedTurnCount: 2,
+    });
   });
 });

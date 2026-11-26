@@ -64,7 +64,7 @@ describe('SessionUsageCard', () => {
     expect(zeroTelemetryMarkup).not.toContain('US$');
   });
 
-  it('renders real token counts for non-official providers without faking savings USD', () => {
+  it('renders tokens-only positive savings for unpriced third-party providers without error banner or faking USD', () => {
     const markup = renderToStaticMarkup(
       createElement(SessionUsageCard, {
         nodes: [
@@ -95,10 +95,58 @@ describe('SessionUsageCard', () => {
     expect(markup).toContain('思考 Token 80');
     expect(markup).toContain('1 轮压缩');
     expect(markup).toContain('历史引用 3 条（1 轮）');
-    expect(markup).toContain('本会话暂无可比省费');
-    expect(markup).toContain('非 DeepSeek 官方接口');
+    expect(markup).toContain('data-testid="session-usage-savings"');
+    expect(markup).toContain('is-saved');
+    expect(markup).toContain('累计节省输入估算');
+    expect(markup).toContain('3,800 Token');
+    expect(markup).toContain('已省略输入估算');
+    expect(markup).toContain('摘要压缩开销');
+    expect(markup).toContain('0 Token');
+    expect(markup).toContain('对比压缩轮次');
+    expect(markup).toContain('未配置模型单价时只统计 Token 省量；可在设置中选填单价以估算花费');
+    expect(markup).not.toContain('data-testid="session-usage-unavailable"');
+    expect(markup).not.toContain('非 DeepSeek 官方接口');
+    expect(markup).not.toContain('非高峰优惠时段');
+    expect(markup).not.toContain('标准时段');
     expect(markup).not.toContain('US$');
     expect(markup).not.toContain('$0');
+  });
+
+  it('renders custom-priced savings in CNY (¥) or USD without DeepSeek schedule pill', () => {
+    const cnyMarkup = renderToStaticMarkup(
+      createElement(SessionUsageCard, {
+        nodes: [
+          assistantNode(
+            'a1',
+            buildTurnUsageTelemetry({
+              baseUrl: 'https://api.siliconflow.cn/v1',
+              model: 'deepseek-ai/DeepSeek-V3',
+              pricing: {
+                currency: 'CNY',
+                inputPerMillion: 2,
+                cacheHitInputPerMillion: 0.5,
+                outputPerMillion: 8,
+              },
+              generationUsage: {
+                promptCacheHitTokens: 1000,
+                promptCacheMissTokens: 1000,
+                completionTokens: 500,
+              },
+              uncompressedPromptChars: 12000,
+              compressedPromptChars: 2000,
+            }),
+          ),
+        ],
+      }),
+    );
+
+    expect(cnyMarkup).toContain('data-testid="session-usage-savings"');
+    expect(cnyMarkup).toContain('预计省费');
+    expect(cnyMarkup).toContain('¥');
+    expect(cnyMarkup).not.toContain('US$');
+    expect(cnyMarkup).not.toContain('非高峰优惠时段');
+    expect(cnyMarkup).not.toContain('标准时段');
+    expect(cnyMarkup).toContain('按自定义模型单价与未压缩前文基线估算');
   });
 
   it('renders real tokens and no-compression-yet reason for pre-compression official DeepSeek turns', () => {

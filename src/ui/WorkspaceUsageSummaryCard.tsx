@@ -8,6 +8,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import type {
+  PricingCurrency,
   SessionSavingsUnavailableReason,
   WorkspaceModeUsageSummary,
   WorkspaceUsageMode,
@@ -47,12 +48,13 @@ function formatCount(value: number): string {
   return value.toLocaleString('en-US');
 }
 
-function formatUsd(amount: number): string {
+function formatMoney(amount: number, currency: PricingCurrency = 'USD'): string {
+  const prefix = currency === 'CNY' ? '¥' : 'US$';
   const abs = Math.abs(amount);
-  if (abs >= 1) return `US$${abs.toFixed(2)}`;
-  if (abs >= 0.0001) return `US$${abs.toFixed(4)}`;
-  if (abs === 0) return 'US$0.0000';
-  return `US$${abs.toFixed(6)}`;
+  if (abs >= 1) return `${prefix}${abs.toFixed(2)}`;
+  if (abs >= 0.0001) return `${prefix}${abs.toFixed(4)}`;
+  if (abs === 0) return `${prefix}0.0000`;
+  return `${prefix}${abs.toFixed(6)}`;
 }
 
 function formatModeItemCount(mode: WorkspaceUsageMode, modeSummary: WorkspaceModeUsageSummary, itemUnit: string): string {
@@ -70,14 +72,28 @@ export function WorkspaceUsageSummaryCard({ summary }: WorkspaceUsageSummaryCard
     total.cacheHitRate !== null ? Math.min(100, Math.max(0, total.cacheHitRate * 100)) : null;
   const cacheHitRateText =
     cacheHitRatePercent !== null ? `${cacheHitRatePercent.toFixed(1)}%` : '—';
-  const scheduleLabel = savings.schedule === 'off-peak' ? '非高峰优惠时段' : '标准时段';
+  const scheduleLabel =
+    savings.status === 'available' && savings.pricingSource !== 'custom'
+      ? savings.schedule === 'off-peak'
+        ? '非高峰优惠时段'
+        : '标准时段'
+      : null;
 
   const heroToneClass =
     savings.status === 'available'
       ? savings.estimatedSavingsUsd >= 0
         ? 'is-saved'
         : 'is-increased'
-      : 'is-unavailable';
+      : savings.status === 'tokens-only'
+        ? 'is-saved'
+        : 'is-unavailable';
+
+  const totalActualCost =
+    total.actualCostAmount !== undefined && total.actualCostAmount !== null
+      ? { amount: total.actualCostAmount, currency: total.actualCostCurrency ?? 'USD' }
+      : total.actualCostUsd !== null
+        ? { amount: total.actualCostUsd, currency: 'USD' as const }
+        : null;
 
   return (
     <div className="workspace-usage-card" data-testid="workspace-usage-card">
@@ -90,6 +106,8 @@ export function WorkspaceUsageSummaryCard({ summary }: WorkspaceUsageSummaryCard
               ) : (
                 <TrendingUp size={16} strokeWidth={1.75} aria-hidden="true" />
               )
+            ) : savings.status === 'tokens-only' ? (
+              <TrendingDown size={16} strokeWidth={1.75} aria-hidden="true" />
             ) : (
               <Activity size={16} strokeWidth={1.75} aria-hidden="true" />
             )}
@@ -98,19 +116,23 @@ export function WorkspaceUsageSummaryCard({ summary }: WorkspaceUsageSummaryCard
                 ? savings.estimatedSavingsUsd >= 0
                   ? '累计预计省费'
                   : '费用增加'
-                : '暂无可比省费'}
+                : savings.status === 'tokens-only'
+                  ? '累计节省输入估算'
+                  : '暂无可比省费'}
             </span>
           </span>
-          <span className="workspace-usage-schedule-pill" data-testid="workspace-usage-schedule">
-            {scheduleLabel}
-          </span>
+          {scheduleLabel && (
+            <span className="workspace-usage-schedule-pill" data-testid="workspace-usage-schedule">
+              {scheduleLabel}
+            </span>
+          )}
         </div>
 
         {savings.status === 'available' ? (
           <>
             <div className="workspace-usage-hero-main">
               <strong className="workspace-usage-hero-amount" data-testid="workspace-usage-savings-amount">
-                {formatUsd(Math.abs(savings.estimatedSavingsUsd))}
+                {formatMoney(Math.abs(savings.estimatedSavingsUsd), savings.currency ?? 'USD')}
               </strong>
               {savings.savingsPercent !== null && (
                 <span className="workspace-usage-percent-pill" data-testid="workspace-usage-savings-percent">
@@ -123,11 +145,11 @@ export function WorkspaceUsageSummaryCard({ summary }: WorkspaceUsageSummaryCard
             <div className="workspace-usage-hero-compare">
               <div className="workspace-usage-compare-cell">
                 <span>实测总花费</span>
-                <strong>{formatUsd(savings.actualCostUsd)}</strong>
+                <strong>{formatMoney(savings.actualCostUsd, savings.currency ?? 'USD')}</strong>
               </div>
               <div className="workspace-usage-compare-cell">
                 <span>未压缩全历史基线</span>
-                <strong>{formatUsd(savings.baselineCostUsd)}</strong>
+                <strong>{formatMoney(savings.baselineCostUsd, savings.currency ?? 'USD')}</strong>
               </div>
               <div className="workspace-usage-compare-cell">
                 <span>已省略输入估算</span>
@@ -136,7 +158,36 @@ export function WorkspaceUsageSummaryCard({ summary }: WorkspaceUsageSummaryCard
             </div>
 
             <p className="workspace-usage-hero-note">
-              按 DeepSeek 官方公开费率与未压缩前文基线估算（对比 {formatCount(savings.comparedTurnCount)} 轮）
+              {savings.pricingSource === 'custom'
+                ? `按自定义模型单价与未压缩前文基线估算（对比 ${formatCount(savings.comparedTurnCount)} 轮）`
+                : `按 DeepSeek 官方公开费率与未压缩前文基线估算（对比 ${formatCount(savings.comparedTurnCount)} 轮）`}
+            </p>
+          </>
+        ) : savings.status === 'tokens-only' ? (
+          <>
+            <div className="workspace-usage-hero-main">
+              <strong className="workspace-usage-hero-amount" data-testid="workspace-usage-savings-amount">
+                {formatCount(savings.netSavedTokensEstimated)} Token
+              </strong>
+            </div>
+
+            <div className="workspace-usage-hero-compare">
+              <div className="workspace-usage-compare-cell">
+                <span>已省略输入估算</span>
+                <strong>{formatCount(savings.evictedInputTokensEstimated)} Token</strong>
+              </div>
+              <div className="workspace-usage-compare-cell">
+                <span>摘要压缩开销</span>
+                <strong>{formatCount(savings.summaryOverheadTokens)} Token</strong>
+              </div>
+              <div className="workspace-usage-compare-cell">
+                <span>对比压缩轮次</span>
+                <strong>{formatCount(savings.compressedTurnCount)} 轮</strong>
+              </div>
+            </div>
+
+            <p className="workspace-usage-hero-note">
+              未配置模型单价时只统计 Token 省量；可在设置中选填单价以估算花费
             </p>
           </>
         ) : (
@@ -150,11 +201,11 @@ export function WorkspaceUsageSummaryCard({ summary }: WorkspaceUsageSummaryCard
               />
               <span>暂无可比省费：{WORKSPACE_UNAVAILABLE_REASON_TEXT[savings.reason]}</span>
             </div>
-            {total.actualCostUsd !== null && (
+            {totalActualCost !== null && (
               <div className="workspace-usage-hero-compare">
                 <div className="workspace-usage-compare-cell" data-testid="workspace-usage-actual-cost">
                   <span>实测费用</span>
-                  <strong>{formatUsd(total.actualCostUsd)}</strong>
+                  <strong>{formatMoney(totalActualCost.amount, totalActualCost.currency)}</strong>
                 </div>
               </div>
             )}
@@ -232,7 +283,18 @@ export function WorkspaceUsageSummaryCard({ summary }: WorkspaceUsageSummaryCard
                 ? modeSavings.estimatedSavingsUsd >= 0
                   ? 'is-saved'
                   : 'is-increased'
-                : 'is-unavailable';
+                : modeSavings.status === 'tokens-only'
+                  ? 'is-saved'
+                  : 'is-unavailable';
+            const modeActualCost =
+              modeSummary.actualCostAmount !== undefined && modeSummary.actualCostAmount !== null
+                ? {
+                    amount: modeSummary.actualCostAmount,
+                    currency: modeSummary.actualCostCurrency ?? 'USD',
+                  }
+                : modeSummary.actualCostUsd !== null
+                  ? { amount: modeSummary.actualCostUsd, currency: 'USD' as const }
+                  : null;
 
             return (
               <div
@@ -254,8 +316,8 @@ export function WorkspaceUsageSummaryCard({ summary }: WorkspaceUsageSummaryCard
                       输入 {formatCount(modeSummary.promptTokens)} / 输出{' '}
                       {formatCount(modeSummary.completionTokens)}
                     </span>
-                    {modeSavings.status === 'unavailable' && modeSummary.actualCostUsd !== null && (
-                      <span>实测费用 {formatUsd(modeSummary.actualCostUsd)}</span>
+                    {modeSavings.status === 'unavailable' && modeActualCost !== null && (
+                      <span>实测费用 {formatMoney(modeActualCost.amount, modeActualCost.currency)}</span>
                     )}
                   </div>
                 </div>
@@ -263,9 +325,11 @@ export function WorkspaceUsageSummaryCard({ summary }: WorkspaceUsageSummaryCard
                 <span className={`workspace-usage-mode-badge ${modeBadgeTone}`}>
                   {modeSavings.status === 'available'
                     ? modeSavings.estimatedSavingsUsd >= 0
-                      ? `预计省 ${formatUsd(modeSavings.estimatedSavingsUsd)}`
-                      : `费用增 ${formatUsd(Math.abs(modeSavings.estimatedSavingsUsd))}`
-                    : MODE_UNAVAILABLE_BADGE_TEXT[modeSavings.reason]}
+                      ? `预计省 ${formatMoney(modeSavings.estimatedSavingsUsd, modeSavings.currency ?? 'USD')}`
+                      : `费用增 ${formatMoney(Math.abs(modeSavings.estimatedSavingsUsd), modeSavings.currency ?? 'USD')}`
+                    : modeSavings.status === 'tokens-only'
+                      ? `省 ${formatCount(modeSavings.netSavedTokensEstimated)} Token`
+                      : MODE_UNAVAILABLE_BADGE_TEXT[modeSavings.reason]}
                 </span>
               </div>
             );

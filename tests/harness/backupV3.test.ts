@@ -5,6 +5,8 @@ import {
   characterContext,
   conversationLocalVersion,
   createDefaultBlueprint,
+  createDefaultProviderLibrary,
+  createProviderProfileFromPreset,
   detectBackupSchemaVersion,
   documentVersion,
   emptyWorkspace,
@@ -610,5 +612,105 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     const badTokens = JSON.parse(json);
     badTokens.stories[0].nodes.n2.telemetry.generationUsage.promptTokens = -5;
     expect(() => parseAndValidateFolioBackup(JSON.stringify(badTokens))).toThrow(/promptTokens/);
+  });
+
+  it('exports keyless providerLibrary skeletons, rejects apiKey fields on import, and merges non-destructively without touching local keys', () => {
+    const deepseek = createProviderProfileFromPreset('deepseek', {
+      id: 'deepseek-official',
+      apiKey: 'sk-local-deepseek-SECRET',
+    });
+    const siliconflow = createProviderProfileFromPreset('siliconflow', {
+      id: 'prov-sf',
+      name: '硅基主力',
+      apiKey: 'sk-sf-SECRET-999',
+      defaultPricing: {
+        currency: 'CNY',
+        inputPerMillion: 2,
+        cacheHitInputPerMillion: 0.5,
+        outputPerMillion: 8,
+      },
+    });
+    const fullLibrary = {
+      ...createDefaultProviderLibrary(),
+      activeProviderId: 'prov-sf',
+      profiles: [deepseek, siliconflow],
+      reasoningEffort: 'none' as const,
+      publicResearch: {
+        provider: 'tavily' as const,
+        apiKey: 'tvly-SECRET-888',
+      },
+    };
+
+    const story = makeSampleStory('story-prov');
+    story.generationPreference = { providerId: 'prov-sf', model: 'deepseek-ai/DeepSeek-V3' };
+
+    const json = exportFolioBackupV3({
+      stories: [story],
+      workspace: emptyWorkspace(),
+      providerLibrary: fullLibrary,
+    });
+
+    expect(json).not.toContain('sk-local-deepseek-SECRET');
+    expect(json).not.toContain('sk-sf-SECRET-999');
+    expect(json).not.toContain('tvly-SECRET-888');
+    expect(json).not.toContain('"apiKey"');
+
+    const parsed = parseAndValidateFolioBackup(json);
+    expect(parsed.providerLibrary).toBeDefined();
+    expect(parsed.providerLibrary?.activeProviderId).toBe('prov-sf');
+    expect(parsed.providerLibrary?.profiles).toHaveLength(2);
+    expect(parsed.providerLibrary?.profiles[1]?.defaultPricing).toEqual({
+      currency: 'CNY',
+      inputPerMillion: 2,
+      cacheHitInputPerMillion: 0.5,
+      outputPerMillion: 8,
+    });
+    expect(parsed.providerLibrary?.publicResearch).toEqual({ provider: 'tavily' });
+
+    const poisonedProfile = JSON.parse(json);
+    poisonedProfile.providerLibrary.profiles[0].apiKey = 'sk-tampered-123';
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(poisonedProfile))).toThrow(/apiKey|密钥/);
+
+    const poisonedSearch = JSON.parse(json);
+    poisonedSearch.providerLibrary.publicResearch.apiKey = 'tvly-tampered-123';
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(poisonedSearch))).toThrow(/apiKey|密钥/);
+
+    // Non-destructive merge: existing keeps its own activeProviderId, publicResearch, and colliding profile IDs remap cleanly
+    const existingSf = createProviderProfileFromPreset('siliconflow', {
+      id: 'prov-sf',
+      name: '本机硅基',
+    });
+    const { apiKey: _k1, ...existingDsMeta } = deepseek;
+    const { apiKey: _k2, ...existingSfMeta } = existingSf;
+    let nextSeq = 1;
+    const merged = mergeRestoredBackup(
+      {
+        stories: [],
+        workspace: emptyWorkspace(),
+        providerLibrary: {
+          version: 2,
+          activeProviderId: 'deepseek-official',
+          profiles: [existingDsMeta, existingSfMeta],
+          reasoningEffort: 'none',
+          publicResearch: { provider: 'deepseek_account', deepseekProfileId: 'deepseek-official' },
+        },
+      },
+      parsed,
+      { createId: () => `remapped-${nextSeq++}` },
+    );
+
+    expect(merged.providerLibrary?.activeProviderId).toBe('deepseek-official');
+    expect(merged.providerLibrary?.publicResearch).toEqual({
+      provider: 'deepseek_account',
+      deepseekProfileId: 'deepseek-official',
+    });
+    expect(merged.providerLibrary?.profiles.map((p) => p.id)).toEqual([
+      'deepseek-official',
+      'prov-sf',
+      'remapped-1',
+    ]);
+    expect(merged.providerLibrary?.profiles[2]?.name).toBe('硅基主力 (备份导入)');
+    expect(merged.stories[0]?.generationPreference?.providerId).toBe('remapped-1');
+    expect(JSON.stringify(merged.providerLibrary)).not.toContain('"apiKey"');
   });
 });
