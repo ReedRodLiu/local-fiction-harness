@@ -4,6 +4,7 @@ import type {
   ModelConfig,
   PlatformRuntime,
   PromptPackLibrary,
+  ProviderLibrary,
   StageAssetMode,
   Story,
 } from '../harness/index.ts';
@@ -19,6 +20,7 @@ interface Props {
   mode: 'writing' | 'character';
   workspace: CreativeWorkspaceState;
   defaultConfig?: ModelConfig;
+  providerLibrary?: ProviderLibrary;
   promptPackLibrary?: PromptPackLibrary;
   ready: boolean;
   storageError: string;

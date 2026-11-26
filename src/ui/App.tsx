@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, FilePlus2, PenLine, Plus, Sparkles, Square } from 'lucide-react';
 import {
   DEFAULT_MODEL_CONFIG,
+  DEFAULT_REASONING_EFFORT,
   EMPTY_SUMMARY_SNAPSHOT,
+  PROVIDER_PRESETS,
   STAGE_MODE_LABELS,
   buildEntryRouteMessages,
   buildPromptPackContextOptions,
@@ -10,9 +12,10 @@ import {
   computeActiveReviewState,
   computeWorkspaceUsageSummary,
   conversationExport,
-  createAsyncModelConfigStore,
+  createAsyncProviderLibraryStore,
   createDefaultBlueprint,
   createDefaultId,
+  createDefaultProviderLibrary,
   createFictionHarness,
   detectNaturalModeSwitchIntent,
   documentLineage,
@@ -27,6 +30,8 @@ import {
   importDeepSeekSessions,
   invalidateStorySummarySnapshotsFromNode,
   isDefaultPromptPackLibrary,
+  isOfficialDeepSeekModel,
+  isOfficialDeepSeekUrl,
   isAbortError,
   loadPromptPackLibrary,
   materializeAssetFromNodes,
@@ -36,10 +41,10 @@ import {
   newDocument,
   newWork,
   normalizeOfficialDeepSeekModel,
-  normalizeOfficialModelConfig,
   normalizeProposalTarget,
   normalizeReasoningEffort,
   parseAndValidateFolioBackup,
+  projectActiveModelConfig,
   projectStoryTreeSpine,
   recordRefusalDiagnostic,
   recordRefusalOriginalRestoredDiagnostic,
@@ -55,11 +60,14 @@ import {
   type DiagnosticBundleTrigger,
   type GenerationPreference,
   type ModelConfig,
-  type OfficialDeepSeekModel,
   type PlatformRuntime,
   type PrefixCompletionMode,
   type PromptPack,
   type PromptPackLibrary,
+  type ProviderLibrary,
+  type ProviderLibraryMeta,
+  type ProviderProfile,
+  type PublicResearchConfig,
   type ReasoningEffort,
   type ScriptTurnRange,
   type StageAssetMode,
@@ -83,16 +91,24 @@ import { useAppAsyncError } from './AppErrorBoundary.tsx';
 import { AppUpdateModal } from './AppUpdateModal.tsx';
 import { CompanionSheet } from './CompanionSheet.tsx';
 import { CreativeWorkspace } from './CreativeWorkspace.tsx';
-import { DeepSeekSetupWizard } from './DeepSeekSetupWizard.tsx';
 import { DiagnosticsPreview } from './DiagnosticsPreview.tsx';
 import { DocumentDialog, type DocumentEdit } from './DocumentDialog.tsx';
-import { GenerationControls, mergeGenerationPreference } from './GenerationControls.tsx';
+import {
+  GenerationControls,
+  mergeGenerationPreference,
+  resolveEffectiveLibraryModelConfig,
+} from './GenerationControls.tsx';
 import { ImportPanel, type ImportMode } from './ImportPanel.tsx';
 import { LibraryDrawer } from './LibraryDrawer.tsx';
 import { MarkdownView } from './MarkdownView.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { ModeSwitchConfirmDialog, type ModeSwitchConfirmRequest } from './ModeSwitchConfirmDialog.tsx';
 import { PromptPackSheet } from './PromptPackSheet.tsx';
+import {
+  ProviderSetupWizard,
+  mergeProviderModels,
+  type ProviderSetupSaveResult,
+} from './ProviderSetupWizard.tsx';
 import { SettingsPage } from './SettingsPage.tsx';
 import { SpotlightTutorial } from './SpotlightTutorial.tsx';
 import { TopBar } from './TopBar.tsx';
@@ -154,38 +170,89 @@ import { flushActiveManuscripts } from './useManuscriptAutosave.ts';
 import { usePresentationOverlayState } from './usePresentationOverlayState.ts';
 import { useRotatingWaitingPhrase } from './waitingPhrases.ts';
 
-function hasModelCredentials(config: ModelConfig, useDevEnvKey: boolean): boolean {
+export function hasModelCredentials(config: ModelConfig, useDevEnvKey: boolean): boolean {
   if (
     config.apiKey.trim() ||
     (import.meta.env.DEV && (useDevEnvKey || isDevProxyBaseUrl(config.baseUrl)))
   ) {
     return true;
   }
-  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(config.baseUrl.trim());
+  if (config.providerPresetId === 'local') {
+    return true;
+  }
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(?:[/?#]|$)/i.test(config.baseUrl.trim());
 }
 
-function mergeLoadedConfig(
-  loaded: ModelConfig,
-  isWebDev: boolean,
-): { initialConfig: ModelConfig; initialUseDevEnvKey: boolean } {
-  if (import.meta.env.DEV && isWebDev) {
-    const devProxy = readDevSessionProxy(true);
-    if (devProxy) {
-      return {
-        initialConfig: {
-          ...loaded,
-          baseUrl: devProxy.baseUrl,
-          model: devProxy.model ?? normalizeOfficialDeepSeekModel(loaded.model),
-          reasoningEffort: normalizeReasoningEffort(loaded.reasoningEffort),
-          apiKey: devProxy.hasEnvKey ? '' : loaded.apiKey,
-        },
-        initialUseDevEnvKey: devProxy.hasEnvKey,
-      };
-    }
-  }
+export function hasCredentialsForItem(
+  config: ModelConfig,
+  activeProviderId: string,
+  useDevEnvKey: boolean,
+): boolean {
+  const itemUsesDevEnvKey =
+    useDevEnvKey && (!config.providerId || config.providerId === activeProviderId);
+  return hasModelCredentials(config, itemUsesDevEnvKey);
+}
+
+export function applyWizardSaveToLibrary(
+  library: ProviderLibrary,
+  result: ProviderSetupSaveResult,
+  mode: 'onboarding' | 'add' | 'edit',
+): ProviderLibrary {
+  const exists = library.profiles.some((p) => p.id === result.profile.id);
+  const isSingleUnconfiguredPlaceholder =
+    mode === 'onboarding' &&
+    library.profiles.length === 1 &&
+    library.profiles[0]?.id === 'deepseek-official' &&
+    !library.profiles[0]?.apiKey.trim();
+
+  const profiles =
+    isSingleUnconfiguredPlaceholder && result.profile.id !== 'deepseek-official'
+      ? [result.profile]
+      : exists
+        ? library.profiles.map((p) => (p.id === result.profile.id ? result.profile : p))
+        : [...library.profiles, result.profile];
+
+  const activeProviderId =
+    mode === 'edit' && profiles.some((p) => p.id === library.activeProviderId)
+      ? library.activeProviderId
+      : result.profile.id;
+
+  const publicResearch =
+    result.publicResearch !== undefined ? result.publicResearch : library.publicResearch;
+
   return {
-    initialConfig: normalizeOfficialModelConfig(loaded),
-    initialUseDevEnvKey: false,
+    version: 2,
+    activeProviderId,
+    profiles,
+    reasoningEffort: library.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+    ...(publicResearch ? { publicResearch } : {}),
+  };
+}
+
+export function rehydrateProviderLibraryKeys(
+  mergedMeta: ProviderLibraryMeta,
+  current: ProviderLibrary,
+): ProviderLibrary {
+  const existingKeys = new Map(current.profiles.map((p) => [p.id, p.apiKey]));
+  const profiles: ProviderProfile[] = mergedMeta.profiles.map((metaProfile) => ({
+    ...metaProfile,
+    apiKey: existingKeys.get(metaProfile.id) ?? '',
+  }));
+  const publicResearch: PublicResearchConfig | undefined = mergedMeta.publicResearch
+    ? {
+        ...mergedMeta.publicResearch,
+        ...(current.publicResearch?.provider === mergedMeta.publicResearch.provider &&
+        current.publicResearch?.apiKey
+          ? { apiKey: current.publicResearch.apiKey }
+          : {}),
+      }
+    : undefined;
+  return {
+    version: 2,
+    activeProviderId: mergedMeta.activeProviderId,
+    profiles,
+    reasoningEffort: mergedMeta.reasoningEffort ?? current.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+    ...(publicResearch ? { publicResearch } : {}),
   };
 }
 
@@ -343,8 +410,8 @@ export function App({ runtime }: AppProps) {
     promptPackLibraryRef.current = saved;
     setPromptPackLibraryState(saved);
   }, [runtime]);
-  const configStore = useMemo(
-    () => createAsyncModelConfigStore(runtime.secretStore),
+  const providerLibraryStore = useMemo(
+    () => createAsyncProviderLibraryStore(runtime.secretStore),
     [runtime],
   );
   const harness = useMemo(
@@ -360,19 +427,46 @@ export function App({ runtime }: AppProps) {
     [runtime],
   );
 
-  const [config, setConfig] = useState<ModelConfig>(() => {
+  const [providerLibrary, setProviderLibrary] = useState<ProviderLibrary>(() =>
+    createDefaultProviderLibrary(),
+  );
+  const providerLibraryRef = useRef(providerLibrary);
+  providerLibraryRef.current = providerLibrary;
+  const [devProxySession, setDevProxySession] = useState<{ baseUrl: string; model?: string } | null>(() => {
     const devProxy = import.meta.env.DEV ? readDevSessionProxy(isWebDev) : null;
-    if (devProxy) {
-      return {
-        ...DEFAULT_MODEL_CONFIG,
-        baseUrl: devProxy.baseUrl,
-        model: devProxy.model ?? DEFAULT_MODEL_CONFIG.model,
-      };
-    }
-    return DEFAULT_MODEL_CONFIG;
+    return devProxy ? { baseUrl: devProxy.baseUrl, model: devProxy.model } : null;
   });
+  const devProxySessionRef = useRef(devProxySession);
+  devProxySessionRef.current = devProxySession;
   const [useDevEnvKey, setUseDevEnvKey] = useState(() =>
     Boolean(import.meta.env.DEV && readDevSessionProxy(isWebDev)?.hasEnvKey),
+  );
+  const useDevEnvKeyRef = useRef(useDevEnvKey);
+  useDevEnvKeyRef.current = useDevEnvKey;
+
+  const resolveEffectiveAppConfig = useCallback(
+    (library: ProviderLibrary, pref?: GenerationPreference): ModelConfig => {
+      const currentDevProxy = devProxySessionRef.current;
+      return resolveEffectiveLibraryModelConfig({
+        providerLibrary: library,
+        preference: pref,
+        devProxy: currentDevProxy
+          ? { ...currentDevProxy, hasEnvKey: useDevEnvKeyRef.current }
+          : null,
+      });
+    },
+    [],
+  );
+
+  const config = useMemo(
+    () =>
+      resolveEffectiveLibraryModelConfig({
+        providerLibrary,
+        devProxy: devProxySession
+          ? { ...devProxySession, hasEnvKey: useDevEnvKey }
+          : null,
+      }),
+    [providerLibrary, devProxySession, useDevEnvKey],
   );
   const [devTestInfo, setDevTestInfo] = useState<DevTestConfigResponse | null>(null);
   const [stories, setStories] = useState<Story[]>([]);
@@ -396,9 +490,13 @@ export function App({ runtime }: AppProps) {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardMounted, setWizardMounted] = useState(false);
   const [wizardVerifying, setWizardVerifying] = useState(false);
+  const [wizardMode, setWizardMode] = useState<'onboarding' | 'add' | 'edit'>('onboarding');
+  const [wizardTargetProfileId, setWizardTargetProfileId] = useState<string | undefined>(undefined);
   const [keyBoundSeq, setKeyBoundSeq] = useState(0);
   const [pendingByok, setPendingByok] = useState<{
     label: string;
+    targetProfileId?: string;
+    preference?: GenerationPreference;
     resume: (resolvedConfig: ModelConfig) => void;
     onCancel?: () => void;
   } | null>(null);
@@ -559,9 +657,10 @@ export function App({ runtime }: AppProps) {
   const buildDiagnosticBundle = useCallback(
     (trigger: DiagnosticBundleTrigger, extra?: { userNote?: string }) => {
       const envVersions = detectEnvironmentVersions();
+      const { publicResearch: _omittedResearch, ...safeConfig } = config;
       return runtime.diagnostics.buildBundle(
         {
-          ...config,
+          ...safeConfig,
           isDevProxy: import.meta.env.DEV && isDevProxyBaseUrl(config.baseUrl),
         },
         {
@@ -679,11 +778,20 @@ export function App({ runtime }: AppProps) {
     const editSeqAtStart = configEditSeqRef.current;
     (async () => {
       try {
-        const loaded = await configStore.load();
+        const loadedLibrary = await providerLibraryStore.load();
         if (cancelled || configEditSeqRef.current !== editSeqAtStart) return;
-        const merged = mergeLoadedConfig(loaded, isWebDev);
-        setConfig(merged.initialConfig);
-        setUseDevEnvKey(merged.initialUseDevEnvKey);
+        providerLibraryRef.current = loadedLibrary;
+        setProviderLibrary(loadedLibrary);
+        if (import.meta.env.DEV && isWebDev) {
+          const devProxy = readDevSessionProxy(true);
+          if (devProxy) {
+            setDevProxySession({ baseUrl: devProxy.baseUrl, model: devProxy.model });
+            setUseDevEnvKey(devProxy.hasEnvKey);
+          } else {
+            setDevProxySession(null);
+            setUseDevEnvKey(false);
+          }
+        }
       } catch (err) {
         if (!cancelled && configEditSeqRef.current === editSeqAtStart) {
           setErrorMsg(toErrorMessage(err, '读取连接配置失败。'));
@@ -697,7 +805,7 @@ export function App({ runtime }: AppProps) {
     return () => {
       cancelled = true;
     };
-  }, [configStore, isWebDev]);
+  }, [providerLibraryStore, isWebDev]);
 
   useEffect(() => {
     let cancelled = false;
@@ -851,35 +959,21 @@ export function App({ runtime }: AppProps) {
       });
   };
 
-  const updateConfig = (next: ModelConfig, nextUseDevEnvKey = useDevEnvKey) => {
+  const updateProviderLibrary = (
+    nextLibrary: ProviderLibrary,
+    options?: { keepDevProxy?: boolean },
+  ) => {
     configEditSeqRef.current += 1;
-    const effectiveUseDevEnvKey =
-      import.meta.env.DEV && isWebDev && nextUseDevEnvKey && isDevProxyBaseUrl(next.baseUrl);
-    setConfig(next);
-    setUseDevEnvKey(effectiveUseDevEnvKey);
-    if (import.meta.env.DEV && isWebDev) {
-      if (effectiveUseDevEnvKey) {
-        writeDevSessionProxy({
-          baseUrl: next.baseUrl,
-          model: next.model,
-          hasEnvKey: true,
-        });
-        const saveSeq = configEditSeqRef.current;
-        enqueueConfigSave(async () => {
-          if (configEditSeqRef.current !== saveSeq) return;
-          const persisted = await configStore.load();
-          await configStore.save({
-            ...next,
-            baseUrl: isDevProxyBaseUrl(persisted.baseUrl)
-              ? DEFAULT_MODEL_CONFIG.baseUrl
-              : persisted.baseUrl,
-          });
-        });
-        return;
-      }
+    if (!options?.keepDevProxy && import.meta.env.DEV && isWebDev) {
       clearDevSessionProxy();
+      devProxySessionRef.current = null;
+      useDevEnvKeyRef.current = false;
+      setDevProxySession(null);
+      setUseDevEnvKey(false);
     }
-    enqueueConfigSave(() => configStore.save(next));
+    providerLibraryRef.current = nextLibrary;
+    setProviderLibrary(nextLibrary);
+    enqueueConfigSave(() => providerLibraryStore.save(nextLibrary));
   };
 
   const applyDevTestConfig = () => {
@@ -891,13 +985,10 @@ export function App({ runtime }: AppProps) {
       model: devModel,
       hasEnvKey: devTestInfo.hasEnvKey,
     });
-    setConfig({
-      baseUrl: devTestInfo.proxyBaseUrl,
-      model: devModel,
-      reasoningEffort: normalizeReasoningEffort(config.reasoningEffort),
-      apiKey: devTestInfo.hasEnvKey ? '' : config.apiKey,
-      memoryOnly: config.memoryOnly,
-    });
+    const nextDevProxy = { baseUrl: devTestInfo.proxyBaseUrl, model: devModel };
+    devProxySessionRef.current = nextDevProxy;
+    useDevEnvKeyRef.current = devTestInfo.hasEnvKey;
+    setDevProxySession(nextDevProxy);
     setUseDevEnvKey(devTestInfo.hasEnvKey);
     setErrorMsg(null);
   };
@@ -1062,6 +1153,10 @@ export function App({ runtime }: AppProps) {
   };
 
   const hasCredentials = hasModelCredentials(config, useDevEnvKey);
+  const supportsBalanceQuery = Boolean(
+    !useDevEnvKey &&
+      (config.capabilities?.supportsBalanceQuery ?? isOfficialDeepSeekUrl(config.baseUrl)),
+  );
   const useDevProxyForSetup = import.meta.env.DEV && isWebDev && isDevProxyBaseUrl(config.baseUrl);
   const { balanceState, refreshBalance } = useDeepSeekBalance({
     active: showSettings,
@@ -1069,6 +1164,7 @@ export function App({ runtime }: AppProps) {
     useDevEnvKey,
     apiKey: config.apiKey,
     baseUrl: config.baseUrl,
+    supportsBalanceQuery,
     keyBoundSeq,
     diagnostics: runtime.diagnostics,
   });
@@ -1077,12 +1173,24 @@ export function App({ runtime }: AppProps) {
     label: string,
     resume: (resolvedConfig: ModelConfig) => void,
     onCancel?: () => void,
+    targetProfileId?: string,
+    preference?: GenerationPreference,
   ) => {
     wizardReturnFocusRef.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
     wizardCloseReasonRef.current = null;
-    setPendingByok({ label, resume, onCancel });
+    const profiles = providerLibraryRef.current.profiles;
+    const resolvedTargetId = targetProfileId ?? providerLibraryRef.current.activeProviderId;
+    const targetExists = profiles.some((p) => p.id === resolvedTargetId);
+    const isInitialOnboarding =
+      profiles.length <= 1 &&
+      profiles[0]?.id === 'deepseek-official' &&
+      !profiles[0]?.apiKey.trim() &&
+      resolvedTargetId === 'deepseek-official';
+    setWizardMode(isInitialOnboarding || !targetExists ? 'onboarding' : 'edit');
+    setWizardTargetProfileId(targetExists && !isInitialOnboarding ? resolvedTargetId : undefined);
+    setPendingByok({ label, targetProfileId: resolvedTargetId, preference, resume, onCancel });
     setWizardMounted(true);
     setWizardOpen(true);
   };
@@ -1197,6 +1305,39 @@ export function App({ runtime }: AppProps) {
       ? document.activeElement
       : null;
     wizardCloseReasonRef.current = null;
+    const activeId = providerLibraryRef.current.activeProviderId;
+    const activeProf = providerLibraryRef.current.profiles.find((p) => p.id === activeId);
+    const isInitialOnboarding =
+      !hasCredentials &&
+      providerLibraryRef.current.profiles.length <= 1 &&
+      activeProf?.id === 'deepseek-official' &&
+      !activeProf.apiKey.trim();
+    setWizardMode(isInitialOnboarding ? 'onboarding' : 'edit');
+    setWizardTargetProfileId(isInitialOnboarding ? undefined : activeProf?.id);
+    setPendingByok(null);
+    setWizardMounted(true);
+    setWizardOpen(true);
+  };
+
+  const openAddProviderWizard = () => {
+    wizardReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    wizardCloseReasonRef.current = null;
+    setWizardMode('add');
+    setWizardTargetProfileId(undefined);
+    setPendingByok(null);
+    setWizardMounted(true);
+    setWizardOpen(true);
+  };
+
+  const openEditProviderWizard = (profileId: string) => {
+    wizardReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    wizardCloseReasonRef.current = null;
+    setWizardMode('edit');
+    setWizardTargetProfileId(profileId);
     setPendingByok(null);
     setWizardMounted(true);
     setWizardOpen(true);
@@ -1213,8 +1354,127 @@ export function App({ runtime }: AppProps) {
   };
 
   const handleClearSavedKey = () => {
-    const cleared = normalizeOfficialModelConfig({ ...config, apiKey: '' });
-    updateConfig(cleared, false);
+    const current = providerLibraryRef.current;
+    const profiles = current.profiles.map((profile) =>
+      profile.id === current.activeProviderId
+        ? { ...profile, apiKey: '', memoryOnly: false }
+        : profile,
+    );
+    updateProviderLibrary({ ...current, profiles });
+  };
+
+  const handleSelectProviderProfile = (profileId: string) => {
+    const current = providerLibraryRef.current;
+    if (!current.profiles.some((p) => p.id === profileId)) return;
+    updateProviderLibrary({ ...current, activeProviderId: profileId });
+    setKeyBoundSeq((seq) => seq + 1);
+  };
+
+  const handleDeleteProviderProfile = (profileId: string) => {
+    const current = providerLibraryRef.current;
+    if (current.profiles.length <= 1) return;
+    const remaining = current.profiles.filter((p) => p.id !== profileId);
+    if (remaining.length === 0) return;
+    const activeProviderId =
+      current.activeProviderId === profileId ? remaining[0]!.id : current.activeProviderId;
+    let publicResearch = current.publicResearch;
+    if (
+      publicResearch?.provider === 'deepseek_account' &&
+      publicResearch.deepseekProfileId === profileId
+    ) {
+      const replacementDs = remaining.find(
+        (p) => p.presetId === 'deepseek' || isOfficialDeepSeekUrl(p.baseUrl),
+      );
+      publicResearch = replacementDs
+        ? { provider: 'deepseek_account', deepseekProfileId: replacementDs.id }
+        : { provider: 'none' };
+    }
+    updateProviderLibrary({
+      ...current,
+      activeProviderId,
+      profiles: remaining,
+      ...(publicResearch ? { publicResearch } : {}),
+    });
+    setKeyBoundSeq((seq) => seq + 1);
+  };
+
+  const handleDefaultModelChange = (rawModel: string) => {
+    const trimmed = rawModel.trim();
+    if (!trimmed) return;
+    const current = providerLibraryRef.current;
+    const profiles = current.profiles.map((profile) => {
+      if (profile.id !== current.activeProviderId) return profile;
+      const isDeepSeek =
+        profile.presetId === 'deepseek' || isOfficialDeepSeekUrl(profile.baseUrl);
+      const hasCustomModels = profile.models.some((m) => !isOfficialDeepSeekModel(m.id));
+      const nextModel =
+        isDeepSeek && !hasCustomModels ? normalizeOfficialDeepSeekModel(trimmed) : trimmed;
+      const nextModels =
+        isDeepSeek && !hasCustomModels
+          ? profile.models
+          : mergeProviderModels(profile.models, [nextModel]);
+      return {
+        ...profile,
+        defaultModel: nextModel,
+        models: nextModels,
+      };
+    });
+    updateProviderLibrary({ ...current, profiles }, { keepDevProxy: isWebDev && Boolean(devProxySessionRef.current) });
+  };
+
+  const handleDefaultReasoningEffortChange = (effort: ReasoningEffort) => {
+    const current = providerLibraryRef.current;
+    updateProviderLibrary(
+      {
+        ...current,
+        reasoningEffort: normalizeReasoningEffort(effort),
+      },
+      { keepDevProxy: isWebDev && Boolean(devProxySessionRef.current) },
+    );
+  };
+
+  const handleAddCustomModel = (modelId: string) => {
+    const trimmed = modelId.trim();
+    if (!trimmed) return;
+    const current = providerLibraryRef.current;
+    const profiles = current.profiles.map((profile) => {
+      if (profile.id !== current.activeProviderId) return profile;
+      return {
+        ...profile,
+        models: mergeProviderModels(profile.models, [trimmed]),
+      };
+    });
+    updateProviderLibrary(
+      { ...current, profiles },
+      { keepDevProxy: isWebDev && Boolean(devProxySessionRef.current) },
+    );
+  };
+
+  const handleRemoveCustomModel = (modelId: string) => {
+    const current = providerLibraryRef.current;
+    const profiles = current.profiles.map((profile) => {
+      if (profile.id !== current.activeProviderId) return profile;
+      const nextModels = profile.models.filter((m) => m.id !== modelId);
+      const nextDefault =
+        profile.defaultModel === modelId ? nextModels[0]?.id ?? '' : profile.defaultModel;
+      return {
+        ...profile,
+        models: nextModels,
+        defaultModel: nextDefault,
+      };
+    });
+    updateProviderLibrary(
+      { ...current, profiles },
+      { keepDevProxy: isWebDev && Boolean(devProxySessionRef.current) },
+    );
+  };
+
+  const handleUpdatePublicResearch = (publicResearch: PublicResearchConfig) => {
+    const current = providerLibraryRef.current;
+    updateProviderLibrary(
+      { ...current, publicResearch },
+      { keepDevProxy: isWebDev && Boolean(devProxySessionRef.current) },
+    );
   };
 
   const openImportView = (mode: ImportMode) => {
@@ -1284,14 +1544,28 @@ export function App({ runtime }: AppProps) {
   const withCredentials = (
     label: string,
     action: (resolvedConfig: ModelConfig) => void,
+    targetPreference?: GenerationPreference,
     overrideConfig?: ModelConfig,
   ) => {
-    const activeCfg = overrideConfig ?? config;
-    if (!overrideConfig && !hasCredentials) {
-      openByokPrompt(label, (resolved) => action(resolved));
+    const liveLibrary = providerLibraryRef.current;
+    const targetCfg = overrideConfig ?? resolveEffectiveAppConfig(liveLibrary, targetPreference);
+    if (
+      hasCredentialsForItem(
+        targetCfg,
+        liveLibrary.activeProviderId,
+        useDevEnvKeyRef.current,
+      )
+    ) {
+      action(targetCfg);
       return;
     }
-    action(activeCfg);
+    openByokPrompt(
+      label,
+      (resolved) => action(resolved),
+      undefined,
+      targetCfg.providerId,
+      targetPreference,
+    );
   };
 
   const persistMaterializedAsset = async (
@@ -1523,6 +1797,7 @@ export function App({ runtime }: AppProps) {
       return;
     }
 
+    const initialStory = storyRef.current ?? story;
     withCredentials(
       '继续互动对话',
       (activeCfg) => {
@@ -1534,10 +1809,15 @@ export function App({ runtime }: AppProps) {
         void runStreamingExecution(
           (callbacks) => {
             const latestStory = storyRef.current ?? story;
+            const effectiveCfg = overrideConfig
+              ? resolveEffectiveModelConfig(overrideConfig, latestStory.generationPreference)
+              : latestStory.generationPreference?.providerId === activeCfg.providerId
+                ? resolveEffectiveModelConfig(activeCfg, latestStory.generationPreference)
+                : resolveEffectiveAppConfig(providerLibraryRef.current, latestStory.generationPreference);
             return harness.runTurn(
               latestStory,
               trimmed,
-              resolveEffectiveModelConfig(activeCfg, latestStory.generationPreference),
+              effectiveCfg,
               callbacks,
             );
           },
@@ -1548,6 +1828,7 @@ export function App({ runtime }: AppProps) {
             : undefined,
         );
       },
+      initialStory.generationPreference,
       overrideConfig,
     );
   };
@@ -1559,21 +1840,28 @@ export function App({ runtime }: AppProps) {
   ) => {
     const trimmed = newContent.trim();
     if (!trimmed || branchSwitchBusyRef.current || isSummarizing) return;
+    const initialStory = storyRef.current ?? story;
     withCredentials(
       '编辑内容并生成新分支',
       (activeCfg) => {
         autoScroll.resumeFollow();
         void runStreamingExecution((callbacks) => {
           const latestStory = storyRef.current ?? story;
+          const effectiveCfg = overrideConfig
+            ? resolveEffectiveModelConfig(overrideConfig, latestStory.generationPreference)
+            : latestStory.generationPreference?.providerId === activeCfg.providerId
+              ? resolveEffectiveModelConfig(activeCfg, latestStory.generationPreference)
+              : resolveEffectiveAppConfig(providerLibraryRef.current, latestStory.generationPreference);
           return harness.editAndBranch(
             latestStory,
             targetUserNodeId,
             trimmed,
-            resolveEffectiveModelConfig(activeCfg, latestStory.generationPreference),
+            effectiveCfg,
             callbacks,
           );
         });
       },
+      initialStory.generationPreference,
       overrideConfig,
     );
   };
@@ -1583,20 +1871,27 @@ export function App({ runtime }: AppProps) {
     overrideConfig?: ModelConfig,
   ) => {
     if (branchSwitchBusyRef.current || isSummarizing) return;
+    const initialStory = storyRef.current ?? story;
     withCredentials(
       '重新生成回复',
       (activeCfg) => {
         autoScroll.resumeFollow();
         void runStreamingExecution((callbacks) => {
           const latestStory = storyRef.current ?? story;
+          const effectiveCfg = overrideConfig
+            ? resolveEffectiveModelConfig(overrideConfig, latestStory.generationPreference)
+            : latestStory.generationPreference?.providerId === activeCfg.providerId
+              ? resolveEffectiveModelConfig(activeCfg, latestStory.generationPreference)
+              : resolveEffectiveAppConfig(providerLibraryRef.current, latestStory.generationPreference);
           return harness.regenerateNode(
             latestStory,
             targetAssistantNodeId,
-            resolveEffectiveModelConfig(activeCfg, latestStory.generationPreference),
+            effectiveCfg,
             callbacks,
           );
         });
       },
+      initialStory.generationPreference,
       overrideConfig,
     );
   };
@@ -1715,18 +2010,22 @@ export function App({ runtime }: AppProps) {
             setRefusalRetrying(false);
           }
         });
-    });
+    }, pendingWelcomePref);
   };
 
   const handleContinuePartialRefusal = (nodeId: string) => {
     if (branchSwitchBusyRef.current || abortRef.current || isStreaming || isSummarizing) return;
+    const initialStory = storyRef.current ?? story;
     withCredentials(
       '继续追要半拒绝内容',
       (activeCfg) => {
         autoScroll.resumeFollow();
         void runStreamingExecution(async (callbacks) => {
           const latest = storyRef.current ?? story;
-          const effectiveConfig = resolveEffectiveModelConfig(activeCfg, latest.generationPreference);
+          const effectiveConfig =
+            latest.generationPreference?.providerId === activeCfg.providerId
+              ? resolveEffectiveModelConfig(activeCfg, latest.generationPreference)
+              : resolveEffectiveAppConfig(providerLibraryRef.current, latest.generationPreference);
           const {
             workingStory,
             node,
@@ -1769,6 +2068,7 @@ export function App({ runtime }: AppProps) {
           return { userNode: parent, assistantNode: nextNode, story: saved };
         });
       },
+      initialStory.generationPreference,
     );
   };
 
@@ -2051,7 +2351,7 @@ export function App({ runtime }: AppProps) {
           setStreamReasoning('');
           setRefusalRetrying(false);
         });
-    });
+    }, prefAtSubmit);
   };
 
   const handleStartBlankManuscript = async () => {
@@ -2108,14 +2408,20 @@ export function App({ runtime }: AppProps) {
         void runStreamingExecution((callbacks) => {
           const latestStory =
             storyRef.current?.id === targetStory.id ? storyRef.current : targetStory;
+          const effectiveCfg = overrideConfig
+            ? resolveEffectiveModelConfig(overrideConfig, latestStory.generationPreference)
+            : latestStory.generationPreference?.providerId === activeCfg.providerId
+              ? resolveEffectiveModelConfig(activeCfg, latestStory.generationPreference)
+              : resolveEffectiveAppConfig(providerLibraryRef.current, latestStory.generationPreference);
           return harness.runTurn(
             latestStory,
             '请按照当前故事设定开始第一幕。',
-            resolveEffectiveModelConfig(activeCfg, latestStory.generationPreference),
+            effectiveCfg,
             callbacks,
           );
         });
       },
+      targetStory.generationPreference,
       overrideConfig,
     );
   };
@@ -2314,6 +2620,7 @@ export function App({ runtime }: AppProps) {
           fontSize: displayPreferences.fontSize,
         },
         promptPacks: promptPackLibrary,
+        providerLibrary: providerLibraryRef.current,
       });
       const dateTag = new Date().toISOString().slice(0, 10);
       await runtime.backupExporter.exportJsonFile(`folio-backup-${dateTag}.folio.json`, json);
@@ -2357,6 +2664,7 @@ export function App({ runtime }: AppProps) {
             fontSize: displayPreferences.fontSize,
           },
           promptPacks: promptPackLibrary,
+          providerLibrary: providerLibraryRef.current,
         },
         incoming,
       );
@@ -2367,6 +2675,12 @@ export function App({ runtime }: AppProps) {
       await creative.save(() => merged.workspace);
       if (merged.promptPacks) {
         setPromptPackLibrary(merged.promptPacks);
+      }
+      if (merged.providerLibrary) {
+        updateProviderLibrary(
+          rehydrateProviderLibraryKeys(merged.providerLibrary, providerLibraryRef.current),
+          { keepDevProxy: true },
+        );
       }
       if (incoming.displayPreferences?.themePreference) {
         const pref = incoming.displayPreferences.themePreference as DisplayThemePreference;
@@ -2929,8 +3243,8 @@ export function App({ runtime }: AppProps) {
   );
 
   const effectiveComposerConfig = isWelcome
-    ? resolveEffectiveModelConfig(config, pendingWelcomePref)
-    : resolveEffectiveModelConfig(config, story.generationPreference);
+    ? resolveEffectiveAppConfig(providerLibrary, pendingWelcomePref)
+    : resolveEffectiveAppConfig(providerLibrary, story.generationPreference);
 
   const handleStoryGenerationPreferenceChange = (
     patch: Parameters<typeof mergeGenerationPreference>[1],
@@ -2958,12 +3272,21 @@ export function App({ runtime }: AppProps) {
     });
   };
 
-  const handleComposerModelChange = (model: OfficialDeepSeekModel) => {
+  const handleComposerModelChange = (model: string) => {
     if (isStreaming || creating) return;
     if (isWelcome) {
       setPendingWelcomePref((prev) => mergeGenerationPreference(prev, { model }));
     } else {
       handleStoryGenerationPreferenceChange({ model });
+    }
+  };
+
+  const handleComposerProviderModelChange = (patch: { providerId?: string; model: string }) => {
+    if (isStreaming || creating) return;
+    if (isWelcome) {
+      setPendingWelcomePref((prev) => mergeGenerationPreference(prev, patch));
+    } else {
+      handleStoryGenerationPreferenceChange(patch);
     }
   };
 
@@ -3147,6 +3470,7 @@ export function App({ runtime }: AppProps) {
                 mode={creativePage}
                 workspace={creative.workspace}
                 defaultConfig={config}
+                providerLibrary={providerLibrary}
                 promptPackLibrary={promptPackLibrary}
                 ready={creative.ready}
                 storageError={creative.error}
@@ -3375,8 +3699,12 @@ export function App({ runtime }: AppProps) {
                 <GenerationControls
                   model={effectiveComposerConfig.model}
                   reasoningEffort={effectiveComposerConfig.reasoningEffort}
+                  providerLibrary={providerLibrary}
+                  providerId={effectiveComposerConfig.providerId}
+                  capabilities={effectiveComposerConfig.capabilities}
                   disabled={isStreaming || creating}
                   onModelChange={handleComposerModelChange}
+                  onProviderModelChange={handleComposerProviderModelChange}
                   onReasoningEffortChange={handleComposerReasoningChange}
                   promptPackLibrary={promptPackLibrary}
                   promptPackMode={
@@ -3544,9 +3872,16 @@ export function App({ runtime }: AppProps) {
                 onImportBackupFile={(file) => void handleImportBackupFile(file)}
                 onThemePreferenceChange={setThemePreference}
                 onFontSizeChange={setDisplayFontSize}
-                onDefaultModelChange={(model) => updateConfig({ ...config, model })}
-                onDefaultReasoningEffortChange={(reasoningEffort) =>
-                  updateConfig({ ...config, reasoningEffort })}
+                onDefaultModelChange={handleDefaultModelChange}
+                onDefaultReasoningEffortChange={handleDefaultReasoningEffortChange}
+                providerLibrary={providerLibrary}
+                onSelectProviderProfile={handleSelectProviderProfile}
+                onOpenAddProviderWizard={openAddProviderWizard}
+                onOpenEditProviderWizard={openEditProviderWizard}
+                onDeleteProviderProfile={handleDeleteProviderProfile}
+                onAddCustomModel={handleAddCustomModel}
+                onRemoveCustomModel={handleRemoveCustomModel}
+                onUpdatePublicResearch={handleUpdatePublicResearch}
                 promptPackLibrary={promptPackLibrary}
                 workspaceUsageSummary={workspaceUsageSummary}
                 appUpdater={appUpdater}
@@ -3603,24 +3938,49 @@ export function App({ runtime }: AppProps) {
       )}
 
       {wizardMounted && (
-        <DeepSeekSetupWizard
+        <ProviderSetupWizard
           open={wizardOpen}
-          initialKey={config.apiKey}
+          mode={wizardMode}
+          initialProfile={
+            wizardMode === 'edit' && wizardTargetProfileId
+              ? providerLibrary.profiles.find((p) => p.id === wizardTargetProfileId)
+              : undefined
+          }
+          initialPublicResearch={
+            wizardMode === 'add' ? undefined : providerLibrary.publicResearch
+          }
+          initialKey={wizardMode === 'onboarding' ? config.apiKey : ''}
+          hasDeepSeekProfileInLibrary={providerLibrary.profiles.some(
+            (p) => p.presetId === 'deepseek' || isOfficialDeepSeekUrl(p.baseUrl),
+          )}
+          isWebPlatform={runtime.platform === 'web'}
           pendingLabel={pendingByok?.label ?? null}
           verifyUrlBase={
-            useDevProxyForSetup ? config.baseUrl : DEFAULT_MODEL_CONFIG.baseUrl
+            useDevProxyForSetup ? config.baseUrl : PROVIDER_PRESETS.deepseek.baseUrl
           }
-          onComplete={(verifiedKey) => {
-            const nextCfg: ModelConfig = useDevProxyForSetup
-              ? { ...config, apiKey: verifiedKey, memoryOnly: false }
-              : normalizeOfficialModelConfig({ ...config, baseUrl: DEFAULT_MODEL_CONFIG.baseUrl, apiKey: verifiedKey });
+          onSaveProfile={(result) => {
+            const nextLibrary = applyWizardSaveToLibrary(
+              providerLibraryRef.current,
+              result,
+              wizardMode,
+            );
             const resume = pendingByok?.resume;
+            const targetPref = pendingByok?.preference;
             wizardCloseReasonRef.current = 'success';
             setPendingByok(null);
             setWizardOpen(false);
-            updateConfig(nextCfg, false);
+            updateProviderLibrary(nextLibrary);
             setKeyBoundSeq((seq) => seq + 1);
-            if (resume) resume(nextCfg);
+            if (resume) {
+              const resolvedCfg = targetPref
+                ? projectActiveModelConfig(nextLibrary, targetPref)
+                : projectActiveModelConfig(nextLibrary, { providerId: result.profile.id });
+              resume(resolveEffectiveLibraryModelConfig({
+                providerLibrary: nextLibrary,
+                defaultConfig: resolvedCfg,
+                preference: targetPref,
+              }));
+            }
           }}
           onVerifyingChange={setWizardVerifying}
           onExitComplete={finishWizardExit}

@@ -189,6 +189,52 @@ describe('Issue #111 Slice 3: memory-only DeepSeek balance controller', () => {
     expect(controller.getState()).toEqual({ status: 'idle' });
   });
 
+  it('never calls /user/balance and resets to idle when supportsBalanceQuery is false or baseUrl is third-party', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ is_available: true, balance_infos: [] }),
+    }));
+    const controller = createDeepSeekBalanceController({ fetchImpl: fetchMock });
+
+    // Load DeepSeek balance first
+    await controller.sync({
+      active: true,
+      hasCredentials: true,
+      useDevEnvKey: false,
+      apiKey: 'sk-ds-key',
+      baseUrl: 'https://api.deepseek.com',
+      supportsBalanceQuery: true,
+    });
+    expect(controller.getState().status).toBe('loaded');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Switching to third-party with supportsBalanceQuery: false must reset to idle and never fetch
+    await controller.sync({
+      active: true,
+      hasCredentials: true,
+      useDevEnvKey: false,
+      apiKey: 'sk-openai-key',
+      baseUrl: 'https://api.openai.com/v1',
+      supportsBalanceQuery: false,
+    });
+    expect(controller.getState()).toEqual({ status: 'idle' });
+    await controller.refresh();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Omitting supportsBalanceQuery with a non-DeepSeek URL must also skip /user/balance
+    await controller.sync({
+      active: true,
+      hasCredentials: true,
+      useDevEnvKey: false,
+      apiKey: 'sk-custom-key',
+      baseUrl: 'https://relay.example.com/v1',
+    });
+    expect(controller.getState()).toEqual({ status: 'idle' });
+    await controller.refresh();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('auto-checks after binding a new key via wizard and supports retry after 401/5xx/timeout', async () => {
     let attempt = 0;
     const fetchMock = vi.fn<BalanceFetchLike>(async () => {

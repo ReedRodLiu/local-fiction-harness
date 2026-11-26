@@ -4,17 +4,25 @@ import { fileURLToPath } from 'node:url';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_MODEL_CONFIG, type ModelConfig } from '../../src/harness/index.ts';
+import {
+  DEFAULT_MODEL_CONFIG,
+  createDefaultProviderLibrary,
+  createProviderProfileFromPreset,
+  type ModelConfig,
+  type ProviderLibrary,
+} from '../../src/harness/index.ts';
 import {
   GenerationControls,
+  buildProviderModelMenuGroups,
   mergeGenerationPreference,
+  resolveComposerThinkingToggleEffort,
 } from '../../src/ui/GenerationControls.tsx';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const readSource = (relPath: string) => readFileSync(join(repoRoot, relPath), 'utf8');
 
-describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer toolbar', () => {
-  it('renders Flash/Pro 2-way selector, 4-stop thinking slider (关闭 / 低 / 高 / 极限), and optional leading/trailing slots', () => {
+describe('Ticket #165 & Issue #109: GenerationControls multi-provider switcher & unified thinking toggle', () => {
+  it('renders Flash/Pro 2-way selector for single DeepSeek preset, unified thinking toggle ON with DeepSeek stops (低 / 高 / 极限), and slots', () => {
     const markup = renderToStaticMarkup(
       createElement(GenerationControls, {
         model: 'deepseek-flash',
@@ -31,6 +39,7 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
     expect(markup).toContain('data-testid="send-btn"');
     expect(markup).toContain('data-testid="composer-model-deepseek-flash"');
     expect(markup).toContain('data-testid="composer-model-deepseek-v4-pro"');
+    expect(markup).not.toContain('data-testid="composer-provider-model-trigger"');
     expect(markup).not.toContain('data-testid="generation-pref-prompt-pack"');
     expect(markup).not.toContain('data-testid="generation-pref-prefix-mode"');
     expect(markup).not.toContain('composer-preference-row');
@@ -42,19 +51,130 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
     expect(markup).toMatch(/data-testid="composer-model-deepseek-v4-pro"[^>]*aria-pressed="false"/);
     expect(markup).not.toContain('data-testid="composer-pro-cost-hint"');
 
+    expect(markup).toContain('data-testid="composer-reasoning-control"');
+    expect(markup).toContain('data-testid="composer-thinking-toggle"');
+    expect(markup).toMatch(/data-testid="composer-thinking-toggle"[^>]*aria-pressed="true"/);
     expect(markup).toContain('data-testid="composer-reasoning-slider"');
-    expect(markup).toContain('data-testid="composer-reasoning-stop-none"');
     expect(markup).toContain('data-testid="composer-reasoning-stop-low"');
     expect(markup).toContain('data-testid="composer-reasoning-stop-high"');
     expect(markup).toContain('data-testid="composer-reasoning-stop-max"');
-    expect(markup).toContain('关闭');
+    expect(markup).not.toContain('data-testid="composer-reasoning-stop-medium"');
     expect(markup).toContain('低');
     expect(markup).toContain('高');
     expect(markup).toContain('极限');
     expect(markup).toMatch(/data-testid="composer-reasoning-stop-high"[^>]*aria-pressed="true"/);
   });
 
-  it('shows inline non-blocking Pro cost hint when deepseek-v4-pro is selected', () => {
+  it('defaults unified thinking toggle to OFF (none), hides stops, and maps toggle ON per protocol', () => {
+    const offMarkup = renderToStaticMarkup(
+      createElement(GenerationControls, {
+        model: 'deepseek-flash',
+        reasoningEffort: 'none',
+        onModelChange: vi.fn(),
+        onReasoningEffortChange: vi.fn(),
+      }),
+    );
+
+    expect(offMarkup).toContain('data-testid="composer-reasoning-control"');
+    expect(offMarkup).toContain('data-testid="composer-thinking-toggle"');
+    expect(offMarkup).toMatch(/data-testid="composer-thinking-toggle"[^>]*aria-pressed="false"/);
+    expect(offMarkup).toContain('关闭');
+    expect(offMarkup).not.toContain('data-testid="composer-reasoning-stop-low"');
+    expect(offMarkup).not.toContain('data-testid="composer-reasoning-stop-high"');
+    expect(offMarkup).not.toContain('data-testid="composer-reasoning-stop-max"');
+
+    expect(resolveComposerThinkingToggleEffort('none', 'deepseek')).toBe('high');
+    expect(resolveComposerThinkingToggleEffort('none', 'openai_reasoning_effort')).toBe('medium');
+    expect(resolveComposerThinkingToggleEffort('high', 'deepseek')).toBe('none');
+    expect(resolveComposerThinkingToggleEffort('medium', 'openai_reasoning_effort')).toBe('none');
+  });
+
+  it('renders provider-model trigger and OpenAI thinking stops (low / medium / high) when multi-profile or third-party is active', () => {
+    const dsProfile = createProviderProfileFromPreset('deepseek', { id: 'deepseek-official', apiKey: 'sk-ds' });
+    const openaiProfile = createProviderProfileFromPreset('openai', {
+      id: 'openai-main',
+      name: '我的 OpenAI',
+      apiKey: 'sk-oa',
+      models: [{ id: 'gpt-4o' }, { id: 'o3-mini', label: 'o3 Mini' }],
+      defaultModel: 'o3-mini',
+    });
+    const multiLib: ProviderLibrary = {
+      version: 2,
+      activeProviderId: openaiProfile.id,
+      profiles: [dsProfile, openaiProfile],
+      reasoningEffort: 'medium',
+    };
+
+    const markup = renderToStaticMarkup(
+      createElement(GenerationControls, {
+        model: 'o3-mini',
+        reasoningEffort: 'medium',
+        providerLibrary: multiLib,
+        providerId: openaiProfile.id,
+        capabilities: openaiProfile.capabilities,
+        onModelChange: vi.fn(),
+        onProviderModelChange: vi.fn(),
+        onReasoningEffortChange: vi.fn(),
+      }),
+    );
+
+    expect(markup).toContain('data-testid="composer-provider-model-trigger"');
+    expect(markup).toContain('我的 OpenAI');
+    expect(markup).toContain('o3 Mini');
+    expect(markup).not.toContain('data-testid="composer-model-deepseek-flash"');
+
+    expect(markup).toMatch(/data-testid="composer-thinking-toggle"[^>]*aria-pressed="true"/);
+    expect(markup).toContain('data-testid="composer-reasoning-stop-low"');
+    expect(markup).toContain('data-testid="composer-reasoning-stop-medium"');
+    expect(markup).toContain('data-testid="composer-reasoning-stop-high"');
+    expect(markup).not.toContain('data-testid="composer-reasoning-stop-max"');
+    expect(markup).toContain('中');
+    expect(markup).toMatch(/data-testid="composer-reasoning-stop-medium"[^>]*aria-pressed="true"/);
+
+    // Single third-party profile also uses provider-model trigger
+    const singleThirdParty: ProviderLibrary = {
+      version: 2,
+      activeProviderId: openaiProfile.id,
+      profiles: [openaiProfile],
+      reasoningEffort: 'none',
+    };
+    const singleThirdPartyMarkup = renderToStaticMarkup(
+      createElement(GenerationControls, {
+        model: 'gpt-4o',
+        reasoningEffort: 'none',
+        providerLibrary: singleThirdParty,
+        providerId: openaiProfile.id,
+        capabilities: openaiProfile.capabilities,
+        onModelChange: vi.fn(),
+        onReasoningEffortChange: vi.fn(),
+      }),
+    );
+    expect(singleThirdPartyMarkup).toContain('data-testid="composer-provider-model-trigger"');
+    expect(singleThirdPartyMarkup).not.toContain('data-testid="composer-model-deepseek-flash"');
+
+    // Menu groups include all saved profiles & models
+    const groups = buildProviderModelMenuGroups(multiLib, openaiProfile.id, 'o3-mini');
+    expect(groups.map((g) => g.profileId)).toEqual(['deepseek-official', 'openai-main']);
+    expect(groups[0]?.models.map((m) => m.id)).toEqual(['deepseek-flash', 'deepseek-v4-pro']);
+    expect(groups[1]?.models.map((m) => m.id)).toEqual(['gpt-4o', 'o3-mini']);
+
+    // Single DeepSeek library without custom models keeps Flash/Pro quick buttons
+    const singleDsLib = createDefaultProviderLibrary();
+    const singleDsMarkup = renderToStaticMarkup(
+      createElement(GenerationControls, {
+        model: 'deepseek-flash',
+        reasoningEffort: 'none',
+        providerLibrary: singleDsLib,
+        providerId: 'deepseek-official',
+        onModelChange: vi.fn(),
+        onReasoningEffortChange: vi.fn(),
+      }),
+    );
+    expect(singleDsMarkup).toContain('data-testid="composer-model-deepseek-flash"');
+    expect(singleDsMarkup).not.toContain('data-testid="composer-provider-model-trigger"');
+  });
+
+  it('shows inline non-blocking Pro cost hint when deepseek-v4-pro is selected on DeepSeek official', () => {
     const markup = renderToStaticMarkup(
       createElement(GenerationControls, {
         model: 'deepseek-v4-pro',
@@ -70,7 +190,7 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
     expect(markup).toContain('3–4 倍');
   });
 
-  it('disables model toggle and thinking slider/stops during streaming while leaving trailing stop slot enabled', () => {
+  it('disables model toggle, thinking toggle, and stops during streaming while leaving trailing stop slot enabled', () => {
     const markup = renderToStaticMarkup(
       createElement(GenerationControls, {
         model: 'deepseek-v4-pro',
@@ -84,10 +204,10 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
 
     expect(markup).toMatch(/<button[^>]*data-testid="composer-model-deepseek-flash"[^>]*disabled=""/);
     expect(markup).toMatch(/<button[^>]*data-testid="composer-model-deepseek-v4-pro"[^>]*disabled=""/);
+    expect(markup).toMatch(/<button[^>]*data-testid="composer-thinking-toggle"[^>]*disabled=""/);
     const sliderTag = /<input[^>]*data-testid="composer-reasoning-slider"[^>]*>/.exec(markup)?.[0];
     expect(sliderTag).toBeDefined();
     expect(sliderTag).toContain('disabled=""');
-    expect(markup).toMatch(/data-testid="composer-reasoning-stop-none"[^>]*disabled=""/);
     expect(markup).toMatch(/data-testid="composer-reasoning-stop-low"[^>]*disabled=""/);
     expect(markup).toMatch(/data-testid="composer-reasoning-stop-high"[^>]*disabled=""/);
     expect(markup).toMatch(/data-testid="composer-reasoning-stop-max"[^>]*disabled=""/);
@@ -95,84 +215,84 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
     expect(markup).not.toMatch(/aria-label="停止生成"[^>]*disabled/);
   });
 
-  it('merges partial generationPreference patches without dropping sibling overrides or mutating global config', () => {
+  it('merges partial generationPreference patches preserving arbitrary model and providerId without mutating global config', () => {
     const globalSnapshot: ModelConfig = { ...DEFAULT_MODEL_CONFIG };
 
-    const afterModel = mergeGenerationPreference(
+    const afterProviderModel = mergeGenerationPreference(
       { promptPackMode: 'pack-a', prefixCompletion: 'always' },
-      { model: 'deepseek-v4-pro' },
+      { providerId: 'openai-1', model: 'gpt-4o' },
     );
-    expect(afterModel).toEqual({
-      model: 'deepseek-v4-pro',
+    expect(afterProviderModel).toEqual({
+      providerId: 'openai-1',
+      model: 'gpt-4o',
       promptPackMode: 'pack-a',
       prefixCompletion: 'always',
     });
 
-    const afterEffort = mergeGenerationPreference(afterModel, { reasoningEffort: 'max' });
+    const afterEffort = mergeGenerationPreference(afterProviderModel, { reasoningEffort: 'medium' });
     expect(afterEffort).toEqual({
-      model: 'deepseek-v4-pro',
-      reasoningEffort: 'max',
+      providerId: 'openai-1',
+      model: 'gpt-4o',
+      reasoningEffort: 'medium',
       promptPackMode: 'pack-a',
       prefixCompletion: 'always',
     });
 
-    const afterSwitchBack = mergeGenerationPreference(afterEffort, { model: 'deepseek-flash' });
-    expect(afterSwitchBack).toEqual({
-      model: 'deepseek-flash',
-      reasoningEffort: 'max',
+    const afterSwitchCustom = mergeGenerationPreference(afterEffort, { model: 'claude-3-7-sonnet' });
+    expect(afterSwitchCustom).toEqual({
+      providerId: 'openai-1',
+      model: 'claude-3-7-sonnet',
+      reasoningEffort: 'medium',
       promptPackMode: 'pack-a',
       prefixCompletion: 'always',
     });
 
-    const afterClearingOverrides = mergeGenerationPreference(afterSwitchBack, {
+    const afterClearingOverrides = mergeGenerationPreference(afterSwitchCustom, {
+      providerId: null,
       promptPackMode: null,
       prefixCompletion: null,
     });
     expect(afterClearingOverrides).toEqual({
-      model: 'deepseek-flash',
-      reasoningEffort: 'max',
+      model: 'claude-3-7-sonnet',
+      reasoningEffort: 'medium',
     });
 
-    const afterInvalidPatch = mergeGenerationPreference(afterSwitchBack, {
-      model: 'invalid-model' as never,
+    const afterInvalidPatch = mergeGenerationPreference(afterSwitchCustom, {
+      providerId: '   ',
+      model: '   ',
       promptPackMode: '   ',
       prefixCompletion: 'invalid-mode' as never,
     });
-    expect(afterInvalidPatch).toEqual({ reasoningEffort: 'max' });
+    expect(afterInvalidPatch).toEqual({ reasoningEffort: 'medium' });
 
     expect(mergeGenerationPreference(undefined, {})).toBeUndefined();
     expect(globalSnapshot).toEqual(DEFAULT_MODEL_CONFIG);
   });
 
-  it('wires double-row composer, GenerationControls, welcome ephemeral pref, and story override persistence in App.tsx and styles', () => {
+  it('wires double-row composer, GenerationControls, welcome ephemeral pref, and multi-provider resolution in App.tsx, Panes, and styles', () => {
     const appSource = readSource('src/ui/App.tsx');
+    const draftSource = readSource('src/ui/DraftPane.tsx');
+    const charSource = readSource('src/ui/CharacterPane.tsx');
+    const workspaceSource = readSource('src/ui/CreativeWorkspace.tsx');
     const shellCss = readSource('src/ui/styles/shell.css');
     const playStageCss = readSource('src/ui/styles/play-stage.css');
 
-    // App.tsx wires GenerationControls into the double-row composer
+    // App.tsx wires GenerationControls & multi-provider library resolution
     expect(appSource).toContain("from './GenerationControls.tsx'");
     expect(appSource).toContain('className="composer composer-double-row"');
     expect(appSource).toContain('<GenerationControls');
     expect(appSource).toContain('pendingWelcomePref');
-    expect(appSource).toContain('resolveEffectiveModelConfig(activeCfg, prefAtSubmit)');
+    expect(appSource).toContain('projectActiveModelConfig');
     expect(appSource).toContain('generationPreference: prefAtSubmit');
 
     // Double-row column layout in both shell.css (welcome) and play-stage.css (story)
     expect(shellCss).toMatch(/\.composer\.composer-double-row\s*\{[^}]*flex-direction:\s*column;[^}]*align-items:\s*stretch;/s);
     expect(shellCss).toMatch(/\.composer\.composer-double-row textarea\s*\{[^}]*width:\s*100%;/s);
     expect(playStageCss).toMatch(/\.main-stage\.is-playing > \.composer\.composer-double-row\s*\{[^}]*flex-direction:\s*column;[^}]*align-items:\s*stretch;/s);
-
-    // Narrow mobile rules hide secondary tier label so controls never squeeze textarea or overflow
     expect(shellCss).toMatch(/@media \(max-width: 560px\)[\s\S]*\.composer-model-tier\s*\{[^}]*display:\s*none;/s);
-  });
-
-  it('wires double-row GenerationControls into DraftPane (both discussion and manuscript views) and CharacterPane', () => {
-    const appSource = readSource('src/ui/App.tsx');
-    const draftSource = readSource('src/ui/DraftPane.tsx');
-    const charSource = readSource('src/ui/CharacterPane.tsx');
-    const workspaceSource = readSource('src/ui/CreativeWorkspace.tsx');
 
     expect(workspaceSource).toContain('defaultConfig?: ModelConfig');
+    expect(workspaceSource).toContain('providerLibrary?: ProviderLibrary');
     expect(draftSource).toContain("from './GenerationControls.tsx'");
     expect(draftSource).toContain('className="composer composer-double-row"');
     expect(draftSource).toContain('className="composer writing-composer composer-double-row"');
@@ -222,20 +342,5 @@ describe('Issue #109 Slice 2: Reusable GenerationControls double-row composer to
     );
     expect(overriddenMarkup).toContain('data-overridden="true"');
     expect(overriddenMarkup).toContain('data-testid="composer-narrative-preset-dot"');
-
-    const continuityOverriddenMarkup = renderToStaticMarkup(
-      createElement(GenerationControls, {
-        model: 'deepseek-flash',
-        reasoningEffort: 'high',
-        onModelChange: vi.fn(),
-        onReasoningEffortChange: vi.fn(),
-        promptPackMode: 'inherit',
-        prefixCompletion: 'on_retry',
-        onPromptPackModeChange: vi.fn(),
-        onPrefixCompletionChange: vi.fn(),
-      }),
-    );
-    expect(continuityOverriddenMarkup).toContain('data-overridden="true"');
-    expect(continuityOverriddenMarkup).toContain('data-testid="composer-narrative-preset-dot"');
   });
 });

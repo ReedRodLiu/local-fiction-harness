@@ -6,6 +6,7 @@ import {
   type CharacterConversation,
   type CreativeWorkspaceState,
   type DraftWork,
+  type GenerationPreference,
   type LlmMessage,
   type LlmTransport,
   type LocalCharacter,
@@ -22,7 +23,11 @@ import {
   toErrorMessage,
 } from './textHelpers.ts';
 
-export type RequestModel = (label: string, run: (config: ModelConfig) => void) => void;
+export type RequestModel = (
+  label: string,
+  run: (config: ModelConfig) => void,
+  targetPreference?: GenerationPreference,
+) => void;
 
 export type CreativeReplyRequestOptions = {
   onVisibleDelta?: (delta: string) => void;
@@ -198,6 +203,7 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
       appendReasoning: (delta: string) => void,
       onRefusalRetry: () => void,
     ) => Promise<void>,
+    targetPreference?: GenerationPreference,
   ) {
     requestModel(label, (config) => {
       if (!mounted.current || active.current) return;
@@ -249,7 +255,7 @@ export function useCreativeReply(runtime: PlatformRuntime, requestModel: Request
           setRefusalRetrying(false);
           setBusy(false);
         });
-    });
+    }, targetPreference);
   }
 
   const fail = (err: unknown) => setError(toErrorMessage(err, '本地操作失败。'));
