@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  PUBLIC_RESEARCH_PRESETS,
+  createBochaPublicResearchProvider,
   createDeepSeekPublicResearchProvider,
   createFictionHarness,
   createInMemoryStoryStorage,
+  createRoutedPublicResearchProvider,
+  createTavilyPublicResearchProvider,
   derivePublicResearchIdentity,
   characterContext,
   emptyWorkspace,
@@ -299,6 +303,7 @@ describe('public character research', () => {
     const foregroundConfig: ModelConfig = {
       ...testConfig,
       model: 'deepseek-v4-pro',
+      backgroundModel: 'deepseek-flash',
       reasoningEffort: 'max',
     };
     const provider = createDeepSeekPublicResearchProvider({ fetcher, transport });
@@ -1634,5 +1639,532 @@ describe('public character research', () => {
 
     expect(lookups).toBe(1);
     expect(payloads[1]).toContain('说话短促');
+  });
+
+  it('exports public research preset metadata for none, deepseek_account, tavily, and bocha', () => {
+    expect(PUBLIC_RESEARCH_PRESETS.none).toMatchObject({
+      title: '不开启',
+      description: '仅使用模型自身知识推进设定与创作，不发起联网搜索',
+      quotaHint: '无需额外配置',
+      requiresApiKey: false,
+    });
+    expect(PUBLIC_RESEARCH_PRESETS.deepseek_account).toMatchObject({
+      title: '复用已连 DeepSeek 账号',
+      description: '直接借用你已保存的 DeepSeek 档案密钥做原作与角色查证',
+      quotaHint: '按 DeepSeek 官方检索计费',
+      requiresApiKey: false,
+    });
+    expect(PUBLIC_RESEARCH_PRESETS.tavily).toMatchObject({
+      title: 'Tavily 搜索',
+      description: '专为 AI 整理的网页检索，适合查原作版本、剧情线与角色资料',
+      quotaHint: '免费版每月 1,000 次，足够日常同人使用',
+      docsUrl: 'https://app.tavily.com',
+      requiresApiKey: true,
+    });
+    expect(PUBLIC_RESEARCH_PRESETS.bocha).toMatchObject({
+      title: '博查 AI 搜索',
+      description: '中文网页与百科检索覆盖好，适合国内直连查设定与资料',
+      quotaHint: '注册即赠免费体验额度，日常低频查证够用',
+      docsUrl: 'https://open.bochaai.com',
+      requiresApiKey: true,
+    });
+  });
+
+  it('enforces strict host isolation in createDeepSeekPublicResearchProvider when builtin search is unsupported', async () => {
+    const fetcher = vi.fn<FetchLike>(async () => {
+      throw new Error('must never call api.deepseek.com with third-party key');
+    });
+    const transport: LlmTransport = {
+      streamChat: vi.fn(async function* () {
+        yield { contentDelta: 'unused', finishReason: 'stop' };
+      }),
+    };
+    const provider = createDeepSeekPublicResearchProvider({ fetcher, transport });
+    const identity = {
+      work: '钢之炼金术师',
+      version: '2003 动画版',
+      timeline: '第 51 集结局后',
+      characters: ['爱德华·艾尔利克'],
+    };
+
+    const thirdPartyNoCaps: ModelConfig = {
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o',
+      apiKey: 'sk-openai-secret',
+      memoryOnly: false,
+    };
+    const officialUrlDisabledCaps: ModelConfig = {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'custom-model',
+      apiKey: 'sk-relay-secret',
+      memoryOnly: false,
+      capabilities: {
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    };
+
+    await expect(provider.resolve({ identity, config: thirdPartyNoCaps })).resolves.toBeNull();
+    await expect(provider.resolve({ identity, config: officialUrlDisabledCaps })).resolves.toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(transport.streamChat).not.toHaveBeenCalled();
+  });
+
+  it('uses searchApiKey override for DeepSeek search while synthesizing with active third-party config', async () => {
+    const fetchCalls: Array<{ url: string; headers: Record<string, string> }> = [];
+    const fetcher: FetchLike = async (url, init) => {
+      fetchCalls.push({ url, headers: init.headers });
+      if (url.endsWith('/v1/tools/search')) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          body: null,
+          text: async () => JSON.stringify({
+            results: [{ rerank_score: 2.5, authority: 4, title: '角色百科', url: 'https://wiki.example/ed' }],
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body: null,
+        text: async () => JSON.stringify({ title: '角色百科', content: '爱德华·艾尔利克性格直率。' }),
+      };
+    };
+    const llmRequests: LlmStreamRequest[] = [];
+    const transport: LlmTransport = {
+      async *streamChat(req) {
+        llmRequests.push(req);
+        yield { contentDelta: '### 爱德华·艾尔利克\n- 性格直率。', finishReason: 'stop' };
+      },
+    };
+    const thirdPartyConfig: ModelConfig = {
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o',
+      backgroundModel: 'gpt-4o-mini',
+      apiKey: 'sk-openai-123',
+      memoryOnly: false,
+      capabilities: {
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    };
+    const provider = createDeepSeekPublicResearchProvider({
+      fetcher,
+      transport,
+      searchApiKey: 'sk-deepseek-borrowed',
+      now: () => 5678,
+    });
+
+    const ref = await provider.resolve({
+      identity: {
+        work: '钢之炼金术师',
+        version: '2003 动画版',
+        timeline: '第 51 集结局后',
+        characters: ['爱德华·艾尔利克'],
+      },
+      config: thirdPartyConfig,
+    });
+
+    expect(ref).toMatchObject({
+      summary: '### 爱德华·艾尔利克\n- 性格直率。',
+      sources: [{ title: '角色百科', url: 'https://wiki.example/ed' }],
+      fetchedAt: 5678,
+    });
+    expect(fetchCalls.every((c) => c.headers.Authorization === 'Bearer sk-deepseek-borrowed')).toBe(true);
+    expect(llmRequests).toHaveLength(1);
+    expect(llmRequests[0]).toMatchObject({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-openai-123',
+      model: 'gpt-4o-mini',
+      reasoningEffort: 'none',
+      capabilities: thirdPartyConfig.capabilities,
+    });
+  });
+
+  it('resolves public research via Tavily search and synthesizes using active provider config', async () => {
+    const fetchCalls: Array<{ url: string; headers: Record<string, string>; body: Record<string, unknown> }> = [];
+    const fetcher: FetchLike = async (url, init) => {
+      fetchCalls.push({ url, headers: init.headers, body: JSON.parse(init.body) as Record<string, unknown> });
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body: null,
+        text: async () => JSON.stringify({
+          results: [
+            { title: '内网忽略', url: 'http://127.0.0.1/secret', content: '爱德华·艾尔利克' },
+            { title: 'FMA Wiki', url: 'https://fma.example/edward', content: '爱德华·艾尔利克习惯被称为豆丁。' },
+          ],
+        }),
+      };
+    };
+    const llmRequests: LlmStreamRequest[] = [];
+    const transport: LlmTransport = {
+      async *streamChat(req) {
+        llmRequests.push(req);
+        yield { contentDelta: '### 爱德华·艾尔利克\n- 讨厌别人叫他豆丁。', finishReason: 'stop' };
+      },
+    };
+    const thirdPartyConfig: ModelConfig = {
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'anthropic/claude-3.5-sonnet',
+      backgroundModel: 'openai/gpt-4o-mini',
+      apiKey: 'sk-or-secret',
+      memoryOnly: false,
+      capabilities: {
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    };
+    const provider = createTavilyPublicResearchProvider({
+      fetcher,
+      transport,
+      apiKey: 'tvly-key-123',
+      now: () => 9001,
+    });
+
+    const ref = await provider.resolve({
+      identity: {
+        work: '钢之炼金术师',
+        version: '2003 动画版',
+        timeline: '第 51 集结局后',
+        characters: ['爱德华·艾尔利克'],
+      },
+      config: thirdPartyConfig,
+    });
+
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0].url).toBe('https://api.tavily.com/search');
+    expect(fetchCalls[0].headers.Authorization).toBe('Bearer tvly-key-123');
+    expect(fetchCalls[0].body).toMatchObject({
+      max_results: 5,
+      include_raw_content: false,
+    });
+    expect(String(fetchCalls[0].body.query)).toContain('钢之炼金术师');
+    expect(ref).toMatchObject({
+      summary: '### 爱德华·艾尔利克\n- 讨厌别人叫他豆丁。',
+      sources: [{ title: 'FMA Wiki', url: 'https://fma.example/edward' }],
+      fetchedAt: 9001,
+    });
+    expect(llmRequests[0]).toMatchObject({
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-or-secret',
+      model: 'openai/gpt-4o-mini',
+      reasoningEffort: 'none',
+      capabilities: thirdPartyConfig.capabilities,
+    });
+  });
+
+  it('resolves public research via Bocha AI search and synthesizes using active provider config', async () => {
+    const fetchCalls: Array<{ url: string; headers: Record<string, string>; body: Record<string, unknown> }> = [];
+    const fetcher: FetchLike = async (url, init) => {
+      fetchCalls.push({ url, headers: init.headers, body: JSON.parse(init.body) as Record<string, unknown> });
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body: null,
+        text: async () => JSON.stringify({
+          code: 200,
+          data: {
+            webPages: {
+              value: [
+                { name: '萌娘百科：爱德华', url: 'https://zh.moegirl.org.cn/edward', summary: '爱德华·艾尔利克称呼弟弟阿尔。' },
+              ],
+            },
+          },
+        }),
+      };
+    };
+    const llmRequests: LlmStreamRequest[] = [];
+    const transport: LlmTransport = {
+      async *streamChat(req) {
+        llmRequests.push(req);
+        yield { contentDelta: '### 爱德华·艾尔利克\n- 称呼弟弟为阿尔。', finishReason: 'stop' };
+      },
+    };
+    const thirdPartyConfig: ModelConfig = {
+      baseUrl: 'https://api.siliconflow.cn/v1',
+      model: 'deepseek-ai/DeepSeek-V3',
+      apiKey: 'sk-sf-secret',
+      memoryOnly: false,
+      capabilities: {
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    };
+    const provider = createBochaPublicResearchProvider({
+      fetcher,
+      transport,
+      apiKey: 'bocha-key-456',
+      now: () => 9002,
+    });
+
+    const ref = await provider.resolve({
+      identity: {
+        work: '钢之炼金术师',
+        version: '2003 动画版',
+        timeline: '第 51 集结局后',
+        characters: ['爱德华·艾尔利克'],
+      },
+      config: thirdPartyConfig,
+    });
+
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0].url).toBe('https://api.bochaai.com/v1/web-search');
+    expect(fetchCalls[0].headers.Authorization).toBe('Bearer bocha-key-456');
+    expect(fetchCalls[0].body).toMatchObject({
+      count: 5,
+      summary: true,
+    });
+    expect(ref).toMatchObject({
+      summary: '### 爱德华·艾尔利克\n- 称呼弟弟为阿尔。',
+      sources: [{ title: '萌娘百科：爱德华', url: 'https://zh.moegirl.org.cn/edward' }],
+      fetchedAt: 9002,
+    });
+    expect(llmRequests[0]).toMatchObject({
+      baseUrl: 'https://api.siliconflow.cn/v1',
+      apiKey: 'sk-sf-secret',
+      model: 'deepseek-ai/DeepSeek-V3',
+      reasoningEffort: 'none',
+      capabilities: thirdPartyConfig.capabilities,
+    });
+  });
+
+  it('routes DeepSeek official configs to builtin search and isolates third-party configs when search is unconfigured or none', async () => {
+    const fetchCalls: string[] = [];
+    const fetcher: FetchLike = async (url) => {
+      fetchCalls.push(url);
+      if (url === 'https://api.deepseek.com/v1/tools/search') {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          body: null,
+          text: async () => JSON.stringify({
+            results: [{ rerank_score: 2.5, authority: 4, title: '官方页', url: 'https://official.example/ed' }],
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body: null,
+        text: async () => JSON.stringify({ title: '官方页', content: '爱德华·艾尔利克说话短促。' }),
+      };
+    };
+    const transport: LlmTransport = {
+      async *streamChat() {
+        yield { contentDelta: '### 爱德华·艾尔利克\n- 说话短促。', finishReason: 'stop' };
+      },
+    };
+    const provider = createRoutedPublicResearchProvider({
+      fetcher,
+      transport,
+      now: () => 4242,
+    });
+    const identity = {
+      work: '钢之炼金术师',
+      version: '2003 动画版',
+      timeline: '第 51 集结局后',
+      characters: ['爱德华·艾尔利克'],
+    };
+
+    const thirdPartyNone: ModelConfig = {
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o',
+      apiKey: 'sk-openai-never-leak',
+      memoryOnly: false,
+      capabilities: {
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    };
+
+    await expect(provider.resolve({ identity, config: thirdPartyNone })).resolves.toBeNull();
+    await expect(
+      provider.resolve({ identity, config: { ...thirdPartyNone, publicResearch: { provider: 'none' } } }),
+    ).resolves.toBeNull();
+    expect(fetchCalls).toEqual([]);
+
+    const dsRef = await provider.resolve({ identity, config: testConfig });
+    expect(dsRef?.fetchedAt).toBe(4242);
+    expect(fetchCalls).toEqual([
+      'https://api.deepseek.com/v1/tools/search',
+      'https://api.deepseek.com/v1/tools/fetch',
+    ]);
+  });
+
+  it('routes third-party configs across deepseek_account, tavily, bocha, and handles missing keys or resolver errors safely', async () => {
+    const requestedUrls: Array<{ url: string; auth: string }> = [];
+    const fetcher: FetchLike = async (url, init) => {
+      requestedUrls.push({ url, auth: init.headers.Authorization ?? '' });
+      if (url === 'https://api.deepseek.com/v1/tools/search') {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          body: null,
+          text: async () => JSON.stringify({
+            results: [{ rerank_score: 2.5, authority: 4, title: 'DS页', url: 'https://ds.example/ed' }],
+          }),
+        };
+      }
+      if (url === 'https://api.deepseek.com/v1/tools/fetch') {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          body: null,
+          text: async () => JSON.stringify({ title: 'DS页', content: '爱德华·艾尔利克使用机械铠。' }),
+        };
+      }
+      if (url === 'https://api.tavily.com/search') {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          body: null,
+          text: async () => JSON.stringify({
+            results: [{ title: 'Tavily页', url: 'https://tavily.example/ed', content: '爱德华·艾尔利克性格倔强。' }],
+          }),
+        };
+      }
+      if (url === 'https://api.bochaai.com/v1/web-search') {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          body: null,
+          text: async () => JSON.stringify({
+            data: {
+              webPages: {
+                value: [{ name: 'Bocha页', url: 'https://bocha.example/ed', summary: '爱德华·艾尔利克是国家炼金术师。' }],
+              },
+            },
+          }),
+        };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+    const llmKeysSeen: string[] = [];
+    const transport: LlmTransport = {
+      async *streamChat(req) {
+        llmKeysSeen.push(req.apiKey);
+        yield { contentDelta: '### 爱德华·艾尔利克\n- 国家炼金术师。', finishReason: 'stop' };
+      },
+    };
+    const identity = {
+      work: '钢之炼金术师',
+      version: '2003 动画版',
+      timeline: '第 51 集结局后',
+      characters: ['爱德华·艾尔利克'],
+    };
+    const baseThirdParty: ModelConfig = {
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o',
+      apiKey: 'sk-openai-main',
+      memoryOnly: false,
+      capabilities: {
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    };
+
+    const resolveDeepSeekApiKey = vi.fn((profileId?: string) =>
+      profileId === 'ds-1' ? 'sk-ds-borrowed' : undefined,
+    );
+    const provider = createRoutedPublicResearchProvider({
+      fetcher,
+      transport,
+      resolveSearchConfig: () => ({ provider: 'deepseek_account', deepseekProfileId: 'ds-1' }),
+      resolveDeepSeekApiKey,
+      now: () => 7777,
+    });
+
+    const borrowedRef = await provider.resolve({ identity, config: baseThirdParty });
+    expect(borrowedRef?.sources).toEqual([{ title: 'DS页', url: 'https://ds.example/ed' }]);
+    expect(resolveDeepSeekApiKey).toHaveBeenCalledWith('ds-1');
+
+    const tavilyRef = await provider.resolve({
+      identity,
+      config: { ...baseThirdParty, publicResearch: { provider: 'tavily', apiKey: 'tvly-999' } },
+    });
+    expect(tavilyRef?.sources).toEqual([{ title: 'Tavily页', url: 'https://tavily.example/ed' }]);
+
+    const bochaRef = await provider.resolve({
+      identity,
+      config: { ...baseThirdParty, publicResearch: { provider: 'bocha', apiKey: 'bocha-999' } },
+    });
+    expect(bochaRef?.sources).toEqual([{ title: 'Bocha页', url: 'https://bocha.example/ed' }]);
+
+    // Missing keys for tavily / bocha / deepseek_account must silently return null
+    await expect(
+      provider.resolve({ identity, config: { ...baseThirdParty, publicResearch: { provider: 'tavily', apiKey: '  ' } } }),
+    ).resolves.toBeNull();
+    await expect(
+      provider.resolve({ identity, config: { ...baseThirdParty, publicResearch: { provider: 'bocha' } } }),
+    ).resolves.toBeNull();
+    await expect(
+      provider.resolve({
+        identity,
+        config: { ...baseThirdParty, publicResearch: { provider: 'deepseek_account', deepseekProfileId: 'missing' } },
+      }),
+    ).resolves.toBeNull();
+
+    expect(requestedUrls).toEqual([
+      { url: 'https://api.deepseek.com/v1/tools/search', auth: 'Bearer sk-ds-borrowed' },
+      { url: 'https://api.deepseek.com/v1/tools/fetch', auth: 'Bearer sk-ds-borrowed' },
+      { url: 'https://api.tavily.com/search', auth: 'Bearer tvly-999' },
+      { url: 'https://api.bochaai.com/v1/web-search', auth: 'Bearer bocha-999' },
+    ]);
+    expect(llmKeysSeen).toEqual(['sk-openai-main', 'sk-openai-main', 'sk-openai-main']);
+
+    // Resolver exceptions return null safely unless externally aborted
+    const throwingProvider = createRoutedPublicResearchProvider({
+      fetcher,
+      transport,
+      resolveSearchConfig: () => {
+        throw new Error('storage unavailable');
+      },
+    });
+    await expect(throwingProvider.resolve({ identity, config: baseThirdParty })).resolves.toBeNull();
+
+    const abortErr = new Error('aborted');
+    abortErr.name = 'AbortError';
+    const externalSignal = { aborted: false };
+    const abortingProvider = createRoutedPublicResearchProvider({
+      fetcher,
+      transport,
+      resolveSearchConfig: () => {
+        externalSignal.aborted = true;
+        throw abortErr;
+      },
+    });
+    await expect(
+      abortingProvider.resolve({ identity, config: baseThirdParty, signal: externalSignal }),
+    ).rejects.toThrow('aborted');
   });
 });

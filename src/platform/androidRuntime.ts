@@ -1,8 +1,8 @@
 import {
-  createDeepSeekPublicResearchProvider,
   createDiagnosticCollector,
   createDiagnosticStoryStorage,
   createDiagnosticTransport,
+  createRoutedPublicResearchProvider,
   type AppUpdater,
   type BackupExporter,
   type BinaryDownloader,
@@ -82,7 +82,7 @@ export function createAndroidPlatformRuntime(
     diagnostics,
     promptPackStorage,
     transport,
-    publicResearch: options.publicResearch ?? (webFetch ? createDeepSeekPublicResearchProvider({
+    publicResearch: options.publicResearch ?? (webFetch ? createRoutedPublicResearchProvider({
       fetcher: webFetch,
       transport,
     }) : undefined),
