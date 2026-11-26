@@ -6,6 +6,7 @@ import {
   getActiveSummarySnapshot,
   invalidateStorySummarySnapshotsFromNode,
   invalidateSummarySnapshotsFromNode,
+  isOfficialDeepSeekUrl,
   judgeRefusal,
   normalizeReasoningEffort,
   parseProposalReply,
@@ -296,6 +297,20 @@ export async function streamPrefixContinuation(
   options: PrefixContinuationOptions,
 ): Promise<PrefixContinuationResult> {
   const reasoningEffort = normalizeReasoningEffort(options.config.reasoningEffort);
+  const prefixProtocol =
+    options.config.capabilities?.prefixProtocol ??
+    (isOfficialDeepSeekUrl(options.config.baseUrl) ? 'deepseek_beta' : 'none');
+  const usePrefixCompletion = prefixProtocol !== 'none';
+  const requestMessages: LlmMessage[] = usePrefixCompletion
+    ? options.messages
+    : [
+        ...options.messages,
+        { role: 'assistant', content: options.prefixContent },
+        {
+          role: 'user',
+          content: '请紧接上一句自然续写后续正文，不要重复已写内容，也不要输出说明或免责声明。',
+        },
+      ];
   let content = '';
   let shownContinuation = '';
   let reasoningContent = '';
@@ -306,8 +321,9 @@ export async function streamPrefixContinuation(
     apiKey: options.config.apiKey,
     model: options.config.model,
     reasoningEffort,
-    messages: options.messages,
-    prefixCompletion: { content: options.prefixContent },
+    ...(options.config.capabilities ? { capabilities: options.config.capabilities } : {}),
+    messages: requestMessages,
+    ...(usePrefixCompletion ? { prefixCompletion: { content: options.prefixContent } } : {}),
     signal: options.signal,
   })) {
     if (options.signal?.aborted) {

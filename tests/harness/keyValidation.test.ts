@@ -3,9 +3,13 @@ import {
   DEFAULT_MODEL_CONFIG,
   maskApiKey,
   normalizeOfficialModelConfig,
+  normalizeProviderBaseUrl,
+  probeAssistantPrefillCompatibility,
   sanitizeApiKeyInput,
   validateApiKeyFormat,
+  validateProviderApiKeyFormat,
   verifyDeepSeekApiKey,
+  verifyProviderConnection,
 } from '../../src/harness/index.ts';
 
 describe('DeepSeek official key validation & config normalization', () => {
@@ -13,7 +17,7 @@ describe('DeepSeek official key validation & config normalization', () => {
     expect(DEFAULT_MODEL_CONFIG).toEqual({
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-flash',
-      reasoningEffort: 'high',
+      reasoningEffort: 'none',
       apiKey: '',
       memoryOnly: false,
     });
@@ -28,7 +32,7 @@ describe('DeepSeek official key validation & config normalization', () => {
     expect(normalized).toEqual({
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-flash',
-      reasoningEffort: 'high',
+      reasoningEffort: 'none',
       apiKey: '',
       memoryOnly: false,
     });
@@ -123,5 +127,191 @@ describe('DeepSeek official key validation & config normalization', () => {
     if (resAbort.status === 'network_error') {
       expect(resAbort.message).toContain('超时');
     }
+  });
+});
+
+describe('Generic OpenAI-compatible provider validation & prefill probing', () => {
+  it('normalizes provider base URLs cleanly', () => {
+    expect(normalizeProviderBaseUrl('  https://api.openai.com/v1/  ')).toBe('https://api.openai.com/v1');
+    expect(normalizeProviderBaseUrl('https://api.openai.com/v1/chat/completions/')).toBe('https://api.openai.com/v1');
+    expect(normalizeProviderBaseUrl('https://openrouter.ai/api/v1/models')).toBe('https://openrouter.ai/api/v1');
+    expect(normalizeProviderBaseUrl(' /__dev_llm_proxy/ ')).toBe('/__dev_llm_proxy');
+  });
+
+  it('validates provider API keys with configurable sk- requirement and allowEmpty', () => {
+    expect(validateProviderApiKeyFormat('')).toMatchObject({ ok: false });
+    expect(validateProviderApiKeyFormat('', { allowEmpty: true })).toEqual({ ok: true, key: '' });
+    expect(validateProviderApiKeyFormat('or-key-123')).toEqual({ ok: true, key: 'or-key-123' });
+    expect(validateProviderApiKeyFormat('or-key-123', { requireSkPrefix: true })).toMatchObject({ ok: false });
+    expect(validateProviderApiKeyFormat('sk-123456', { requireSkPrefix: true })).toEqual({ ok: true, key: 'sk-123456' });
+    expect(validateProviderApiKeyFormat('密钥 key')).toMatchObject({ ok: false });
+  });
+
+  it('verifies provider connections, parses /models, omits Authorization for empty keys, and classifies errors', async () => {
+    const fetchMock = vi.fn(async (url: string, init: { method: string; headers: Record<string, string> }) => {
+      expect(url).toBe('https://api.openai.com/v1/models');
+      expect(init.method).toBe('GET');
+      expect(init.headers.Authorization).toBe('Bearer or-custom-token');
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ data: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }, { id: 'gpt-4o' }] }),
+      };
+    });
+
+    const valid = await verifyProviderConnection({
+      baseUrl: 'https://api.openai.com/v1/chat/completions',
+      apiKey: ' or-custom-token ',
+      fetchImpl: fetchMock,
+    });
+    expect(valid).toEqual({
+      status: 'valid',
+      key: 'or-custom-token',
+      baseUrl: 'https://api.openai.com/v1',
+      models: ['gpt-4o', 'gpt-4o-mini'],
+    });
+
+    const localNoKey = await verifyProviderConnection({
+      baseUrl: 'http://localhost:11434/v1/',
+      apiKey: '',
+      allowEmptyKey: true,
+      fetchImpl: async (url, init) => {
+        expect(url).toBe('http://localhost:11434/v1/models');
+        expect(init.headers.Authorization).toBeUndefined();
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: [{ id: 'llama3.2' }] }),
+        };
+      },
+    });
+    expect(localNoKey).toEqual({
+      status: 'valid',
+      key: '',
+      baseUrl: 'http://localhost:11434/v1',
+      models: ['llama3.2'],
+    });
+
+    const badUrl = await verifyProviderConnection({
+      baseUrl: 'ftp://invalid.local',
+      apiKey: 'sk-123456',
+      fetchImpl: fetchMock,
+    });
+    expect(badUrl.status).toBe('format_error');
+
+    const res401 = await verifyProviderConnection({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'bad',
+      fetchImpl: async () => ({ ok: false, status: 401 }),
+    });
+    expect(res401.status).toBe('invalid_key');
+
+    const res403 = await verifyProviderConnection({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'key',
+      fetchImpl: async () => ({ ok: false, status: 403 }),
+    });
+    expect(res403.status).toBe('quota_or_blocked');
+
+    const res404 = await verifyProviderConnection({
+      baseUrl: 'https://custom.example.com/v1',
+      apiKey: 'key',
+      fetchImpl: async () => ({ ok: false, status: 404 }),
+    });
+    expect(res404.status).toBe('models_unsupported');
+
+    const res405 = await verifyProviderConnection({
+      baseUrl: 'https://custom.example.com/v1',
+      apiKey: 'key',
+      fetchImpl: async () => ({ ok: false, status: 405 }),
+    });
+    expect(res405.status).toBe('models_unsupported');
+
+    const webCors = await verifyProviderConnection({
+      baseUrl: 'https://custom.example.com/v1',
+      apiKey: 'key',
+      isWebPlatform: true,
+      fetchImpl: async () => {
+        throw new TypeError('Failed to fetch');
+      },
+    });
+    expect(webCors.status).toBe('network_error');
+    if (webCors.status === 'network_error') {
+      expect(webCors.message).toContain('跨域');
+      expect(webCors.message).toContain('安卓 App');
+    }
+  });
+
+  it('probes assistant prefill compatibility cleanly', async () => {
+    const supported = await probeAssistantPrefillCompatibility({
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-test',
+      model: 'model-x',
+      fetchImpl: async (url, init) => {
+        expect(url).toBe('https://api.example.com/v1/chat/completions');
+        expect(init.method).toBe('POST');
+        expect(init.headers.Authorization).toBe('Bearer sk-test');
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        expect(body).toEqual({
+          model: 'model-x',
+          stream: false,
+          max_tokens: 16,
+          messages: [
+            { role: 'user', content: '请接着下面半句话继续写几个字。' },
+            { role: 'assistant', content: '窗外的雨' },
+          ],
+        });
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => JSON.stringify({ choices: [{ message: { content: '落了下来。' } }] }),
+          body: null,
+        };
+      },
+    });
+    expect(supported).toEqual({
+      supported: true,
+      message: '当前服务商支持增强续写',
+    });
+
+    const emptyChoice = await probeAssistantPrefillCompatibility({
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: '',
+      model: 'model-x',
+      fetchImpl: async (_url, init) => {
+        expect(init.headers.Authorization).toBeUndefined();
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => JSON.stringify({ choices: [{ message: { content: '' } }] }),
+          body: null,
+        };
+      },
+    });
+    expect(emptyChoice).toEqual({
+      supported: false,
+      message: '当前服务商暂不支持增强续写，已保持通用稳定模式',
+      statusCode: 200,
+    });
+
+    const rejected = await probeAssistantPrefillCompatibility({
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-test',
+      model: 'model-x',
+      fetchImpl: async () => ({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: async () => 'last message must be user',
+        body: null,
+      }),
+    });
+    expect(rejected).toEqual({
+      supported: false,
+      message: '当前服务商暂不支持增强续写，已保持通用稳定模式',
+      statusCode: 400,
+    });
   });
 });
