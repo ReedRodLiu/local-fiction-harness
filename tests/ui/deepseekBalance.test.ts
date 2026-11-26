@@ -429,4 +429,36 @@ describe('Issue #111 Slice 4: SettingsPage balance & official top-up UI states',
     expect(errorMarkup).toContain('data-testid="settings-default-model-block"');
     expect(errorMarkup).toContain('data-testid="open-diagnostics"');
   });
+
+  it('strictly hides DeepSeek balance panel and top-up block when active profile is a third-party provider', () => {
+    const markup = renderSettings({
+      hasCredentials: true,
+      config: {
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o',
+        apiKey: 'sk-third-party-1234',
+        memoryOnly: false,
+        providerId: 'openai-1',
+        providerPresetId: 'openai',
+        capabilities: {
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+      },
+      balanceState: {
+        status: 'loaded',
+        isAvailable: true,
+        balances: [{ currency: 'CNY', totalBalance: '88.80' }],
+        formattedBalance: '¥88.80',
+      },
+    });
+    expect(markup).not.toContain('data-testid="deepseek-balance-panel"');
+    expect(markup).not.toContain('data-testid="deepseek-balance-dev-proxy-note"');
+    expect(markup).not.toContain('data-testid="deepseek-topup-block"');
+    expect(markup).not.toContain('data-testid="deepseek-topup-link"');
+    expect(markup).not.toContain('¥88.80');
+  });
 });
