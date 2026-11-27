@@ -62,5 +62,8 @@
   "homepage": "https://github.com/ReedRodLiu/local-fiction-harness#readme",
   "bugs": {
     "url": "https://github.com/ReedRodLiu/local-fiction-harness/issues"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
