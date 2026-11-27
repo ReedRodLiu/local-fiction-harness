@@ -26,6 +26,9 @@ const CUSTOM_BASE_URL = 'https://custom-relay.example/v1';
 const CUSTOM_API_KEY = 'sk-custom-secret-key-111';
 const DEEPSEEK_API_KEY = 'sk-ds-official-222';
 const TAVILY_API_KEY = 'tvly-e2e-search-key-333';
+const OPENAI_API_KEY = 'sk-openai-e2e-444';
+const ANTHROPIC_API_KEY = 'sk-ant-e2e-555';
+const GEMINI_API_KEY = 'AIza-gemini-e2e-666';
 const CUSTOM_FETCHED_MODELS = ['fetched-model-a', 'fetched-model-b'];
 const CUSTOM_MANUAL_MODEL = 'manual-story-model-x';
 
@@ -66,6 +69,88 @@ async function startViteServer() {
     });
   });
   return server;
+}
+
+function responsesSseResponse(content, options = {}) {
+  const chunks = [];
+  if (options.reasoning) {
+    chunks.push(
+      `event: response.reasoning_summary_text.delta\ndata: ${JSON.stringify({
+        type: 'response.reasoning_summary_text.delta',
+        delta: options.reasoning,
+      })}\n\n`,
+    );
+  }
+  chunks.push(
+    `event: response.output_text.delta\ndata: ${JSON.stringify({
+      type: 'response.output_text.delta',
+      delta: content,
+    })}\n\n`,
+  );
+  chunks.push(
+    `event: response.completed\ndata: ${JSON.stringify({
+      type: 'response.completed',
+      response: {
+        status: 'completed',
+        usage: options.usage ?? {
+          input_tokens: 120,
+          output_tokens: 30,
+          total_tokens: 150,
+        },
+      },
+    })}\n\n`,
+  );
+  return chunks.join('');
+}
+
+function anthropicSseResponse(content, options = {}) {
+  const chunks = [
+    `event: message_start\ndata: ${JSON.stringify({
+      type: 'message_start',
+      message: { usage: { input_tokens: 100, cache_read_input_tokens: 40 } },
+    })}\n\n`,
+  ];
+  if (options.reasoning) {
+    chunks.push(
+      `event: content_block_delta\ndata: ${JSON.stringify({
+        type: 'content_block_delta',
+        delta: { type: 'thinking_delta', thinking: options.reasoning },
+      })}\n\n`,
+    );
+  }
+  chunks.push(
+    `event: content_block_delta\ndata: ${JSON.stringify({
+      type: 'content_block_delta',
+      delta: { type: 'text_delta', text: content },
+    })}\n\n`,
+  );
+  chunks.push(
+    `event: message_delta\ndata: ${JSON.stringify({
+      type: 'message_delta',
+      delta: { stop_reason: 'end_turn' },
+      usage: { output_tokens: 25 },
+    })}\n\n`,
+  );
+  chunks.push(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
+  return chunks.join('');
+}
+
+function geminiSseResponse(content, options = {}) {
+  const chunks = [];
+  if (options.reasoning) {
+    chunks.push(
+      `data: ${JSON.stringify({
+        candidates: [{ content: { parts: [{ text: options.reasoning, thought: true }] } }],
+      })}\n\n`,
+    );
+  }
+  chunks.push(
+    `data: ${JSON.stringify({
+      candidates: [{ content: { parts: [{ text: content }] }, finishReason: 'STOP' }],
+      usageMetadata: { promptTokenCount: 90, candidatesTokenCount: 20, totalTokenCount: 110 },
+    })}\n\n`,
+  );
+  return chunks.join('');
 }
 
 function sseResponse(content, options = {}) {
@@ -204,6 +289,9 @@ async function main() {
   const customRequests = [];
   const deepSeekRequests = [];
   const tavilyRequests = [];
+  const openaiRequests = [];
+  const anthropicRequests = [];
+  const geminiRequests = [];
   let prefillProbeSupported = false;
   let forceNextMainPartialRefusal = false;
   let customReplySeq = 0;
@@ -430,6 +518,121 @@ async function main() {
     });
   });
 
+  await page.route('https://api.openai.com/**', async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const auth = req.headers().authorization || '';
+    assert.equal(auth, `Bearer ${OPENAI_API_KEY}`, 'OpenAI endpoint must send OpenAI API key');
+    if (url.pathname === '/v1/models') {
+      await route.fulfill({
+        status: 200,
+        json: { data: [{ id: 'gpt-4.1' }, { id: 'gpt-4o-mini' }] },
+      });
+      return;
+    }
+    if (url.pathname === '/v1/responses') {
+      const body = req.postDataJSON();
+      openaiRequests.push({ url: req.url(), auth, body });
+      const instructions = String(body.instructions || '');
+      const lastUser = [...(body.input || [])].reverse().find((m) => m.role === 'user')?.content || '';
+      const content = instructions.includes('自然语言第一入口助手')
+        ? routeReply({
+            mode: 'story',
+            title: '雪夜山庄',
+            settingMarkdown: '暴风雪封锁了山庄木门。',
+            body: 'Responses首幕：雪夜山庄壁炉余烬未熄。',
+          })
+        : `Responses回复：${lastUser}`;
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: responsesSseResponse(content, {
+          reasoning: body.reasoning ? 'Responses推理摘要' : undefined,
+        }),
+      });
+      return;
+    }
+    await route.abort('failed');
+  });
+
+  await page.route('https://api.anthropic.com/**', async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const headers = req.headers();
+    assert.equal(headers['x-api-key'], ANTHROPIC_API_KEY, 'Anthropic endpoint must send x-api-key');
+    assert.equal(headers['anthropic-version'], '2023-06-01', 'Anthropic endpoint must send anthropic-version');
+    assert.equal(
+      headers['anthropic-dangerous-direct-browser-access'],
+      'true',
+      'Anthropic Web request must send browser-access header',
+    );
+    if (url.pathname === '/v1/models') {
+      await route.fulfill({
+        status: 200,
+        json: { data: [{ id: 'claude-sonnet-4-5' }, { id: 'claude-haiku-4-5' }] },
+      });
+      return;
+    }
+    if (url.pathname === '/v1/messages') {
+      const body = req.postDataJSON();
+      anthropicRequests.push({ url: req.url(), headers, body });
+      const lastUser = [...(body.messages || [])].reverse().find((m) => m.role === 'user')?.content || '';
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: anthropicSseResponse(`Anthropic回复：${lastUser}`, {
+          reasoning: body.thinking?.type === 'enabled' ? 'Claude思考过程' : undefined,
+        }),
+      });
+      return;
+    }
+    await route.abort('failed');
+  });
+
+  await page.route('https://generativelanguage.googleapis.com/**', async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const headers = req.headers();
+    assert.equal(headers['x-goog-api-key'], GEMINI_API_KEY, 'Gemini endpoint must send x-goog-api-key');
+    assert.equal(url.searchParams.has('key'), false, 'Gemini URL must NEVER expose API key in query string');
+    if (url.pathname === '/v1beta/models') {
+      await route.fulfill({
+        status: 200,
+        json: {
+          models: [
+            { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] },
+            { name: 'models/text-embedding-004', supportedGenerationMethods: ['embedContent'] },
+          ],
+        },
+      });
+      return;
+    }
+    if (url.pathname.endsWith(':streamGenerateContent')) {
+      assert.equal(url.searchParams.get('alt'), 'sse');
+      const body = req.postDataJSON();
+      geminiRequests.push({ url: req.url(), headers, body });
+      const sysText = (body.systemInstruction?.parts || []).map((p) => p.text || '').join('\n');
+      const lastUser = [...(body.contents || [])].reverse().find((c) => c.role === 'user')?.parts?.[0]?.text || '';
+      const content = sysText.includes('自然语言第一入口助手')
+        ? routeReply({
+            mode: 'story',
+            title: '星际航站楼',
+            settingMarkdown: '第十二星区中转站正值换班时刻。',
+            body: 'Gemini原生首幕：星际航站楼全息告示牌闪烁蓝光。',
+          })
+        : `Gemini原生回复：${lastUser}`;
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: geminiSseResponse(content, {
+          reasoning: body.generationConfig?.thinkingConfig?.includeThoughts ? 'Gemini思考链' : undefined,
+        }),
+      });
+      return;
+    }
+    await route.abort('failed');
+  });
+
   try {
     await page.goto(`http://localhost:${PORT}`, { waitUntil: 'networkidle' });
     await page.getByTestId('welcome-view').waitFor();
@@ -444,7 +647,31 @@ async function main() {
     const wizard = page.getByTestId('deepseek-setup-wizard');
     await wizard.waitFor({ state: 'visible' });
 
+    // Onboarding mode starts with preset picker collapsed
+    const pickerTrigger = wizard.getByTestId('provider-preset-picker-trigger');
+    assert.equal(await pickerTrigger.getAttribute('aria-expanded'), 'false');
+    assert.equal(await wizard.getByTestId('provider-preset-picker-panel').count(), 0);
+
+    // Expanding shows search input, 4 categories, and all 21 presets
+    await pickerTrigger.click();
+    const pickerPanel = wizard.getByTestId('provider-preset-picker-panel');
+    await pickerPanel.waitFor({ state: 'visible' });
+    assert.equal(await pickerTrigger.getAttribute('aria-expanded'), 'true');
+    for (const groupLabel of ['推荐与内置', '国内大模型', '海外大模型', '聚合・本地・自定义']) {
+      await pickerPanel.getByRole('heading', { name: groupLabel }).waitFor();
+    }
+    assert.equal(await pickerPanel.locator('button[data-testid^="provider-preset-"]').count(), 21);
+
+    // Search filter narrows by Chinese/English alias and resets cleanly
+    const presetSearchInput = wizard.getByTestId('provider-preset-search-input');
+    await presetSearchInput.fill('Kimi');
+    await pickerPanel.getByTestId('provider-preset-moonshot').waitFor({ state: 'visible' });
+    assert.equal(await pickerPanel.getByTestId('provider-preset-openai').count(), 0);
+    await presetSearchInput.fill('');
+
     await wizard.getByTestId('provider-preset-custom').click();
+    await pickerPanel.waitFor({ state: 'detached' });
+    assert.equal(await pickerTrigger.getAttribute('aria-expanded'), 'false');
     await wizard.getByTestId('provider-name-input').fill('我的中转站');
     await wizard.getByTestId('provider-base-url-input').fill(CUSTOM_BASE_URL);
     await wizard.locator('#byok-api-key').fill(CUSTOM_API_KEY);
@@ -508,7 +735,11 @@ async function main() {
     await openSettings(page);
     await page.getByTestId('add-provider-profile-btn').click();
     await wizard.waitFor({ state: 'visible' });
+    // Add mode starts with preset picker expanded
+    assert.equal(await wizard.getByTestId('provider-preset-picker-trigger').getAttribute('aria-expanded'), 'true');
+    await wizard.getByTestId('provider-preset-picker-panel').waitFor({ state: 'visible' });
     await wizard.getByTestId('provider-preset-deepseek').click();
+    await wizard.getByTestId('provider-preset-picker-panel').waitFor({ state: 'detached' });
     await wizard.locator('#byok-api-key').fill(DEEPSEEK_API_KEY);
     await wizard.getByTestId('wizard-verify-save-btn').click();
     await wizard.waitFor({ state: 'detached' });
@@ -787,6 +1018,115 @@ async function main() {
     assert.equal(parsedBackup.providerLibrary.publicResearch?.provider, 'tavily');
     assert.equal(parsedBackup.providerLibrary.publicResearch?.apiKey, undefined);
     console.log('CUSTOM_PROVIDER_SCENARIO_7_PASSED');
+
+    // =========================================================================
+    // Scenario 8: Multi-protocol native flows (OpenAI Responses / Anthropic
+    //             Messages / Gemini Native) with search picker, thinking
+    //             toggle, multi-profile switching, and per-story override
+    // =========================================================================
+    // Add OpenAI (openai_responses)
+    await page.getByTestId('add-provider-profile-btn').click();
+    await wizard.waitFor({ state: 'visible' });
+    assert.equal(await wizard.getByTestId('provider-preset-picker-trigger').getAttribute('aria-expanded'), 'true');
+    await wizard.getByTestId('provider-preset-search-input').fill('responses');
+    await wizard.getByTestId('provider-preset-openai').click();
+    await wizard.getByTestId('provider-preset-picker-panel').waitFor({ state: 'detached' });
+    await wizard.locator('#byok-api-key').fill(OPENAI_API_KEY);
+    await wizard.getByTestId('wizard-verify-save-btn').click();
+    await wizard.waitFor({ state: 'detached' });
+    const openaiItem = page.locator('[data-testid^="provider-profile-item-"]', { hasText: 'OpenAI' });
+    await openaiItem.waitFor();
+    const openaiProfileId = (await openaiItem.getAttribute('data-testid')).replace('provider-profile-item-', '');
+
+    // Add Anthropic (anthropic_messages)
+    await page.getByTestId('add-provider-profile-btn').click();
+    await wizard.waitFor({ state: 'visible' });
+    await wizard.getByTestId('provider-preset-search-input').fill('claude');
+    await wizard.getByTestId('provider-preset-anthropic').click();
+    await wizard.getByTestId('anthropic-subscription-notice').waitFor({ state: 'visible' });
+    await wizard.locator('#byok-api-key').fill(ANTHROPIC_API_KEY);
+    await wizard.getByTestId('wizard-verify-save-btn').click();
+    await wizard.waitFor({ state: 'detached' });
+    const anthropicItem = page.locator('[data-testid^="provider-profile-item-"]', { hasText: 'Anthropic (Claude)' });
+    await anthropicItem.waitFor();
+    const anthropicProfileId = (await anthropicItem.getAttribute('data-testid')).replace('provider-profile-item-', '');
+
+    // Add Gemini (gemini_native)
+    await page.getByTestId('add-provider-profile-btn').click();
+    await wizard.waitFor({ state: 'visible' });
+    await wizard.getByTestId('provider-preset-search-input').fill('googleapis.com');
+    await wizard.getByTestId('provider-preset-gemini').click();
+    await wizard.getByTestId('provider-gemini-billing-note').waitFor({ state: 'visible' });
+    await wizard.locator('#byok-api-key').fill(GEMINI_API_KEY);
+    await wizard.getByTestId('wizard-verify-save-btn').click();
+    await wizard.waitFor({ state: 'detached' });
+    const geminiItem = page.locator('[data-testid^="provider-profile-item-"]', { hasText: 'Google (Gemini)' });
+    await geminiItem.waitFor();
+    await closeSettings(page);
+
+    // Active profile is Gemini -> test Gemini Native (thinking OFF -> ON)
+    await page.getByTestId('desktop-library-new-creation').click();
+    await page.getByTestId('welcome-view').waitFor();
+    await page.fill('#turn-input', '开一个星际航站楼的文游。');
+    await page.getByRole('button', { name: '发送行动', exact: true }).click();
+    await page.getByTestId('story-timeline').getByText('Gemini原生首幕：星际航站楼全息告示牌闪烁蓝光。', { exact: false }).waitFor();
+    assert.equal(geminiRequests.at(-1).body.generationConfig?.thinkingConfig?.thinkingBudget, 0);
+
+    await composerThinkingToggle.click();
+    assert.equal(await composerThinkingToggle.getAttribute('aria-pressed'), 'true');
+    await page.fill('#turn-input', '扫描停机坪');
+    await page.getByRole('button', { name: '发送行动', exact: true }).click();
+    await page.getByTestId('turn-assistant').last().getByText('Gemini原生回复：扫描停机坪', { exact: false }).waitFor();
+    assert.equal(geminiRequests.at(-1).body.generationConfig?.thinkingConfig?.includeThoughts, true);
+    assert.ok(geminiRequests.at(-1).body.generationConfig?.thinkingConfig?.thinkingBudget > 0);
+    await page.getByTestId('turn-assistant').last().getByTestId('reasoning-toggle').click();
+    await page.getByTestId('turn-assistant').last().getByTestId('reasoning-content').getByText('Gemini思考链').waitFor();
+    await composerThinkingToggle.click();
+    assert.equal(await composerThinkingToggle.getAttribute('aria-pressed'), 'false');
+
+    // Per-story override -> Anthropic Messages (thinking OFF -> ON)
+    await page.getByTestId('composer-provider-model-trigger').click();
+    await page.getByTestId('composer-provider-model-menu').waitFor({ state: 'visible' });
+    await page.getByTestId(`composer-provider-model-option-${anthropicProfileId}-claude-sonnet-4-5`).click();
+
+    await page.fill('#turn-input', '询问值班港务长');
+    await page.getByRole('button', { name: '发送行动', exact: true }).click();
+    await page.getByTestId('turn-assistant').last().getByText('Anthropic回复：询问值班港务长', { exact: false }).waitFor();
+    assert.equal('thinking' in anthropicRequests.at(-1).body, false, 'Anthropic thinking OFF must omit `thinking`');
+
+    await composerThinkingToggle.click();
+    await page.fill('#turn-input', '核对航行日志');
+    await page.getByRole('button', { name: '发送行动', exact: true }).click();
+    await page.getByTestId('turn-assistant').last().getByText('Anthropic回复：核对航行日志', { exact: false }).waitFor();
+    assert.equal(anthropicRequests.at(-1).body.thinking?.type, 'enabled');
+    assert.ok(anthropicRequests.at(-1).body.max_tokens > anthropicRequests.at(-1).body.thinking.budget_tokens);
+    await page.getByTestId('turn-assistant').last().getByTestId('reasoning-toggle').click();
+    await page.getByTestId('turn-assistant').last().getByTestId('reasoning-content').getByText('Claude思考过程').waitFor();
+    await composerThinkingToggle.click();
+
+    // Switch active profile in Settings -> OpenAI Responses API (thinking OFF -> ON)
+    await openSettings(page);
+    await page.getByTestId(`provider-profile-switch-${openaiProfileId}`).click();
+    await closeSettings(page);
+
+    await page.getByTestId('desktop-library-new-creation').click();
+    await page.getByTestId('welcome-view').waitFor();
+    await page.fill('#turn-input', '开一个雪夜山庄的文游。');
+    await page.getByRole('button', { name: '发送行动', exact: true }).click();
+    await page.getByTestId('story-timeline').getByText('Responses首幕：雪夜山庄壁炉余烬未熄。', { exact: false }).waitFor();
+    assert.equal(openaiRequests.at(-1).body.store, false);
+    assert.equal('reasoning' in openaiRequests.at(-1).body, false, 'Responses thinking OFF must omit `reasoning`');
+
+    await composerThinkingToggle.click();
+    await page.fill('#turn-input', '推开壁炉旁暗门');
+    await page.getByRole('button', { name: '发送行动', exact: true }).click();
+    await page.getByTestId('turn-assistant').last().getByText('Responses回复：推开壁炉旁暗门', { exact: false }).waitFor();
+    assert.equal(openaiRequests.at(-1).body.reasoning?.summary, 'auto');
+    await page.getByTestId('turn-assistant').last().getByTestId('reasoning-toggle').click();
+    await page.getByTestId('turn-assistant').last().getByTestId('reasoning-content').getByText('Responses推理摘要').waitFor();
+    await composerThinkingToggle.click();
+
+    console.log('CUSTOM_PROVIDER_SCENARIO_8_PASSED');
     console.log('ISSUE_CUSTOM_PROVIDER_E2E_PASSED');
   } finally {
     await context.close();

@@ -11,10 +11,13 @@ import {
 } from '../../src/harness/index.ts';
 import { DeepSeekSetupWizard } from '../../src/ui/DeepSeekSetupWizard.tsx';
 import {
+  PROVIDER_PRESET_CATEGORIES,
   ProviderSetupWizard,
   buildProviderSaveResultFromDraft,
   createWizardDraftFromPreset,
   createWizardDraftFromProfile,
+  filterProviderPresetGroups,
+  resolveInitialPresetPickerOpen,
   validateWizardFallbackSave,
   verifyWizardDraftConnection,
 } from '../../src/ui/ProviderSetupWizard.tsx';
@@ -22,8 +25,8 @@ import {
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const readUiSource = (fileName: string) => readFileSync(join(repoRoot, 'src', 'ui', fileName), 'utf8');
 
-describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
-  it('renders 6 preset cards, ultra-simple DeepSeek first-class flow, 3-line summary, and collapsed advanced details', () => {
+describe('Ticket #164 T5 & Ticket #181: ProviderSetupWizard & DeepSeekSetupWizard', () => {
+  it('renders single-row collapsed preset picker in onboarding mode, ultra-simple DeepSeek first-class flow, 3-line summary, and collapsed advanced details', () => {
     const markup = renderToStaticMarkup(
       createElement(ProviderSetupWizard, {
         open: true,
@@ -44,19 +47,14 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
     expect(markup).toContain('id="byok-api-key"');
     expect(markup).toContain('data-testid="wizard-verify-save-btn"');
 
-    for (const presetId of [
-      'deepseek',
-      'openai',
-      'anthropic',
-      'gemini',
-      'openrouter',
-      'siliconflow',
-      'local',
-      'custom',
-    ]) {
-      expect(markup).toContain(`data-testid="provider-preset-${presetId}"`);
-    }
-    expect(markup).toMatch(/data-testid="provider-preset-deepseek"[^>]*aria-pressed="true"/);
+    expect(markup).toContain('data-testid="provider-preset-picker-trigger"');
+    expect(markup).toMatch(/data-testid="provider-preset-picker-trigger"[^>]*aria-expanded="false"/);
+    expect(markup).toContain('DeepSeek 官方');
+    expect(markup).toContain('官方推荐');
+    expect(markup).toContain('切换服务商（21 项）');
+    expect(markup).not.toContain('data-testid="provider-preset-picker-panel"');
+    expect(markup).not.toContain('data-testid="provider-preset-search-input"');
+    expect(markup).not.toContain('data-testid="provider-preset-deepseek"');
 
     // DeepSeek first-class view hides third-party Base URL / model / public research clutter
     expect(markup).not.toContain('data-testid="provider-base-url-input"');
@@ -102,6 +100,59 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
     expect(markup).toContain('value="sk-123456"');
   });
 
+  it('supports expandable 4-category 21-preset picker, search filtering, and mode-sensitive initial expansion', () => {
+    expect(resolveInitialPresetPickerOpen('add')).toBe(true);
+    expect(resolveInitialPresetPickerOpen('onboarding')).toBe(false);
+    expect(resolveInitialPresetPickerOpen('edit')).toBe(false);
+
+    expect(PROVIDER_PRESET_CATEGORIES.map((group) => group.label)).toEqual([
+      '推荐与内置',
+      '国内大模型',
+      '海外大模型',
+      '聚合・本地・自定义',
+    ]);
+    const flattenedIds = PROVIDER_PRESET_CATEGORIES.flatMap((group) => group.presetIds);
+    expect(flattenedIds).toHaveLength(21);
+    expect(new Set(flattenedIds)).toEqual(new Set(Object.keys(PROVIDER_PRESETS)));
+
+    expect(
+      filterProviderPresetGroups('Kimi').flatMap((g) => g.presetIds),
+    ).toEqual(['moonshot']);
+    expect(
+      filterProviderPresetGroups('百炼').flatMap((g) => g.presetIds),
+    ).toEqual(['dashscope']);
+    expect(
+      filterProviderPresetGroups('googleapis.com').flatMap((g) => g.presetIds),
+    ).toEqual(['gemini']);
+    expect(
+      filterProviderPresetGroups('volcengine').flatMap((g) => g.presetIds),
+    ).toEqual(['volcengine']);
+    expect(filterProviderPresetGroups('nonexistent-provider-xyz')).toEqual([]);
+
+    const addMarkup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        mode: 'add',
+        onSaveProfile: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+
+    expect(addMarkup).toMatch(
+      /data-testid="provider-preset-picker-trigger"[^>]*aria-expanded="true"/,
+    );
+    expect(addMarkup).toContain('data-testid="provider-preset-picker-panel"');
+    expect(addMarkup).toContain('data-testid="provider-preset-search-input"');
+    for (const label of ['推荐与内置', '国内大模型', '海外大模型', '聚合・本地・自定义']) {
+      expect(addMarkup).toContain(label);
+    }
+    for (const presetId of Object.keys(PROVIDER_PRESETS)) {
+      expect(addMarkup).toContain(`data-testid="provider-preset-${presetId}"`);
+    }
+    expect(addMarkup).toMatch(/data-testid="provider-preset-deepseek"[^>]*aria-pressed="true"/);
+  });
+
   it('renders third-party fields, optional public research presets, 3-line capability summary, and prefill probe controls', () => {
     const openaiProfile = createProviderProfileFromPreset('openai', {
       id: 'openai-1',
@@ -123,7 +174,11 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
       }),
     );
 
-    expect(tavilyMarkup).toMatch(/data-testid="provider-preset-openai"[^>]*aria-pressed="true"/);
+    expect(tavilyMarkup).toMatch(
+      /data-testid="provider-preset-picker-trigger"[^>]*aria-expanded="false"/,
+    );
+    expect(tavilyMarkup).toContain('OpenAI');
+    expect(tavilyMarkup).not.toContain('data-testid="provider-preset-picker-panel"');
     expect(tavilyMarkup).toContain('data-testid="provider-name-input"');
     expect(tavilyMarkup).toContain('data-testid="provider-base-url-input"');
     expect(tavilyMarkup).toContain('https://api.openai.com/v1');
@@ -409,7 +464,11 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
       }),
     );
 
-    expect(markup).toMatch(/data-testid="provider-preset-anthropic"[^>]*aria-pressed="true"/);
+    expect(markup).toMatch(
+      /data-testid="provider-preset-picker-trigger"[^>]*aria-expanded="false"/,
+    );
+    expect(markup).toContain('Anthropic (Claude)');
+    expect(markup).not.toContain('data-testid="provider-preset-picker-panel"');
     expect(markup).toContain('https://api.anthropic.com/v1');
     expect(markup).toContain('data-testid="anthropic-subscription-notice"');
     expect(markup).toMatch(/Claude Pro\s*\/\s*Max/);
@@ -466,7 +525,12 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
       }),
     );
 
-    expect(markup).toMatch(/data-testid="provider-preset-gemini"[^>]*aria-pressed="true"/);
+    expect(markup).toMatch(
+      /data-testid="provider-preset-picker-trigger"[^>]*aria-expanded="false"/,
+    );
+    expect(markup).toContain('Google (Gemini)');
+    expect(markup).not.toContain('data-testid="provider-preset-picker-panel"');
+    expect(markup.match(/data-testid="provider-gemini-billing-note"/g)).toHaveLength(1);
     expect(markup).toContain('https://aistudio.google.com/apikey');
     expect(markup).toContain('Google AI Studio');
     expect(markup).toContain('免费');
