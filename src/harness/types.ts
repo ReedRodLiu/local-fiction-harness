@@ -141,7 +141,7 @@ export interface ProviderProfile {
 
 export type ProviderProfileMeta = Omit<ProviderProfile, 'apiKey'>;
 
-export type PublicResearchSearchPresetId = 'none' | 'deepseek_account' | 'tavily' | 'bocha';
+export type PublicResearchSearchPresetId = 'auto' | 'none' | 'deepseek_account' | 'tavily' | 'bocha';
 
 export interface PublicResearchConfig {
   provider: PublicResearchSearchPresetId;

@@ -5,7 +5,13 @@ import {
   createWebPlatformRuntime,
   detectRuntimePlatform,
 } from '../../src/platform/runtime.ts';
-import type { FetchLike, KeyValueStorage, ModelConfig, StoryStorage } from '../../src/harness/index.ts';
+import type {
+  FetchLike,
+  KeyValueStorage,
+  ModelConfig,
+  PublicTextFetcher,
+  StoryStorage,
+} from '../../src/harness/index.ts';
 
 function createMemoryStorage(): KeyValueStorage {
   const map = new Map<string, string>();
@@ -183,9 +189,25 @@ describe('PlatformRuntime detection & Web adapter', () => {
         storyStorage: createNoopStoryStorage(),
         fetchImpl: fetchSpy as unknown as FetchLike,
       });
+      const textCalls: string[] = [];
+      const mockTextFetcher: PublicTextFetcher = async (url) => {
+        textCalls.push(url);
+        if (url.startsWith('https://cn.bing.com/search?q=')) {
+          return {
+            ok: true,
+            status: 200,
+            text: '<li class="b_algo"><h2><a href="https://fma.example/ed">FMA Wiki</a></h2><p>爱德华</p></li>',
+          };
+        }
+        if (url === 'https://r.jina.ai/https://fma.example/ed') {
+          return { ok: true, status: 200, text: '爱德华·艾尔利克性格直率。' };
+        }
+        throw new Error(`Unexpected textFetcher URL: ${url}`);
+      };
       const androidRuntime = createAndroidPlatformRuntime({
         promptPackStorage: kv,
         diagnosticsStorage: kv,
+        textFetcher: mockTextFetcher,
         transport: {
           async *streamChat() {
             yield { contentDelta: '### 爱德华·艾尔利克\n- 性格直率。', finishReason: 'stop' };
@@ -217,8 +239,20 @@ describe('PlatformRuntime detection & Web adapter', () => {
         webRuntime.publicResearch!.resolve({ identity, config: thirdPartyNoSearch }),
       ).resolves.toBeNull();
       await expect(
-        androidRuntime.publicResearch!.resolve({ identity, config: thirdPartyNoSearch }),
+        androidRuntime.publicResearch!.resolve({
+          identity,
+          config: { ...thirdPartyNoSearch, publicResearch: { provider: 'none' } },
+        }),
       ).resolves.toBeNull();
+      expect(fetchCalls).toEqual([]);
+      expect(textCalls).toEqual([]);
+
+      const androidAutoRef = await androidRuntime.publicResearch!.resolve({
+        identity,
+        config: thirdPartyNoSearch,
+      });
+      expect(androidAutoRef?.sources).toEqual([{ title: 'FMA Wiki', url: 'https://fma.example/ed' }]);
+      expect(textCalls).toHaveLength(2);
       expect(fetchCalls).toEqual([]);
 
       const tavilyConfig: ModelConfig = {

@@ -731,5 +731,17 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     expect(mergedAdoptsResearch.providerLibrary?.publicResearch).toEqual({
       provider: 'tavily',
     });
+
+    const autoLibrary = {
+      ...createDefaultProviderLibrary(),
+      publicResearch: { provider: 'auto' as any },
+    };
+    const autoJson = exportFolioBackupV3({
+      stories: [story],
+      workspace: emptyWorkspace(),
+      providerLibrary: autoLibrary,
+    });
+    const parsedAuto = parseAndValidateFolioBackup(autoJson);
+    expect(parsedAuto.providerLibrary?.publicResearch).toEqual({ provider: 'auto' });
   });
 });

@@ -208,6 +208,7 @@ const VALID_PROVIDER_PRESET_IDS = new Set<ProviderPresetId>([
   'custom',
 ]);
 const VALID_PUBLIC_RESEARCH_PROVIDERS = new Set<PublicResearchSearchPresetId>([
+  'auto',
   'none',
   'deepseek_account',
   'tavily',

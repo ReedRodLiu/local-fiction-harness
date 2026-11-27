@@ -460,10 +460,22 @@ function parseMetaJson(rawMeta: string | null): Partial<ModelConfigMeta> {
   }
 }
 
+function isPublicResearchProvider(value: unknown): value is PublicResearchConfig['provider'] {
+  return (
+    value === 'auto' ||
+    value === 'none' ||
+    value === 'deepseek_account' ||
+    value === 'tavily' ||
+    value === 'bocha'
+  );
+}
+
 function stripPublicResearchSecret(
   config: PublicResearchConfig | PublicResearchConfigMeta | undefined,
 ): PublicResearchConfigMeta | undefined {
-  if (!config || typeof config !== 'object') return undefined;
+  if (!config || typeof config !== 'object' || !isPublicResearchProvider(config.provider)) {
+    return undefined;
+  }
   return {
     provider: config.provider,
     ...(typeof config.deepseekProfileId === 'string' && config.deepseekProfileId.trim()
