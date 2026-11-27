@@ -6,11 +6,10 @@ Folio 不运行自建模型中转或业务服务器。用户在客户端配置�
 
 ## 下载与安装
 
-仓库目前为私有仓库，GitHub Release 仅对获授权的仓库成员开放。Release 页面记录各版本源码和更新内容；本次发布暂未附 Android APK，安装包需要完成签名构建后才能上传。
+仓库已开源。GitHub Releases 提供源码归档与签名 Android APK；请从 Release 页面下载与你设备匹配的 APK，并按 Android 系统提示允许安装来源。
 
-- [Folio V0.3.0 Release](https://github.com/ReedRodLiu/local-fiction-harness/releases/tag/v0.3.0)
-- [Folio V0.2.0 Release](https://github.com/ReedRodLiu/local-fiction-harness/releases/tag/v0.2.0)
-- [Folio V0.1.0 Release](https://github.com/ReedRodLiu/local-fiction-harness/releases/tag/v0.1.0)
+- [Folio V0.5.1 Release](https://github.com/ReedRodLiu/local-fiction-harness/releases/tag/v0.5.1)
+- [全部 Releases](https://github.com/ReedRodLiu/local-fiction-harness/releases)
 
 Android 最低版本设为 Android 7.0（API 24），当前构建目标为 Android API 36。Release 附带 APK 后，按 Android 系统提示允许本次安装来源，再打开 Folio。首次使用需要在应用设置中填写你自己的模型 API Key；模型调用费用由你与模型服务商之间的账户承担。
 
@@ -27,28 +26,10 @@ Android 最低版本设为 Android 7.0（API 24），当前构建目标为 Andro
 
 ## 版本说明
 
-### V0.3.0
+当前稳定版本为 **V0.5.1**。版本历史与详细变更请见：
 
-- 开放 DeepSeek 官方双模型（`deepseek-flash` / `deepseek-v4-pro`）与四档思考强度滑块（全局默认 + 按故事/作品/角色独立覆盖）。
-- 支持在设置页连接卡片内查看 DeepSeek 官方总余额与直达官方充值页。
-- 写故事试写与改写统一接入 `target: manuscript` 提案确认卡片，正文编辑升级为 1.5s–2s 静默自动保存与全路径退出刷盘。
-- 新增单轮摘要与紧凑剧情树预览、全场景等待轮播提示、去“DS味”默认系统提示词、`lfh-choices` 容错解析及移动端触控反馈优化。
-
-### V0.2.0
-
-- 统一三种模式的入口和创作工作区，支持自然语言意图分流。
-- 增加 `.folio.json` v3 全量备份、旧版备份导入和 V0.1 → V0.2 静默迁移。
-- 增加写故事正文建议卡片、差异预览、确认写入、自动保存和撤销。
-- 增加安全的 Markdown 展示、流式提案降级处理和更温和的错误提示。
-- 改进 DeepSeek 对话导入、隐私诊断包和跨模式滚动摘要。
-
-### V0.1.0
-
-- 首个 Folio 试用版本，提供文游、写故事和角色互动三种模式。
-- 支持导入剧本与 DeepSeek 对话、管理本地作品、配置 DeepSeek API Key 和继续对话。
-- 提供本地保存、对话分支和基础长上下文整理能力。
-
-完整记录见 [CHANGELOG.md](CHANGELOG.md)。
+- [CHANGELOG.md](CHANGELOG.md)
+- [docs/releases/](docs/releases/)
 
 ## 本地开发
 
@@ -75,8 +56,9 @@ npm run android:build
 
 ## 项目文档
 
-- [项目方案](docs/project-plan.md)：产品方向、技术路线与范围边界。
 - [术语表](GLOSSARY.md)：产品与架构术语。
+- [架构概览](docs/architecture.md)：模块边界、数据流与运行时边界。
+- [故障排查](docs/troubleshooting.md)：环境、构建、签名与常见错误。
 - [三种模式验收流程](docs/three-mode-acceptance.md)：主要交互流程和手工验收场景。
 - [界面设计规范](docs/ui-design-system.md)：界面结构、设计令牌与实现约定。
 - [架构决策记录](docs/adr/)：已经确认的关键技术决策。
@@ -85,6 +67,27 @@ npm run android:build
 ## 数据与费用提示
 
 Folio 是客户端工具。配置 API Key 后，模型请求会发送到你选择的服务商；请检查服务商的隐私政策、计费方式和数据处理规则。导出的 `.folio.json` 不包含 API Key，但可能包含你保存的故事、角色资料和对话，请按包含个人内容的文件妥善保管。
+
+
+## 文档导航
+
+### 用户
+- [README](README.md)：项目介绍、安装与基础开发
+- [CHANGELOG.md](CHANGELOG.md)：版本历史
+- [docs/releases/](docs/releases/)：发布说明
+
+### 贡献者
+- [CONTRIBUTING.md](CONTRIBUTING.md)：开发与 PR 流程
+- [GLOSSARY.md](GLOSSARY.md)：术语
+- [docs/architecture.md](docs/architecture.md)：架构概览
+- [docs/ui-design-system.md](docs/ui-design-system.md)：界面设计规范
+- [docs/three-mode-acceptance.md](docs/three-mode-acceptance.md)：验收流程
+- [docs/adr/](docs/adr/)：架构决策
+
+### 维护者
+- [docs/troubleshooting.md](docs/troubleshooting.md)：故障排查
+- [SECURITY.md](SECURITY.md)：安全政策
+
 
 ## Contributing
 
