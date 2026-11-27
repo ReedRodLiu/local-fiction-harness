@@ -490,7 +490,7 @@ export function exportFolioBackupV3(options: ExportFolioBackupV3Options): string
   const envelope: FolioBackupEnvelopeV3 = {
     schemaVersion: 3,
     exportedAt: now(),
-    appVersion: options.appVersion?.trim() || '0.5.0',
+    appVersion: options.appVersion?.trim() || '0.5.1',
     stories: options.stories.map(sanitizeStoryForExport),
     workspace: sanitizeWorkspaceForExport(options.workspace),
     ...(displayPreferences ? { displayPreferences } : {}),

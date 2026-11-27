@@ -2,6 +2,15 @@
 
 本文件记录 Folio 面向用户的版本变化。实现细节和技术决策见各版本对应的 GitHub Release 与 `docs/adr/`。
 
+## V0.5.1 — 2026-11-27
+
+### 新增与改进
+
+- **多协议 Provider Presets 正式发布（#177–#181 / ADR-0020）**：在通用 OpenAI 兼容多服务商架构之上，新增 OpenAI Responses API、Anthropic Messages、Google Gemini native 三种协议支持，扩展 13 个国内外服务商预设，补充 thinking dialects 与诊断 host，并提供分类可折叠预设选择器与多协议 E2E 覆盖。
+- **多协议基础与兼容性**：提供多协议 base、OpenAI Responses API 与备份兼容层，保证现有档案与备份在协议扩展下的平滑迁移。
+- **代码评审修复**：合入 #176 评审修复，提升预设选择与协议处理的稳定性。
+- **版本号更新**：应用与 Android 版本号同步更新为 `0.5.1`（`versionCode 11`）。
+
 ## V0.5.0 — 2026-11-27
 
 ### 新增与改进
