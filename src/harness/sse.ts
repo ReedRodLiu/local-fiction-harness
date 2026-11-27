@@ -1,5 +1,9 @@
 import { getTextDecoderCtor, type TextDecoderLike } from './encoding.ts';
-import { isOfficialDeepSeekUrl, normalizeReasoningEffort } from './keyConfig.ts';
+import {
+  isOfficialDeepSeekUrl,
+  normalizeProviderApiProtocol,
+  normalizeReasoningEffort,
+} from './keyConfig.ts';
 import type {
   DeepSeekThinkingParam,
   FetchLike,
@@ -8,6 +12,8 @@ import type {
   LlmStreamRequest,
   LlmTransport,
   LlmUsage,
+  ProviderApiProtocol,
+  ProviderCapabilities,
   ProviderPrefixProtocol,
   ProviderThinkingProtocol,
   ReasoningEffort,
@@ -185,6 +191,112 @@ function parseUsage(raw: {
     : undefined;
 }
 
+function parseResponsesUsage(raw: {
+  input_tokens?: unknown;
+  output_tokens?: unknown;
+  total_tokens?: unknown;
+  input_tokens_details?: {
+    cached_tokens?: unknown;
+  };
+  output_tokens_details?: {
+    reasoning_tokens?: unknown;
+  };
+} | undefined): LlmUsage | undefined {
+  if (!raw) return undefined;
+  const promptTokens = optionalTokenCount(raw.input_tokens);
+  const completionTokens = optionalTokenCount(raw.output_tokens);
+  const totalTokens = optionalTokenCount(raw.total_tokens);
+  const cachedTokens = optionalTokenCount(raw.input_tokens_details?.cached_tokens);
+  const promptCacheHitTokens = cachedTokens;
+  const promptCacheMissTokens =
+    cachedTokens !== undefined && promptTokens !== undefined
+      ? Math.max(0, promptTokens - cachedTokens)
+      : undefined;
+  const reasoningTokens = optionalTokenCount(raw.output_tokens_details?.reasoning_tokens);
+  const usage: LlmUsage = {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    promptCacheHitTokens,
+    promptCacheMissTokens,
+    ...(reasoningTokens === undefined
+      ? {}
+      : { completionTokensDetails: { reasoningTokens } }),
+  };
+  return usage.promptTokens !== undefined ||
+    usage.completionTokens !== undefined ||
+    usage.totalTokens !== undefined ||
+    usage.promptCacheHitTokens !== undefined ||
+    usage.promptCacheMissTokens !== undefined ||
+    usage.completionTokensDetails !== undefined
+    ? usage
+    : undefined;
+}
+
+async function* iterateSseFrames(
+  chunks: AsyncIterable<Uint8Array | string>,
+): AsyncIterable<{ event?: string; data: string }> {
+  const decoder = createUtf8Decoder();
+  let buffer = '';
+  let currentEvent: string | undefined;
+  let dataLines: string[] = [];
+
+  const flushEvent = function* (): Generator<{ event?: string; data: string }> {
+    if (dataLines.length === 0) {
+      currentEvent = undefined;
+      return;
+    }
+    const payload = dataLines.join('\n');
+    const event = currentEvent;
+    dataLines = [];
+    currentEvent = undefined;
+    yield { ...(event ? { event } : {}), data: payload };
+  };
+
+  const processLines = function* (
+    flushRemaining: boolean,
+  ): Generator<{ event?: string; data: string }> {
+    const lines = buffer.split(/\r?\n/);
+    buffer = flushRemaining ? '' : (lines.pop() ?? '');
+
+    for (const line of lines) {
+      if (line === '') {
+        yield* flushEvent();
+        continue;
+      }
+      if (line.startsWith('event:')) {
+        if (dataLines.length > 0 && isCompleteSsePayload(dataLines.join('\n'))) {
+          yield* flushEvent();
+        }
+        currentEvent = (line[6] === ' ' ? line.slice(7) : line.slice(6)).trim() || undefined;
+        continue;
+      }
+      if (!line.startsWith('data:')) {
+        continue;
+      }
+      if (dataLines.length > 0 && isCompleteSsePayload(dataLines.join('\n'))) {
+        yield* flushEvent();
+      }
+      const value = line[5] === ' ' ? line.slice(6) : line.slice(5);
+      dataLines.push(value);
+    }
+
+    if (flushRemaining) {
+      yield* flushEvent();
+    }
+  };
+
+  for await (const chunk of chunks) {
+    buffer += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true });
+    yield* processLines(false);
+  }
+
+  buffer += decoder.decode(undefined, { stream: false });
+  if (buffer.length > 0 || dataLines.length > 0) {
+    yield* processLines(true);
+  }
+}
+
 /**
  * Parses an OpenAI-compatible Server-Sent Events stream into typed deltas,
  * decoding UTF-8 across chunk boundaries, assembling multi-line data: events,
@@ -193,65 +305,152 @@ function parseUsage(raw: {
 export async function* parseOpenAiSseStream(
   chunks: AsyncIterable<Uint8Array | string>,
 ): AsyncIterable<LlmStreamDelta> {
-  const decoder = createUtf8Decoder();
-  let buffer = '';
-  let dataLines: string[] = [];
-
-  const flushEvent = function* (): Generator<LlmStreamDelta, boolean> {
-    if (dataLines.length === 0) {
-      return false;
-    }
-    const payload = dataLines.join('\n');
-    dataLines = [];
-    const parsed = parseSseEventData(payload);
+  for await (const frame of iterateSseFrames(chunks)) {
+    const parsed = parseSseEventData(frame.data);
     if (parsed.done) {
-      return true;
+      return;
     }
     if (parsed.delta) {
       yield parsed.delta;
     }
-    return false;
+  }
+}
+
+function parseResponsesEventData(
+  dataText: string,
+  frameEvent?: string,
+): { done: boolean; delta?: LlmStreamDelta } {
+  const trimmed = dataText.trim();
+  if (!trimmed) {
+    return { done: false };
+  }
+  if (trimmed === '[DONE]') {
+    return { done: true };
+  }
+
+  let parsed: {
+    type?: unknown;
+    delta?: unknown;
+    message?: unknown;
+    error?: { message?: string };
+    usage?: {
+      input_tokens?: unknown;
+      output_tokens?: unknown;
+      total_tokens?: unknown;
+      input_tokens_details?: { cached_tokens?: unknown };
+      output_tokens_details?: { reasoning_tokens?: unknown };
+    };
+    response?: {
+      status?: unknown;
+      error?: { message?: string };
+      incomplete_details?: { reason?: unknown };
+      usage?: {
+        input_tokens?: unknown;
+        output_tokens?: unknown;
+        total_tokens?: unknown;
+        input_tokens_details?: { cached_tokens?: unknown };
+        output_tokens_details?: { reasoning_tokens?: unknown };
+      };
+    };
   };
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return { done: false };
+  }
 
-  const processLines = function* (flushRemaining: boolean): Generator<LlmStreamDelta, boolean> {
-    const lines = buffer.split(/\r?\n/);
-    buffer = flushRemaining ? '' : (lines.pop() ?? '');
+  const eventType = typeof parsed.type === 'string' ? parsed.type : frameEvent;
+  if (parsed.error || eventType === 'error') {
+    const msg =
+      parsed.error?.message ||
+      (typeof parsed.message === 'string' ? parsed.message : undefined) ||
+      'OpenAI Responses API returned an SSE error payload.';
+    throw new Error(msg);
+  }
+  if (eventType === 'response.failed') {
+    const msg =
+      parsed.response?.error?.message ||
+      'OpenAI Responses API request failed.';
+    throw new Error(msg);
+  }
 
-    for (const line of lines) {
-      if (line === '') {
-        const ended = yield* flushEvent();
-        if (ended) return true;
-        continue;
-      }
-      if (!line.startsWith('data:')) {
-        continue;
-      }
-      if (dataLines.length > 0 && isCompleteSsePayload(dataLines.join('\n'))) {
-        const ended = yield* flushEvent();
-        if (ended) return true;
-      }
-      const value = line[5] === ' ' ? line.slice(6) : line.slice(5);
-      dataLines.push(value);
+  if (
+    eventType === 'response.reasoning_summary_text.delta' ||
+    eventType === 'response.reasoning_text.delta'
+  ) {
+    if (typeof parsed.delta === 'string') {
+      return { done: false, delta: { reasoningDelta: parsed.delta } };
     }
+    return { done: false };
+  }
 
-    if (flushRemaining) {
-      return yield* flushEvent();
+  if (eventType === 'response.output_text.delta') {
+    if (typeof parsed.delta === 'string') {
+      return { done: false, delta: { contentDelta: parsed.delta } };
     }
-    return false;
-  };
+    return { done: false };
+  }
 
-  for await (const chunk of chunks) {
-    buffer += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true });
-    const ended = yield* processLines(false);
-    if (ended) {
+  if (
+    eventType === 'response.completed' ||
+    eventType === 'response.done' ||
+    eventType === 'response.incomplete'
+  ) {
+    const responseObj = parsed.response;
+    const usage = parseResponsesUsage(responseObj?.usage ?? parsed.usage);
+    const isIncomplete =
+      eventType === 'response.incomplete' || responseObj?.status === 'incomplete';
+    const incompleteReason = responseObj?.incomplete_details?.reason;
+    const finishReason = isIncomplete
+      ? incompleteReason === 'content_filter'
+        ? 'content_filter'
+        : 'length'
+      : 'stop';
+    return {
+      done: false,
+      delta: {
+        finishReason,
+        ...(usage ? { usage } : {}),
+      },
+    };
+  }
+
+  return { done: false };
+}
+
+/**
+ * Parses an OpenAI Responses API Server-Sent Events stream into normalized deltas
+ * and usage metrics, separating reasoning summary deltas from output text deltas.
+ */
+export async function* parseOpenAiResponsesSseStream(
+  chunks: AsyncIterable<Uint8Array | string>,
+): AsyncIterable<LlmStreamDelta> {
+  for await (const frame of iterateSseFrames(chunks)) {
+    const parsed = parseResponsesEventData(frame.data, frame.event);
+    if (parsed.done) {
       return;
     }
+    if (parsed.delta) {
+      yield parsed.delta;
+    }
   }
+}
 
-  buffer += decoder.decode(undefined, { stream: false });
-  if (buffer.length > 0 || dataLines.length > 0) {
-    yield* processLines(true);
+export function resolveResponsesUrl(baseUrl: string): string {
+  const cleaned = baseUrl.trim().replace(/\/+$/, '');
+  if (!cleaned) {
+    throw new Error('Model Base URL cannot be empty.');
   }
+  if (cleaned.endsWith('/responses')) {
+    return cleaned;
+  }
+  if (cleaned.endsWith('/beta/chat/completions')) {
+    return `${cleaned.slice(0, -'/beta/chat/completions'.length)}/responses`;
+  }
+  if (cleaned.endsWith('/chat/completions')) {
+    return `${cleaned.slice(0, -'/chat/completions'.length)}/responses`;
+  }
+  return `${cleaned}/responses`;
 }
 
 export function resolveChatCompletionsUrl(baseUrl: string): string {
@@ -434,6 +633,12 @@ export async function* applyPrefixEchoCursor(
   yield* flushConfirmedPrefill();
 }
 
+export function resolveEffectiveApiProtocol(input: {
+  capabilities?: ProviderCapabilities;
+}): ProviderApiProtocol {
+  return normalizeProviderApiProtocol(input.capabilities?.apiProtocol, 'openai_chat');
+}
+
 function resolveEffectiveThinkingProtocol(req: LlmStreamRequest): ProviderThinkingProtocol {
   return (
     req.capabilities?.thinkingProtocol ??
@@ -441,11 +646,24 @@ function resolveEffectiveThinkingProtocol(req: LlmStreamRequest): ProviderThinki
   );
 }
 
-function resolveEffectivePrefixProtocol(req: LlmStreamRequest): ProviderPrefixProtocol {
+export function resolveEffectivePrefixProtocol(input: {
+  baseUrl: string;
+  capabilities?: ProviderCapabilities;
+}): ProviderPrefixProtocol {
+  const apiProtocol = resolveEffectiveApiProtocol(input);
+  if (apiProtocol === 'openai_responses' || apiProtocol === 'gemini_native') {
+    return 'none';
+  }
   return (
-    req.capabilities?.prefixProtocol ??
-    (isOfficialDeepSeekUrl(req.baseUrl) ? 'deepseek_beta' : 'none')
+    input.capabilities?.prefixProtocol ??
+    (isOfficialDeepSeekUrl(input.baseUrl) ? 'deepseek_beta' : 'none')
   );
+}
+
+export function resolveStreamPrefillContent(req: LlmStreamRequest): string {
+  return resolveEffectivePrefixProtocol(req) !== 'none'
+    ? (req.prefixCompletion?.content ?? '')
+    : '';
 }
 
 export function mapReasoningEffortToDeepSeekParams(effort: ReasoningEffort = 'none'): {
@@ -552,8 +770,97 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
   };
 }
 
+export function buildOpenAiResponsesRequest(req: LlmStreamRequest): {
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+} {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+  };
+  if (req.apiKey.trim()) {
+    headers.Authorization = `Bearer ${req.apiKey.trim()}`;
+  }
+
+  const systemParts: string[] = [];
+  const input: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  for (const msg of req.messages) {
+    if (msg.role === 'system') {
+      if (msg.content.trim()) {
+        systemParts.push(msg.content);
+      }
+    } else {
+      input.push({ role: msg.role, content: msg.content });
+    }
+  }
+  const instructions = systemParts.length > 0 ? systemParts.join('\n\n') : undefined;
+
+  const rawEffort = normalizeReasoningEffort(req.reasoningEffort ?? req.reasoning_effort, 'none');
+  const reasoning =
+    rawEffort !== 'none'
+      ? {
+          effort: (rawEffort === 'max' ? 'high' : rawEffort) as 'low' | 'medium' | 'high',
+          summary: 'auto' as const,
+        }
+      : undefined;
+
+  return {
+    url: resolveResponsesUrl(req.baseUrl),
+    headers,
+    body: JSON.stringify({
+      model: req.model,
+      stream: true,
+      store: false,
+      ...(instructions !== undefined ? { instructions } : {}),
+      input,
+      ...(reasoning !== undefined ? { reasoning } : {}),
+      ...(req.maxOutputTokens && req.maxOutputTokens > 0
+        ? { max_output_tokens: Math.max(1, Math.floor(req.maxOutputTokens)) }
+        : {}),
+    }),
+  };
+}
+
 /**
- * Creates an OpenAI-compatible streaming transport backed by an injected Fetch-like client.
+ * Dispatches streaming request construction by the profile's apiProtocol so Web
+ * and Android NativeSse transports share identical wire payloads.
+ */
+export function buildProviderStreamRequest(req: LlmStreamRequest): {
+  protocol: ProviderApiProtocol;
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+} {
+  const protocol = resolveEffectiveApiProtocol(req);
+  if (protocol === 'openai_responses') {
+    return { protocol, ...buildOpenAiResponsesRequest(req) };
+  }
+  if (protocol === 'openai_chat') {
+    return { protocol, ...buildOpenAiChatRequest(req) };
+  }
+  throw new Error(`Unsupported API protocol: ${protocol}`);
+}
+
+/**
+ * Dispatches SSE byte/text stream parsing by ProviderApiProtocol into normalized
+ * LlmStreamDelta events.
+ */
+export function parseProviderSseStream(
+  protocol: ProviderApiProtocol,
+  chunks: AsyncIterable<Uint8Array | string>,
+): AsyncIterable<LlmStreamDelta> {
+  if (protocol === 'openai_responses') {
+    return parseOpenAiResponsesSseStream(chunks);
+  }
+  if (protocol === 'openai_chat') {
+    return parseOpenAiSseStream(chunks);
+  }
+  throw new Error(`Unsupported API protocol: ${protocol}`);
+}
+
+/**
+ * Creates a multi-protocol streaming transport backed by an injected Fetch-like client.
  */
 export function createOpenAiTransport(fetchImpl?: FetchLike): LlmTransport {
   const fetcher: FetchLike =
@@ -566,7 +873,7 @@ export function createOpenAiTransport(fetchImpl?: FetchLike): LlmTransport {
 
   return {
     async *streamChat(req: LlmStreamRequest): AsyncIterable<LlmStreamDelta> {
-      const { url, headers, body } = buildOpenAiChatRequest(req);
+      const { protocol, url, headers, body } = buildProviderStreamRequest(req);
 
       const response = await fetcher(url, {
         method: 'POST',
@@ -591,12 +898,9 @@ export function createOpenAiTransport(fetchImpl?: FetchLike): LlmTransport {
         throw new Error('Model response body is empty.');
       }
 
-      const prefixProtocol = resolveEffectivePrefixProtocol(req);
-      const prefillContent =
-        prefixProtocol !== 'none' ? (req.prefixCompletion?.content ?? '') : '';
       yield* applyPrefixEchoCursor(
-        parseOpenAiSseStream(toAsyncChunks(response.body)),
-        prefillContent,
+        parseProviderSseStream(protocol, toAsyncChunks(response.body)),
+        resolveStreamPrefillContent(req),
       );
     },
   };

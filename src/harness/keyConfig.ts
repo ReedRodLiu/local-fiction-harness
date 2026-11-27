@@ -7,6 +7,7 @@ import type {
   ModelConfigMeta,
   OfficialDeepSeekModel,
   PrefixCompletionMode,
+  ProviderApiProtocol,
   ProviderCapabilities,
   ProviderLibrary,
   ProviderLibraryMeta,
@@ -36,6 +37,31 @@ export const REASONING_EFFORTS: readonly ReasoningEffort[] = [
 ] as const;
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'none';
+
+export const PROVIDER_API_PROTOCOLS: readonly ProviderApiProtocol[] = [
+  'openai_chat',
+  'openai_responses',
+  'anthropic_messages',
+  'gemini_native',
+] as const;
+
+export const DEFAULT_PROVIDER_API_PROTOCOL: ProviderApiProtocol = 'openai_chat';
+
+export function isProviderApiProtocol(value: unknown): value is ProviderApiProtocol {
+  return (
+    value === 'openai_chat' ||
+    value === 'openai_responses' ||
+    value === 'anthropic_messages' ||
+    value === 'gemini_native'
+  );
+}
+
+export function normalizeProviderApiProtocol(
+  value: unknown,
+  fallback: ProviderApiProtocol = DEFAULT_PROVIDER_API_PROTOCOL,
+): ProviderApiProtocol {
+  return isProviderApiProtocol(value) ? value : fallback;
+}
 
 export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   baseUrl: 'https://api.deepseek.com',
@@ -91,6 +117,7 @@ export const PROVIDER_PRESETS: Readonly<Record<ProviderPresetId, ProviderPresetS
     defaultModel: 'deepseek-flash',
     backgroundModel: 'deepseek-flash',
     capabilities: {
+      apiProtocol: 'openai_chat',
       thinkingProtocol: 'deepseek',
       prefixProtocol: 'deepseek_beta',
       supportsBalanceQuery: true,
@@ -102,9 +129,16 @@ export const PROVIDER_PRESETS: Readonly<Record<ProviderPresetId, ProviderPresetS
     presetId: 'openai',
     name: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
-    models: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }],
-    defaultModel: 'gpt-4o',
+    models: [
+      { id: 'gpt-4.1' },
+      { id: 'gpt-4o' },
+      { id: 'gpt-4o-mini' },
+      { id: 'o4-mini' },
+    ],
+    defaultModel: 'gpt-4.1',
+    backgroundModel: 'gpt-4o-mini',
     capabilities: {
+      apiProtocol: 'openai_responses',
       thinkingProtocol: 'openai_reasoning_effort',
       prefixProtocol: 'none',
       supportsBalanceQuery: false,
@@ -119,6 +153,7 @@ export const PROVIDER_PRESETS: Readonly<Record<ProviderPresetId, ProviderPresetS
     models: [{ id: 'openai/gpt-4o-mini' }],
     defaultModel: 'openai/gpt-4o-mini',
     capabilities: {
+      apiProtocol: 'openai_chat',
       thinkingProtocol: 'openai_reasoning_effort',
       prefixProtocol: 'none',
       supportsBalanceQuery: false,
@@ -133,6 +168,7 @@ export const PROVIDER_PRESETS: Readonly<Record<ProviderPresetId, ProviderPresetS
     models: [{ id: 'deepseek-ai/DeepSeek-V3' }],
     defaultModel: 'deepseek-ai/DeepSeek-V3',
     capabilities: {
+      apiProtocol: 'openai_chat',
       thinkingProtocol: 'openai_reasoning_effort',
       prefixProtocol: 'none',
       supportsBalanceQuery: false,
@@ -147,6 +183,7 @@ export const PROVIDER_PRESETS: Readonly<Record<ProviderPresetId, ProviderPresetS
     models: [{ id: 'llama3.2' }],
     defaultModel: 'llama3.2',
     capabilities: {
+      apiProtocol: 'openai_chat',
       thinkingProtocol: 'openai_reasoning_effort',
       prefixProtocol: 'none',
       supportsBalanceQuery: false,
@@ -161,6 +198,7 @@ export const PROVIDER_PRESETS: Readonly<Record<ProviderPresetId, ProviderPresetS
     models: [],
     defaultModel: '',
     capabilities: {
+      apiProtocol: 'openai_chat',
       thinkingProtocol: 'openai_reasoning_effort',
       prefixProtocol: 'none',
       supportsBalanceQuery: false,
@@ -178,8 +216,12 @@ function cloneModelEntry(entry: ProviderModelEntry): ProviderModelEntry {
   };
 }
 
-function cloneCapabilities(capabilities: ProviderCapabilities): ProviderCapabilities {
+function cloneCapabilities(
+  capabilities: ProviderCapabilities,
+  fallbackProtocol: ProviderApiProtocol = DEFAULT_PROVIDER_API_PROTOCOL,
+): ProviderCapabilities {
   return {
+    apiProtocol: normalizeProviderApiProtocol(capabilities.apiProtocol, fallbackProtocol),
     thinkingProtocol: capabilities.thinkingProtocol,
     prefixProtocol: capabilities.prefixProtocol,
     supportsBalanceQuery: Boolean(capabilities.supportsBalanceQuery),
@@ -200,8 +242,13 @@ export function createProviderProfileFromPreset(
   const models = (overrides.models ?? preset.models).map(cloneModelEntry);
   const capabilities = cloneCapabilities(
     overrides.capabilities
-      ? { ...preset.capabilities, ...overrides.capabilities }
+      ? {
+          ...preset.capabilities,
+          ...overrides.capabilities,
+          apiProtocol: overrides.capabilities.apiProtocol ?? preset.capabilities.apiProtocol,
+        }
       : preset.capabilities,
+    preset.capabilities.apiProtocol ?? DEFAULT_PROVIDER_API_PROTOCOL,
   );
   const backgroundModel =
     overrides.backgroundModel !== undefined ? overrides.backgroundModel : preset.backgroundModel;

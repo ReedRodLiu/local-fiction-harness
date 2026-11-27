@@ -40,6 +40,7 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
       defaultModel: 'deepseek-flash',
       backgroundModel: 'deepseek-flash',
       capabilities: {
+        apiProtocol: 'openai_chat',
         thinkingProtocol: 'deepseek',
         prefixProtocol: 'deepseek_beta',
         supportsBalanceQuery: true,
@@ -51,9 +52,16 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
     expect(PROVIDER_PRESETS.openai).toMatchObject({
       name: 'OpenAI',
       baseUrl: 'https://api.openai.com/v1',
-      models: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }],
-      defaultModel: 'gpt-4o',
+      models: [
+        { id: 'gpt-4.1' },
+        { id: 'gpt-4o' },
+        { id: 'gpt-4o-mini' },
+        { id: 'o4-mini' },
+      ],
+      defaultModel: 'gpt-4.1',
+      backgroundModel: 'gpt-4o-mini',
       capabilities: {
+        apiProtocol: 'openai_responses',
         thinkingProtocol: 'openai_reasoning_effort',
         prefixProtocol: 'none',
         supportsBalanceQuery: false,
@@ -92,7 +100,7 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
 
     const p1 = createProviderProfileFromPreset('openai', { id: 'p-openai', apiKey: 'sk-1' });
     p1.models.push({ id: 'o3-mini' });
-    expect(PROVIDER_PRESETS.openai.models).toHaveLength(2);
+    expect(PROVIDER_PRESETS.openai.models).toHaveLength(4);
 
     const defLib = createDefaultProviderLibrary();
     expect(defLib.version).toBe(2);
@@ -155,6 +163,7 @@ describe('AsyncProviderLibraryStore persistence, memoryOnly purge, and legacy mi
         createProviderProfileFromPreset('openai', {
           id: 'openai-1',
           apiKey: 'sk-openai-secret',
+          defaultModel: 'gpt-4o',
           defaultPricing: {
             currency: 'USD',
             inputPerMillion: 2.5,
@@ -300,6 +309,7 @@ describe('AsyncProviderLibraryStore persistence, memoryOnly purge, and legacy mi
       apiKey: 'sk-relay-999',
       memoryOnly: false,
       capabilities: {
+        apiProtocol: 'openai_chat',
         thinkingProtocol: 'openai_reasoning_effort',
         prefixProtocol: 'none',
         supportsBalanceQuery: false,
@@ -307,6 +317,46 @@ describe('AsyncProviderLibraryStore persistence, memoryOnly purge, and legacy mi
         supportsBuiltinPricing: false,
       },
     });
+  });
+
+  it('defaults omitted capabilities.apiProtocol to openai_chat when loading legacy stored profiles', async () => {
+    const kv = createMemoryKv();
+    kv.setItem(
+      'lfh.model_config.meta',
+      JSON.stringify({
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o',
+        providerId: 'openai-legacy',
+        providerPresetId: 'openai',
+        providerLibrary: {
+          version: 2,
+          activeProviderId: 'openai-legacy',
+          reasoningEffort: 'none',
+          profiles: [
+            {
+              id: 'openai-legacy',
+              name: 'OpenAI',
+              presetId: 'openai',
+              baseUrl: 'https://api.openai.com/v1',
+              models: [{ id: 'gpt-4o' }],
+              defaultModel: 'gpt-4o',
+              capabilities: {
+                thinkingProtocol: 'openai_reasoning_effort',
+                prefixProtocol: 'none',
+                supportsBalanceQuery: false,
+                supportsBuiltinSearch: false,
+                supportsBuiltinPricing: false,
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    const store = createAsyncProviderLibraryStore(createKeyValueSecretStore(kv));
+    const loaded = await store.load();
+    expect(loaded.profiles[0]?.capabilities.apiProtocol).toBe('openai_chat');
+    expect(projectActiveModelConfig(loaded).capabilities?.apiProtocol).toBe('openai_chat');
   });
 });
 
@@ -328,6 +378,7 @@ describe('projectActiveModelConfig', () => {
         createProviderProfileFromPreset('openai', {
           id: 'openai-1',
           apiKey: 'sk-openai',
+          defaultModel: 'gpt-4o',
           backgroundModel: 'gpt-4o-mini',
           defaultPricing: {
             currency: 'USD',

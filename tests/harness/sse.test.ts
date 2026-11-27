@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   applyPrefixEchoCursor,
   buildOpenAiChatRequest,
+  buildProviderStreamRequest,
   createOpenAiTransport,
   parseOpenAiSseStream,
   resolveBetaChatCompletionsUrl,
+  resolveResponsesUrl,
   type LlmStreamDelta,
 } from '../../src/harness/index.ts';
 
@@ -669,5 +671,216 @@ describe('Multi-provider capability-driven OpenAI request & usage parsing', () =
       promptCacheHitTokens: 600,
       promptCacheMissTokens: 400,
     });
+  });
+});
+
+describe('OpenAI Responses API multi-protocol dispatch & streaming', () => {
+  it('resolves /responses URLs idempotently and strips /chat/completions', () => {
+    expect(resolveResponsesUrl('https://api.openai.com/v1')).toBe('https://api.openai.com/v1/responses');
+    expect(resolveResponsesUrl('https://api.openai.com/v1/')).toBe('https://api.openai.com/v1/responses');
+    expect(resolveResponsesUrl('https://api.openai.com/v1/responses')).toBe('https://api.openai.com/v1/responses');
+    expect(resolveResponsesUrl('https://api.openai.com/v1/chat/completions')).toBe(
+      'https://api.openai.com/v1/responses',
+    );
+  });
+
+  it('builds openai_responses payloads with store:false, instructions+input, and reasoning mapping', () => {
+    const offReq = buildProviderStreamRequest({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-oa-1',
+      model: 'gpt-4.1',
+      reasoningEffort: 'none',
+      includeUsage: true,
+      maxOutputTokens: 2048,
+      prefixCompletion: { content: '不应发送预填' },
+      capabilities: {
+        apiProtocol: 'openai_responses',
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'standard_assistant_prefill',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+      messages: [
+        { role: 'system', content: '系统规则一' },
+        { role: 'system', content: '系统规则二' },
+        { role: 'user', content: '开场' },
+        { role: 'assistant', content: '回应' },
+        { role: 'user', content: '继续' },
+      ],
+    });
+
+    expect(offReq.protocol).toBe('openai_responses');
+    expect(offReq.url).toBe('https://api.openai.com/v1/responses');
+    expect(offReq.headers.Authorization).toBe('Bearer sk-oa-1');
+    const offBody = JSON.parse(offReq.body) as Record<string, unknown>;
+    expect(offBody).toEqual({
+      model: 'gpt-4.1',
+      stream: true,
+      store: false,
+      instructions: '系统规则一\n\n系统规则二',
+      input: [
+        { role: 'user', content: '开场' },
+        { role: 'assistant', content: '回应' },
+        { role: 'user', content: '继续' },
+      ],
+      max_output_tokens: 2048,
+    });
+    expect(offBody).not.toHaveProperty('reasoning');
+    expect(offBody).not.toHaveProperty('stream_options');
+    expect(offBody).not.toHaveProperty('messages');
+
+    const onReq = buildProviderStreamRequest({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-oa-1',
+      model: 'o4-mini',
+      reasoningEffort: 'max',
+      capabilities: {
+        apiProtocol: 'openai_responses',
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+      messages: [{ role: 'user', content: '推理一下' }],
+    });
+    const onBody = JSON.parse(onReq.body) as Record<string, unknown>;
+    expect(onBody).not.toHaveProperty('instructions');
+    expect(onBody.reasoning).toEqual({ effort: 'high', summary: 'auto' });
+  });
+
+  it('streams reasoning summary deltas, output text deltas, and normalized usage from OpenAI Responses SSE', async () => {
+    const encoder = new TextEncoder();
+    const ssePayload = [
+      'event: response.created\n',
+      'data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}\n\n',
+      'event: response.reasoning_summary_text.delta\n',
+      'data: {"type":"response.reasoning_summary_text.delta","delta":"先梳理线索。"}\n\n',
+      'event: response.reasoning_text.delta\n',
+      'data: {"type":"response.reasoning_text.delta","delta":"再核对动机。"}\n\n',
+      'event: response.output_text.delta\n',
+      'data: {"type":"response.output_text.delta","delta":"雨夜中的"}\n\n',
+      'event: response.output_text.delta\n',
+      'data: {"type":"response.output_text.delta","delta":"钟声响起。"}\n\n',
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1000,"input_tokens_details":{"cached_tokens":750},"output_tokens":180,"output_tokens_details":{"reasoning_tokens":60},"total_tokens":1180}}}\n\n',
+    ].join('');
+    const bytes = encoder.encode(ssePayload);
+
+    const transport = createOpenAiTransport(async (url, init) => {
+      expect(url).toBe('https://api.openai.com/v1/responses');
+      expect(JSON.parse(init.body)).toMatchObject({
+        model: 'gpt-4.1',
+        store: false,
+        stream: true,
+      });
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+        body: (async function* () {
+          // Split across UTF-8 multi-byte boundaries
+          for (let i = 0; i < bytes.length; i += 7) {
+            yield bytes.slice(i, i + 7);
+          }
+        })(),
+      };
+    });
+
+    const deltas = await collect(
+      transport.streamChat({
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-oa-1',
+        model: 'gpt-4.1',
+        reasoningEffort: 'medium',
+        prefixCompletion: { content: '雨夜' },
+        capabilities: {
+          apiProtocol: 'openai_responses',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [{ role: 'user', content: '继续' }],
+      }),
+    );
+
+    expect(deltas.map((d) => d.reasoningDelta ?? '').join('')).toBe('先梳理线索。再核对动机。');
+    expect(deltas.map((d) => d.contentDelta ?? '').join('')).toBe('雨夜中的钟声响起。');
+    const last = deltas.at(-1);
+    expect(last?.finishReason).toBe('stop');
+    expect(last?.usage).toEqual({
+      promptTokens: 1000,
+      completionTokens: 180,
+      totalTokens: 1180,
+      promptCacheHitTokens: 750,
+      promptCacheMissTokens: 250,
+      completionTokensDetails: { reasoningTokens: 60 },
+    });
+  });
+
+  it('maps incomplete responses to length/content_filter and surfaces response.failed / error events', async () => {
+    const encoder = new TextEncoder();
+    const incompleteTransport = createOpenAiTransport(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '',
+      body: (async function* () {
+        yield encoder.encode(
+          'data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}\n\n',
+        );
+      })(),
+    }));
+    const incompleteDeltas = await collect(
+      incompleteTransport.streamChat({
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-oa-1',
+        model: 'gpt-4.1',
+        capabilities: {
+          apiProtocol: 'openai_responses',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    );
+    expect(incompleteDeltas.at(-1)?.finishReason).toBe('length');
+
+    const failedTransport = createOpenAiTransport(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '',
+      body: (async function* () {
+        yield encoder.encode(
+          'event: response.failed\ndata: {"type":"response.failed","response":{"status":"failed","error":{"message":"Quota exceeded"}}}\n\n',
+        );
+      })(),
+    }));
+    const { error } = await collectUntilError(
+      failedTransport.streamChat({
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-oa-1',
+        model: 'gpt-4.1',
+        capabilities: {
+          apiProtocol: 'openai_responses',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('Quota exceeded');
   });
 });

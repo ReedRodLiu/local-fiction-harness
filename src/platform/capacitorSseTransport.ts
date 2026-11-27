@@ -1,9 +1,10 @@
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import {
-  buildOpenAiChatRequest,
   applyPrefixEchoCursor,
+  buildProviderStreamRequest,
   createDefaultId,
-  parseOpenAiSseStream,
+  parseProviderSseStream,
+  resolveStreamPrefillContent,
   type LlmStreamDelta,
   type LlmStreamRequest,
   type LlmTransport,
@@ -51,7 +52,7 @@ export function createCapacitorSseTransport(
       }
 
       const requestId = createRequestId();
-      const { url, headers, body } = buildOpenAiChatRequest(req);
+      const { protocol, url, headers, body } = buildProviderStreamRequest(req);
 
       const queue: Uint8Array[] = [];
       let waiter: (() => void) | null = null;
@@ -154,8 +155,8 @@ export function createCapacitorSseTransport(
         }
 
         yield* applyPrefixEchoCursor(
-          parseOpenAiSseStream(rawByteChunks()),
-          req.prefixCompletion?.content ?? '',
+          parseProviderSseStream(protocol, rawByteChunks()),
+          resolveStreamPrefillContent(req),
         );
       } finally {
         unbind();

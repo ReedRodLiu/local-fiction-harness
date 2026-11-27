@@ -1,4 +1,5 @@
-import { isOfficialDeepSeekUrl, normalizeReasoningEffort } from './keyConfig.ts';
+import { normalizeReasoningEffort } from './keyConfig.ts';
+import { resolveEffectivePrefixProtocol } from './sse.ts';
 import {
   buildModePrefill,
   type PrefillMode,
@@ -25,7 +26,6 @@ import type {
   LlmUsage,
   ModelConfig,
   NodeDiagnostics,
-  ProviderPrefixProtocol,
   TurnCallbacks,
 } from './types.ts';
 
@@ -236,13 +236,6 @@ function emitDiagnostic(
 
 function isStop(finishReason: string | null | undefined): boolean {
   return finishReason === 'stop';
-}
-
-function resolveEffectivePrefixProtocol(config: ModelConfig): ProviderPrefixProtocol {
-  return (
-    config.capabilities?.prefixProtocol ??
-    (isOfficialDeepSeekUrl(config.baseUrl) ? 'deepseek_beta' : 'none')
-  );
 }
 
 async function streamPassThrough(

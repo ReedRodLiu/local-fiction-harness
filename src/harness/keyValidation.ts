@@ -544,7 +544,7 @@ const PREFILL_PROBE_UNSUPPORTED_MESSAGE = '当前服务商暂不支持增强续�
  */
 export function normalizeProviderBaseUrl(rawBaseUrl: string): string {
   const trimmed = rawBaseUrl.trim().replace(/\/+$/, '');
-  return trimmed.replace(/\/(?:chat\/completions|models)$/i, '').replace(/\/+$/, '');
+  return trimmed.replace(/\/(?:chat\/completions|responses|models)$/i, '').replace(/\/+$/, '');
 }
 
 function isValidProviderBaseUrl(normalizedBaseUrl: string, allowRelativeBaseUrl = false): boolean {

@@ -6,10 +6,10 @@ import {
   getActiveSummarySnapshot,
   invalidateStorySummarySnapshotsFromNode,
   invalidateSummarySnapshotsFromNode,
-  isOfficialDeepSeekUrl,
   judgeRefusal,
   normalizeReasoningEffort,
   parseProposalReply,
+  resolveEffectivePrefixProtocol,
   restoreRefusalOriginalContent,
   routeRefusal,
   storyDocumentState,
@@ -297,9 +297,7 @@ export async function streamPrefixContinuation(
   options: PrefixContinuationOptions,
 ): Promise<PrefixContinuationResult> {
   const reasoningEffort = normalizeReasoningEffort(options.config.reasoningEffort);
-  const prefixProtocol =
-    options.config.capabilities?.prefixProtocol ??
-    (isOfficialDeepSeekUrl(options.config.baseUrl) ? 'deepseek_beta' : 'none');
+  const prefixProtocol = resolveEffectivePrefixProtocol(options.config);
   const usePrefixCompletion = prefixProtocol !== 'none';
   const requestMessages: LlmMessage[] = usePrefixCompletion
     ? options.messages
