@@ -436,6 +436,195 @@ export async function* parseOpenAiResponsesSseStream(
   }
 }
 
+interface AnthropicUsageAccumulator {
+  inputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  outputTokens?: number;
+}
+
+function normalizeAnthropicUsage(acc: AnthropicUsageAccumulator): LlmUsage | undefined {
+  const { inputTokens, cacheCreationInputTokens, cacheReadInputTokens, outputTokens } = acc;
+  if (
+    inputTokens === undefined &&
+    cacheCreationInputTokens === undefined &&
+    cacheReadInputTokens === undefined &&
+    outputTokens === undefined
+  ) {
+    return undefined;
+  }
+  const hasCacheInfo =
+    cacheReadInputTokens !== undefined || cacheCreationInputTokens !== undefined;
+  const promptTokens =
+    inputTokens !== undefined
+      ? inputTokens + (cacheCreationInputTokens ?? 0) + (cacheReadInputTokens ?? 0)
+      : hasCacheInfo
+        ? (cacheCreationInputTokens ?? 0) + (cacheReadInputTokens ?? 0)
+        : undefined;
+  const completionTokens = outputTokens;
+  const totalTokens =
+    promptTokens !== undefined && completionTokens !== undefined
+      ? promptTokens + completionTokens
+      : undefined;
+  const promptCacheHitTokens = cacheReadInputTokens;
+  const promptCacheMissTokens = hasCacheInfo
+    ? (inputTokens ?? 0) + (cacheCreationInputTokens ?? 0)
+    : undefined;
+
+  return {
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(completionTokens !== undefined ? { completionTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(promptCacheHitTokens !== undefined ? { promptCacheHitTokens } : {}),
+    ...(promptCacheMissTokens !== undefined ? { promptCacheMissTokens } : {}),
+  };
+}
+
+function mergeAnthropicUsageFields(
+  acc: AnthropicUsageAccumulator,
+  raw:
+    | {
+        input_tokens?: unknown;
+        output_tokens?: unknown;
+        cache_creation_input_tokens?: unknown;
+        cache_read_input_tokens?: unknown;
+      }
+    | undefined,
+): void {
+  if (!raw) return;
+  const inputTokens = optionalTokenCount(raw.input_tokens);
+  const outputTokens = optionalTokenCount(raw.output_tokens);
+  const cacheCreation = optionalTokenCount(raw.cache_creation_input_tokens);
+  const cacheRead = optionalTokenCount(raw.cache_read_input_tokens);
+  if (inputTokens !== undefined) acc.inputTokens = inputTokens;
+  if (outputTokens !== undefined) acc.outputTokens = outputTokens;
+  if (cacheCreation !== undefined) acc.cacheCreationInputTokens = cacheCreation;
+  if (cacheRead !== undefined) acc.cacheReadInputTokens = cacheRead;
+}
+
+function mapAnthropicStopReason(stopReason: unknown): string | undefined {
+  if (typeof stopReason !== 'string' || !stopReason) return undefined;
+  if (stopReason === 'end_turn' || stopReason === 'stop_sequence') return 'stop';
+  if (stopReason === 'max_tokens') return 'length';
+  if (stopReason === 'refusal') return 'content_filter';
+  return stopReason;
+}
+
+/**
+ * Parses an Anthropic Messages Server-Sent Events stream into normalized deltas
+ * and usage metrics, separating thinking_delta from text_delta and normalizing
+ * cache creation/read tokens.
+ */
+export async function* parseAnthropicSseStream(
+  chunks: AsyncIterable<Uint8Array | string>,
+): AsyncIterable<LlmStreamDelta> {
+  const usageAcc: AnthropicUsageAccumulator = {};
+  let emittedUsage = false;
+
+  for await (const frame of iterateSseFrames(chunks)) {
+    const trimmed = frame.data.trim();
+    if (!trimmed) continue;
+    if (trimmed === '[DONE]') break;
+
+    let parsed: {
+      type?: unknown;
+      message?: {
+        usage?: {
+          input_tokens?: unknown;
+          output_tokens?: unknown;
+          cache_creation_input_tokens?: unknown;
+          cache_read_input_tokens?: unknown;
+        };
+      };
+      delta?: {
+        type?: unknown;
+        text?: unknown;
+        thinking?: unknown;
+        stop_reason?: unknown;
+      };
+      usage?: {
+        input_tokens?: unknown;
+        output_tokens?: unknown;
+        cache_creation_input_tokens?: unknown;
+        cache_read_input_tokens?: unknown;
+      };
+      error?: { message?: string };
+    };
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+
+    const eventType = typeof parsed.type === 'string' ? parsed.type : frame.event;
+    if (parsed.error || eventType === 'error') {
+      throw new Error(
+        parsed.error?.message || 'Anthropic Messages API returned an SSE error payload.',
+      );
+    }
+
+    if (eventType === 'message_start') {
+      mergeAnthropicUsageFields(usageAcc, parsed.message?.usage);
+      continue;
+    }
+
+    if (eventType === 'content_block_delta') {
+      const deltaType = parsed.delta?.type;
+      if (deltaType === 'text_delta' && typeof parsed.delta?.text === 'string') {
+        yield { contentDelta: parsed.delta.text };
+      } else if (deltaType === 'thinking_delta' && typeof parsed.delta?.thinking === 'string') {
+        yield { reasoningDelta: parsed.delta.thinking };
+      }
+      continue;
+    }
+
+    if (eventType === 'message_delta') {
+      mergeAnthropicUsageFields(usageAcc, parsed.usage);
+      const finishReason = mapAnthropicStopReason(parsed.delta?.stop_reason);
+      const usage = normalizeAnthropicUsage(usageAcc);
+      if (finishReason !== undefined || usage !== undefined) {
+        if (usage) emittedUsage = true;
+        yield {
+          ...(finishReason !== undefined ? { finishReason } : {}),
+          ...(usage ? { usage } : {}),
+        };
+      }
+      continue;
+    }
+
+    if (eventType === 'message_stop') {
+      if (!emittedUsage) {
+        const usage = normalizeAnthropicUsage(usageAcc);
+        if (usage) {
+          emittedUsage = true;
+          yield { usage };
+        }
+      }
+      return;
+    }
+  }
+
+  if (!emittedUsage) {
+    const usage = normalizeAnthropicUsage(usageAcc);
+    if (usage) {
+      yield { usage };
+    }
+  }
+}
+
+export const ANTHROPIC_API_VERSION = '2023-06-01';
+
+export function resolveAnthropicMessagesUrl(baseUrl: string): string {
+  const cleaned = baseUrl.trim().replace(/\/+$/, '');
+  if (!cleaned) {
+    throw new Error('Model Base URL cannot be empty.');
+  }
+  if (cleaned.endsWith('/messages')) {
+    return cleaned;
+  }
+  return `${cleaned}/messages`;
+}
+
 export function resolveResponsesUrl(baseUrl: string): string {
   const cleaned = baseUrl.trim().replace(/\/+$/, '');
   if (!cleaned) {
@@ -649,10 +838,19 @@ function resolveEffectiveThinkingProtocol(req: LlmStreamRequest): ProviderThinki
 export function resolveEffectivePrefixProtocol(input: {
   baseUrl: string;
   capabilities?: ProviderCapabilities;
+  reasoningEffort?: ReasoningEffort;
+  reasoning_effort?: ReasoningEffort;
+  thinking?: DeepSeekThinkingParam;
 }): ProviderPrefixProtocol {
   const apiProtocol = resolveEffectiveApiProtocol(input);
   if (apiProtocol === 'openai_responses' || apiProtocol === 'gemini_native') {
     return 'none';
+  }
+  if (apiProtocol === 'anthropic_messages') {
+    const effort = normalizeReasoningEffort(input.reasoningEffort ?? input.reasoning_effort, 'none');
+    if (effort !== 'none' || input.thinking?.type === 'enabled') {
+      return 'none';
+    }
   }
   return (
     input.capabilities?.prefixProtocol ??
@@ -822,6 +1020,90 @@ export function buildOpenAiResponsesRequest(req: LlmStreamRequest): {
   };
 }
 
+const ANTHROPIC_THINKING_BUDGETS: Record<Exclude<ReasoningEffort, 'none'>, number> = {
+  low: 2048,
+  medium: 8192,
+  high: 16384,
+  max: 16384,
+};
+
+export function buildAnthropicMessagesRequest(req: LlmStreamRequest): {
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+} {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+    'anthropic-version': ANTHROPIC_API_VERSION,
+    'anthropic-dangerous-direct-browser-access': 'true',
+  };
+  if (req.apiKey.trim()) {
+    headers['x-api-key'] = req.apiKey.trim();
+  }
+
+  const systemParts: string[] = [];
+  const mergedMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  for (const msg of req.messages) {
+    if (msg.role === 'system') {
+      if (msg.content.trim()) {
+        systemParts.push(msg.content);
+      }
+      continue;
+    }
+    const previous = mergedMessages.at(-1);
+    if (previous && previous.role === msg.role) {
+      previous.content = `${previous.content}\n\n${msg.content}`;
+    } else {
+      mergedMessages.push({ role: msg.role, content: msg.content });
+    }
+  }
+  const system = systemParts.length > 0 ? systemParts.join('\n\n') : undefined;
+
+  const effort = normalizeReasoningEffort(req.reasoningEffort ?? req.reasoning_effort, 'none');
+  const requestedMax =
+    req.maxOutputTokens && req.maxOutputTokens > 0 ? Math.floor(req.maxOutputTokens) : 0;
+
+  let thinking: { type: 'enabled'; budget_tokens: number } | undefined;
+  let maxTokens = requestedMax > 0 ? Math.max(1, requestedMax) : 4096;
+  if (effort !== 'none') {
+    const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effort];
+    thinking = { type: 'enabled', budget_tokens: budgetTokens };
+    maxTokens = Math.max(requestedMax, budgetTokens + 2048);
+  }
+
+  const prefixProtocol = resolveEffectivePrefixProtocol(req);
+  const usePrefix = Boolean(req.prefixCompletion) && prefixProtocol !== 'none';
+  if (usePrefix && mergedMessages.length === 0) {
+    throw new Error(
+      'Cannot use prefix completion with an empty message history. The final original message must be user or system.',
+    );
+  }
+  if (usePrefix && mergedMessages.at(-1)?.role === 'assistant') {
+    throw new Error(
+      'Cannot append an assistant prefix after an assistant message. The final original message must be user or system.',
+    );
+  }
+
+  const messages =
+    usePrefix && req.prefixCompletion
+      ? [...mergedMessages, { role: 'assistant' as const, content: req.prefixCompletion.content }]
+      : mergedMessages;
+
+  return {
+    url: resolveAnthropicMessagesUrl(req.baseUrl),
+    headers,
+    body: JSON.stringify({
+      model: req.model,
+      stream: true,
+      max_tokens: maxTokens,
+      ...(system !== undefined ? { system } : {}),
+      messages,
+      ...(thinking !== undefined ? { thinking } : {}),
+    }),
+  };
+}
+
 /**
  * Dispatches streaming request construction by the profile's apiProtocol so Web
  * and Android NativeSse transports share identical wire payloads.
@@ -835,6 +1117,9 @@ export function buildProviderStreamRequest(req: LlmStreamRequest): {
   const protocol = resolveEffectiveApiProtocol(req);
   if (protocol === 'openai_responses') {
     return { protocol, ...buildOpenAiResponsesRequest(req) };
+  }
+  if (protocol === 'anthropic_messages') {
+    return { protocol, ...buildAnthropicMessagesRequest(req) };
   }
   if (protocol === 'openai_chat') {
     return { protocol, ...buildOpenAiChatRequest(req) };
@@ -852,6 +1137,9 @@ export function parseProviderSseStream(
 ): AsyncIterable<LlmStreamDelta> {
   if (protocol === 'openai_responses') {
     return parseOpenAiResponsesSseStream(chunks);
+  }
+  if (protocol === 'anthropic_messages') {
+    return parseAnthropicSseStream(chunks);
   }
   if (protocol === 'openai_chat') {
     return parseOpenAiSseStream(chunks);

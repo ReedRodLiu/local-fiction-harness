@@ -1,8 +1,18 @@
 import type { DiagnosticCollector } from './diagnostics.ts';
-import { resolveChatCompletionsUrl } from './sse.ts';
-import type { AbortSignalLike, FetchLike, FetchResponseLike } from './types.ts';
+import {
+  ANTHROPIC_API_VERSION,
+  resolveAnthropicMessagesUrl,
+  resolveChatCompletionsUrl,
+} from './sse.ts';
+import type {
+  AbortSignalLike,
+  FetchLike,
+  FetchResponseLike,
+  ProviderApiProtocol,
+} from './types.ts';
 
 export const DEEPSEEK_OFFICIAL_KEYS_URL = 'https://platform.deepseek.com/api_keys';
+export const ANTHROPIC_CONSOLE_KEYS_URL = 'https://console.anthropic.com/settings/keys';
 export const DEEPSEEK_OFFICIAL_TOP_UP_URL = 'https://platform.deepseek.com/top_up';
 export const DEEPSEEK_OFFICIAL_TOP_UP_DECLARATION =
   '将跳转至 DeepSeek 开放平台官方充值页，与网页/App 端额度独立，本应用不经手支付';
@@ -539,12 +549,12 @@ export interface PrefillProbeResult {
 const PREFILL_PROBE_UNSUPPORTED_MESSAGE = '当前服务商暂不支持增强续写，已保持通用稳定模式';
 
 /**
- * Normalizes an OpenAI-compatible provider base URL by trimming whitespace and
- * stripping trailing slashes or endpoint suffixes (/chat/completions, /models).
+ * Normalizes a provider base URL by trimming whitespace and stripping trailing
+ * slashes or endpoint suffixes (/chat/completions, /responses, /messages, /models).
  */
 export function normalizeProviderBaseUrl(rawBaseUrl: string): string {
   const trimmed = rawBaseUrl.trim().replace(/\/+$/, '');
-  return trimmed.replace(/\/(?:chat\/completions|responses|models)$/i, '').replace(/\/+$/, '');
+  return trimmed.replace(/\/(?:chat\/completions|responses|messages|models)$/i, '').replace(/\/+$/, '');
 }
 
 function isValidProviderBaseUrl(normalizedBaseUrl: string, allowRelativeBaseUrl = false): boolean {
@@ -626,13 +636,34 @@ function isAbortError(err: unknown): boolean {
   );
 }
 
+function buildProviderHeaders(
+  apiProtocol: ProviderApiProtocol | undefined,
+  apiKey: string,
+  extra: Record<string, string> = {},
+): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  if (apiProtocol === 'anthropic_messages') {
+    headers['anthropic-version'] = ANTHROPIC_API_VERSION;
+    headers['anthropic-dangerous-direct-browser-access'] = 'true';
+    if (apiKey) {
+      headers['x-api-key'] = apiKey;
+    }
+    return headers;
+  }
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+  return headers;
+}
+
 /**
- * Verifies an OpenAI-compatible provider connection via GET /models and returns
- * structured status, discovered model IDs, and plain-language guidance.
+ * Verifies a provider connection via GET /models and returns structured status,
+ * discovered model IDs, and plain-language guidance.
  */
 export async function verifyProviderConnection(options: {
   baseUrl: string;
   apiKey: string;
+  apiProtocol?: ProviderApiProtocol;
   requireSkPrefix?: boolean;
   allowEmptyKey?: boolean;
   allowRelativeBaseUrl?: boolean;
@@ -675,12 +706,9 @@ export async function verifyProviderConnection(options: {
       : undefined;
 
   try {
-    const headers: Record<string, string> = {
+    const headers = buildProviderHeaders(options.apiProtocol, format.key, {
       Accept: 'application/json',
-    };
-    if (format.key) {
-      headers.Authorization = `Bearer ${format.key}`;
-    }
+    });
 
     const res = await fetchFn(`${baseUrl}/models`, {
       method: 'GET',
@@ -740,20 +768,24 @@ export async function verifyProviderConnection(options: {
 }
 
 /**
- * Probes whether an OpenAI-compatible provider supports a trailing assistant
- * message for standard assistant prefill without /beta URL rewriting.
+ * Probes whether a provider supports a trailing assistant message for standard
+ * assistant prefill without /beta URL rewriting.
  */
 export async function probeAssistantPrefillCompatibility(options: {
   baseUrl: string;
   apiKey: string;
   model: string;
+  apiProtocol?: ProviderApiProtocol;
   fetchImpl?: FetchLike;
   timeoutMs?: number;
 }): Promise<PrefillProbeResult> {
   const model = options.model.trim();
+  const isAnthropic = options.apiProtocol === 'anthropic_messages';
   let url: string;
   try {
-    url = resolveChatCompletionsUrl(options.baseUrl);
+    url = isAnthropic
+      ? resolveAnthropicMessagesUrl(options.baseUrl)
+      : resolveChatCompletionsUrl(options.baseUrl);
   } catch {
     return { supported: false, message: PREFILL_PROBE_UNSUPPORTED_MESSAGE };
   }
@@ -778,13 +810,10 @@ export async function probeAssistantPrefillCompatibility(options: {
 
   try {
     const cleanedKey = sanitizeApiKeyInput(options.apiKey);
-    const headers: Record<string, string> = {
+    const headers = buildProviderHeaders(options.apiProtocol, cleanedKey, {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-    };
-    if (cleanedKey) {
-      headers.Authorization = `Bearer ${cleanedKey}`;
-    }
+    });
 
     const res = await fetchFn(url, {
       method: 'POST',
@@ -810,10 +839,23 @@ export async function probeAssistantPrefillCompatibility(options: {
     }
 
     const payload = await readJsonPayload(res);
-    const firstChoice =
-      isPlainRecord(payload) && Array.isArray(payload.choices) ? payload.choices[0] : undefined;
-    const message = isPlainRecord(firstChoice) ? firstChoice.message : undefined;
-    const content = isPlainRecord(message) ? message.content : undefined;
+    let content: unknown;
+    if (isAnthropic) {
+      if (isPlainRecord(payload) && Array.isArray(payload.content)) {
+        const textParts = payload.content
+          .filter(
+            (block): block is { type: 'text'; text: string } =>
+              isPlainRecord(block) && block.type === 'text' && typeof block.text === 'string',
+          )
+          .map((block) => block.text);
+        content = textParts.join('');
+      }
+    } else {
+      const firstChoice =
+        isPlainRecord(payload) && Array.isArray(payload.choices) ? payload.choices[0] : undefined;
+      const message = isPlainRecord(firstChoice) ? firstChoice.message : undefined;
+      content = isPlainRecord(message) ? message.content : undefined;
+    }
     if (typeof content === 'string' && content.trim().length > 0) {
       return { supported: true, message: '当前服务商支持增强续写' };
     }

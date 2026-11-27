@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ExternalLink, RefreshCw } from 'lucide-react';
 import { isDevProxyBaseUrl } from '../platform/devProxy.ts';
 import {
+  ANTHROPIC_CONSOLE_KEYS_URL,
   DEEPSEEK_OFFICIAL_KEYS_URL,
   PROVIDER_PRESETS,
   PUBLIC_RESEARCH_PRESETS,
@@ -78,6 +79,7 @@ const PRESET_CARDS: ReadonlyArray<{
 }> = [
   { presetId: 'deepseek', label: 'DeepSeek', badge: '官方推荐' },
   { presetId: 'openai', label: 'OpenAI' },
+  { presetId: 'anthropic', label: 'Anthropic' },
   { presetId: 'openrouter', label: 'OpenRouter' },
   { presetId: 'siliconflow', label: '硅基流动' },
   { presetId: 'local', label: '本地服务' },
@@ -366,6 +368,7 @@ export async function verifyWizardDraftConnection(options: {
   const result: ProviderConnectionVerifyResult = await verifyProviderFn({
     baseUrl: draft.baseUrl,
     apiKey: draft.apiKey,
+    apiProtocol: draft.apiProtocol,
     requireSkPrefix: false,
     allowEmptyKey: true,
     allowRelativeBaseUrl: import.meta.env.DEV && isDevProxyBaseUrl(draft.baseUrl),
@@ -559,6 +562,7 @@ export function ProviderSetupWizard({
     const result = await verifyProviderConnection({
       baseUrl: draft.baseUrl,
       apiKey: draft.apiKey,
+      apiProtocol: draft.apiProtocol,
       requireSkPrefix: false,
       allowEmptyKey: true,
       allowRelativeBaseUrl: import.meta.env.DEV && isDevProxyBaseUrl(draft.baseUrl),
@@ -598,6 +602,7 @@ export function ProviderSetupWizard({
       baseUrl: draft.baseUrl,
       apiKey: draft.apiKey,
       model: probeModel,
+      apiProtocol: draft.apiProtocol,
     });
     setIsProbingPrefill(false);
     setDraft((prev) => ({
@@ -838,7 +843,11 @@ export function ProviderSetupWizard({
                     id="byok-api-key"
                     name="apiKey"
                     type={showKey ? 'text' : 'password'}
-                    placeholder="sk-...（本地服务可不填）"
+                    placeholder={
+                      draft.apiProtocol === 'anthropic_messages'
+                        ? 'sk-ant-...'
+                        : 'sk-...（本地服务可不填）'
+                    }
                     value={draft.apiKey}
                     disabled={busy}
                     autoComplete="off"
@@ -863,6 +872,26 @@ export function ProviderSetupWizard({
                   </button>
                 </div>
               </div>
+
+              {draft.presetId === 'anthropic' && (
+                <BannerAlert tone="info" testId="anthropic-subscription-notice">
+                  <div className="provider-subscription-notice">
+                    <span>
+                      Claude Pro / Max 网页会员订阅不含 API 调用额度，需在 Anthropic Console 创建按量 API Key。
+                    </span>
+                    <a
+                      className="provider-search-docs-link"
+                      data-testid="anthropic-console-keys-link"
+                      href={ANTHROPIC_CONSOLE_KEYS_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <span>前往 Anthropic Console 获取 API Key</span>
+                      <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
+                    </a>
+                  </div>
+                </BannerAlert>
+              )}
 
               <div className="field">
                 <label htmlFor="provider-model-input">常用模型</label>
@@ -1041,15 +1070,13 @@ export function ProviderSetupWizard({
                 >
                   <option value="openai_chat">OpenAI Chat Completions (/chat/completions)</option>
                   <option value="openai_responses">OpenAI Responses API (/responses)</option>
-                  <option value="anthropic_messages" disabled>
-                    Anthropic Messages (/v1/messages · 后续支持)
-                  </option>
+                  <option value="anthropic_messages">Anthropic Messages (/v1/messages)</option>
                   <option value="gemini_native" disabled>
                     Google Gemini 原生 (/v1beta · 后续支持)
                   </option>
                 </select>
                 <span className="wizard-privacy-note">
-                  OpenAI 官方默认使用 Responses API；第三方兼容或旧中转站可切换为 Chat Completions
+                  OpenAI 官方默认 Responses API，Anthropic 默认 Messages API；兼容中转站可按需切换
                 </span>
               </div>
             )}
@@ -1191,10 +1218,16 @@ export function ProviderSetupWizard({
                     </span>
                   )}
                 </div>
-                {prefillDisabledByProtocol && (
+                {prefillDisabledByProtocol ? (
                   <span className="wizard-privacy-note">
                     当前所选接口协议不支持助手预填，已自动使用标准多轮续写
                   </span>
+                ) : (
+                  draft.apiProtocol === 'anthropic_messages' && (
+                    <span className="wizard-privacy-note">
+                      Anthropic 原生协议在未开启思考时支持助手尾段预填；开启思考后将自动降级为标准多轮续写
+                    </span>
+                  )
                 )}
               </div>
             )}

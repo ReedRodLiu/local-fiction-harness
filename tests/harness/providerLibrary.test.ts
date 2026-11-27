@@ -70,6 +70,27 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
       },
     });
 
+    expect(PROVIDER_PRESETS.anthropic).toMatchObject({
+      presetId: 'anthropic',
+      name: 'Anthropic (Claude)',
+      baseUrl: 'https://api.anthropic.com/v1',
+      models: [
+        { id: 'claude-sonnet-4-5' },
+        { id: 'claude-opus-4-1' },
+        { id: 'claude-haiku-4-5' },
+      ],
+      defaultModel: 'claude-sonnet-4-5',
+      backgroundModel: 'claude-haiku-4-5',
+      capabilities: {
+        apiProtocol: 'anthropic_messages',
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'standard_assistant_prefill',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    });
+
     expect(PROVIDER_PRESETS.openrouter).toMatchObject({
       name: 'OpenRouter',
       baseUrl: 'https://openrouter.ai/api/v1',

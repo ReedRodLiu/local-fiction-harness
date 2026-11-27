@@ -315,4 +315,67 @@ describe('Generic OpenAI-compatible provider validation & prefill probing', () =
       statusCode: 400,
     });
   });
+
+  it('normalizes Anthropic /messages URLs, verifies GET /models with x-api-key + CORS headers, and probes /messages prefill', async () => {
+    expect(normalizeProviderBaseUrl('https://api.anthropic.com/v1/messages/')).toBe(
+      'https://api.anthropic.com/v1',
+    );
+
+    const verified = await verifyProviderConnection({
+      baseUrl: 'https://api.anthropic.com/v1/messages',
+      apiKey: ' sk-ant-key-1 ',
+      apiProtocol: 'anthropic_messages',
+      fetchImpl: async (url, init) => {
+        expect(url).toBe('https://api.anthropic.com/v1/models');
+        expect(init.method).toBe('GET');
+        expect(init.headers['x-api-key']).toBe('sk-ant-key-1');
+        expect(init.headers['anthropic-version']).toBe('2023-06-01');
+        expect(init.headers['anthropic-dangerous-direct-browser-access']).toBe('true');
+        expect(init.headers.Authorization).toBeUndefined();
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              data: [
+                { id: 'claude-sonnet-4-5', type: 'model' },
+                { id: 'claude-haiku-4-5', type: 'model' },
+              ],
+            }),
+        };
+      },
+    });
+    expect(verified).toEqual({
+      status: 'valid',
+      key: 'sk-ant-key-1',
+      baseUrl: 'https://api.anthropic.com/v1',
+      models: ['claude-sonnet-4-5', 'claude-haiku-4-5'],
+    });
+
+    const probeSupported = await probeAssistantPrefillCompatibility({
+      baseUrl: 'https://api.anthropic.com/v1',
+      apiKey: 'sk-ant-key-1',
+      model: 'claude-sonnet-4-5',
+      apiProtocol: 'anthropic_messages',
+      fetchImpl: async (url, init) => {
+        expect(url).toBe('https://api.anthropic.com/v1/messages');
+        expect(init.method).toBe('POST');
+        expect(init.headers['x-api-key']).toBe('sk-ant-key-1');
+        expect(init.headers['anthropic-version']).toBe('2023-06-01');
+        expect(init.headers['anthropic-dangerous-direct-browser-access']).toBe('true');
+        expect(init.headers.Authorization).toBeUndefined();
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => JSON.stringify({ content: [{ type: 'text', text: '落了下来。' }] }),
+          body: null,
+        };
+      },
+    });
+    expect(probeSupported).toEqual({
+      supported: true,
+      message: '当前服务商支持增强续写',
+    });
+  });
 });
