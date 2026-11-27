@@ -871,7 +871,7 @@ export async function verifyThreeModes(browser, port, helpers) {
     const v3Path = await v3Backup.path();
     const v3Json = JSON.parse(fs.readFileSync(v3Path, 'utf8'));
     assert.equal(v3Json.schemaVersion, 3);
-    assert.equal(v3Json.appVersion, '0.4.5');
+    assert.equal(v3Json.appVersion, '0.5.0-beta.1');
     assert.ok(v3Json.stories.some((s) => s.title === '浮灯渡口'));
     assert.ok(v3Json.workspace.works.some((w) => w.title === '纸月车站'));
     assert.ok(v3Json.workspace.characters.some((c) => c.name === '岑灯'));

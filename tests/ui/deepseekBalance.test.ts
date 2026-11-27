@@ -189,6 +189,52 @@ describe('Issue #111 Slice 3: memory-only DeepSeek balance controller', () => {
     expect(controller.getState()).toEqual({ status: 'idle' });
   });
 
+  it('never calls /user/balance and resets to idle when supportsBalanceQuery is false or baseUrl is third-party', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ is_available: true, balance_infos: [] }),
+    }));
+    const controller = createDeepSeekBalanceController({ fetchImpl: fetchMock });
+
+    // Load DeepSeek balance first
+    await controller.sync({
+      active: true,
+      hasCredentials: true,
+      useDevEnvKey: false,
+      apiKey: 'sk-ds-key',
+      baseUrl: 'https://api.deepseek.com',
+      supportsBalanceQuery: true,
+    });
+    expect(controller.getState().status).toBe('loaded');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Switching to third-party with supportsBalanceQuery: false must reset to idle and never fetch
+    await controller.sync({
+      active: true,
+      hasCredentials: true,
+      useDevEnvKey: false,
+      apiKey: 'sk-openai-key',
+      baseUrl: 'https://api.openai.com/v1',
+      supportsBalanceQuery: false,
+    });
+    expect(controller.getState()).toEqual({ status: 'idle' });
+    await controller.refresh();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Omitting supportsBalanceQuery with a non-DeepSeek URL must also skip /user/balance
+    await controller.sync({
+      active: true,
+      hasCredentials: true,
+      useDevEnvKey: false,
+      apiKey: 'sk-custom-key',
+      baseUrl: 'https://relay.example.com/v1',
+    });
+    expect(controller.getState()).toEqual({ status: 'idle' });
+    await controller.refresh();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('auto-checks after binding a new key via wizard and supports retry after 401/5xx/timeout', async () => {
     let attempt = 0;
     const fetchMock = vi.fn<BalanceFetchLike>(async () => {
@@ -428,5 +474,37 @@ describe('Issue #111 Slice 4: SettingsPage balance & official top-up UI states',
     expect(errorMarkup).toContain('data-testid="clear-key-btn"');
     expect(errorMarkup).toContain('data-testid="settings-default-model-block"');
     expect(errorMarkup).toContain('data-testid="open-diagnostics"');
+  });
+
+  it('strictly hides DeepSeek balance panel and top-up block when active profile is a third-party provider', () => {
+    const markup = renderSettings({
+      hasCredentials: true,
+      config: {
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o',
+        apiKey: 'sk-third-party-1234',
+        memoryOnly: false,
+        providerId: 'openai-1',
+        providerPresetId: 'openai',
+        capabilities: {
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+      },
+      balanceState: {
+        status: 'loaded',
+        isAvailable: true,
+        balances: [{ currency: 'CNY', totalBalance: '88.80' }],
+        formattedBalance: '¥88.80',
+      },
+    });
+    expect(markup).not.toContain('data-testid="deepseek-balance-panel"');
+    expect(markup).not.toContain('data-testid="deepseek-balance-dev-proxy-note"');
+    expect(markup).not.toContain('data-testid="deepseek-topup-block"');
+    expect(markup).not.toContain('data-testid="deepseek-topup-link"');
+    expect(markup).not.toContain('¥88.80');
   });
 });

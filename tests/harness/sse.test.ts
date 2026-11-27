@@ -508,3 +508,166 @@ describe('Prefix echo cursor', () => {
     ]);
   });
 });
+
+describe('Multi-provider capability-driven OpenAI request & usage parsing', () => {
+  it('defaults DeepSeek thinking to disabled/none when reasoningEffort is omitted and maps medium to high', () => {
+    const defaultReq = buildOpenAiChatRequest({
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-ds',
+      model: 'deepseek-flash',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    const defaultBody = JSON.parse(defaultReq.body) as Record<string, unknown>;
+    expect(defaultBody.thinking).toEqual({ type: 'disabled' });
+    expect(defaultBody.reasoning_effort).toBe('none');
+
+    const mediumReq = buildOpenAiChatRequest({
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-ds',
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'medium',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    const mediumBody = JSON.parse(mediumReq.body) as Record<string, unknown>;
+    expect(mediumBody.thinking).toEqual({ type: 'enabled' });
+    expect(mediumBody.reasoning_effort).toBe('high');
+  });
+
+  it('omits thinking and reasoning_effort for openai_reasoning_effort when none, and maps max to high', () => {
+    const offReq = buildOpenAiChatRequest({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-openai',
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    const offBody = JSON.parse(offReq.body) as Record<string, unknown>;
+    expect(offReq.url).toBe('https://api.openai.com/v1/chat/completions');
+    expect(offBody).not.toHaveProperty('thinking');
+    expect(offBody).not.toHaveProperty('reasoning_effort');
+
+    const mediumReq = buildOpenAiChatRequest({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-openai',
+      model: 'o3-mini',
+      reasoningEffort: 'medium',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    const mediumBody = JSON.parse(mediumReq.body) as Record<string, unknown>;
+    expect(mediumBody).not.toHaveProperty('thinking');
+    expect(mediumBody.reasoning_effort).toBe('medium');
+
+    const maxReq = buildOpenAiChatRequest({
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-or',
+      model: 'openai/o3',
+      reasoningEffort: 'max',
+      capabilities: {
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    const maxBody = JSON.parse(maxReq.body) as Record<string, unknown>;
+    expect(maxBody).not.toHaveProperty('thinking');
+    expect(maxBody.reasoning_effort).toBe('high');
+  });
+
+  it('handles prefixProtocol standard_assistant_prefill and none properly', async () => {
+    const standardPrefillReq = buildOpenAiChatRequest({
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-ex',
+      model: 'model-a',
+      messages: [{ role: 'user', content: '继续' }],
+      prefixCompletion: { content: '窗外的雨', reasoningContent: '不发送' },
+      reasoningEffort: 'high',
+      capabilities: {
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'standard_assistant_prefill',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    });
+    expect(standardPrefillReq.url).toBe('https://api.example.com/v1/chat/completions');
+    const standardBody = JSON.parse(standardPrefillReq.body) as {
+      messages: Array<Record<string, unknown>>;
+    };
+    expect(standardBody.messages.at(-1)).toEqual({ role: 'assistant', content: '窗外的雨' });
+    expect(standardBody.messages.at(-1)).not.toHaveProperty('prefix');
+    expect(standardBody.messages.at(-1)).not.toHaveProperty('reasoning_content');
+
+    const disabledPrefixReq = buildOpenAiChatRequest({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-openai',
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: '继续' }],
+      prefixCompletion: { content: '不应注入' },
+    });
+    expect(disabledPrefixReq.url).toBe('https://api.openai.com/v1/chat/completions');
+    const disabledBody = JSON.parse(disabledPrefixReq.body) as {
+      messages: Array<Record<string, unknown>>;
+    };
+    expect(disabledBody.messages).toEqual([{ role: 'user', content: '继续' }]);
+
+    const transport = createOpenAiTransport(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '',
+      body: (async function* () {
+        yield new TextEncoder().encode(
+          'data: {"choices":[{"delta":{"content":"全新内容"},"finish_reason":"stop"}]}\n\n',
+        );
+      })(),
+    }));
+    const deltas = await collect(
+      transport.streamChat({
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-openai',
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: '继续' }],
+        prefixCompletion: { content: '不应合成' },
+      }),
+    );
+    expect(deltas.map((d) => d.contentDelta ?? '').join('')).toBe('全新内容');
+  });
+
+  it('parses OpenAI prompt_tokens_details.cached_tokens while preserving DeepSeek cache fields', async () => {
+    const encoder = new TextEncoder();
+    const openAiDeltas = await collect(
+      parseOpenAiSseStream(
+        (async function* () {
+          yield encoder.encode(
+            'data: {"choices":[],"usage":{"prompt_tokens":1000,"completion_tokens":50,"total_tokens":1050,"prompt_tokens_details":{"cached_tokens":700}}}\n\n',
+          );
+          yield encoder.encode('data: [DONE]\n\n');
+        })(),
+      ),
+    );
+    expect(openAiDeltas[0]?.usage).toEqual({
+      promptTokens: 1000,
+      completionTokens: 50,
+      totalTokens: 1050,
+      promptCacheHitTokens: 700,
+      promptCacheMissTokens: 300,
+    });
+
+    const deepSeekDeltas = await collect(
+      parseOpenAiSseStream(
+        (async function* () {
+          yield encoder.encode(
+            'data: {"choices":[],"usage":{"prompt_tokens":1000,"prompt_cache_hit_tokens":600,"prompt_cache_miss_tokens":400,"prompt_tokens_details":{"cached_tokens":999}}}\n\n',
+          );
+        })(),
+      ),
+    );
+    expect(deepSeekDeltas[0]?.usage).toEqual({
+      promptTokens: 1000,
+      promptCacheHitTokens: 600,
+      promptCacheMissTokens: 400,
+    });
+  });
+});

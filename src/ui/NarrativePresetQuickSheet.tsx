@@ -3,6 +3,7 @@ import type {
   GenerationPreference,
   PrefixCompletionMode,
   PromptPackLibrary,
+  ProviderPrefixProtocol,
 } from '../harness/index.ts';
 import { SheetDialog } from './primitives/SheetDialog.tsx';
 import { useWebHistoryLayer } from './useWebHistoryLayer.ts';
@@ -12,6 +13,7 @@ export interface NarrativePresetQuickSheetProps {
   library?: PromptPackLibrary;
   promptPackMode?: GenerationPreference['promptPackMode'] | 'inherit';
   prefixCompletion?: PrefixCompletionMode | 'inherit';
+  prefixProtocol?: ProviderPrefixProtocol;
   disabled?: boolean;
   onPromptPackModeChange: (mode: GenerationPreference['promptPackMode'] | 'inherit') => void;
   onPrefixCompletionChange: (mode: PrefixCompletionMode | 'inherit') => void;
@@ -38,6 +40,7 @@ export function NarrativePresetQuickSheet({
   library,
   promptPackMode = 'inherit',
   prefixCompletion = 'inherit',
+  prefixProtocol = 'deepseek_beta',
   disabled = false,
   onPromptPackModeChange,
   onPrefixCompletionChange,
@@ -165,7 +168,9 @@ export function NarrativePresetQuickSheet({
           <div className="narrative-quick-heading-group">
             <h3 className="narrative-quick-heading">叙事连贯保护</h3>
             <p className="narrative-quick-hint">
-              输出意外中断或半途收束时，自动尝试衔接续写当前场景。
+              {prefixProtocol === 'none'
+                ? '中断或被拒时自动尝试标准续写衔接。'
+                : '输出意外中断或半途收束时，自动尝试前缀续写衔接当前场景。'}
             </p>
           </div>
           <div
@@ -200,7 +205,13 @@ export function NarrativePresetQuickSheet({
               }
             >
               <strong>开启</strong>
-              <small>{normalizedPrefix === 'always' ? '每轮前缀续写' : '中断时自动衔接'}</small>
+              <small>
+                {prefixProtocol === 'none'
+                  ? '中断时标准续写'
+                  : normalizedPrefix === 'always'
+                    ? '每轮前缀续写'
+                    : '中断时自动衔接'}
+              </small>
             </button>
             <button
               type="button"

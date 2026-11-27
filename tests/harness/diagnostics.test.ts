@@ -858,4 +858,71 @@ describe('Spec #26 Slice 2: DeepSeek structure radar & breadcrumb wrappers', () 
     ]);
   });
 
+  it('redacts custom provider domains to relay_<hash> and scrubs tvly/sk/Bearer tokens from publicResearch and provider errors', () => {
+    const profile = sanitizeEndpointProfile({
+      baseUrl: 'https://custom-gateway.example.org:8443/v1?api_key=tvly-dev-CANARY123456',
+      model: 'tvly-dev-CANARY123456',
+      apiKey: 'sk-custom-CANARY987654',
+      memoryOnly: false,
+    });
+    expect(profile.hostKind).toBe('relay');
+    expect(profile.host).toMatch(/^relay_[0-9a-f]{8}$/);
+    expect(profile.model).toBe('unset');
+
+    const siliconProfile = sanitizeEndpointProfile({
+      baseUrl: 'https://api.siliconflow.cn/v1',
+      model: 'deepseek-ai/DeepSeek-V3',
+      apiKey: 'sk-sf-CANARY',
+      memoryOnly: false,
+    });
+    expect(siliconProfile.hostKind).toBe('relay');
+    expect(siliconProfile.host).toMatch(/^relay_[0-9a-f]{8}$/);
+    expect(siliconProfile.model).toBe('deepseek-ai/DeepSeek-V3');
+
+    const collector = createDiagnosticCollector({ platform: 'web' });
+    collector.recordError({
+      category: 'llm',
+      action: 'stream_error',
+      statusCode: 401,
+      error: new Error(
+        'Tavily search failed at https://api.tavily.com/search?api_key=tvly-dev-CANARY123456 with key tvly-CANARY654321 and Bearer bocha-secret-CANARY-token and sk-CANARY999888 against custom-gateway.example.org',
+      ),
+    });
+
+    const bundle = collector.buildBundle({
+      baseUrl: 'https://custom-gateway.example.org:8443/v1',
+      model: 'deepseek-ai/DeepSeek-V3',
+      apiKey: 'sk-custom-CANARY987654',
+      memoryOnly: false,
+    }, {
+      extraSecrets: ['bocha-unprefixed-secret-999'],
+    });
+    collector.recordError({
+      category: 'llm',
+      action: 'search_error',
+      error: new Error('Search request failed with bocha-unprefixed-secret-999'),
+    });
+    const bundleWithExtra = collector.buildBundle({
+      baseUrl: 'https://custom-gateway.example.org:8443/v1',
+      model: 'deepseek-ai/DeepSeek-V3',
+      apiKey: 'sk-custom-CANARY987654',
+      memoryOnly: false,
+    }, {
+      extraSecrets: ['bocha-unprefixed-secret-999'],
+      userNote: 'note with bocha-unprefixed-secret-999',
+    });
+    const json = JSON.stringify(bundle);
+    const jsonWithExtra = JSON.stringify(bundleWithExtra);
+    expect(jsonWithExtra).not.toContain('bocha-unprefixed-secret-999');
+    expect(json).not.toContain('custom-gateway.example.org');
+    expect(json).not.toContain('api.tavily.com');
+    expect(json).not.toContain('tvly-dev-CANARY123456');
+    expect(json).not.toContain('tvly-CANARY654321');
+    expect(json).not.toContain('bocha-secret-CANARY-token');
+    expect(json).not.toContain('sk-CANARY999888');
+    expect(json).not.toContain('sk-custom-CANARY987654');
+    expect(bundle.events[0]?.sanitizedReason).toContain('[REDACTED_KEY]');
+    expect(bundle.events[0]?.sanitizedReason).toContain('Bearer [REDACTED]');
+  });
+
 });

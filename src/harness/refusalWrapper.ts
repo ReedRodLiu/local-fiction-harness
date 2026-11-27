@@ -1,4 +1,4 @@
-import { normalizeReasoningEffort } from './keyConfig.ts';
+import { isOfficialDeepSeekUrl, normalizeReasoningEffort } from './keyConfig.ts';
 import {
   buildModePrefill,
   type PrefillMode,
@@ -25,6 +25,7 @@ import type {
   LlmUsage,
   ModelConfig,
   NodeDiagnostics,
+  ProviderPrefixProtocol,
   TurnCallbacks,
 } from './types.ts';
 
@@ -237,6 +238,13 @@ function isStop(finishReason: string | null | undefined): boolean {
   return finishReason === 'stop';
 }
 
+function resolveEffectivePrefixProtocol(config: ModelConfig): ProviderPrefixProtocol {
+  return (
+    config.capabilities?.prefixProtocol ??
+    (isOfficialDeepSeekUrl(config.baseUrl) ? 'deepseek_beta' : 'none')
+  );
+}
+
 async function streamPassThrough(
   options: RefusalHandlingOptions,
 ): Promise<RefusalHandlingResult> {
@@ -254,6 +262,7 @@ async function streamPassThrough(
     apiKey: options.config.apiKey,
     model: options.config.model,
     reasoningEffort,
+    ...(options.config.capabilities ? { capabilities: options.config.capabilities } : {}),
     messages: options.messages,
     includeUsage: true,
     signal: options.callbacks?.signal,
@@ -286,9 +295,11 @@ async function runAttempt(
   if (options.callbacks?.signal?.aborted) throw createAbortError();
   const reasoningEffort = normalizeReasoningEffort(options.config.reasoningEffort);
   const toVisible = options.toVisibleContent ?? ((text: string) => text);
+  const prefixProtocol = resolveEffectivePrefixProtocol(options.config);
   const shouldPrefix =
-    effective.prefixCompletion === 'always' ||
-    (attempt === 'retry' && effective.prefixCompletion === 'on_retry');
+    prefixProtocol !== 'none' &&
+    (effective.prefixCompletion === 'always' ||
+      (attempt === 'retry' && effective.prefixCompletion === 'on_retry'));
   const prefixContent = shouldPrefix ? prefillFor(options) : undefined;
   const retryTail = effective.slots.tail.trim() || REFUSAL_RETRY_TAIL;
   const messages = attempt === 'retry' ? withRetryTail(options.messages, retryTail) : options.messages;
@@ -297,6 +308,7 @@ async function runAttempt(
     apiKey: options.config.apiKey,
     model: options.config.model,
     reasoningEffort,
+    ...(options.config.capabilities ? { capabilities: options.config.capabilities } : {}),
     messages,
     includeUsage: true,
     signal: options.callbacks?.signal,
@@ -381,20 +393,13 @@ async function runAttempt(
       if (isStop(finishReason)) {
         const evaluated = evaluateFull();
         if (
-          !gateOpen &&
-          (evaluated.route === 'retry' || evaluated.route === 'retry-skeleton')
+          gateOpen ||
+          (evaluated.route !== 'retry' && evaluated.route !== 'retry-skeleton')
         ) {
-          return {
-            kind: 'refusal',
-            route: evaluated.route,
-            raw,
-            reasoningContent,
-            matchedRuleId: evaluated.matchedRuleId ?? 'skeleton-01',
-            ...(usage ? { usage } : {}),
-          };
+          // Flush visible text as soon as stop arrives, while letting the loop
+          // drain any trailing usage-only SSE chunk before [DONE].
+          emitVisible();
         }
-        emitVisible();
-        return resultFor(evaluated);
       }
     }
 
@@ -481,8 +486,10 @@ export async function streamWithRefusalHandling(
     first.matchedRuleId,
   );
 
+  const prefixProtocol = resolveEffectivePrefixProtocol(options.config);
   const retriedWithPrefix =
-    effective.prefixCompletion === 'on_retry' || effective.prefixCompletion === 'always';
+    prefixProtocol !== 'none' &&
+    (effective.prefixCompletion === 'on_retry' || effective.prefixCompletion === 'always');
   const retry = await runAttempt(options, effective, 'retry');
   const combinedUsage = mergeLlmUsage(first.usage, retry.usage);
   if (retry.kind === 'result' && isStop(retry.finishReason) && !retry.diagnostics) {

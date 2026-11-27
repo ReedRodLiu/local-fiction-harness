@@ -54,11 +54,11 @@ function createMemoryKv(): KeyValueStorage {
 }
 
 describe('Issue #108 Slice 1 & 2: DeepSeek official model whitelist, reasoning effort, and request mapping', () => {
-  it('initializes DEFAULT_MODEL_CONFIG to deepseek-flash + high reasoningEffort and migrates legacy models without clobbering deepseek-v4-pro', () => {
+  it('initializes DEFAULT_MODEL_CONFIG to deepseek-flash + none reasoningEffort and migrates legacy models without clobbering deepseek-v4-pro', () => {
     expect(DEFAULT_MODEL_CONFIG).toEqual({
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-flash',
-      reasoningEffort: 'high',
+      reasoningEffort: 'none',
       apiKey: '',
       memoryOnly: false,
     });
@@ -69,10 +69,11 @@ describe('Issue #108 Slice 1 & 2: DeepSeek official model whitelist, reasoning e
     expect(normalizeOfficialDeepSeekModel('deepseek-v4-pro')).toBe('deepseek-v4-pro');
     expect(normalizeOfficialDeepSeekModel('deepseek-flash')).toBe('deepseek-flash');
 
-    expect(normalizeReasoningEffort(undefined)).toBe('high');
-    expect(normalizeReasoningEffort('invalid')).toBe('high');
+    expect(normalizeReasoningEffort(undefined)).toBe('none');
+    expect(normalizeReasoningEffort('invalid')).toBe('none');
     expect(normalizeReasoningEffort('none')).toBe('none');
     expect(normalizeReasoningEffort('low')).toBe('low');
+    expect(normalizeReasoningEffort('medium')).toBe('medium');
     expect(normalizeReasoningEffort('high')).toBe('high');
     expect(normalizeReasoningEffort('max')).toBe('max');
 
@@ -114,10 +115,11 @@ describe('Issue #108 Slice 1 & 2: DeepSeek official model whitelist, reasoning e
     });
   });
 
-  it('resolves effective foreground preferences dynamically and pins background tasks to deepseek-flash + none', () => {
+  it('resolves effective foreground preferences dynamically and uses backgroundModel or current model + none for background tasks', () => {
     const globalPro: ModelConfig = {
       baseUrl: '/__dev_llm_proxy',
       model: 'deepseek-v4-pro',
+      backgroundModel: 'deepseek-flash',
       reasoningEffort: 'max',
       apiKey: '',
       memoryOnly: false,
@@ -126,6 +128,7 @@ describe('Issue #108 Slice 1 & 2: DeepSeek official model whitelist, reasoning e
     expect(resolveEffectiveModelConfig(globalPro)).toEqual({
       baseUrl: '/__dev_llm_proxy',
       model: 'deepseek-v4-pro',
+      backgroundModel: 'deepseek-flash',
       reasoningEffort: 'max',
       apiKey: '',
       memoryOnly: false,
@@ -134,6 +137,7 @@ describe('Issue #108 Slice 1 & 2: DeepSeek official model whitelist, reasoning e
     expect(resolveEffectiveModelConfig(globalPro, { model: 'deepseek-flash', reasoningEffort: 'low' })).toEqual({
       baseUrl: '/__dev_llm_proxy',
       model: 'deepseek-flash',
+      backgroundModel: 'deepseek-flash',
       reasoningEffort: 'low',
       apiKey: '',
       memoryOnly: false,
@@ -142,8 +146,25 @@ describe('Issue #108 Slice 1 & 2: DeepSeek official model whitelist, reasoning e
     expect(createBackgroundModelConfig(globalPro)).toEqual({
       baseUrl: '/__dev_llm_proxy',
       model: 'deepseek-flash',
+      backgroundModel: 'deepseek-flash',
       reasoningEffort: 'none',
       apiKey: '',
+      memoryOnly: false,
+    });
+
+    const thirdPartyConfig: ModelConfig = {
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      reasoningEffort: 'medium',
+      apiKey: 'sk-openai-123',
+      memoryOnly: false,
+    };
+
+    expect(createBackgroundModelConfig(thirdPartyConfig)).toEqual({
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      reasoningEffort: 'none',
+      apiKey: 'sk-openai-123',
       memoryOnly: false,
     });
   });
@@ -209,8 +230,8 @@ describe('Issue #108 Slice 1 & 2: DeepSeek official model whitelist, reasoning e
         messages: [{ role: 'user', content: 'hi' }],
       }).body,
     ) as Record<string, unknown>;
-    expect(defaultReq.thinking).toEqual({ type: 'enabled' });
-    expect(defaultReq.reasoning_effort).toBe('high');
+    expect(defaultReq.thinking).toEqual({ type: 'disabled' });
+    expect(defaultReq.reasoning_effort).toBe('none');
   });
 });
 
@@ -218,6 +239,7 @@ describe('Issue #108 Slice 3: Foreground/background isolation and TurnNode metad
   const proMaxConfig: ModelConfig = {
     baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-v4-pro',
+    backgroundModel: 'deepseek-flash',
     reasoningEffort: 'max',
     apiKey: 'sk-pro',
     memoryOnly: false,
@@ -440,6 +462,65 @@ describe('Issue #108 Slice 3: Foreground/background isolation and TurnNode metad
     expect(requests.length).toBeGreaterThanOrEqual(3);
     for (const req of requests) {
       expect(req.model).toBe('deepseek-flash');
+      expect(req.reasoningEffort).toBe('none');
+    }
+  });
+
+  it('uses third-party model with reasoningEffort none when importing DeepSeek sessions without backgroundModel', async () => {
+    const requests: LlmStreamRequest[] = [];
+    const transport: LlmTransport = {
+      async *streamChat(req) {
+        requests.push(req);
+        const sys = req.messages[0]?.content ?? '';
+        if (sys.includes('剧本边界定位')) {
+          yield {
+            contentDelta: JSON.stringify({ scriptMessageIds: ['m1'], firstPlayMessageId: 'm2' }),
+            finishReason: 'stop',
+          };
+          return;
+        }
+        yield {
+          contentDelta: JSON.stringify({ fictionSessionIds: ['s1'] }),
+          finishReason: 'stop',
+        };
+      },
+    };
+
+    const thirdPartyConfig: ModelConfig = {
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      reasoningEffort: 'medium',
+      apiKey: 'sk-openai-import',
+      memoryOnly: false,
+    };
+
+    const encoder = new TextEncoder();
+    const zipBytes = zipSync({
+      'manifest.json': encoder.encode(JSON.stringify({ export_format_version: 3 })),
+      'chat_sessions/s1.json': encoder.encode(
+        JSON.stringify({
+          id: 's1',
+          title: '普通闲聊开头',
+          current_message_id: 'm2',
+          messages: [
+            { id: 'm1', parent_id: null, role: 'USER', inserted_at: 1000, fragments: [{ type: 'REQUEST', content: '你好' }] },
+            { id: 'm2', parent_id: 'm1', role: 'ASSISTANT', inserted_at: 2000, fragments: [{ type: 'RESPONSE', content: '你好！' }] },
+          ],
+        }),
+      ),
+    });
+
+    const scan = scanDeepSeekExportZip(zipBytes);
+    await assistFilterDeepSeekSessions(scan.sessions, transport, thirdPartyConfig, undefined, '找文游');
+
+    const harness = createFictionHarness({ transport });
+    const imported = await importDeepSeekSessions(zipBytes, ['s1'], harness, { modelConfig: thirdPartyConfig });
+    await locateDeepSeekScriptBoundary(imported.stories[0]!, transport, thirdPartyConfig);
+
+    expect(requests.length).toBeGreaterThanOrEqual(2);
+    for (const req of requests) {
+      expect(req.baseUrl).toBe('https://api.openai.com/v1');
+      expect(req.model).toBe('gpt-4o-mini');
       expect(req.reasoningEffort).toBe('none');
     }
   });

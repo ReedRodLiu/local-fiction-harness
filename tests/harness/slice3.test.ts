@@ -17,6 +17,7 @@ const testConfig = {
   baseUrl: 'https://api.deepseek.com',
   model: 'deepseek-chat',
   apiKey: 'k',
+  reasoningEffort: 'high' as const,
   memoryOnly: true,
 };
 

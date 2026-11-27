@@ -33,6 +33,7 @@ import {
   type ModelConfig,
   type PlatformRuntime,
   type PromptPackLibrary,
+  type ProviderLibrary,
   type PublicResearchFailure,
   type PublicResearchReference,
   type StageAssetMode,
@@ -41,7 +42,11 @@ import {
   type TurnProposalRecord,
 } from '../harness/index.ts';
 import type { DocumentEdit } from './DocumentDialog.tsx';
-import { GenerationControls, mergeGenerationPreference } from './GenerationControls.tsx';
+import {
+  GenerationControls,
+  mergeGenerationPreference,
+  resolveEffectiveLibraryModelConfig,
+} from './GenerationControls.tsx';
 import { MarkdownView } from './MarkdownView.tsx';
 import { MessageContent } from './MessageContent.tsx';
 import { SessionUsageCard } from './SessionUsageCard.tsx';
@@ -91,6 +96,7 @@ interface CharacterPaneProps {
   character: LocalCharacter;
   workspace: CreativeWorkspaceState;
   defaultConfig?: ModelConfig;
+  providerLibrary?: ProviderLibrary;
   promptPackLibrary?: PromptPackLibrary;
   save: SaveWorkspace;
   read: () => Promise<CreativeWorkspaceState>;
@@ -283,6 +289,18 @@ export function CharacterPane(props: CharacterPaneProps) {
       .catch(() => undefined);
   };
 
+  const resolveEffectiveConfigForTurn = (config: ModelConfig, current: LocalCharacter) => {
+    const targetProfileId =
+      current.generationPreference?.providerId?.trim() || props.providerLibrary?.activeProviderId;
+    return !props.providerLibrary || (targetProfileId && config.providerId === targetProfileId)
+      ? resolveEffectiveModelConfig(config, current.generationPreference)
+      : resolveEffectiveLibraryModelConfig({
+          providerLibrary: props.providerLibrary,
+          defaultConfig: config,
+          preference: current.generationPreference,
+        });
+  };
+
   function send(
     conversationId: string,
     contents: string,
@@ -310,7 +328,7 @@ export function CharacterPane(props: CharacterPaneProps) {
         props.promptPackLibrary,
         current.generationPreference,
       );
-      const effectiveConfig = resolveEffectiveModelConfig(config, current.generationPreference);
+      const effectiveConfig = resolveEffectiveConfigForTurn(config, current);
       const personaMarkdown = documentVersion(current.document, targetConv.characterVersion).markdown;
       const research = await resolvePublicResearchForTurn({
         provider: runtime.publicResearch,
@@ -372,6 +390,8 @@ export function CharacterPane(props: CharacterPaneProps) {
               uncompressedPromptChars: ctx.metrics.uncompressedPromptChars,
               compressedPromptChars: ctx.metrics.compressedPromptChars,
               retrievedNodeCount: ctx.metrics.retrievedNodeCount,
+              ...(effectiveConfig.pricing ? { pricing: effectiveConfig.pricing } : {}),
+              ...(effectiveConfig.capabilities ? { capabilities: effectiveConfig.capabilities } : {}),
             });
             const user = trimmed ? { ...makeTurn('user', trimmed, expectedParent), documents: docs } : null;
             const assistant = {
@@ -427,7 +447,7 @@ export function CharacterPane(props: CharacterPaneProps) {
       if (persistedConv && assistantId) {
         runSilentSummary(current.id, persistedConv, effectiveConfig, assistantId);
       }
-    });
+    }, character.generationPreference);
   }
 
   const queuedOpening = useRef(false);
@@ -506,7 +526,7 @@ export function CharacterPane(props: CharacterPaneProps) {
         props.promptPackLibrary,
         current.generationPreference,
       );
-      const effectiveConfig = resolveEffectiveModelConfig(config, current.generationPreference);
+      const effectiveConfig = resolveEffectiveConfigForTurn(config, current);
       const personaMarkdown = documentVersion(current.document, target.characterVersion).markdown;
       const research = await resolvePublicResearchForTurn({
         provider: runtime.publicResearch,
@@ -563,6 +583,8 @@ export function CharacterPane(props: CharacterPaneProps) {
               uncompressedPromptChars: ctx.metrics.uncompressedPromptChars,
               compressedPromptChars: ctx.metrics.compressedPromptChars,
               retrievedNodeCount: ctx.metrics.retrievedNodeCount,
+              ...(effectiveConfig.pricing ? { pricing: effectiveConfig.pricing } : {}),
+              ...(effectiveConfig.capabilities ? { capabilities: effectiveConfig.capabilities } : {}),
             });
             const assistant = {
               ...makeTurn(
@@ -602,7 +624,7 @@ export function CharacterPane(props: CharacterPaneProps) {
         }));
       }
       if (savedConv && assistantId) runSilentSummary(current.id, savedConv, effectiveConfig, assistantId);
-    });
+    }, character.generationPreference);
   };
 
   const restoreCharacterRefusalOriginal = async (nodeId: string) => {
@@ -652,7 +674,7 @@ export function CharacterPane(props: CharacterPaneProps) {
         undefined,
         promptPackOptions,
       );
-      const effectiveConfig = resolveEffectiveModelConfig(config, current.generationPreference);
+      const effectiveConfig = resolveEffectiveConfigForTurn(config, current);
       let appended = '';
       const continued = await streamPrefixContinuation({
         transport: runtime.transport,
@@ -686,13 +708,14 @@ export function CharacterPane(props: CharacterPaneProps) {
           }),
         ),
       );
-    });
+    }, character.generationPreference);
   };
 
-  const effectiveGenerationConfig = resolveEffectiveModelConfig(
-    props.defaultConfig ?? DEFAULT_MODEL_CONFIG,
-    character.generationPreference,
-  );
+  const effectiveGenerationConfig = resolveEffectiveLibraryModelConfig({
+    providerLibrary: props.providerLibrary,
+    defaultConfig: props.defaultConfig ?? DEFAULT_MODEL_CONFIG,
+    preference: character.generationPreference,
+  });
 
   const handleGenerationPreferenceChange = (
     patch: Parameters<typeof mergeGenerationPreference>[1],
@@ -1185,8 +1208,12 @@ export function CharacterPane(props: CharacterPaneProps) {
         <GenerationControls
           model={effectiveGenerationConfig.model}
           reasoningEffort={effectiveGenerationConfig.reasoningEffort}
+          providerLibrary={props.providerLibrary}
+          providerId={effectiveGenerationConfig.providerId}
+          capabilities={effectiveGenerationConfig.capabilities}
           disabled={reply.busy}
           onModelChange={(model) => handleGenerationPreferenceChange({ model })}
+          onProviderModelChange={(patch) => handleGenerationPreferenceChange(patch)}
           onReasoningEffortChange={(reasoningEffort) => handleGenerationPreferenceChange({ reasoningEffort })}
           promptPackLibrary={props.promptPackLibrary}
           promptPackMode={character.generationPreference?.promptPackMode ?? 'inherit'}

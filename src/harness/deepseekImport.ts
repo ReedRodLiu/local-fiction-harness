@@ -1040,6 +1040,7 @@ async function streamJsonObject(
     apiKey: bgConfig.apiKey,
     model: bgConfig.model,
     reasoningEffort: bgConfig.reasoningEffort,
+    ...(bgConfig.capabilities ? { capabilities: bgConfig.capabilities } : {}),
     signal,
     messages,
   })) {

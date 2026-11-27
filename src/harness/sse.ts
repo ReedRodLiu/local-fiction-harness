@@ -1,5 +1,5 @@
 import { getTextDecoderCtor, type TextDecoderLike } from './encoding.ts';
-import { normalizeReasoningEffort } from './keyConfig.ts';
+import { isOfficialDeepSeekUrl, normalizeReasoningEffort } from './keyConfig.ts';
 import type {
   DeepSeekThinkingParam,
   FetchLike,
@@ -8,6 +8,8 @@ import type {
   LlmStreamRequest,
   LlmTransport,
   LlmUsage,
+  ProviderPrefixProtocol,
+  ProviderThinkingProtocol,
   ReasoningEffort,
 } from './types.ts';
 
@@ -77,6 +79,9 @@ function parseSseEventData(dataText: string): { done: boolean; delta?: LlmStream
       total_tokens?: unknown;
       prompt_cache_hit_tokens?: unknown;
       prompt_cache_miss_tokens?: unknown;
+      prompt_tokens_details?: {
+        cached_tokens?: unknown;
+      };
       completion_tokens_details?: {
         reasoning_tokens?: unknown;
       };
@@ -138,18 +143,34 @@ function parseUsage(raw: {
   total_tokens?: unknown;
   prompt_cache_hit_tokens?: unknown;
   prompt_cache_miss_tokens?: unknown;
+  prompt_tokens_details?: {
+    cached_tokens?: unknown;
+  };
   completion_tokens_details?: {
     reasoning_tokens?: unknown;
   };
 } | undefined): LlmUsage | undefined {
   if (!raw) return undefined;
+  const promptTokens = optionalTokenCount(raw.prompt_tokens);
+  const explicitCacheHit = optionalTokenCount(raw.prompt_cache_hit_tokens);
+  const explicitCacheMiss = optionalTokenCount(raw.prompt_cache_miss_tokens);
+  const openAiCached = optionalTokenCount(raw.prompt_tokens_details?.cached_tokens);
+  const hasExplicitCacheHit =
+    raw.prompt_cache_hit_tokens !== undefined && raw.prompt_cache_hit_tokens !== null;
+  const promptCacheHitTokens = hasExplicitCacheHit ? explicitCacheHit : openAiCached;
+  const promptCacheMissTokens =
+    explicitCacheMiss !== undefined
+      ? explicitCacheMiss
+      : !hasExplicitCacheHit && openAiCached !== undefined && promptTokens !== undefined
+        ? Math.max(0, promptTokens - openAiCached)
+        : undefined;
   const reasoningTokens = optionalTokenCount(raw.completion_tokens_details?.reasoning_tokens);
   const usage: LlmUsage = {
-    promptTokens: optionalTokenCount(raw.prompt_tokens),
+    promptTokens,
     completionTokens: optionalTokenCount(raw.completion_tokens),
     totalTokens: optionalTokenCount(raw.total_tokens),
-    promptCacheHitTokens: optionalTokenCount(raw.prompt_cache_hit_tokens),
-    promptCacheMissTokens: optionalTokenCount(raw.prompt_cache_miss_tokens),
+    promptCacheHitTokens,
+    promptCacheMissTokens,
     ...(reasoningTokens === undefined
       ? {}
       : { completionTokensDetails: { reasoningTokens } }),
@@ -413,14 +434,29 @@ export async function* applyPrefixEchoCursor(
   yield* flushConfirmedPrefill();
 }
 
-export function mapReasoningEffortToDeepSeekParams(effort: ReasoningEffort = 'high'): {
+function resolveEffectiveThinkingProtocol(req: LlmStreamRequest): ProviderThinkingProtocol {
+  return (
+    req.capabilities?.thinkingProtocol ??
+    (isOfficialDeepSeekUrl(req.baseUrl) ? 'deepseek' : 'openai_reasoning_effort')
+  );
+}
+
+function resolveEffectivePrefixProtocol(req: LlmStreamRequest): ProviderPrefixProtocol {
+  return (
+    req.capabilities?.prefixProtocol ??
+    (isOfficialDeepSeekUrl(req.baseUrl) ? 'deepseek_beta' : 'none')
+  );
+}
+
+export function mapReasoningEffortToDeepSeekParams(effort: ReasoningEffort = 'none'): {
   thinking: DeepSeekThinkingParam;
   reasoning_effort: ReasoningEffort;
 } {
-  const normalized = normalizeReasoningEffort(effort);
+  const normalized = normalizeReasoningEffort(effort, 'none');
+  const reasoning_effort: ReasoningEffort = normalized === 'medium' ? 'high' : normalized;
   return {
-    thinking: { type: normalized === 'none' ? 'disabled' : 'enabled' },
-    reasoning_effort: normalized,
+    thinking: { type: reasoning_effort === 'none' ? 'disabled' : 'enabled' },
+    reasoning_effort,
   };
 }
 
@@ -436,40 +472,69 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
   if (req.apiKey.trim()) {
     headers.Authorization = `Bearer ${req.apiKey.trim()}`;
   }
-  const effort =
-    req.reasoningEffort ??
-    req.reasoning_effort ??
-    (req.thinking?.type === 'disabled' ? 'none' : 'high');
-  const mapped = mapReasoningEffortToDeepSeekParams(effort);
-  const thinking = req.thinking ?? mapped.thinking;
-  const reasoning_effort = req.reasoning_effort ?? mapped.reasoning_effort;
-  const allowReasoning = thinking.type !== 'disabled' && reasoning_effort !== 'none';
-  if (req.prefixCompletion && req.messages.length === 0) {
+
+  const thinkingProtocol = resolveEffectiveThinkingProtocol(req);
+  let thinking: DeepSeekThinkingParam | undefined;
+  let reasoning_effort: ReasoningEffort | undefined;
+  let allowReasoning = false;
+
+  if (thinkingProtocol === 'deepseek') {
+    const rawEffort =
+      req.reasoningEffort ??
+      req.reasoning_effort ??
+      (req.thinking?.type === 'disabled' ? 'none' : 'none');
+    const mapped = mapReasoningEffortToDeepSeekParams(
+      normalizeReasoningEffort(rawEffort, 'none'),
+    );
+    thinking = req.thinking ?? mapped.thinking;
+    reasoning_effort = mapped.reasoning_effort;
+    allowReasoning = thinking.type !== 'disabled' && reasoning_effort !== 'none';
+  } else {
+    const effort = normalizeReasoningEffort(req.reasoningEffort ?? req.reasoning_effort, 'none');
+    if (effort !== 'none') {
+      reasoning_effort = effort === 'max' ? 'high' : effort;
+      allowReasoning = true;
+    }
+  }
+
+  const prefixProtocol = resolveEffectivePrefixProtocol(req);
+  const usePrefix = Boolean(req.prefixCompletion) && prefixProtocol !== 'none';
+  if (usePrefix && req.messages.length === 0) {
     throw new Error(
       'Cannot use prefix completion with an empty message history. The final original message must be user or system.',
     );
   }
-  if (req.prefixCompletion && req.messages.at(-1)?.role === 'assistant') {
+  if (usePrefix && req.messages.at(-1)?.role === 'assistant') {
     throw new Error(
       'Cannot append an assistant prefix after an assistant message. The final original message must be user or system.',
     );
   }
-  const messages = req.prefixCompletion
-    ? [
-        ...req.messages,
-        {
-          role: 'assistant' as const,
-          content: req.prefixCompletion.content,
-          prefix: true as const,
-          ...(allowReasoning && req.prefixCompletion.reasoningContent !== undefined
-            ? { reasoning_content: req.prefixCompletion.reasoningContent }
-            : {}),
-        },
-      ]
-    : req.messages;
-  const url = req.prefixCompletion
-    ? resolveBetaChatCompletionsUrl(req.baseUrl)
-    : resolveChatCompletionsUrl(req.baseUrl);
+
+  const messages =
+    usePrefix && req.prefixCompletion
+      ? [
+          ...req.messages,
+          prefixProtocol === 'deepseek_beta'
+            ? {
+                role: 'assistant' as const,
+                content: req.prefixCompletion.content,
+                prefix: true as const,
+                ...(allowReasoning && req.prefixCompletion.reasoningContent !== undefined
+                  ? { reasoning_content: req.prefixCompletion.reasoningContent }
+                  : {}),
+              }
+            : {
+                role: 'assistant' as const,
+                content: req.prefixCompletion.content,
+              },
+        ]
+      : req.messages;
+
+  const url =
+    usePrefix && prefixProtocol === 'deepseek_beta'
+      ? resolveBetaChatCompletionsUrl(req.baseUrl)
+      : resolveChatCompletionsUrl(req.baseUrl);
+
   return {
     url,
     headers,
@@ -477,8 +542,8 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
       model: req.model,
       messages,
       stream: true,
-      thinking,
-      reasoning_effort,
+      ...(thinking !== undefined ? { thinking } : {}),
+      ...(reasoning_effort !== undefined ? { reasoning_effort } : {}),
       ...(req.includeUsage ? { stream_options: { include_usage: true } } : {}),
       ...(req.maxOutputTokens && req.maxOutputTokens > 0
         ? { max_tokens: Math.max(1, Math.floor(req.maxOutputTokens)) }
@@ -526,9 +591,12 @@ export function createOpenAiTransport(fetchImpl?: FetchLike): LlmTransport {
         throw new Error('Model response body is empty.');
       }
 
+      const prefixProtocol = resolveEffectivePrefixProtocol(req);
+      const prefillContent =
+        prefixProtocol !== 'none' ? (req.prefixCompletion?.content ?? '') : '';
       yield* applyPrefixEchoCursor(
         parseOpenAiSseStream(toAsyncChunks(response.body)),
-        req.prefixCompletion?.content ?? '',
+        prefillContent,
       );
     },
   };

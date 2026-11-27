@@ -3,9 +3,11 @@ import type {
   DraftWork,
   LocalCharacter,
 } from './creative.ts';
-import { classifyAndRedactHost } from './diagnostics.ts';
+import { isOfficialDeepSeekUrl } from './keyConfig.ts';
 import type {
+  CustomModelPricing,
   LlmUsage,
+  ProviderCapabilities,
   Story,
   TurnNode,
   TurnUsageTelemetry,
@@ -38,17 +40,30 @@ export type SessionSavingsUnavailableReason =
   | 'incomplete-usage'
   | 'no-compression-yet';
 
+export type PricingCurrency = 'USD' | 'CNY';
+export type PricingSource = 'deepseek-official' | 'custom';
+
 export type SessionSavingsResult =
   | {
       status: 'available';
       schedule: DeepSeekPricingSchedule;
       rates: Readonly<DeepSeekPricingRates>;
+      currency?: PricingCurrency;
+      pricingSource?: PricingSource;
       actualCostUsd: number;
       baselineCostUsd: number;
       estimatedSavingsUsd: number;
       savingsPercent: number | null;
       evictedInputTokensEstimated: number;
       summaryOverheadTokens: number;
+      compressedTurnCount: number;
+      comparedTurnCount: number;
+    }
+  | {
+      status: 'tokens-only';
+      evictedInputTokensEstimated: number;
+      summaryOverheadTokens: number;
+      netSavedTokensEstimated: number;
       compressedTurnCount: number;
       comparedTurnCount: number;
     }
@@ -74,6 +89,8 @@ export interface SessionUsageSummary {
   summaryCompletionTokens: number;
   cacheHitRate: number | null;
   actualCostUsd: number | null;
+  actualCostAmount?: number | null;
+  actualCostCurrency?: PricingCurrency;
   models: string[];
   savings: SessionSavingsResult;
 }
@@ -145,22 +162,65 @@ export function mergeLlmUsage(left?: LlmUsage, right?: LlmUsage): LlmUsage | und
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-function parseHostname(rawBaseUrl?: string): string {
-  const trimmed = (rawBaseUrl ?? '').trim();
-  if (!trimmed) return '';
-  const withoutScheme = trimmed.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '');
-  const slashIndex = withoutScheme.indexOf('/');
-  const authority = slashIndex === -1 ? withoutScheme : withoutScheme.slice(0, slashIndex);
-  const atIndex = authority.lastIndexOf('@');
-  const hostPort = atIndex === -1 ? authority : authority.slice(atIndex + 1);
-  const colonIndex = hostPort.indexOf(':');
-  return (colonIndex === -1 ? hostPort : hostPort.slice(0, colonIndex)).toLowerCase();
+function isValidCustomPricing(pricing: unknown): pricing is CustomModelPricing {
+  if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) return false;
+  const candidate = pricing as Partial<CustomModelPricing>;
+  if (candidate.currency !== 'CNY' && candidate.currency !== 'USD') return false;
+  if (
+    typeof candidate.inputPerMillion !== 'number' ||
+    !Number.isFinite(candidate.inputPerMillion) ||
+    candidate.inputPerMillion < 0
+  ) {
+    return false;
+  }
+  if (
+    typeof candidate.outputPerMillion !== 'number' ||
+    !Number.isFinite(candidate.outputPerMillion) ||
+    candidate.outputPerMillion < 0
+  ) {
+    return false;
+  }
+  if (
+    candidate.cacheHitInputPerMillion !== undefined &&
+    (typeof candidate.cacheHitInputPerMillion !== 'number' ||
+      !Number.isFinite(candidate.cacheHitInputPerMillion) ||
+      candidate.cacheHitInputPerMillion < 0)
+  ) {
+    return false;
+  }
+  return true;
 }
 
-export function resolveUsageProviderKind(baseUrl?: string): UsageProviderKind {
-  const host = parseHostname(baseUrl);
-  if (!host) return 'other';
-  return classifyAndRedactHost(host).hostKind === 'official' ? 'deepseek-official' : 'other';
+function cloneCustomPricing(pricing: CustomModelPricing): CustomModelPricing {
+  return {
+    currency: pricing.currency,
+    inputPerMillion: pricing.inputPerMillion,
+    ...(pricing.cacheHitInputPerMillion !== undefined
+      ? { cacheHitInputPerMillion: pricing.cacheHitInputPerMillion }
+      : {}),
+    outputPerMillion: pricing.outputPerMillion,
+  };
+}
+
+export interface ResolveUsageProviderOptions {
+  pricing?: CustomModelPricing;
+  supportsBuiltinPricing?: boolean;
+  capabilities?: ProviderCapabilities;
+}
+
+export function resolveUsageProviderKind(
+  baseUrl?: string,
+  options?: ResolveUsageProviderOptions,
+): UsageProviderKind {
+  const explicitBuiltin =
+    options?.supportsBuiltinPricing ?? options?.capabilities?.supportsBuiltinPricing;
+  if (explicitBuiltin === true || (explicitBuiltin !== false && isOfficialDeepSeekUrl(baseUrl ?? ''))) {
+    return 'deepseek-official';
+  }
+  if (isValidCustomPricing(options?.pricing)) {
+    return 'custom-priced';
+  }
+  return 'other';
 }
 
 export function buildTurnUsageTelemetry(options: {
@@ -171,9 +231,21 @@ export function buildTurnUsageTelemetry(options: {
   uncompressedPromptChars?: number;
   compressedPromptChars?: number;
   retrievedNodeCount?: number;
+  pricing?: CustomModelPricing;
+  supportsBuiltinPricing?: boolean;
+  capabilities?: ProviderCapabilities;
 }): TurnUsageTelemetry {
+  const providerKind = resolveUsageProviderKind(options.baseUrl, {
+    pricing: options.pricing,
+    supportsBuiltinPricing: options.supportsBuiltinPricing,
+    capabilities: options.capabilities,
+  });
+  const pricingSnapshot =
+    providerKind === 'custom-priced' && isValidCustomPricing(options.pricing)
+      ? cloneCustomPricing(options.pricing)
+      : undefined;
   return {
-    providerKind: resolveUsageProviderKind(options.baseUrl),
+    providerKind,
     model: options.model.trim() || 'deepseek-flash',
     ...(options.generationUsage ? { generationUsage: options.generationUsage } : {}),
     ...(options.summaryUsage ? { summaryUsage: options.summaryUsage } : {}),
@@ -186,6 +258,7 @@ export function buildTurnUsageTelemetry(options: {
     ...(options.retrievedNodeCount !== undefined
       ? { retrievedNodeCount: options.retrievedNodeCount }
       : {}),
+    ...(pricingSnapshot ? { pricingSnapshot } : {}),
   };
 }
 
@@ -243,9 +316,43 @@ function resolveUsageTokens(usage: LlmUsage): {
   };
 }
 
-function usageCostUsd(
+interface ResolvedTurnRates {
+  source: PricingSource;
+  currency: PricingCurrency;
+  cacheHitInputPerMillion: number;
+  cacheMissInputPerMillion: number;
+  outputPerMillion: number;
+}
+
+function resolveTurnRates(
+  telemetry: TurnUsageTelemetry,
+  officialRates: Readonly<DeepSeekPricingRates>,
+): ResolvedTurnRates | null {
+  if (telemetry.providerKind === 'deepseek-official') {
+    return {
+      source: 'deepseek-official',
+      currency: 'USD',
+      cacheHitInputPerMillion: officialRates.cacheHitInputPerMillionUsd,
+      cacheMissInputPerMillion: officialRates.cacheMissInputPerMillionUsd,
+      outputPerMillion: officialRates.outputPerMillionUsd,
+    };
+  }
+  if (telemetry.providerKind === 'custom-priced' && isValidCustomPricing(telemetry.pricingSnapshot)) {
+    const snap = telemetry.pricingSnapshot;
+    return {
+      source: 'custom',
+      currency: snap.currency,
+      cacheHitInputPerMillion: snap.cacheHitInputPerMillion ?? snap.inputPerMillion,
+      cacheMissInputPerMillion: snap.inputPerMillion,
+      outputPerMillion: snap.outputPerMillion,
+    };
+  }
+  return null;
+}
+
+function usageCostWithRates(
   usage: LlmUsage,
-  rates: Readonly<DeepSeekPricingRates>,
+  rates: Pick<ResolvedTurnRates, 'cacheHitInputPerMillion' | 'cacheMissInputPerMillion' | 'outputPerMillion'>,
 ): number | null {
   const resolved = resolveUsageTokens(usage);
   if (resolved.promptTokens === null || resolved.completionTokens === null) {
@@ -254,18 +361,18 @@ function usageCostUsd(
   const hitTokens = resolved.hasSplitCache ? resolved.cacheHitTokens : 0;
   const missTokens = resolved.hasSplitCache ? resolved.cacheMissTokens : resolved.promptTokens;
   return (
-    (hitTokens * rates.cacheHitInputPerMillionUsd +
-      missTokens * rates.cacheMissInputPerMillionUsd +
-      resolved.completionTokens * rates.outputPerMillionUsd) /
+    (hitTokens * rates.cacheHitInputPerMillion +
+      missTokens * rates.cacheMissInputPerMillion +
+      resolved.completionTokens * rates.outputPerMillion) /
     1_000_000
   );
 }
 
 /**
  * Computes branch/session real LLM token totals and a conservative estimated
- * savings comparison against uncompressed full-history replay under DeepSeek official pricing.
- * Strictly marks savings `unavailable` (never fakes zero or placeholder amounts)
- * when official usage or compression deltas are absent.
+ * savings comparison against uncompressed full-history replay.
+ * Uses DeepSeek official pricing or custom per-model pricing when all turns share one
+ * currency; falls back to `tokens-only` savings when pricing is absent or mixed.
  */
 export function computeSessionUsageSummary(
   nodes: readonly TurnNode[],
@@ -290,21 +397,33 @@ export function computeSessionUsageSummary(
   let reasoningTokens = 0;
   let summaryPromptTokens = 0;
   let summaryCompletionTokens = 0;
-  let allOfficial = telemetryNodes.length > 0;
+  let allPriced = telemetryNodes.length > 0;
+  let hasCustomPricing = false;
+  const currencies = new Set<PricingCurrency>();
   let allUsageComplete = true;
-  let totalActualCostUsd = 0;
-  let totalSummaryCostUsd = 0;
+  let totalActualCost = 0;
+  let totalSummaryCost = 0;
   let totalEvictedInputTokens = 0;
   let summaryOverheadTokens = 0;
   let splitCachePromptTotal = 0;
   const models = new Set<string>();
+  const pricedCompressedTurns: Array<{
+    evictedTokens: number;
+    turnHitRatio: number | null;
+    turnRates: ResolvedTurnRates;
+  }> = [];
 
   for (const node of telemetryNodes) {
     const telemetry = node.telemetry;
     if (telemetry.model) models.add(telemetry.model);
-    if (telemetry.providerKind !== 'deepseek-official') {
-      allOfficial = false;
+    const turnRates = resolveTurnRates(telemetry, rates);
+    if (!turnRates) {
+      allPriced = false;
+    } else {
+      currencies.add(turnRates.currency);
+      if (turnRates.source === 'custom') hasCustomPricing = true;
     }
+
     if ((telemetry.retrievedNodeCount ?? 0) > 0) {
       retrievedTurnCount += 1;
       totalRetrievedNodes += telemetry.retrievedNodeCount ?? 0;
@@ -332,9 +451,11 @@ export function computeSessionUsageSummary(
       } else {
         promptCacheMissTokens += genResolved.promptTokens;
       }
-      const genCost = usageCostUsd(genUsage, rates);
-      if (genCost === null) allUsageComplete = false;
-      else totalActualCostUsd += genCost;
+      if (turnRates) {
+        const genCost = usageCostWithRates(genUsage, turnRates);
+        if (genCost === null) allUsageComplete = false;
+        else totalActualCost += genCost;
+      }
     }
 
     if (sumUsage) {
@@ -355,11 +476,13 @@ export function computeSessionUsageSummary(
         } else {
           promptCacheMissTokens += sumResolved.promptTokens;
         }
-        const sumCost = usageCostUsd(sumUsage, rates);
-        if (sumCost === null) allUsageComplete = false;
-        else {
-          totalActualCostUsd += sumCost;
-          totalSummaryCostUsd += sumCost;
+        if (turnRates) {
+          const sumCost = usageCostWithRates(sumUsage, turnRates);
+          if (sumCost === null) allUsageComplete = false;
+          else {
+            totalActualCost += sumCost;
+            totalSummaryCost += sumCost;
+          }
         }
       }
     }
@@ -373,15 +496,31 @@ export function computeSessionUsageSummary(
         genResolved.promptTokens !== null && compressedChars > 0
           ? Math.min(1.2, Math.max(0.4, genResolved.promptTokens / compressedChars))
           : 0.65;
-      totalEvictedInputTokens += Math.round(omittedChars * empiricalTokensPerChar);
+      const turnEvicted = Math.round(omittedChars * empiricalTokensPerChar);
+      totalEvictedInputTokens += turnEvicted;
+      if (turnRates) {
+        const turnSplitTotal = genResolved.cacheHitTokens + genResolved.cacheMissTokens;
+        const turnHitRatio =
+          genResolved.hasSplitCache && turnSplitTotal > 0
+            ? genResolved.cacheHitTokens / turnSplitTotal
+            : null;
+        pricedCompressedTurns.push({
+          evictedTokens: turnEvicted,
+          turnHitRatio,
+          turnRates,
+        });
+      }
     }
   }
 
   const cacheHitRate =
     splitCachePromptTotal > 0 ? promptCacheHitTokens / splitCachePromptTotal : null;
 
-  const actualCostUsd =
-    recordedTurnCount > 0 && allOfficial && allUsageComplete ? totalActualCostUsd : null;
+  const singleCurrency = currencies.size === 1 ? ([...currencies][0] as PricingCurrency) : undefined;
+  const canComputeMoney =
+    recordedTurnCount > 0 && allPriced && singleCurrency !== undefined && allUsageComplete;
+  const actualCostAmount = canComputeMoney ? totalActualCost : null;
+  const actualCostUsd = canComputeMoney && singleCurrency === 'USD' ? totalActualCost : null;
 
   const hasAnyGenerationUsage = telemetryNodes.some((node) => Boolean(node.telemetry.generationUsage));
 
@@ -390,14 +529,6 @@ export function computeSessionUsageSummary(
     savings = {
       status: 'unavailable',
       reason: 'no-usage-data',
-      schedule,
-      rates,
-      compressedTurnCount,
-    };
-  } else if (!allOfficial) {
-    savings = {
-      status: 'unavailable',
-      reason: 'non-official-provider',
       schedule,
       rates,
       compressedTurnCount,
@@ -418,23 +549,63 @@ export function computeSessionUsageSummary(
       rates,
       compressedTurnCount,
     };
+  } else if (!canComputeMoney || !singleCurrency) {
+    savings = {
+      status: 'tokens-only',
+      evictedInputTokensEstimated: totalEvictedInputTokens,
+      summaryOverheadTokens,
+      netSavedTokensEstimated: Math.max(0, totalEvictedInputTokens - summaryOverheadTokens),
+      compressedTurnCount,
+      comparedTurnCount: recordedTurnCount,
+    };
   } else {
     const observedHitRatio = cacheHitRate ?? 0;
-    const effectiveExtraInputRatePerMillionUsd =
-      observedHitRatio * rates.cacheHitInputPerMillionUsd +
-      (1 - observedHitRatio) * rates.cacheMissInputPerMillionUsd;
-    const extraBaselineInputCostUsd =
-      (totalEvictedInputTokens * effectiveExtraInputRatePerMillionUsd) / 1_000_000;
+    const pricingSource: PricingSource = hasCustomPricing ? 'custom' : 'deepseek-official';
+    const firstRates = pricedCompressedTurns[0]?.turnRates;
+    const uniformRates =
+      !hasCustomPricing ||
+      (firstRates !== undefined &&
+        pricedCompressedTurns.every(
+          (item) =>
+            item.turnRates.cacheHitInputPerMillion === firstRates.cacheHitInputPerMillion &&
+            item.turnRates.cacheMissInputPerMillion === firstRates.cacheMissInputPerMillion,
+        ));
+
+    let extraBaselineInputCost = 0;
+    if (!hasCustomPricing) {
+      const effectiveExtraInputRatePerMillion =
+        observedHitRatio * rates.cacheHitInputPerMillionUsd +
+        (1 - observedHitRatio) * rates.cacheMissInputPerMillionUsd;
+      extraBaselineInputCost =
+        (totalEvictedInputTokens * effectiveExtraInputRatePerMillion) / 1_000_000;
+    } else if (uniformRates && firstRates) {
+      const effectiveExtraInputRatePerMillion =
+        observedHitRatio * firstRates.cacheHitInputPerMillion +
+        (1 - observedHitRatio) * firstRates.cacheMissInputPerMillion;
+      extraBaselineInputCost =
+        (totalEvictedInputTokens * effectiveExtraInputRatePerMillion) / 1_000_000;
+    } else {
+      for (const item of pricedCompressedTurns) {
+        const ratio = item.turnHitRatio ?? observedHitRatio;
+        const effectiveRate =
+          ratio * item.turnRates.cacheHitInputPerMillion +
+          (1 - ratio) * item.turnRates.cacheMissInputPerMillion;
+        extraBaselineInputCost += (item.evictedTokens * effectiveRate) / 1_000_000;
+      }
+    }
+
     const baselineCostUsd = Math.max(
       0,
-      totalActualCostUsd - totalSummaryCostUsd + extraBaselineInputCostUsd,
+      totalActualCost - totalSummaryCost + extraBaselineInputCost,
     );
-    const estimatedSavingsUsd = baselineCostUsd - totalActualCostUsd;
+    const estimatedSavingsUsd = baselineCostUsd - totalActualCost;
     savings = {
       status: 'available',
       schedule,
       rates,
-      actualCostUsd: totalActualCostUsd,
+      currency: singleCurrency,
+      pricingSource,
+      actualCostUsd: totalActualCost,
       baselineCostUsd,
       estimatedSavingsUsd,
       savingsPercent: baselineCostUsd > 0 ? (estimatedSavingsUsd / baselineCostUsd) * 100 : null,
@@ -459,6 +630,8 @@ export function computeSessionUsageSummary(
     summaryCompletionTokens,
     cacheHitRate,
     actualCostUsd,
+    actualCostAmount,
+    ...(canComputeMoney && singleCurrency ? { actualCostCurrency: singleCurrency } : {}),
     models: [...models],
     savings,
   };

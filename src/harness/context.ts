@@ -912,6 +912,7 @@ export async function summarizeCreativeTurnNodes(
         apiKey: bgConfig.apiKey,
         model: bgConfig.model,
         reasoningEffort: bgConfig.reasoningEffort,
+        ...(bgConfig.capabilities ? { capabilities: bgConfig.capabilities } : {}),
         messages: buildSummaryCompressionMessages(previousContent, batchNodes, undefined, maxBatchChars),
         includeUsage: true,
         signal,

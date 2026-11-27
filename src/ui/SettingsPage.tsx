@@ -1,18 +1,39 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Download, ExternalLink, FileUp, LifeBuoy, RefreshCw, RotateCcw, ShieldCheck } from 'lucide-react';
+import {
+  Check,
+  ChevronRight,
+  Download,
+  Edit3,
+  ExternalLink,
+  FileUp,
+  LifeBuoy,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  ShieldCheck,
+  X,
+} from 'lucide-react';
 import {
   DEEPSEEK_DEV_PROXY_BALANCE_NOTICE,
   DEEPSEEK_OFFICIAL_TOP_UP_DECLARATION,
   DEEPSEEK_OFFICIAL_TOP_UP_URL,
-  REASONING_EFFORTS,
+  PROVIDER_PRESETS,
+  PUBLIC_RESEARCH_PRESETS,
   computeWorkspaceUsageSummary,
+  createDefaultPromptPackLibrary,
+  createProviderProfileFromPreset,
+  isOfficialDeepSeekUrl,
   maskApiKey,
   normalizeOfficialDeepSeekModel,
   normalizeReasoningEffort,
-  createDefaultPromptPackLibrary,
   type ModelConfig,
   type OfficialDeepSeekModel,
   type PromptPackLibrary,
+  type ProviderLibrary,
+  type ProviderModelEntry,
+  type ProviderProfile,
+  type ProviderThinkingProtocol,
+  type PublicResearchConfig,
   type ReasoningEffort,
   type WorkspaceUsageSummary,
 } from '../harness/index.ts';
@@ -53,8 +74,15 @@ export interface SettingsPageProps {
   onImportBackupFile: (file: File) => void;
   onThemePreferenceChange: (preference: DisplayThemePreference) => void;
   onFontSizeChange: (fontSize: DisplayFontSize) => void;
-  onDefaultModelChange?: (model: OfficialDeepSeekModel) => void;
+  onDefaultModelChange?: (model: string) => void;
   onDefaultReasoningEffortChange?: (effort: ReasoningEffort) => void;
+  providerLibrary?: ProviderLibrary;
+  onSelectProviderProfile?: (profileId: string) => void;
+  onOpenAddProviderWizard?: () => void;
+  onOpenEditProviderWizard?: (profileId: string) => void;
+  onDeleteProviderProfile?: (profileId: string) => void;
+  onAddCustomModel?: (modelId: string) => void;
+  onRemoveCustomModel?: (modelId: string) => void;
   promptPackLibrary?: PromptPackLibrary;
   workspaceUsageSummary?: WorkspaceUsageSummary;
   appUpdater?: AppUpdaterController;
@@ -70,19 +98,28 @@ const MODEL_OPTIONS: Array<{
   { value: 'deepseek-v4-pro', label: '旗舰深度', subtitle: 'deepseek-v4-pro' },
 ];
 
-const REASONING_OPTIONS: Array<{
+const DEEPSEEK_THINKING_OPTIONS: Array<{
   value: ReasoningEffort;
   label: string;
 }> = [
-  { value: 'none', label: '关闭' },
   { value: 'low', label: '低' },
   { value: 'high', label: '高' },
   { value: 'max', label: '极限' },
 ];
 
+const OPENAI_THINKING_OPTIONS: Array<{
+  value: ReasoningEffort;
+  label: string;
+}> = [
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+];
+
 const REASONING_LABELS: Record<ReasoningEffort, string> = {
   none: '关闭',
   low: '低',
+  medium: '中',
   high: '高',
   max: '极限',
 };
@@ -98,6 +135,25 @@ const THEME_OPTIONS: Array<{
 ];
 
 const FONT_SIZE_OPTIONS: readonly DisplayFontSize[] = DISPLAY_FONT_SIZES;
+
+export function resolveNextThinkingToggleEffort(
+  currentEffort: ReasoningEffort,
+  thinkingProtocol: ProviderThinkingProtocol,
+): ReasoningEffort {
+  if (currentEffort !== 'none') return 'none';
+  return thinkingProtocol === 'deepseek' ? 'high' : 'medium';
+}
+
+function normalizeActiveStop(
+  effort: ReasoningEffort,
+  thinkingProtocol: ProviderThinkingProtocol,
+): ReasoningEffort {
+  if (effort === 'none') return 'none';
+  if (thinkingProtocol === 'deepseek') {
+    return effort === 'medium' ? 'high' : effort;
+  }
+  return effort === 'max' ? 'high' : effort;
+}
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '未知';
@@ -135,6 +191,13 @@ export function SettingsPage({
   onFontSizeChange,
   onDefaultModelChange,
   onDefaultReasoningEffortChange,
+  providerLibrary,
+  onSelectProviderProfile,
+  onOpenAddProviderWizard,
+  onOpenEditProviderWizard,
+  onDeleteProviderProfile,
+  onAddCustomModel,
+  onRemoveCustomModel,
   promptPackLibrary = createDefaultPromptPackLibrary(),
   workspaceUsageSummary,
   appUpdater,
@@ -143,9 +206,93 @@ export function SettingsPage({
   const resolvedUsageSummary = workspaceUsageSummary ?? computeWorkspaceUsageSummary({});
   const backupInputRef = useRef<HTMLInputElement>(null);
   const [storageStatus, setStorageStatus] = useState('正在读取本地占用…');
-  const activeModel = normalizeOfficialDeepSeekModel(config.model);
-  const activeReasoningEffort = normalizeReasoningEffort(config.reasoningEffort);
-  const reasoningSliderIndex = REASONING_EFFORTS.indexOf(activeReasoningEffort);
+  const [customModelDraft, setCustomModelDraft] = useState('');
+
+  const inferredDeepSeekFromConfig =
+    useDevEnvKey ||
+    config.providerPresetId === 'deepseek' ||
+    (!config.providerPresetId && (!config.baseUrl || isOfficialDeepSeekUrl(config.baseUrl)));
+
+  const fallbackProfile: ProviderProfile = inferredDeepSeekFromConfig
+    ? createProviderProfileFromPreset('deepseek', {
+        id: config.providerId || 'deepseek-official',
+        apiKey: config.apiKey,
+        defaultModel: normalizeOfficialDeepSeekModel(config.model),
+        memoryOnly: config.memoryOnly,
+        ...(config.capabilities ? { capabilities: config.capabilities } : {}),
+      })
+    : createProviderProfileFromPreset(config.providerPresetId ?? 'custom', {
+        id: config.providerId || 'custom-active',
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        models: config.model ? [{ id: config.model }] : [],
+        defaultModel: config.model,
+        memoryOnly: config.memoryOnly,
+        ...(config.capabilities ? { capabilities: config.capabilities } : {}),
+      });
+
+  const profiles =
+    providerLibrary && providerLibrary.profiles.length > 0
+      ? providerLibrary.profiles
+      : [fallbackProfile];
+  const activeProfile =
+    (providerLibrary
+      ? profiles.find((profile) => profile.id === providerLibrary.activeProviderId)
+      : undefined) ??
+    profiles[0] ??
+    fallbackProfile;
+
+  const isThirdPartyPreset = providerLibrary
+    ? activeProfile.presetId !== 'deepseek'
+    : Boolean(config.providerPresetId && config.providerPresetId !== 'deepseek') ||
+      (!useDevEnvKey && Boolean(config.baseUrl) && !isOfficialDeepSeekUrl(config.baseUrl));
+
+  const activeBaseUrl = activeProfile.baseUrl || config.baseUrl;
+  const activeApiKey = activeProfile.apiKey || config.apiKey;
+  const isOfficialDeepSeekActive =
+    !isThirdPartyPreset &&
+    (useDevEnvKey || activeProfile.presetId === 'deepseek' || isOfficialDeepSeekUrl(activeBaseUrl));
+  const supportsBalanceQuery =
+    !isThirdPartyPreset &&
+    Boolean(
+      config.capabilities?.supportsBalanceQuery ??
+        activeProfile.capabilities.supportsBalanceQuery ??
+        (useDevEnvKey || isOfficialDeepSeekUrl(activeBaseUrl)),
+    );
+  const thinkingProtocol: ProviderThinkingProtocol =
+    config.capabilities?.thinkingProtocol ??
+    activeProfile.capabilities.thinkingProtocol ??
+    (isOfficialDeepSeekActive ? 'deepseek' : 'openai_reasoning_effort');
+
+  const activeModel = isOfficialDeepSeekActive
+    ? normalizeOfficialDeepSeekModel(config.model || activeProfile.defaultModel)
+    : (config.model || activeProfile.defaultModel || activeProfile.models[0]?.id || '').trim();
+
+  const rawEffort = normalizeReasoningEffort(
+    config.reasoningEffort ?? providerLibrary?.reasoningEffort,
+  );
+  const activeReasoningEffort = normalizeActiveStop(rawEffort, thinkingProtocol);
+  const isThinkingEnabled = activeReasoningEffort !== 'none';
+  const thinkingOptions =
+    thinkingProtocol === 'deepseek' ? DEEPSEEK_THINKING_OPTIONS : OPENAI_THINKING_OPTIONS;
+  const thinkingSliderIndex = Math.max(
+    0,
+    thinkingOptions.findIndex((option) => option.value === activeReasoningEffort),
+  );
+
+  const thirdPartyModels: ProviderModelEntry[] = (() => {
+    const entries = [...activeProfile.models];
+    if (activeModel && !entries.some((entry) => entry.id === activeModel)) {
+      entries.unshift({ id: activeModel });
+    }
+    return entries;
+  })();
+
+  const resolvedPublicResearch = config.publicResearch ?? providerLibrary?.publicResearch;
+  const activeResearchPreset =
+    PUBLIC_RESEARCH_PRESETS[resolvedPublicResearch?.provider ?? 'none'] ??
+    PUBLIC_RESEARCH_PRESETS.none;
+
   const activePreset = promptPackLibrary.activePackId
     ? promptPackLibrary.packs.find((pack) => pack.id === promptPackLibrary.activePackId) ??
       promptPackLibrary.packs[0]
@@ -191,32 +338,86 @@ export function SettingsPage({
     };
   }, []);
 
+  const handleOpenEditActive = () => {
+    if (onOpenEditProviderWizard) {
+      onOpenEditProviderWizard(activeProfile.id);
+      return;
+    }
+    onOpenSetupWizard();
+  };
+
+  const handleAddInlineModel = () => {
+    const trimmed = customModelDraft.trim();
+    if (!trimmed) return;
+    onAddCustomModel?.(trimmed);
+    onDefaultModelChange?.(trimmed);
+    setCustomModelDraft('');
+  };
+
   return (
     <OverlayPageShell title="设置" testId="settings-page" onBack={onBack}>
       <InsetGroup
-        title="连接 DeepSeek"
-        description="API Key 只保存在你的设备上，应用会直接连接 DeepSeek 官方服务。"
+        title={isOfficialDeepSeekActive ? '连接 DeepSeek' : '模型服务与连接'}
+        description="API Key 只保存在你的设备上，由本地直接请求所选模型服务。"
         testId="settings-connection-group"
       >
-        <section className="connected-key-card" data-testid="deepseek-connection-card" aria-label="DeepSeek 连接状态">
+        <section
+          className="connected-key-card"
+          data-testid="deepseek-connection-card"
+          aria-label={isOfficialDeepSeekActive ? 'DeepSeek 连接状态' : '当前模型服务连接状态'}
+        >
           <div className="connected-key-header">
-            <strong>{hasCredentials ? '已连接 DeepSeek' : '未连接 DeepSeek'}</strong>
+            <strong>
+              {isOfficialDeepSeekActive
+                ? hasCredentials
+                  ? '已连接 DeepSeek'
+                  : '未连接 DeepSeek'
+                : activeProfile.name}
+            </strong>
             <span
               className={`badge ${hasCredentials ? 'badge-ok' : 'badge-pending'}`}
-              data-testid={hasCredentials && !useDevEnvKey && config.apiKey ? 'connected-key-mask' : undefined}
+              data-testid={
+                hasCredentials && !useDevEnvKey && activeApiKey ? 'connected-key-mask' : undefined
+              }
             >
               {hasCredentials
                 ? useDevEnvKey
                   ? '开发代理'
-                  : maskApiKey(config.apiKey) || '本地已连接'
+                  : maskApiKey(activeApiKey) || (isOfficialDeepSeekActive ? '本地已连接' : '免密已配置')
                 : '未连接'}
             </span>
           </div>
-          <p className="wizard-privacy-note">
-            请求会由你的设备直接发送至 DeepSeek 官方 API；API Key 仅保存在本机，不会上传至第三方。
-          </p>
-          {hasCredentials && (
-            useDevEnvKey ? (
+
+          {isOfficialDeepSeekActive ? (
+            <p className="wizard-privacy-note">
+              请求会由你的设备直接发送至 DeepSeek 官方 API；API Key 仅保存在本机，不会上传至第三方。
+            </p>
+          ) : (
+            <div className="provider-active-summary">
+              <p className="wizard-privacy-note" data-testid="active-provider-base-url">
+                服务商地址：<code>{activeBaseUrl || '未填写'}</code>
+              </p>
+              <p className="wizard-privacy-note" data-testid="active-provider-research-status">
+                联网检索源：{activeResearchPreset.title}
+                {activeProfile && onOpenEditProviderWizard && (
+                  <>
+                    {' '}
+                    <button
+                      type="button"
+                      className="text-action"
+                      onClick={() => onOpenEditProviderWizard(activeProfile.id)}
+                    >
+                      配置
+                    </button>
+                  </>
+                )}
+              </p>
+            </div>
+          )}
+
+          {hasCredentials &&
+            supportsBalanceQuery &&
+            (useDevEnvKey ? (
               <p className="settings-balance-proxy-note" data-testid="deepseek-balance-dev-proxy-note">
                 {DEEPSEEK_DEV_PROXY_BALANCE_NOTICE}
               </p>
@@ -272,9 +473,9 @@ export function SettingsPage({
                   </p>
                 )}
               </div>
-            )
-          )}
-          {hasCredentials && (
+            ))}
+
+          {hasCredentials && supportsBalanceQuery && (
             <div className="settings-topup-block" data-testid="deepseek-topup-block">
               <a
                 className="btn settings-topup-link"
@@ -291,20 +492,32 @@ export function SettingsPage({
               </p>
             </div>
           )}
+
           {hasCredentials ? (
             <div className="settings-button-row">
-              <button type="button" className="btn" data-testid="change-key-btn" onClick={onOpenSetupWizard}>
-                更换 API Key
+              <button
+                type="button"
+                className="btn"
+                data-testid="change-key-btn"
+                onClick={handleOpenEditActive}
+              >
+                {isOfficialDeepSeekActive ? '更换 API Key' : '编辑服务商配置'}
               </button>
               <button type="button" className="btn" data-testid="clear-key-btn" onClick={onClearSavedKey}>
                 断开连接
               </button>
             </div>
           ) : (
-            <button type="button" className="btn btn-primary" data-testid="open-setup-wizard-btn" onClick={onOpenSetupWizard}>
-              连接 DeepSeek
+            <button
+              type="button"
+              className="btn btn-primary"
+              data-testid="open-setup-wizard-btn"
+              onClick={onOpenSetupWizard}
+            >
+              {isOfficialDeepSeekActive ? '连接 DeepSeek' : '连接模型服务'}
             </button>
           )}
+
           {import.meta.env.DEV && showDevTestProxy && (
             <button type="button" className="btn" data-testid="dev-proxy-toggle" onClick={onApplyDevTestConfig}>
               使用本地 .env.local 测试代理
@@ -312,72 +525,252 @@ export function SettingsPage({
           )}
         </section>
 
+        <section
+          className="provider-profile-section"
+          data-testid="provider-profile-list"
+          aria-label="服务商档案列表"
+        >
+          <div className="settings-control-header">
+            <h3>服务商档案列表</h3>
+            <button
+              type="button"
+              className="btn btn-sm provider-add-btn"
+              data-testid="add-provider-profile-btn"
+              onClick={() => (onOpenAddProviderWizard ? onOpenAddProviderWizard() : onOpenSetupWizard())}
+            >
+              <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
+              <span>添加服务商</span>
+            </button>
+          </div>
+
+          <ul className="provider-profile-items">
+            {profiles.map((profile) => {
+              const isActive = profile.id === activeProfile.id;
+              const presetLabel =
+                PROVIDER_PRESETS[profile.presetId]?.name ?? PROVIDER_PRESETS.custom.name;
+              const keyLabel = profile.apiKey
+                ? maskApiKey(profile.apiKey)
+                : profile.presetId === 'local'
+                  ? '本地免密'
+                  : '未填 Key';
+              return (
+                <li
+                  key={profile.id}
+                  className={`provider-profile-item ${isActive ? 'is-active' : ''}`}
+                  data-testid={`provider-profile-item-${profile.id}`}
+                >
+                  <div className="provider-profile-meta">
+                    <div className="provider-profile-title-row">
+                      <strong>{profile.name}</strong>
+                      <span className="badge">{presetLabel}</span>
+                      {isActive && (
+                        <span className="badge badge-ok" aria-current="true">
+                          <Check size={16} strokeWidth={1.75} aria-hidden="true" /> 当前使用
+                        </span>
+                      )}
+                    </div>
+                    <span className="provider-profile-sub">
+                      {profile.defaultModel || '未指定默认模型'} · {keyLabel}
+                    </span>
+                  </div>
+                  <div className="provider-profile-actions">
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      data-testid={`provider-profile-switch-${profile.id}`}
+                      aria-pressed={isActive}
+                      disabled={isActive}
+                      onClick={() => onSelectProviderProfile?.(profile.id)}
+                    >
+                      {isActive ? '使用中' : '切换'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      data-testid={`provider-profile-edit-${profile.id}`}
+                      aria-label={`编辑 ${profile.name}`}
+                      onClick={() =>
+                        onOpenEditProviderWizard
+                          ? onOpenEditProviderWizard(profile.id)
+                          : onOpenSetupWizard()
+                      }
+                    >
+                      <Edit3 size={16} strokeWidth={1.75} aria-hidden="true" />
+                      <span>编辑</span>
+                    </button>
+                    {profiles.length > 1 && (
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        data-testid={`provider-profile-delete-${profile.id}`}
+                        aria-label={`删除 ${profile.name}`}
+                        onClick={() => onDeleteProviderProfile?.(profile.id)}
+                      >
+                        删除
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+
         <div className="settings-control-block" data-testid="settings-default-model-block">
           <h3>全局默认模型</h3>
           <p className="settings-control-hint">未单独调整的故事、作品与角色将默认使用这里的设置。</p>
-          <div className="settings-model-grid" role="group" aria-label="全局默认模型">
-            {MODEL_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className="settings-model-option"
-                data-testid={`settings-model-option-${option.value}`}
-                aria-pressed={activeModel === option.value}
-                onClick={() => onDefaultModelChange?.(option.value)}
-              >
-                <strong>{option.label}</strong>
-                <span className="settings-model-id">{option.subtitle}</span>
-              </button>
-            ))}
-          </div>
-          {activeModel === 'deepseek-v4-pro' && (
-            <p className="settings-pro-cost-hint" data-testid="settings-pro-cost-hint">
-              旗舰深度响应耗时更长，额度消耗约为日常轻量的 3–4 倍。
-            </p>
+          {isOfficialDeepSeekActive ? (
+            <>
+              <div className="settings-model-grid" role="group" aria-label="全局默认模型">
+                {MODEL_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className="settings-model-option"
+                    data-testid={`settings-model-option-${option.value}`}
+                    aria-pressed={activeModel === option.value}
+                    onClick={() => onDefaultModelChange?.(option.value)}
+                  >
+                    <strong>{option.label}</strong>
+                    <span className="settings-model-id">{option.subtitle}</span>
+                  </button>
+                ))}
+              </div>
+              {activeModel === 'deepseek-v4-pro' && (
+                <p className="settings-pro-cost-hint" data-testid="settings-pro-cost-hint">
+                  旗舰深度响应耗时更长，额度消耗约为日常轻量的 3–4 倍。
+                </p>
+              )}
+            </>
+          ) : (
+            <div className="settings-custom-models-wrap">
+              <div className="settings-custom-model-list" role="group" aria-label="常用模型列表">
+                {thirdPartyModels.map((entry) => (
+                  <div key={entry.id} className="settings-custom-model-chip">
+                    <button
+                      type="button"
+                      className="settings-model-option"
+                      data-testid={`settings-model-option-${entry.id}`}
+                      aria-pressed={activeModel === entry.id}
+                      onClick={() => onDefaultModelChange?.(entry.id)}
+                    >
+                      <strong>{entry.label ?? entry.id}</strong>
+                      {entry.label && <span className="settings-model-id">{entry.id}</span>}
+                    </button>
+                    {thirdPartyModels.length > 1 && onRemoveCustomModel && (
+                      <button
+                        type="button"
+                        className="icon-button settings-remove-model-btn"
+                        data-testid={`settings-remove-model-${entry.id}`}
+                        aria-label={`移除模型 ${entry.id}`}
+                        onClick={() => onRemoveCustomModel(entry.id)}
+                      >
+                        <X size={16} strokeWidth={1.75} aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="settings-add-model-row">
+                <input
+                  type="text"
+                  data-testid="settings-custom-model-input"
+                  aria-label="添加或切换模型 ID"
+                  placeholder="输入任意模型 ID，如 gpt-4o"
+                  value={customModelDraft}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  onChange={(event) => setCustomModelDraft(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  data-testid="settings-add-model-btn"
+                  disabled={!customModelDraft.trim()}
+                  onClick={handleAddInlineModel}
+                >
+                  添加并选用
+                </button>
+              </div>
+            </div>
           )}
         </div>
 
         <div className="settings-control-block" data-testid="settings-default-reasoning-block">
           <div className="settings-control-header">
             <h3>默认思考强度</h3>
-            <span className="settings-reasoning-value" data-testid="settings-reasoning-current-label">
-              {REASONING_LABELS[activeReasoningEffort]}
-            </span>
-          </div>
-          <div className="settings-reasoning-slider-wrap">
-            <input
-              type="range"
-              min={0}
-              max={REASONING_EFFORTS.length - 1}
-              step={1}
-              value={reasoningSliderIndex >= 0 ? reasoningSliderIndex : 2}
-              aria-label="默认思考强度"
-              aria-valuetext={REASONING_LABELS[activeReasoningEffort]}
-              data-testid="settings-reasoning-slider"
-              className="settings-reasoning-slider"
-              onChange={(event) => {
-                const index = Number(event.currentTarget.value);
-                const next = REASONING_EFFORTS[index] ?? 'high';
-                onDefaultReasoningEffortChange?.(next);
-              }}
-            />
-            <div className="settings-reasoning-stops" role="group" aria-label="默认思考强度档位">
-              {REASONING_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  data-testid={`settings-reasoning-option-${option.value}`}
-                  aria-pressed={activeReasoningEffort === option.value}
-                  onClick={() => onDefaultReasoningEffortChange?.(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
+            <div className="settings-thinking-toggle-wrap">
+              <span className="settings-reasoning-value" data-testid="settings-reasoning-current-label">
+                {REASONING_LABELS[activeReasoningEffort]}
+              </span>
+              <label className="settings-thinking-switch-label">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label="开启默认深度思考"
+                  data-testid="settings-thinking-toggle"
+                  checked={isThinkingEnabled}
+                  onChange={() =>
+                    onDefaultReasoningEffortChange?.(
+                      resolveNextThinkingToggleEffort(activeReasoningEffort, thinkingProtocol),
+                    )
+                  }
+                />
+                <span>{isThinkingEnabled ? '已开启' : '关闭'}</span>
+              </label>
             </div>
           </div>
+
+          {thinkingProtocol === 'openai_reasoning_effort' && (
+            <p className="settings-control-hint" data-testid="settings-thinking-compatibility-hint">
+              仅支持深度思考的模型可开启，若发送报错请关闭
+            </p>
+          )}
+
+          {isThinkingEnabled && (
+            <div className="settings-reasoning-slider-wrap">
+              <input
+                type="range"
+                min={0}
+                max={thinkingOptions.length - 1}
+                step={1}
+                value={thinkingSliderIndex}
+                aria-label="默认思考强度"
+                aria-valuetext={REASONING_LABELS[activeReasoningEffort]}
+                data-testid="settings-reasoning-slider"
+                className="settings-reasoning-slider"
+                onChange={(event) => {
+                  const index = Number(event.currentTarget.value);
+                  const next = thinkingOptions[index]?.value ?? thinkingOptions[1]?.value ?? 'high';
+                  onDefaultReasoningEffortChange?.(next);
+                }}
+              />
+              <div
+                className="settings-reasoning-stops settings-reasoning-stops-3"
+                role="group"
+                aria-label="默认思考强度档位"
+              >
+                {thinkingOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    data-testid={`settings-reasoning-option-${option.value}`}
+                    aria-pressed={activeReasoningEffort === option.value}
+                    onClick={() => onDefaultReasoningEffortChange?.(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        <p className="settings-privacy"><ShieldCheck size={16} strokeWidth={1.75} /> 不含项目方代理或云端存储。</p>
+        <p className="settings-privacy">
+          <ShieldCheck size={16} strokeWidth={1.75} /> 不含项目方代理或云端存储。
+        </p>
       </InsetGroup>
 
       <InsetGroup

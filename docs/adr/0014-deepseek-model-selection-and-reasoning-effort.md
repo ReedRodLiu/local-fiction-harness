@@ -7,6 +7,8 @@ status: accepted
 > 部分修订 [ADR 0009](0009-deepseek-official-guided-byok.md)：开放官方模型选择与思考控制，同时保留 DeepSeek 官方地址锁定与零编程门槛引导式 BYOK 原则。
 >
 > 部分修订：叙事提示词包、官方 `/beta` 请求派生与拒答治理的边界见 [ADR 0016](0016-prompt-pack-and-refusal-governance.md)。
+>
+> 部分修订：官方双模型白名单、全局默认高思考及后台写死 `deepseek-flash` 已由 [ADR 0018](0018-multi-provider-openai-compatible-architecture.md) 修订为多服务商动态模型、全局默认关闭思考与档案级可选后台轻量模型。
 
 ## Decision
 

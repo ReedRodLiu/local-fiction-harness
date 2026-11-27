@@ -318,6 +318,7 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
       apiKey: config.apiKey,
       model: config.model,
       reasoningEffort,
+      ...(config.capabilities ? { capabilities: config.capabilities } : {}),
       messages,
       includeUsage: true,
       signal: callbacks?.signal,
@@ -645,6 +646,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
               baseUrl: opts.config.baseUrl,
               model: opts.config.model,
               summaryUsage: overflowSummary.summaryUsage,
+              ...(opts.config.pricing ? { pricing: opts.config.pricing } : {}),
+              ...(opts.config.capabilities ? { capabilities: opts.config.capabilities } : {}),
             })
           : initialAssistantNode.telemetry;
 
@@ -763,6 +766,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
         uncompressedPromptChars: metrics.uncompressedPromptChars,
         compressedPromptChars: metrics.compressedPromptChars,
         retrievedNodeCount: metrics.retrievedNodeCount,
+        ...(config.pricing ? { pricing: config.pricing } : {}),
+        ...(config.capabilities ? { capabilities: config.capabilities } : {}),
       }),
       documentState: prepared.state,
       reads: prepared.reads,
@@ -1068,6 +1073,8 @@ export function createFictionHarness(deps: FictionHarnessDeps): FictionHarness {
           uncompressedPromptChars: metrics.uncompressedPromptChars,
           compressedPromptChars: metrics.compressedPromptChars,
           retrievedNodeCount: metrics.retrievedNodeCount,
+          ...(config.pricing ? { pricing: config.pricing } : {}),
+          ...(config.capabilities ? { capabilities: config.capabilities } : {}),
         }),
         documentState: prepared.state,
         reads: prepared.reads,

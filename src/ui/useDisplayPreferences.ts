@@ -23,8 +23,11 @@ export function useDisplayPreferences() {
 
   useEffect(() => {
     applyDisplayPreferences(displayPreferences, prefersDark);
-    persistDisplayPreferences(displayPreferences);
   }, [displayPreferences, prefersDark]);
+
+  useEffect(() => {
+    persistDisplayPreferences(displayPreferences);
+  }, [displayPreferences]);
 
   const setThemePreference = (theme: DisplayThemePreference) => {
     setDisplayPreferences((current) => ({ ...current, theme }));

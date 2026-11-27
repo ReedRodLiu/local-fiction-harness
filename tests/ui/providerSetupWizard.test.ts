@@ -1,0 +1,286 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  PUBLIC_RESEARCH_PRESETS,
+  createProviderProfileFromPreset,
+} from '../../src/harness/index.ts';
+import { DeepSeekSetupWizard } from '../../src/ui/DeepSeekSetupWizard.tsx';
+import {
+  ProviderSetupWizard,
+  buildProviderSaveResultFromDraft,
+  createWizardDraftFromPreset,
+  createWizardDraftFromProfile,
+  validateWizardFallbackSave,
+  verifyWizardDraftConnection,
+} from '../../src/ui/ProviderSetupWizard.tsx';
+
+const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const readUiSource = (fileName: string) => readFileSync(join(repoRoot, 'src', 'ui', fileName), 'utf8');
+
+describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
+  it('renders 6 preset cards, ultra-simple DeepSeek first-class flow, 3-line summary, and collapsed advanced details', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        verifyUrlBase: 'https://api.deepseek.com',
+        onComplete: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+
+    expect(markup).toContain('data-testid="deepseek-setup-wizard"');
+    expect(markup).toContain('aria-label="连接模型服务"');
+    expect(markup).toContain('连接模型服务');
+    expect(markup).toContain('连接 DeepSeek');
+    expect(markup).toContain('API Key 只保存在本机');
+    expect(markup).toContain('data-testid="wizard-open-platform-btn"');
+    expect(markup).toContain('打开 DeepSeek 开放平台');
+    expect(markup).toContain('id="byok-api-key"');
+    expect(markup).toContain('data-testid="wizard-verify-save-btn"');
+
+    for (const presetId of ['deepseek', 'openai', 'openrouter', 'siliconflow', 'local', 'custom']) {
+      expect(markup).toContain(`data-testid="provider-preset-${presetId}"`);
+    }
+    expect(markup).toMatch(/data-testid="provider-preset-deepseek"[^>]*aria-pressed="true"/);
+
+    // DeepSeek first-class view hides third-party Base URL / model / public research clutter
+    expect(markup).not.toContain('data-testid="provider-base-url-input"');
+    expect(markup).not.toContain('data-testid="provider-model-input"');
+    expect(markup).not.toContain('data-testid="provider-public-research-section"');
+    expect(markup).not.toContain('data-testid="provider-probe-prefill-btn"');
+
+    // 3-line plain-language capability summary
+    expect(markup).toContain('data-testid="provider-capability-summary"');
+    expect(markup).toContain('聊天、文游与叙事预设：始终可用');
+    expect(markup).toContain('已随账号自带，免配');
+    expect(markup).toContain('自动查余额与省费');
+
+    // Collapsed advanced details (no open attribute)
+    expect(markup).toContain('data-testid="provider-advanced-settings"');
+    expect(markup).not.toMatch(/data-testid="provider-advanced-settings"[^>]* open=/);
+    expect(markup).toContain('data-testid="provider-background-model-input"');
+
+    // Legacy forbidden strings & clipboard rules
+    expect(markup).not.toContain('钥匙');
+    expect(markup).not.toContain('wizard-paste-btn');
+    expect(readUiSource('DeepSeekSetupWizard.tsx')).not.toContain('navigator.clipboard.readText');
+    expect(readUiSource('ProviderSetupWizard.tsx')).not.toContain('navigator.clipboard.readText');
+  });
+
+  it('forwards DeepSeekSetupWizard cleanly to ProviderSetupWizard while preserving all legacy props', () => {
+    const markup = renderToStaticMarkup(
+      createElement(DeepSeekSetupWizard, {
+        open: true,
+        initialKey: 'sk-123456',
+        pendingLabel: '继续生成剧情',
+        verifyUrlBase: 'https://api.deepseek.com',
+        onComplete: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+
+    expect(markup).toContain('data-testid="deepseek-setup-wizard"');
+    expect(markup).toContain('继续生成剧情');
+    expect(markup).toContain('连接 DeepSeek');
+    expect(markup).toContain('value="sk-123456"');
+  });
+
+  it('renders third-party fields, optional public research presets, 3-line capability summary, and prefill probe controls', () => {
+    const openaiProfile = createProviderProfileFromPreset('openai', {
+      id: 'openai-1',
+      apiKey: 'oa-key-001',
+      defaultPricing: { currency: 'USD', inputPerMillion: 2.5, outputPerMillion: 10 },
+      prefillProbeStatus: 'unsupported',
+    });
+
+    const tavilyMarkup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        initialProfile: openaiProfile,
+        initialPublicResearch: { provider: 'tavily', apiKey: 'tvly-1234' },
+        mode: 'edit',
+        hasDeepSeekProfileInLibrary: true,
+        onSaveProfile: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+
+    expect(tavilyMarkup).toMatch(/data-testid="provider-preset-openai"[^>]*aria-pressed="true"/);
+    expect(tavilyMarkup).toContain('data-testid="provider-name-input"');
+    expect(tavilyMarkup).toContain('data-testid="provider-base-url-input"');
+    expect(tavilyMarkup).toContain('https://api.openai.com/v1');
+    expect(tavilyMarkup).toContain('API Key（本地服务可留空）');
+    expect(tavilyMarkup).toContain('data-testid="provider-model-input"');
+    expect(tavilyMarkup).toContain('data-testid="provider-fetch-models-btn"');
+    expect(tavilyMarkup).toContain('拉取模型列表');
+
+    // Public research section with Tavily selected
+    expect(tavilyMarkup).toContain('data-testid="provider-public-research-section"');
+    expect(tavilyMarkup).toMatch(/data-testid="provider-search-preset-tavily"[^>]*aria-pressed="true"/);
+    expect(tavilyMarkup).toContain(PUBLIC_RESEARCH_PRESETS.tavily.quotaHint);
+    expect(tavilyMarkup).toContain(PUBLIC_RESEARCH_PRESETS.tavily.docsUrl!);
+    expect(tavilyMarkup).toContain('data-testid="provider-search-key-input"');
+    expect(tavilyMarkup).toContain('value="tvly-1234"');
+
+    // Third-party 3-line capability summary
+    expect(tavilyMarkup).toContain('聊天、文游与叙事预设：始终可用');
+    expect(tavilyMarkup).toContain('Tavily 搜索（已配置）');
+    expect(tavilyMarkup).toContain('已填写自定义单价');
+
+    // Third-party advanced controls
+    expect(tavilyMarkup).toContain('data-testid="provider-pricing-currency"');
+    expect(tavilyMarkup).toContain('data-testid="provider-pricing-input"');
+    expect(tavilyMarkup).toContain('data-testid="provider-pricing-cache-input"');
+    expect(tavilyMarkup).toContain('data-testid="provider-pricing-output"');
+    expect(tavilyMarkup).toContain('data-testid="provider-prefill-toggle"');
+    expect(tavilyMarkup).toContain('data-testid="provider-probe-prefill-btn"');
+    expect(tavilyMarkup).toContain('暂不支持，已保持通用稳定模式');
+
+    // When search preset is 'none', search API key input is hidden and summary encourages optional setup
+    const noneMarkup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        initialProfile: createProviderProfileFromPreset('local', { id: 'local-1' }),
+        initialPublicResearch: { provider: 'none' },
+        onSaveProfile: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+    expect(noneMarkup).not.toContain('data-testid="provider-search-key-input"');
+    expect(noneMarkup).toContain('可选：配免费搜索即可用（不配也能正常玩）');
+    expect(noneMarkup).toContain('默认统计节省 Token，选填单价后可算花费');
+  });
+
+  it('blocks fallback save on 401/format errors and enables fallback save on network_error or models_unsupported', async () => {
+    const dsDraft = createWizardDraftFromPreset('deepseek', { apiKey: 'sk-invalid-401' });
+    const ds401 = await verifyWizardDraftConnection({
+      draft: dsDraft,
+      verifyDeepSeekImpl: async () => ({
+        status: 'invalid_key',
+        message: '401 invalid',
+      }),
+    });
+    expect(ds401.ok).toBe(false);
+    expect(ds401.allowFallbackSave).toBe(false);
+
+    const dsNet = await verifyWizardDraftConnection({
+      draft: dsDraft,
+      verifyDeepSeekImpl: async () => ({
+        status: 'network_error',
+        message: 'timeout',
+      }),
+    });
+    expect(dsNet.ok).toBe(false);
+    expect(dsNet.allowFallbackSave).toBe(true);
+
+    const thirdPartyDraft = createWizardDraftFromPreset('custom', {
+      apiKey: 'custom-token',
+      publicResearch: { provider: 'bocha', apiKey: 'bocha-key-99' },
+    });
+    thirdPartyDraft.name = '我的中转';
+    thirdPartyDraft.baseUrl = 'https://relay.example.com/v1/';
+    thirdPartyDraft.defaultModel = 'claude-3-7-sonnet';
+    thirdPartyDraft.backgroundModel = 'claude-3-5-haiku';
+    thirdPartyDraft.pricingCurrency = 'USD';
+    thirdPartyDraft.inputPriceText = '3';
+    thirdPartyDraft.cacheHitPriceText = '0.3';
+    thirdPartyDraft.outputPriceText = '15';
+
+    const third401 = await verifyWizardDraftConnection({
+      draft: thirdPartyDraft,
+      verifyProviderImpl: async () => ({
+        status: 'invalid_key',
+        message: 'API Key 无效',
+      }),
+    });
+    expect(third401.ok).toBe(false);
+    expect(third401.allowFallbackSave).toBe(false);
+
+    const thirdFormat = await verifyWizardDraftConnection({
+      draft: { ...thirdPartyDraft, baseUrl: 'not-a-url' },
+      verifyProviderImpl: async () => ({
+        status: 'format_error',
+        message: '请填写有效的服务商接口地址',
+      }),
+    });
+    expect(thirdFormat.ok).toBe(false);
+    expect(thirdFormat.allowFallbackSave).toBe(false);
+
+    const thirdUnsupported = await verifyWizardDraftConnection({
+      draft: thirdPartyDraft,
+      verifyProviderImpl: async () => ({
+        status: 'models_unsupported',
+        message: '未开放 /models',
+      }),
+    });
+    expect(thirdUnsupported.ok).toBe(false);
+    expect(thirdUnsupported.allowFallbackSave).toBe(true);
+
+    const thirdValid = await verifyWizardDraftConnection({
+      draft: thirdPartyDraft,
+      verifyProviderImpl: async () => ({
+        status: 'valid',
+        key: 'custom-token',
+        baseUrl: 'https://relay.example.com/v1',
+        models: ['claude-3-7-sonnet', 'gpt-4o-mini'],
+      }),
+    });
+    expect(thirdValid.ok).toBe(true);
+    expect(thirdValid.saveResult?.profile.baseUrl).toBe('https://relay.example.com/v1');
+    expect(thirdValid.saveResult?.profile.models.map((m) => m.id)).toEqual([
+      'claude-3-7-sonnet',
+      'gpt-4o-mini',
+    ]);
+    expect(thirdValid.saveResult?.profile.backgroundModel).toBe('claude-3-5-haiku');
+    expect(thirdValid.saveResult?.profile.defaultPricing).toEqual({
+      currency: 'USD',
+      inputPerMillion: 3,
+      cacheHitInputPerMillion: 0.3,
+      outputPerMillion: 15,
+    });
+    expect(thirdValid.saveResult?.publicResearch).toEqual({
+      provider: 'bocha',
+      apiKey: 'bocha-key-99',
+    });
+
+    // Local service allows empty API key on fallback save
+    const localDraft = createWizardDraftFromPreset('local');
+    const localFallback = validateWizardFallbackSave(localDraft);
+    expect(localFallback.ok).toBe(true);
+    if (localFallback.ok) {
+      expect(localFallback.saveResult.profile.apiKey).toBe('');
+      expect(localFallback.saveResult.profile.baseUrl).toBe('http://localhost:11434/v1');
+    }
+
+    // Build preserves empty pricing when unset
+    const cleanSave = buildProviderSaveResultFromDraft(localDraft);
+    expect(cleanSave.profile.defaultPricing).toBeUndefined();
+
+    // Editing a DeepSeek profile set to deepseek-v4-pro preserves deepseek-v4-pro as defaultModel
+    const proDeepSeek = createProviderProfileFromPreset('deepseek', {
+      id: 'deepseek-official',
+      defaultModel: 'deepseek-v4-pro',
+      apiKey: 'sk-ds-pro',
+    });
+    const editedDsDraft = createWizardDraftFromProfile(proDeepSeek);
+    const editedDsSave = buildProviderSaveResultFromDraft(editedDsDraft, {
+      hasDeepSeekProfileInLibrary: true,
+    });
+    expect(editedDsSave.profile.defaultModel).toBe('deepseek-v4-pro');
+  });
+
+  it('never contains jailbreak or bypass prompt text in wizard source', () => {
+    const wizardSource = readUiSource('ProviderSetupWizard.tsx');
+    for (const pattern of [/破甲/, /越狱/, /防拒答/, /jailbreak/i, /\bDAN\b/]) {
+      expect(wizardSource).not.toMatch(pattern);
+    }
+  });
+});

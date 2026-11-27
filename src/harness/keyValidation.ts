@@ -1,5 +1,6 @@
 import type { DiagnosticCollector } from './diagnostics.ts';
-import type { AbortSignalLike, FetchResponseLike } from './types.ts';
+import { resolveChatCompletionsUrl } from './sse.ts';
+import type { AbortSignalLike, FetchLike, FetchResponseLike } from './types.ts';
 
 export const DEEPSEEK_OFFICIAL_KEYS_URL = 'https://platform.deepseek.com/api_keys';
 export const DEEPSEEK_OFFICIAL_TOP_UP_URL = 'https://platform.deepseek.com/top_up';
@@ -504,5 +505,328 @@ export function recordBalanceCheckDiagnostic(
     });
   } catch {
     // Never break UI flows due to diagnostics recording.
+  }
+}
+
+export type ProviderConnectionFetchResponseLike = Pick<FetchResponseLike, 'ok' | 'status'> & {
+  text?: () => Promise<string>;
+  json?: () => Promise<unknown>;
+};
+
+export type ProviderConnectionFetchLike = (
+  input: string,
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    signal?: AbortSignalLike;
+  },
+) => Promise<ProviderConnectionFetchResponseLike>;
+
+export type ProviderConnectionVerifyResult =
+  | { status: 'valid'; key: string; baseUrl: string; models: string[] }
+  | { status: 'format_error'; message: string }
+  | { status: 'invalid_key'; message: string }
+  | { status: 'quota_or_blocked'; message: string }
+  | { status: 'models_unsupported'; message: string }
+  | { status: 'network_error'; message: string };
+
+export interface PrefillProbeResult {
+  supported: boolean;
+  message: string;
+  statusCode?: number;
+}
+
+const PREFILL_PROBE_UNSUPPORTED_MESSAGE = '当前服务商暂不支持增强续写，已保持通用稳定模式';
+
+/**
+ * Normalizes an OpenAI-compatible provider base URL by trimming whitespace and
+ * stripping trailing slashes or endpoint suffixes (/chat/completions, /models).
+ */
+export function normalizeProviderBaseUrl(rawBaseUrl: string): string {
+  const trimmed = rawBaseUrl.trim().replace(/\/+$/, '');
+  return trimmed.replace(/\/(?:chat\/completions|models)$/i, '').replace(/\/+$/, '');
+}
+
+function isValidProviderBaseUrl(normalizedBaseUrl: string, allowRelativeBaseUrl = false): boolean {
+  if (!normalizedBaseUrl || /\s/.test(normalizedBaseUrl)) {
+    return false;
+  }
+  if (allowRelativeBaseUrl && /^\/[^\s?#]+$/.test(normalizedBaseUrl)) {
+    return true;
+  }
+  return /^https?:\/\/[^/\s?#]+(?:[/?#].*)?$/i.test(normalizedBaseUrl);
+}
+
+/**
+ * Validates an API key for any OpenAI-compatible provider with optional sk-
+ * prefix enforcement and optional empty-key allowance (for local endpoints).
+ */
+export function validateProviderApiKeyFormat(
+  raw: string,
+  options?: { requireSkPrefix?: boolean; allowEmpty?: boolean },
+): KeyFormatCheckResult {
+  const key = sanitizeApiKeyInput(raw);
+  if (!key) {
+    if (options?.allowEmpty) {
+      return { ok: true, key: '' };
+    }
+    return { ok: false, message: '请先粘贴或输入 API Key。' };
+  }
+  if (/[\s\u4e00-\u9fff]/.test(key)) {
+    return {
+      ok: false,
+      message: '这串 Key 包含空格或中文字符，请确认复制完整，不要复制成钥匙名称。',
+    };
+  }
+  if (options?.requireSkPrefix && (!key.startsWith('sk-') || key.length < 6)) {
+    return {
+      ok: false,
+      message: '这串 Key 好像不对，密钥通常以 sk- 开头，请确认复制完整。',
+    };
+  }
+  return { ok: true, key };
+}
+
+async function readJsonPayload(res: {
+  text?: () => Promise<string>;
+  json?: () => Promise<unknown>;
+}): Promise<unknown> {
+  if (typeof res.text === 'function') {
+    const rawText = await res.text();
+    return rawText ? JSON.parse(rawText) : null;
+  }
+  if (typeof res.json === 'function') {
+    return await res.json();
+  }
+  return null;
+}
+
+function extractModelIds(payload: unknown): string[] {
+  if (!isPlainRecord(payload) || !Array.isArray(payload.data)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const models: string[] = [];
+  for (const item of payload.data) {
+    if (!isPlainRecord(item) || typeof item.id !== 'string') continue;
+    const id = item.id.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    models.push(id);
+  }
+  return models;
+}
+
+function isAbortError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'name' in err &&
+    (err as { name?: unknown }).name === 'AbortError'
+  );
+}
+
+/**
+ * Verifies an OpenAI-compatible provider connection via GET /models and returns
+ * structured status, discovered model IDs, and plain-language guidance.
+ */
+export async function verifyProviderConnection(options: {
+  baseUrl: string;
+  apiKey: string;
+  requireSkPrefix?: boolean;
+  allowEmptyKey?: boolean;
+  allowRelativeBaseUrl?: boolean;
+  isWebPlatform?: boolean;
+  fetchImpl?: ProviderConnectionFetchLike;
+  timeoutMs?: number;
+}): Promise<ProviderConnectionVerifyResult> {
+  const baseUrl = normalizeProviderBaseUrl(options.baseUrl);
+  if (!isValidProviderBaseUrl(baseUrl, options.allowRelativeBaseUrl)) {
+    return {
+      status: 'format_error',
+      message: '请填写有效的服务商接口地址（以 https:// 或 http:// 开头）。',
+    };
+  }
+
+  const format = validateProviderApiKeyFormat(options.apiKey, {
+    requireSkPrefix: options.requireSkPrefix,
+    allowEmpty: options.allowEmptyKey,
+  });
+  if (!format.ok) {
+    return { status: 'format_error', message: format.message };
+  }
+
+  const host = globalThis as unknown as Omit<GlobalTimerHost, 'fetch'> & {
+    fetch?: ProviderConnectionFetchLike;
+  };
+  const fetchFn = options.fetchImpl ?? host.fetch;
+  if (!fetchFn) {
+    return {
+      status: 'network_error',
+      message: '当前环境不支持网络验证，可点击「先保存，稍后再试」。',
+    };
+  }
+
+  const timeoutMs = options.timeoutMs ?? 10000;
+  const controller = host.AbortController ? new host.AbortController() : undefined;
+  const timer =
+    controller && host.setTimeout
+      ? host.setTimeout(() => controller.abort(), timeoutMs)
+      : undefined;
+
+  try {
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+    };
+    if (format.key) {
+      headers.Authorization = `Bearer ${format.key}`;
+    }
+
+    const res = await fetchFn(`${baseUrl}/models`, {
+      method: 'GET',
+      headers,
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+
+    if (res.ok) {
+      let models: string[] = [];
+      try {
+        models = extractModelIds(await readJsonPayload(res));
+      } catch {
+        models = [];
+      }
+      return { status: 'valid', key: format.key, baseUrl, models };
+    }
+    if (res.status === 401) {
+      return {
+        status: 'invalid_key',
+        message: 'API Key 无效或已失效，请确认复制完整，不要复制成钥匙名称。',
+      };
+    }
+    if (res.status === 402 || res.status === 403) {
+      return {
+        status: 'quota_or_blocked',
+        message: '当前账户额度不足或密钥权限受限，请前往服务商控制台查看。',
+      };
+    }
+    if (res.status === 404 || res.status === 405) {
+      return {
+        status: 'models_unsupported',
+        message: '该服务商未开放模型列表接口（/models），你可以手填模型 ID 后直接保存。',
+      };
+    }
+    return {
+      status: 'network_error',
+      message: `服务商暂时不可用（状态码 ${res.status}），可点击「先保存，稍后再试」。`,
+    };
+  } catch (err) {
+    if (isAbortError(err)) {
+      return {
+        status: 'network_error',
+        message: '连接服务商超时，请检查网络后重试，或点击「先保存，稍后再试」。',
+      };
+    }
+    return {
+      status: 'network_error',
+      message: options.isWebPlatform
+        ? '暂时无法连接该服务商，可能是网页端跨域（CORS）或网络受限，建议点击「先保存，稍后再试」或改用安卓 App。'
+        : '暂时无法连接该服务商，请检查网络与接口地址后重试，或点击「先保存，稍后再试」。',
+    };
+  } finally {
+    if (timer !== undefined && host.clearTimeout) {
+      host.clearTimeout(timer);
+    }
+  }
+}
+
+/**
+ * Probes whether an OpenAI-compatible provider supports a trailing assistant
+ * message for standard assistant prefill without /beta URL rewriting.
+ */
+export async function probeAssistantPrefillCompatibility(options: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  fetchImpl?: FetchLike;
+  timeoutMs?: number;
+}): Promise<PrefillProbeResult> {
+  const model = options.model.trim();
+  let url: string;
+  try {
+    url = resolveChatCompletionsUrl(options.baseUrl);
+  } catch {
+    return { supported: false, message: PREFILL_PROBE_UNSUPPORTED_MESSAGE };
+  }
+  if (!model) {
+    return { supported: false, message: PREFILL_PROBE_UNSUPPORTED_MESSAGE };
+  }
+
+  const host = globalThis as unknown as Omit<GlobalTimerHost, 'fetch'> & {
+    fetch?: FetchLike;
+  };
+  const fetchFn = options.fetchImpl ?? host.fetch;
+  if (!fetchFn) {
+    return { supported: false, message: PREFILL_PROBE_UNSUPPORTED_MESSAGE };
+  }
+
+  const timeoutMs = options.timeoutMs ?? 10000;
+  const controller = host.AbortController ? new host.AbortController() : undefined;
+  const timer =
+    controller && host.setTimeout
+      ? host.setTimeout(() => controller.abort(), timeoutMs)
+      : undefined;
+
+  try {
+    const cleanedKey = sanitizeApiKeyInput(options.apiKey);
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    };
+    if (cleanedKey) {
+      headers.Authorization = `Bearer ${cleanedKey}`;
+    }
+
+    const res = await fetchFn(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        stream: false,
+        max_tokens: 16,
+        messages: [
+          { role: 'user', content: '请接着下面半句话继续写几个字。' },
+          { role: 'assistant', content: '窗外的雨' },
+        ],
+      }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+
+    if (!res.ok) {
+      return {
+        supported: false,
+        message: PREFILL_PROBE_UNSUPPORTED_MESSAGE,
+        statusCode: res.status,
+      };
+    }
+
+    const payload = await readJsonPayload(res);
+    const firstChoice =
+      isPlainRecord(payload) && Array.isArray(payload.choices) ? payload.choices[0] : undefined;
+    const message = isPlainRecord(firstChoice) ? firstChoice.message : undefined;
+    const content = isPlainRecord(message) ? message.content : undefined;
+    if (typeof content === 'string' && content.trim().length > 0) {
+      return { supported: true, message: '当前服务商支持增强续写' };
+    }
+    return {
+      supported: false,
+      message: PREFILL_PROBE_UNSUPPORTED_MESSAGE,
+      statusCode: res.status,
+    };
+  } catch {
+    return { supported: false, message: PREFILL_PROBE_UNSUPPORTED_MESSAGE };
+  } finally {
+    if (timer !== undefined && host.clearTimeout) {
+      host.clearTimeout(timer);
+    }
   }
 }
