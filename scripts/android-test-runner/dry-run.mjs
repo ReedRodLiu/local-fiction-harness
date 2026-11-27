@@ -124,6 +124,7 @@ export function createDryRunHarness(options = {}) {
     drawerOpen: false,
     settingsOpen: false,
     wizardOpen: false,
+    presetPickerOpen: false,
     storyMenuOpen: false,
     storyMenuItemIndex: 0,
     importPanelOpen: false,
@@ -215,6 +216,7 @@ export function createDryRunHarness(options = {}) {
       drawerOpen: state.drawerOpen,
       settingsOpen: state.settingsOpen,
       wizardOpen: state.wizardOpen,
+      presetPickerOpen: state.presetPickerOpen,
       diagnosticsOpen: state.diagnosticsOpen,
       modeSwitchDialogOpen: state.modeSwitchDialogOpen,
       testIds: [
@@ -469,8 +471,12 @@ export function createDryRunHarness(options = {}) {
         state.overlayDepth = 0;
       } else if (sel.includes('open-setup-wizard-btn') || sel.includes('add-provider-profile-btn') || sel.includes('change-key-btn')) {
         state.wizardOpen = true;
+        state.presetPickerOpen = sel.includes('add-provider-profile-btn');
         state.overlayDepth = 2;
+      } else if (sel.includes('provider-preset-picker-trigger')) {
+        state.presetPickerOpen = !state.presetPickerOpen;
       } else if (sel.includes('provider-preset-custom') || sel.includes('provider-preset-local')) {
+        state.presetPickerOpen = false;
         return true;
       } else if (sel.includes('wizard-verify-save-btn')) {
         const newId = `custom-${state.profiles.length + 1}`;
