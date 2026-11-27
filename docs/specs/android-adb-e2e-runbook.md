@@ -58,6 +58,7 @@ npm run test:android-e2e -- --serial <DEVICE_SERIAL>
 - 编排器会在宿主机启动 `MockSseServer` 并自动通过 `adb reverse` 映射至测试机回环端口。
 - `E2E-03`、`E2E-05`、`E2E-06A`、`E2E-06B` 默认启用限时 `screenrecord`（`PASS` 自动删除视频，`FAIL` 自动拉取保存）。
 - 单步 DOM 超时 5s，软键盘/Launcher/冷启 8–10s，后台恢复收尾 15s；任何硬断言失败立即落盘并判 `FAIL`（零静默重试）。
+- 每次运行结束都会强制生成 `llm-review-input.json` 与 `llm-review-output.json`（无跳过开关，严格执行 Hard Gate 校验）。
 
 ### 真机运行 `.smoke` 真模型冒烟（`SMK-01` ~ `SMK-06`）
 

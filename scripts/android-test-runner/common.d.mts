@@ -54,6 +54,7 @@ export interface SuiteRunContext {
   timings: Record<string, number>;
   adbRunner: AdbRunner;
   cdpFactory: (opts: { serial: string; packageId: string; runCommand: AdbRunner }) => Promise<AppWebViewSession>;
+  uiDriver: Record<string, (...args: any[]) => Promise<any>> | null;
   session: AppWebViewSession | null;
   collector: RunArtifactCollector;
   mockSse?: import('../android-driver/index.mjs').MockSseServer | null;

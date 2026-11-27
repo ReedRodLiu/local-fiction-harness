@@ -67,7 +67,6 @@ export function parseCliArgs(argv) {
     record: false,
     keepStories: false,
     dryRun: false,
-    llmReview: true,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -87,12 +86,6 @@ export function parseCliArgs(argv) {
         break;
       case 'dry-run':
         options.dryRun = inlineVal ? inlineVal !== 'false' : true;
-        break;
-      case 'no-llm-review':
-        options.llmReview = false;
-        break;
-      case 'llm-review':
-        options.llmReview = inlineVal ? inlineVal !== 'false' : true;
         break;
       case 'serial':
       case 'apk':
@@ -181,6 +174,36 @@ export async function runAndroidSuite(options = {}) {
     dryHarness?.serial ??
     resolveConnectedSerial(undefined, adbRunner);
 
+  let apiLevel = null;
+  let displaySizePx = null;
+  try {
+    const sdkRaw = String(
+      await adbRunner('adb', ['-s', serial, 'shell', 'getprop', 'ro.build.version.sdk'], {
+        allowFailure: true,
+      }) ?? '',
+    ).trim();
+    if (/^\d+$/.test(sdkRaw)) {
+      apiLevel = Number(sdkRaw);
+    }
+  } catch {
+    // Best-effort device apiLevel probe.
+  }
+  try {
+    const wmSizeRaw = String(
+      await adbRunner('adb', ['-s', serial, 'shell', 'wm', 'size'], {
+        allowFailure: true,
+      }) ?? '',
+    );
+    const sizeMatch =
+      wmSizeRaw.match(/Override size:\s*(\d+x\d+)/i) ??
+      wmSizeRaw.match(/Physical size:\s*(\d+x\d+)/i);
+    if (sizeMatch) {
+      displaySizePx = sizeMatch[1];
+    }
+  } catch {
+    // Best-effort display size probe.
+  }
+
   const rootDir = path.resolve(REPO_ROOT, options.artifactsDir ?? '.');
   const runId = options.label ?? new Date().toISOString().replace(/[:.]/g, '-');
   const drySpawn = (cmd, args) => {
@@ -194,6 +217,8 @@ export async function runAndroidSuite(options = {}) {
     deviceMeta: {
       serial,
       packageId,
+      apiLevel,
+      displaySizePx,
       dryRun,
     },
     runCommand: adbRunner,
@@ -235,6 +260,7 @@ export async function runAndroidSuite(options = {}) {
     },
     adbRunner,
     cdpFactory,
+    uiDriver: options.uiDriver ?? options.cdpFactory?.uiDriver ?? dryHarness?.uiDriver ?? null,
     session: null,
     collector,
     mockSse: null,
@@ -341,29 +367,26 @@ export async function runAndroidSuite(options = {}) {
 
   const finalized = await collector.finalizeRun();
 
-  let llmReview = null;
-  if (options.llmReview !== false) {
-    const reviewInput = artifacts.buildLlmReviewInput({
-      runMeta: finalized.runMeta,
-      artifactsRoot: finalized.runDir,
-      forbiddenStrings: options.forbiddenStrings ?? [],
-      scenarios: scenarioResults.map((s) => ({
-        scenarioId: s.scenarioId,
-        hardOutcome: s.hardOutcome,
-        assertions: s.assertions,
-        artifactPaths: s.artifactPaths,
-        ...(s.error ? { error: s.error } : {}),
-      })),
-    });
+  const reviewInput = artifacts.buildLlmReviewInput({
+    runMeta: finalized.runMeta,
+    artifactsRoot: finalized.runDir,
+    forbiddenStrings: options.forbiddenStrings ?? [],
+    scenarios: scenarioResults.map((s) => ({
+      scenarioId: s.scenarioId,
+      hardOutcome: s.hardOutcome,
+      assertions: s.assertions,
+      artifactPaths: s.artifactPaths,
+      ...(s.error ? { error: s.error } : {}),
+    })),
+  });
 
-    const reviewerFn = options.reviewerFn ?? buildDefaultHardGateReviewer();
-    llmReview = await artifacts.reviewRunWithLlm({
-      reviewInput,
-      artifactsRoot: finalized.runDir,
-      reviewerFn,
-      forbiddenStrings: options.forbiddenStrings ?? [],
-    });
-  }
+  const reviewerFn = options.reviewerFn ?? buildDefaultHardGateReviewer();
+  const llmReview = await artifacts.reviewRunWithLlm({
+    reviewInput,
+    artifactsRoot: finalized.runDir,
+    reviewerFn,
+    forbiddenStrings: options.forbiddenStrings ?? [],
+  });
 
   const overallHardGate = scenarioResults.some((s) => s.hardOutcome === 'FAIL')
     ? 'FAIL'

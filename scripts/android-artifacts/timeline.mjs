@@ -1,8 +1,4 @@
-import { execFileSync } from 'node:child_process';
-
-function defaultRunCommand(command, args) {
-  return execFileSync(command, args, { encoding: 'utf8' });
-}
+import { adbArgs, defaultRunCommand } from '../android-driver/cdp-client.mjs';
 
 function parseThreadtimeToMs(rawDeviceTs, options = {}) {
   const match = rawDeviceTs
@@ -56,7 +52,7 @@ export async function measureClockOffset({
 
   const hostBeforeMs = Date.now();
   const rawDeviceOut = String(
-    runCommand('adb', ['-s', serial, 'shell', 'date', '+%s%3N']) ?? '',
+    runCommand('adb', adbArgs(serial, ['shell', 'date', '+%s%3N'])) ?? '',
   ).trim();
   const hostAfterMs = Date.now();
 

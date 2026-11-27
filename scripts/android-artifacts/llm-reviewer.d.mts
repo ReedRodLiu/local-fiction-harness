@@ -5,11 +5,27 @@ export interface LlmReviewScenarioInput {
   hardOutcome: ScenarioOutcome;
   assertions: readonly HardAssertionRecord[];
   artifactPaths: readonly string[];
+  timelineSlice: unknown[];
+  screenshotPaths: string[];
+  logcatExcerptPath?: string;
+  diagnosticBundlePath: string | null;
+  videoPath: string | null;
   [key: string]: unknown;
+}
+
+export interface LlmReviewDeviceInfo {
+  serial: string;
+  apiLevel: number | string | null;
+  displaySizePx: string | Record<string, unknown> | null;
+  clockOffsetMs: number;
 }
 
 export interface LlmReviewInput {
   schemaVersion: number;
+  runId: string;
+  suite: 'e2e' | 'smoke' | string;
+  packageId: string;
+  device: LlmReviewDeviceInfo;
   generatedAt: string;
   runMeta: Record<string, unknown>;
   scenarios: LlmReviewScenarioInput[];
@@ -23,17 +39,23 @@ export type ScenarioReviewStatus =
 
 export interface EvidenceCitation {
   artifactPath: string;
+  hostTsMs?: number | null;
   observation: string;
 }
 
 export interface ScenarioReview {
   scenarioId: string;
+  hardOutcome: ScenarioOutcome;
   reviewStatus: ScenarioReviewStatus;
   summary: string;
+  suspectedComponent?: string | null;
+  reproSteps?: string[];
+  visualFindings?: string[];
   evidenceCitations: EvidenceCitation[];
 }
 
 export interface LlmReviewOutput {
+  runId: string;
   overallHardGate: 'PASS' | 'FAIL';
   llmReviewVerdict: 'CONFIRMED_PASS' | 'CONFIRMED_FAIL' | 'NEEDS_HUMAN_REVIEW';
   scenarioReviews: ScenarioReview[];

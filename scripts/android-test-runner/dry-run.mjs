@@ -15,17 +15,7 @@ WINDOW MANAGER DISPLAY CONTENTS (dumpsys window displays)
       InsetsSource id=c8e0006 type=systemGestures frame=[996,0][1080,2400] visible=true flags=[]
 `;
 
-function parseOpTag(expr) {
-  const match = String(expr).match(/^\/\*\s*@lfh-op\s+([A-Za-z0-9_]+)\s+(\{[\s\S]*?\})\s*\*\//);
-  if (!match) return null;
-  try {
-    return { op: match[1], args: JSON.parse(match[2]) };
-  } catch {
-    return null;
-  }
-}
-
-async function consumeSseFromMock(url, payload) {
+async function consumeSseFromMock(url, payload, onChunkProgress) {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -39,6 +29,7 @@ async function consumeSseFromMock(url, payload) {
       errorCode: `HTTP_${response.status}`,
       content: errText,
       reasoningContent: '',
+      chunkCount: 0,
     };
   }
 
@@ -46,10 +37,18 @@ async function consumeSseFromMock(url, payload) {
   let reasoningContent = '';
   let aborted = false;
   let sawDone = false;
+  let chunkCount = 0;
 
   const reader = response.body?.getReader();
   if (!reader) {
-    return { ok: true, aborted: false, errorCode: null, content: '', reasoningContent: '' };
+    return {
+      ok: true,
+      aborted: false,
+      errorCode: null,
+      content: '',
+      reasoningContent: '',
+      chunkCount: 0,
+    };
   }
   const decoder = new TextDecoder();
   let buffer = '';
@@ -78,6 +77,8 @@ async function consumeSseFromMock(url, payload) {
           }
           if (typeof delta.content === 'string') {
             content += delta.content;
+            chunkCount += 1;
+            onChunkProgress?.({ content, reasoningContent, chunkCount });
           }
         } catch {
           // Ignore malformed chunk in simulation
@@ -98,6 +99,7 @@ async function consumeSseFromMock(url, payload) {
     errorCode: aborted ? 'CONNECTION_ABORTED' : null,
     content,
     reasoningContent,
+    chunkCount,
   };
 }
 
@@ -127,7 +129,10 @@ export function createDryRunHarness(options = {}) {
     importPanelOpen: false,
     importPreviewOpen: false,
     diagnosticsOpen: false,
+    asyncErrorBannerOpen: false,
     modeSwitchDialogOpen: false,
+    providerModelMenuOpen: false,
+    presetSheetOpen: false,
     inLauncher: false,
     powerAsleep: false,
     screenOffObserved: false,
@@ -140,10 +145,10 @@ export function createDryRunHarness(options = {}) {
     currentMode: 'story',
     lockedMode: 'story',
     originalModeDataUntouched: true,
-    tutorialStage: 'main',
+    tutorialStage: suite === 'e2e' ? 'main' : null,
     tutorialStepIndex: 0,
-    tutorialMainDone: false,
-    tutorialSettingsDone: false,
+    tutorialMainDone: suite === 'smoke',
+    tutorialSettingsDone: suite === 'smoke',
     profiles: [
       {
         id: 'deepseek-official',
@@ -169,17 +174,23 @@ export function createDryRunHarness(options = {}) {
     draftBaseUrl: '',
     draftModel: '',
     draftName: '',
+    composerInput: '',
     stories: [
       { id: 'preexisting-story-1', title: '既有本地故事', mode: 'story', updatedAt: 1000 },
     ],
     works: [{ id: 'preexisting-work-1', title: '既有作品', updatedAt: 1000 }],
     characters: [{ id: 'preexisting-char-1', title: '既有角色', updatedAt: 1000 }],
     turns: [],
+    streamingText: '',
+    streamingChunkCount: 0,
+    isStreaming: false,
     lastErrorBanner: null,
+    lastErrorCode: null,
     lastRefusalRoute: null,
     balanceText: '¥ 88.80',
     screenshotCounter: 0,
     activePromptPackId: 'default-pack',
+    presetOverridden: false,
     reasoningEffort: 'off',
   };
 
@@ -210,9 +221,22 @@ export function createDryRunHarness(options = {}) {
         'app-workspace',
         'main-stage',
         ...(state.drawerOpen ? ['mobile-library-dialog', 'mobile-library-sheet', 'library-list-scroll'] : []),
-        ...(state.settingsOpen ? ['settings-page', 'provider-profile-list', 'active-provider-base-url', 'refresh-balance-btn', 'deepseek-balance-value', 'replay-tutorial-btn'] : []),
-        ...(state.tutorialStage ? ['spotlight-tutorial', 'spotlight-cutout', 'spotlight-next-btn', 'spotlight-skip-btn'] : []),
-        ...(state.modeSwitchDialogOpen ? ['mode-switch-confirm-dialog', 'mode-switch-source', 'mode-switch-target', 'mode-switch-confirm-btn'] : []),
+        ...(state.settingsOpen
+          ? [
+              'settings-page',
+              'provider-profile-list',
+              'active-provider-base-url',
+              'refresh-balance-btn',
+              'deepseek-balance-value',
+              'replay-tutorial-btn',
+            ]
+          : []),
+        ...(state.tutorialStage
+          ? ['spotlight-tutorial', 'spotlight-cutout', 'spotlight-next-btn', 'spotlight-skip-btn']
+          : []),
+        ...(state.modeSwitchDialogOpen
+          ? ['mode-switch-confirm-dialog', 'mode-switch-source', 'mode-switch-target', 'mode-switch-confirm-btn']
+          : []),
         ...(state.autoScrollPaused ? ['scroll-to-bottom'] : []),
       ],
     };
@@ -237,7 +261,13 @@ export function createDryRunHarness(options = {}) {
       state.works = [];
       state.characters = [];
       state.turns = [];
+      state.lastErrorBanner = null;
+      state.lastErrorCode = null;
+      state.lastRefusalRoute = null;
       return 'Success\n';
+    }
+    if (joined.includes('getprop ro.build.version.sdk')) {
+      return '35\n';
     }
     if (joined.includes('adb') && args[0] === 'devices') {
       return `${options.serial ?? 'emulator-5554'}\tdevice\n`;
@@ -336,7 +366,10 @@ export function createDryRunHarness(options = {}) {
       return '';
     }
     if (joined.includes('input keyevent KEYCODE_BACK')) {
-      if (state.importPreviewOpen) {
+      if (state.presetSheetOpen) {
+        state.presetSheetOpen = false;
+        state.overlayDepth = 0;
+      } else if (state.importPreviewOpen) {
         state.importPreviewOpen = false;
         state.overlayDepth = 1;
       } else if (state.storyMenuOpen) {
@@ -370,6 +403,7 @@ export function createDryRunHarness(options = {}) {
       state.settingsOpen = false;
       state.wizardOpen = false;
       state.overlayDepth = 0;
+      state.tutorialStage = !state.tutorialMainDone ? 'main' : null;
       return '';
     }
     if (joined.includes('input swipe')) {
@@ -400,15 +434,14 @@ export function createDryRunHarness(options = {}) {
       return '';
     }
     if (joined.includes('input tap')) {
-      const [x, y] = args.slice(-2).map(Number);
+      const [, y] = args.slice(-2).map(Number);
       if (state.modeSwitchDialogOpen) {
         state.modeSwitchDialogOpen = false;
-        state.currentMode = 'work';
+        state.currentMode = 'writing';
         state.overlayDepth = 0;
       } else if (y > 1600 && !state.drawerOpen && !state.settingsOpen) {
         state.imeVisible = true;
       }
-      void x;
       return '';
     }
     if (joined.includes('logcat -d')) {
@@ -421,395 +454,485 @@ export function createDryRunHarness(options = {}) {
     return '';
   };
 
-  async function handleOp(op, args) {
-    switch (op) {
-      case 'readSnapshot':
-        return currentSnapshot();
-      case 'checkKeyUiVisible':
-        return Boolean(state.wizardOpen);
-      case 'clickSelector': {
-        const sel = String(args.selector ?? '');
-        if (sel.includes('library-drawer-trigger')) {
-          state.drawerOpen = true;
-          state.overlayDepth = 1;
-        } else if (sel.includes('mobile-settings-open')) {
-          state.drawerOpen = false;
-          state.settingsOpen = true;
-          state.overlayDepth = 1;
-        } else if (sel.includes('open-setup-wizard-btn') || sel.includes('add-provider-profile-btn')) {
-          state.wizardOpen = true;
-          state.overlayDepth = 2;
-        } else if (sel.includes('provider-preset-custom') || sel.includes('provider-preset-local')) {
-          return true;
-        } else if (sel.includes('wizard-verify-save-btn')) {
-          const newId = `custom-${state.profiles.length + 1}`;
-          state.profiles.push({
-            id: newId,
-            name: state.draftName || `测试档案 ${state.profiles.length}`,
-            presetId: 'custom',
-            baseUrl: state.draftBaseUrl || 'http://127.0.0.1:18080',
-            defaultModel: state.draftModel || 'deepseek-chat',
-          });
-          state.activeProfileId = newId;
-          state.activeModel = state.draftModel || 'deepseek-chat';
-          state.wizardOpen = false;
-          state.overlayDepth = 1;
-        } else if (sel.includes('provider-profile-switch-')) {
-          const targetId = sel.split('provider-profile-switch-')[1]?.replace(/["\]]/g, '') ?? '';
-          const found = state.profiles.find((p) => p.id === targetId);
-          if (found) {
-            state.activeProfileId = found.id;
-            state.activeModel = found.defaultModel;
+  const uiDriver = {
+    async clickSelector(_ctx, selector) {
+      const sel = String(selector ?? '');
+      if (sel.includes('library-drawer-trigger')) {
+        state.drawerOpen = true;
+        state.overlayDepth = 1;
+      } else if (sel.includes('mobile-settings-open')) {
+        state.drawerOpen = false;
+        state.settingsOpen = true;
+        state.overlayDepth = 1;
+      } else if (sel.includes('settings-page') && sel.includes('返回')) {
+        state.settingsOpen = false;
+        state.overlayDepth = 0;
+      } else if (sel.includes('open-setup-wizard-btn') || sel.includes('add-provider-profile-btn') || sel.includes('change-key-btn')) {
+        state.wizardOpen = true;
+        state.overlayDepth = 2;
+      } else if (sel.includes('provider-preset-custom') || sel.includes('provider-preset-local')) {
+        return true;
+      } else if (sel.includes('wizard-verify-save-btn')) {
+        const newId = `custom-${state.profiles.length + 1}`;
+        state.profiles.push({
+          id: newId,
+          name: state.draftName || `测试档案 ${state.profiles.length}`,
+          presetId: 'custom',
+          baseUrl: state.draftBaseUrl || 'http://127.0.0.1:18080',
+          defaultModel: state.draftModel || 'deepseek-chat',
+        });
+        state.activeProfileId = newId;
+        state.activeModel = state.draftModel || 'deepseek-chat';
+        state.wizardOpen = false;
+        state.overlayDepth = 1;
+      } else if (sel.includes('provider-profile-switch-')) {
+        const targetId = sel.split('provider-profile-switch-')[1]?.replace(/["\]]/g, '') ?? '';
+        const found = state.profiles.find((p) => p.id === targetId);
+        if (found) {
+          state.activeProfileId = found.id;
+          state.activeModel = found.defaultModel;
+        }
+      } else if (sel.includes('settings-model-option-')) {
+        const modelId = sel.split('settings-model-option-')[1]?.replace(/["\]]/g, '') ?? '';
+        if (modelId) state.activeModel = modelId;
+      } else if (sel.includes('composer-provider-model-trigger')) {
+        state.providerModelMenuOpen = !state.providerModelMenuOpen;
+      } else if (sel.includes('composer-provider-model-option-')) {
+        const rest = sel.split('composer-provider-model-option-')[1]?.replace(/["\]]/g, '') ?? '';
+        for (const p of state.profiles) {
+          if (rest.startsWith(`${p.id}-`)) {
+            state.activeProfileId = p.id;
+            state.activeModel = rest.slice(p.id.length + 1);
+            break;
           }
-        } else if (sel.includes('spotlight-next-btn')) {
-          state.tutorialStepIndex = Math.min(3, state.tutorialStepIndex + 1);
-        } else if (sel.includes('tutorial-connect-cta')) {
-          state.tutorialMainDone = true;
-          state.settingsOpen = true;
-          state.overlayDepth = 1;
-          state.tutorialStage = 'settings';
-          state.tutorialStepIndex = 0;
-        } else if (sel.includes('spotlight-finish-btn')) {
-          state.tutorialSettingsDone = true;
-          state.tutorialStage = null;
-          state.tutorialStepIndex = 0;
-        } else if (sel.includes('replay-tutorial-btn')) {
-          state.settingsOpen = false;
-          state.overlayDepth = 0;
-          state.tutorialMainDone = false;
-          state.tutorialSettingsDone = false;
-          state.tutorialStage = 'main';
-          state.tutorialStepIndex = 0;
-        } else if (sel.includes('diagnostics-reload')) {
-          state.timeOrigin += 1000;
-          state.diagnosticsOpen = false;
-          state.historySession = 'stale-session';
-          state.overlayDepth = 1;
-        } else if (sel.includes('story-menu-trigger')) {
-          state.storyMenuOpen = true;
-          state.storyMenuItemIndex = 0;
-          state.overlayDepth = 2;
-        } else if (sel.includes('mobile-library-start-deepseek')) {
-          state.drawerOpen = false;
-          state.importPanelOpen = true;
-          state.overlayDepth = 1;
-        } else if (sel.includes('ds-session-preview-trigger')) {
-          state.importPreviewOpen = true;
-          state.overlayDepth = 2;
-        } else if (sel.includes('refresh-balance-btn')) {
-          state.balanceText = '¥ 88.80';
-        } else if (sel.includes('mode-switch-confirm-btn')) {
-          state.modeSwitchDialogOpen = false;
-          state.currentMode = 'work';
-          state.overlayDepth = 0;
         }
-        return true;
-      }
-      case 'fillInput': {
-        const sel = String(args.selector ?? '');
-        const val = String(args.value ?? '');
-        if (sel.includes('provider-base-url-input')) state.draftBaseUrl = val;
-        if (sel.includes('provider-model-input')) state.draftModel = val;
-        if (sel.includes('provider-name-input')) state.draftName = val;
-        return true;
-      }
-      case 'queryElementMetrics': {
-        const sel = String(args.selector ?? '');
-        const isComposer = sel.includes('turn-input') || sel.includes('stage-composer');
-        const isConfirm = sel.includes('mode-switch-confirm-btn');
-        return {
-          rect: isComposer
-            ? { left: 24, top: 820, right: 360, bottom: 870, width: 336, height: 50 }
-            : isConfirm
-              ? { left: 220, top: 520, right: 340, bottom: 564, width: 120, height: 44 }
-              : { left: 160, top: 680, right: 320, bottom: 724, width: 160, height: 44 },
-          unobscured: true,
-          visualViewport: { offsetLeft: 0, offsetTop: 0, scale: 1 },
-          dpr: 2.625,
-        };
-      }
-      case 'e2eReadProviderState': {
-        const active =
-          state.profiles.find((p) => p.id === state.activeProfileId) ?? state.profiles[0];
-        return {
-          profileCount: state.profiles.length,
-          activeProfileId: state.activeProfileId,
-          activeBaseUrl: active?.baseUrl ?? '',
-          activeModel: state.activeModel,
-          profiles: state.profiles.map((p) => ({ ...p })),
-        };
-      }
-      case 'e2eReadTutorialState': {
-        const mainIds = [
-          'main-welcome-library',
-          'main-model-reasoning',
-          'main-narrative-presets',
-          'main-connect-deepseek',
-        ];
-        const settingsIds = [
-          'settings-connection',
-          'settings-usage-overview',
-          'settings-narrative-presets',
-          'settings-backup-replay',
-        ];
-        const ids = state.tutorialStage === 'settings' ? settingsIds : mainIds;
-        return {
-          open: Boolean(state.tutorialStage),
-          stage: state.tutorialStage,
-          stepIndex: state.tutorialStepIndex,
-          stepId: state.tutorialStage ? ids[state.tutorialStepIndex] ?? ids[0] : null,
-          cutoutRect: { left: 20, top: 200, right: 220, bottom: 280, width: 200, height: 80 },
-          targetRect: { left: 20, top: 200, right: 220, bottom: 280, width: 200, height: 80 },
-          nextBtnUnobscured: true,
-          skipBtnUnobscured: true,
-          mainDone: state.tutorialMainDone,
-          settingsDone: state.tutorialSettingsDone,
-        };
-      }
-      case 'e2eSeedStories': {
-        const count = Number(args.count ?? 5);
-        while (state.stories.length < count) {
-          const idx = state.stories.length + 1;
-          state.stories.push({
-            id: `e2e-seed-${idx}`,
-            title: `滑动测试故事 ${idx}`,
-            mode: 'story',
-            updatedAt: 2000 + idx,
-          });
-        }
-        return state.stories.length;
-      }
-      case 'e2eReadScrollMetrics':
-        return {
-          drawerScrollTop: state.drawerScrollTop,
-          stageScrollGapPx: state.stageScrollGapPx,
-          showScrollToBottom: state.autoScrollPaused,
-          stageScrollHeight: 2800,
-          stageClientHeight: 460,
-        };
-      case 'e2eTriggerCrashOverlay':
+        state.providerModelMenuOpen = false;
+      } else if (sel.includes('spotlight-skip-btn')) {
+        state.tutorialStage = null;
+      } else if (sel.includes('spotlight-next-btn')) {
+        state.tutorialStepIndex = Math.min(3, state.tutorialStepIndex + 1);
+      } else if (sel.includes('tutorial-connect-cta')) {
+        state.tutorialMainDone = true;
+        state.settingsOpen = true;
+        state.overlayDepth = 1;
+        state.tutorialStage = 'settings';
+        state.tutorialStepIndex = 0;
+      } else if (sel.includes('spotlight-finish-btn')) {
+        state.tutorialSettingsDone = true;
+        state.tutorialStage = null;
+        state.tutorialStepIndex = 0;
+      } else if (sel.includes('replay-tutorial-btn')) {
+        state.settingsOpen = false;
+        state.overlayDepth = 0;
+        state.tutorialMainDone = false;
+        state.tutorialSettingsDone = false;
+        state.tutorialStage = 'main';
+        state.tutorialStepIndex = 0;
+      } else if (sel.includes('async-error-banner-action')) {
+        state.asyncErrorBannerOpen = false;
         state.diagnosticsOpen = true;
         state.overlayDepth = 1;
-        return true;
-      case 'e2eSetupStageBackScenario':
-        if (args.step === 'settings-byok') {
-          state.settingsOpen = true;
-          state.wizardOpen = true;
-          state.overlayDepth = 2;
-        } else if (args.step === 'drawer-menu') {
-          state.drawerOpen = true;
-          state.storyMenuOpen = true;
-          state.storyMenuItemIndex = 0;
-          state.overlayDepth = 2;
-        } else if (args.step === 'import-preview') {
-          state.importPanelOpen = true;
-          state.importPreviewOpen = true;
-          state.overlayDepth = 2;
-        }
-        return true;
-      case 'e2eSendTurn': {
-        if (options.failScenario && options.failScenario === args.scenarioId) {
-          state.lastErrorBanner = 'FORCED_TEST_FAILURE';
-          return {
-            ok: false,
-            aborted: true,
-            errorCode: 'FORCED_TEST_FAILURE',
-            content: '',
-            reasoningContent: '',
-          };
-        }
-        state.sseForegroundActive = true;
-        state.wakeLockObserved = true;
-        state.autoScrollPaused = false;
-        state.stageScrollGapPx = 0;
+      } else if (sel.includes('diagnostics-reload')) {
+        state.timeOrigin += 1000;
+        state.diagnosticsOpen = false;
+        state.sessionToken = 'session-token-2';
+        state.historySession = 'session-token-1';
+        state.overlayDepth = 0;
+      } else if (sel.includes('story-menu-trigger')) {
+        state.storyMenuOpen = true;
+        state.storyMenuItemIndex = 0;
+        state.overlayDepth = 2;
+      } else if (sel.includes('mobile-library-start-deepseek')) {
+        state.drawerOpen = false;
+        state.importPanelOpen = true;
+        state.overlayDepth = 1;
+      } else if (sel.includes('ds-session-preview-trigger')) {
+        state.importPreviewOpen = true;
+        state.overlayDepth = 2;
+      } else if (sel.includes('refresh-balance-btn')) {
+        state.balanceText = '¥ 88.80';
+      } else if (sel.includes('mode-switch-confirm-btn')) {
+        state.modeSwitchDialogOpen = false;
+        state.currentMode = 'writing';
+        state.overlayDepth = 0;
+      } else if (sel.includes('composer-thinking-toggle')) {
+        state.reasoningEffort = state.reasoningEffort === 'off' ? 'low' : 'off';
+      } else if (sel.includes('composer-reasoning-stop-low')) {
+        state.reasoningEffort = 'low';
+      } else if (sel.includes('composer-narrative-preset-trigger')) {
+        state.presetSheetOpen = true;
+        state.overlayDepth = 1;
+      } else if (sel.includes('quick-preset-option-')) {
+        state.activePromptPackId = 'default-pack';
+        state.presetOverridden = true;
+        state.presetSheetOpen = false;
+        state.overlayDepth = 0;
+      } else if (sel.includes('mobile-library-new-creation')) {
+        state.drawerOpen = false;
+        state.overlayDepth = 0;
+      }
+      return true;
+    },
 
-        let sseResult = {
-          ok: true,
-          aborted: false,
-          errorCode: null,
-          content: '模拟流式响应正常完成。',
+    async fillInput(_ctx, selector, value) {
+      const sel = String(selector ?? '');
+      const val = String(value ?? '');
+      if (sel.includes('provider-base-url-input')) state.draftBaseUrl = val;
+      else if (sel.includes('provider-model-input')) state.draftModel = val;
+      else if (sel.includes('provider-name-input')) state.draftName = val;
+      else if (sel.includes('turn-input') || sel.includes('textarea')) state.composerInput = val;
+      return true;
+    },
+
+    async readSnapshot() {
+      return currentSnapshot();
+    },
+
+    async queryElementMetrics(_ctx, selector) {
+      const sel = String(selector ?? '');
+      const isComposer = sel.includes('turn-input') || sel.includes('stage-composer');
+      const isConfirm = sel.includes('mode-switch-confirm-btn');
+      return {
+        rect: isComposer
+          ? { left: 24, top: 820, right: 360, bottom: 870, width: 336, height: 50 }
+          : isConfirm
+            ? { left: 220, top: 520, right: 340, bottom: 564, width: 120, height: 44 }
+            : { left: 160, top: 680, right: 320, bottom: 724, width: 160, height: 44 },
+        unobscured: true,
+        visualViewport: { offsetLeft: 0, offsetTop: 0, scale: 1 },
+        dpr: 2.625,
+      };
+    },
+
+    async isKeyUiVisible() {
+      return Boolean(state.wizardOpen);
+    },
+
+    async selectLibraryCategory(_ctx, mode) {
+      state.lockedMode = mode;
+      return true;
+    },
+
+    async readProviderState() {
+      const active =
+        state.profiles.find((p) => p.id === state.activeProfileId) ?? state.profiles[0];
+      return {
+        profileCount: state.profiles.length,
+        activeProfileId: state.activeProfileId,
+        activeBaseUrl: active?.baseUrl ?? '',
+        activeModel: state.activeModel,
+        profiles: state.profiles.map((p) => ({ ...p })),
+      };
+    },
+
+    async readTutorialState() {
+      const mainIds = [
+        'main-welcome-library',
+        'main-model-reasoning',
+        'main-narrative-presets',
+        'main-connect-deepseek',
+      ];
+      const settingsIds = [
+        'settings-connection',
+        'settings-usage-overview',
+        'settings-narrative-presets',
+        'settings-backup-replay',
+      ];
+      const ids = state.tutorialStage === 'settings' ? settingsIds : mainIds;
+      return {
+        open: Boolean(state.tutorialStage),
+        stage: state.tutorialStage,
+        stepIndex: state.tutorialStepIndex,
+        stepId: state.tutorialStage ? ids[state.tutorialStepIndex] ?? ids[0] : null,
+        cutoutRect: { left: 20, top: 200, right: 220, bottom: 280, width: 200, height: 80 },
+        targetRect: { left: 20, top: 200, right: 220, bottom: 280, width: 200, height: 80 },
+        nextBtnUnobscured: true,
+        skipBtnUnobscured: true,
+        mainDone: state.tutorialMainDone,
+        settingsDone: state.tutorialSettingsDone,
+      };
+    },
+
+    async seedStories(_ctx, count = 12) {
+      while (state.stories.length < count) {
+        const idx = state.stories.length + 1;
+        state.stories.push({
+          id: `e2e-seed-${idx}`,
+          title: `滑动测试故事 ${idx}`,
+          mode: 'story',
+          updatedAt: 2000 + idx,
+        });
+      }
+      return state.stories.length;
+    },
+
+    async readScrollMetrics() {
+      return {
+        drawerScrollTop: state.drawerScrollTop,
+        stageScrollGapPx: state.stageScrollGapPx,
+        showScrollToBottom: state.autoScrollPaused,
+        stageScrollHeight: 2800,
+        stageClientHeight: 460,
+      };
+    },
+
+    async triggerCrashDiagnostics() {
+      state.asyncErrorBannerOpen = true;
+      state.diagnosticsOpen = true;
+      state.overlayDepth = 1;
+      return true;
+    },
+
+    async sendTurn(_ctx, args) {
+      if (options.failScenario && options.failScenario === args.scenarioId) {
+        state.lastErrorBanner = 'FORCED_TEST_FAILURE';
+        state.lastErrorCode = 'FORCED_TEST_FAILURE';
+        return {
+          ok: false,
+          aborted: true,
+          errorCode: 'FORCED_TEST_FAILURE',
+          content: '',
           reasoningContent: '',
         };
-        if (args.mockUrl) {
-          const targetUrl = `${args.mockUrl}${args.endpointPath ?? '/v1/chat/completions'}`;
-          sseResult = await consumeSseFromMock(targetUrl, {
+      }
+      state.sseForegroundActive = true;
+      state.wakeLockObserved = true;
+      state.autoScrollPaused = false;
+      state.stageScrollGapPx = 0;
+      state.isStreaming = true;
+      state.streamingText = '';
+      state.streamingChunkCount = 0;
+
+      const fetchTurn = async (endpointPath) => {
+        if (!args.mockUrl) {
+          return {
+            ok: true,
+            aborted: false,
+            errorCode: null,
+            content: '模拟流式响应正常完成。',
+            reasoningContent: '',
+            chunkCount: 1,
+          };
+        }
+        return consumeSseFromMock(
+          `${args.mockUrl}${endpointPath}`,
+          {
             model: state.activeModel || 'deepseek-chat',
             stream: true,
             messages: [{ role: 'user', content: args.prompt ?? 'hello' }],
-          });
-        }
-        state.sseForegroundActive = false;
-        if (sseResult.aborted) {
-          state.lastErrorBanner = sseResult.errorCode ?? 'CONNECTION_ABORTED';
-          state.turns.push({ role: 'user', content: args.prompt ?? '' });
-          state.turns.push({ role: 'assistant', content: sseResult.content });
-        } else {
-          state.lastErrorBanner = null;
-          if (args.expectHalfRefusal) {
-            state.lastRefusalRoute = 'retry';
-          }
-          state.turns.push({ role: 'user', content: args.prompt ?? '' });
-          state.turns.push({
-            role: 'assistant',
-            content: sseResult.content,
-            reasoningContent: sseResult.reasoningContent,
-            refusalRoute: state.lastRefusalRoute,
-          });
-        }
-        return sseResult;
-      }
-      case 'e2eReadTurnState': {
-        const assistantTurns = state.turns.filter((t) => t.role === 'assistant');
-        const last = assistantTurns[assistantTurns.length - 1];
-        return {
-          assistantCount: assistantTurns.length,
-          lastAssistantText: last?.content ?? '',
-          hasErrorBanner: Boolean(state.lastErrorBanner),
-          errorCode: state.lastErrorBanner,
-          hasRecoveredBadge: state.lastRefusalRoute === 'retry',
-          refusalRoute: state.lastRefusalRoute,
-          reasoningPresent: Boolean(last?.reasoningContent),
-        };
-      }
-      case 'e2eImportDeepSeekZip': {
-        const importedId = `imported-ds-${state.stories.length + 1}`;
-        state.stories.push({
-          id: importedId,
-          title: '导入的 DeepSeek 故事',
-          mode: 'story',
-          updatedAt: Date.now(),
-        });
-        state.activeStoryId = importedId;
-        state.importPreviewOpen = false;
-        state.importPanelOpen = false;
-        state.overlayDepth = 0;
-        return { importedId };
-      }
-      case 'e2eCreateLockedModeDraft': {
-        state.lockedMode = args.mode ?? 'story';
-        state.currentMode = args.mode ?? 'story';
-        state.modeSwitchDialogOpen = true;
-        state.overlayDepth = 1;
-        state.originalModeDataUntouched = true;
-        return { dialogOpen: true };
-      }
-      case 'e2eReadModeSwitchState':
-        return {
-          dialogOpen: state.modeSwitchDialogOpen,
-          sourceText: state.lockedMode === 'story' ? '文游' : state.lockedMode,
-          targetText: '写故事',
-          currentMode: state.currentMode,
-          originalDataUntouched: state.originalModeDataUntouched,
-        };
-      case 'smokeSnapshotEntities':
-        return {
-          storyIds: state.stories.map((s) => s.id),
-          workIds: state.works.map((w) => w.id),
-          characterIds: state.characters.map((c) => c.id),
-        };
-      case 'smokeCreateAndSendTurn': {
-        if (options.failScenario && options.failScenario === args.scenarioId) {
-          state.lastErrorBanner = 'FORCED_SMOKE_FAILURE';
-          throw new Error(`Forced smoke failure on ${args.scenarioId}`);
-        }
-        const mode = args.mode ?? 'story';
-        const suffix = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        let createdId = null;
-        if (args.createEntity !== false) {
-          if (mode === 'story') {
-            createdId = `smk-story-${suffix}`;
-            state.stories.push({
-              id: createdId,
-              title: `${args.titlePrefix ?? '[SMK-TEST]'} 文游`,
-              mode: 'story',
-              updatedAt: Date.now(),
-            });
-          } else if (mode === 'work') {
-            createdId = `smk-work-${suffix}`;
-            state.works.push({
-              id: createdId,
-              title: `${args.titlePrefix ?? '[SMK-TEST]'} 作品`,
-              updatedAt: Date.now(),
-            });
-          } else {
-            createdId = `smk-char-${suffix}`;
-            state.characters.push({
-              id: createdId,
-              title: `${args.titlePrefix ?? '[SMK-TEST]'} 角色`,
-              updatedAt: Date.now(),
-            });
-          }
-        }
-        if (args.reasoningEffort) state.reasoningEffort = args.reasoningEffort;
-        if (args.presetId) state.activePromptPackId = args.presetId;
+          },
+          ({ content, chunkCount }) => {
+            state.streamingText = content;
+            state.streamingChunkCount = chunkCount;
+          },
+        );
+      };
 
-        const turn = {
-          role: 'assistant',
-          content: `真实冒烟短回复 (${mode})`,
-          reasoningContent: args.reasoningEffort ? '简短思维链推理内容。' : '',
-          hasProposal: Boolean(args.expectProposal),
-          proposalApplied: false,
-          proposalReverted: false,
-          hasResearch: Boolean(args.expectPublicResearch),
-        };
+      let sseResult = await fetchTurn(args.endpointPath ?? '/v1/chat/completions');
+      if (args.expectHalfRefusal && !sseResult.aborted) {
+        // Simulates app's automatic Narrative Continuity retry request to /beta/chat/completions
+        state.lastRefusalRoute = 'retry';
+        sseResult = await fetchTurn('/beta/chat/completions');
+      }
+
+      state.sseForegroundActive = false;
+      state.isStreaming = false;
+      if (sseResult.aborted) {
+        state.lastErrorBanner = sseResult.errorCode ?? 'CONNECTION_ABORTED';
+        state.lastErrorCode = sseResult.errorCode ?? 'CONNECTION_ABORTED';
         state.turns.push({ role: 'user', content: args.prompt ?? '' });
-        state.turns.push(turn);
-        return {
-          createdId,
-          mode,
-          assistantText: turn.content,
-          hasReasoning: Boolean(turn.reasoningContent),
-          hasProposal: turn.hasProposal,
-          hasResearch: turn.hasResearch,
-          hasErrorBanner: false,
-          presetOverridden: Boolean(args.presetId),
-        };
+        state.turns.push({ role: 'assistant', content: sseResult.content });
+      } else {
+        state.lastErrorBanner = null;
+        state.lastErrorCode = null;
+        state.turns.push({ role: 'user', content: args.prompt ?? '' });
+        state.turns.push({
+          role: 'assistant',
+          content: sseResult.content,
+          reasoningContent: sseResult.reasoningContent,
+          refusalRoute: state.lastRefusalRoute,
+        });
       }
-      case 'smokeApplyAndCheckProposal': {
-        const last = state.turns[state.turns.length - 1];
-        if (last) {
-          last.proposalApplied = true;
+      return sseResult;
+    },
+
+    async readTurnState() {
+      const assistantTurns = state.turns.filter((t) => t.role === 'assistant');
+      const last = assistantTurns[assistantTurns.length - 1];
+      return {
+        assistantCount: assistantTurns.length,
+        lastAssistantText: state.isStreaming ? state.streamingText : (last?.content ?? ''),
+        streamingChunkCount: state.streamingChunkCount,
+        isStreaming: state.isStreaming,
+        hasErrorBanner: Boolean(state.lastErrorBanner),
+        errorCode: state.lastErrorCode,
+        hasRecoveredBadge: state.lastRefusalRoute === 'retry',
+        refusalRoute: state.lastRefusalRoute,
+        reasoningPresent: Boolean(last?.reasoningContent),
+      };
+    },
+
+    async importDeepSeekZip() {
+      const importedId = `imported-ds-${state.stories.length + 1}`;
+      state.stories.push({
+        id: importedId,
+        title: '导入的 DeepSeek 故事',
+        mode: 'story',
+        updatedAt: Date.now(),
+      });
+      state.activeStoryId = importedId;
+      state.importPreviewOpen = false;
+      state.importPanelOpen = false;
+      state.overlayDepth = 0;
+      return { importedId };
+    },
+
+    async triggerModeSwitch(_ctx, args) {
+      state.lockedMode = args.mode ?? 'story';
+      state.currentMode = args.mode ?? 'story';
+      state.modeSwitchDialogOpen = true;
+      state.overlayDepth = 1;
+      state.originalModeDataUntouched = true;
+      return { dialogOpen: true };
+    },
+
+    async readModeSwitchState() {
+      return {
+        dialogOpen: state.modeSwitchDialogOpen,
+        sourceText: state.lockedMode === 'story' ? '文游' : state.lockedMode,
+        targetText: '写故事',
+        currentMode: state.currentMode,
+        originalDataUntouched: state.originalModeDataUntouched,
+      };
+    },
+
+    async snapshotSmokeEntities() {
+      return {
+        storyIds: state.stories.map((s) => s.id),
+        workIds: state.works.map((w) => w.id),
+        characterIds: state.characters.map((c) => c.id),
+      };
+    },
+
+    async deleteSmokeEntitiesByIds(_ctx, args) {
+      const sIds = new Set(args.storyIds ?? []);
+      const wIds = new Set(args.workIds ?? []);
+      const cIds = new Set(args.characterIds ?? []);
+      for (const id of sIds) deletedEntities.storyIds.push(id);
+      for (const id of wIds) deletedEntities.workIds.push(id);
+      for (const id of cIds) deletedEntities.characterIds.push(id);
+      state.stories = state.stories.filter((s) => !sIds.has(s.id));
+      state.works = state.works.filter((w) => !wIds.has(w.id));
+      state.characters = state.characters.filter((c) => !cIds.has(c.id));
+      return {
+        deleted: sIds.size + wIds.size + cIds.size,
+        remainingStoryIds: state.stories.map((s) => s.id),
+        remainingWorkIds: state.works.map((w) => w.id),
+        remainingCharacterIds: state.characters.map((c) => c.id),
+      };
+    },
+
+    async sendSmokeTurn(_ctx, args) {
+      if (options.failScenario && options.failScenario === args.scenarioId) {
+        state.lastErrorBanner = 'FORCED_SMOKE_FAILURE';
+        throw new Error(`Forced smoke failure on ${args.scenarioId}`);
+      }
+      const mode = args.mode ?? 'story';
+      const suffix = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      let createdId = null;
+      if (args.createEntity !== false) {
+        if (mode === 'story') {
+          createdId = `smk-story-${suffix}`;
+          state.stories.push({
+            id: createdId,
+            title: `${args.titlePrefix ?? '[SMK-TEST]'} 文游`,
+            mode: 'story',
+            updatedAt: Date.now(),
+          });
+        } else if (mode === 'work') {
+          createdId = `smk-work-${suffix}`;
+          state.works.push({
+            id: createdId,
+            title: `${args.titlePrefix ?? '[SMK-TEST]'} 作品`,
+            updatedAt: Date.now(),
+          });
+        } else {
+          createdId = `smk-char-${suffix}`;
+          state.characters.push({
+            id: createdId,
+            title: `${args.titlePrefix ?? '[SMK-TEST]'} 角色`,
+            updatedAt: Date.now(),
+          });
         }
-        return {
-          applied: Boolean(last?.proposalApplied),
-          revertAvailable: Boolean(last?.proposalApplied),
-        };
       }
-      case 'smokeReadBalance':
-        return {
-          balanceText: state.balanceText,
-          hasError: false,
-        };
-      case 'smokeListProfilesSafe':
-        return {
-          activeProfileId: state.activeProfileId,
-          profiles: state.profiles.map((p) => ({
-            id: p.id,
-            name: p.name,
-            presetId: p.presetId,
-            defaultModel: p.defaultModel,
-          })),
-        };
-      case 'smokeDeleteEntitiesByIds': {
-        const sIds = new Set(args.storyIds ?? []);
-        const wIds = new Set(args.workIds ?? []);
-        const cIds = new Set(args.characterIds ?? []);
-        for (const id of sIds) deletedEntities.storyIds.push(id);
-        for (const id of wIds) deletedEntities.workIds.push(id);
-        for (const id of cIds) deletedEntities.characterIds.push(id);
-        state.stories = state.stories.filter((s) => !sIds.has(s.id));
-        state.works = state.works.filter((w) => !wIds.has(w.id));
-        state.characters = state.characters.filter((c) => !cIds.has(c.id));
-        return {
-          remainingStoryIds: state.stories.map((s) => s.id),
-          remainingWorkIds: state.works.map((w) => w.id),
-          remainingCharacterIds: state.characters.map((c) => c.id),
-        };
+      if (args.reasoningEffort) state.reasoningEffort = args.reasoningEffort;
+      if (args.presetId) {
+        state.activePromptPackId = args.presetId;
+        state.presetOverridden = true;
       }
-      default:
-        return currentSnapshot();
-    }
-  }
+      state.isStreaming = true;
+      state.streamingText = '首包响应、';
+      state.streamingChunkCount = 1;
+
+      if (args.streamDelayMs) {
+        await new Promise((r) => setTimeout(r, args.streamDelayMs));
+      }
+
+      const turn = {
+        role: 'assistant',
+        content: `真实冒烟短回复 (${mode})`,
+        reasoningContent: args.reasoningEffort ? '简短思维链推理内容。' : '',
+        hasProposal: Boolean(args.expectProposal),
+        proposalApplied: false,
+        proposalReverted: false,
+        hasResearch: Boolean(args.expectPublicResearch),
+      };
+      state.isStreaming = false;
+      state.streamingText = turn.content;
+      state.turns.push({ role: 'user', content: args.prompt ?? '' });
+      state.turns.push(turn);
+      return {
+        createdId,
+        mode,
+        assistantText: turn.content,
+        hasReasoning: Boolean(turn.reasoningContent),
+        hasProposal: turn.hasProposal,
+        hasResearch: turn.hasResearch,
+        hasErrorBanner: false,
+        presetOverridden: state.presetOverridden,
+      };
+    },
+
+    async applyAndCheckProposal() {
+      const last = state.turns[state.turns.length - 1];
+      if (last) {
+        last.proposalApplied = true;
+      }
+      return {
+        applied: Boolean(last?.proposalApplied),
+        revertAvailable: Boolean(last?.proposalApplied),
+      };
+    },
+
+    async readBalance() {
+      return {
+        balanceText: state.balanceText,
+        hasError: false,
+      };
+    },
+
+    async listProfilesSafe() {
+      return {
+        activeProfileId: state.activeProfileId,
+        profiles: state.profiles.map((p) => ({
+          id: p.id,
+          name: p.name,
+          presetId: p.presetId,
+          defaultModel: p.defaultModel,
+        })),
+      };
+    },
+  };
 
   const client = {
     pid: '4215',
@@ -835,12 +958,8 @@ export function createDryRunHarness(options = {}) {
     close: async () => {},
     evaluate: async (expr) => {
       evaluatedExpressions.push(expr);
-      if (suite === 'smoke' && /\b(loadApiKey|saveApiKey|clearApiKey)\b/.test(expr)) {
+      if (suite === 'smoke' && /\b(loadApiKey|saveApiKey|clearApiKey|loadMeta)\b/.test(expr)) {
         throw new Error('SECURITY VIOLATION: NativeVault key API invoked in .smoke');
-      }
-      const parsed = parseOpTag(expr);
-      if (parsed) {
-        return handleOp(parsed.op, parsed.args);
       }
       if (expr.includes('performance.timeOrigin')) {
         return state.timeOrigin;
@@ -878,6 +997,16 @@ export function createDryRunHarness(options = {}) {
     },
   };
 
+  const cdpFactory = async () => ({
+    client,
+    pid: '4215',
+    localPort: '39111',
+    target: { id: 'page-1', type: 'page', url: 'http://localhost/' },
+    reconnect: async () => ({ client, pid: '4215', localPort: '39111', target: null }),
+    close: async () => {},
+  });
+  cdpFactory.uiDriver = uiDriver;
+
   return {
     serial: options.serial ?? 'emulator-5554',
     state,
@@ -887,13 +1016,7 @@ export function createDryRunHarness(options = {}) {
     screenrecordStarts,
     deletedEntities,
     adbRunner,
-    cdpFactory: async () => ({
-      client,
-      pid: '4215',
-      localPort: '39111',
-      target: { id: 'page-1', type: 'page', url: 'http://localhost/' },
-      reconnect: async () => ({ client, pid: '4215', localPort: '39111', target: null }),
-      close: async () => {},
-    }),
+    uiDriver,
+    cdpFactory,
   };
 }

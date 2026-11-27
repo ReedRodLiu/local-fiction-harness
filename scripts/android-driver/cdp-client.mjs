@@ -12,15 +12,40 @@ const LIFECYCLE_EVENT_METHODS = new Set([
   'Page.loadEventFired',
 ]);
 
-function defaultRunCommand(command, args = []) {
-  return execFileSync(command, args, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+export function defaultRunCommand(command, args = [], options = {}) {
+  const encoding = options.encoding === 'buffer' ? null : 'utf8';
+  try {
+    return execFileSync(command, args, {
+      encoding,
+      maxBuffer: 32 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    if (options.allowFailure) {
+      return options.encoding === 'buffer' ? Buffer.alloc(0) : '';
+    }
+    throw error;
+  }
 }
 
-function adbArgs(serial, rest) {
+export function adbArgs(serial, rest) {
   return serial ? ['-s', serial, ...rest] : rest;
+}
+
+export async function readDeviceUiHierarchy(runCommand = defaultRunCommand, serial) {
+  const remotePath = `/sdcard/lfh-ui-${Date.now()}.xml`;
+  try {
+    await runCommand('adb', adbArgs(serial, ['shell', 'uiautomator', 'dump', remotePath]));
+    return String((await runCommand('adb', adbArgs(serial, ['exec-out', 'cat', remotePath]))) ?? '');
+  } finally {
+    try {
+      await runCommand('adb', adbArgs(serial, ['shell', 'rm', '-f', remotePath]), {
+        allowFailure: true,
+      });
+    } catch {
+      // Best-effort cleanup of transient uiautomator dump file.
+    }
+  }
 }
 
 function removeForwardBestEffort({ serial, localPort, runCommand }) {
@@ -256,6 +281,7 @@ export class CdpClient {
   #reconnectHandler;
   #closeHandler;
   #closedManually;
+  #socketListeners = null;
 
   #pushBounded(list, item) {
     list.push(item);
@@ -265,8 +291,10 @@ export class CdpClient {
   }
 
   #attachSocket(socket) {
+    this.detachSocket();
     this.socket = socket;
-    socket.addEventListener('message', (event) => {
+
+    const onMessage = (event) => {
       let message;
       try {
         message = JSON.parse(String(event.data));
@@ -315,9 +343,9 @@ export class CdpClient {
           }
         }
       }
-    });
+    };
 
-    socket.addEventListener('close', () => {
+    const onClose = () => {
       if (this.socket !== socket) return;
       for (const pending of this.pending.values()) {
         clearTimeout(pending.timer);
@@ -327,7 +355,36 @@ export class CdpClient {
       for (const listener of [...this.closeListeners]) {
         listener({ manual: this.#closedManually });
       }
-    });
+    };
+
+    const onError = () => {
+      if (this.socket !== socket) return;
+      for (const pending of this.pending.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error('WebView DevTools socket error.'));
+      }
+      this.pending.clear();
+    };
+
+    socket.addEventListener('message', onMessage);
+    socket.addEventListener('close', onClose);
+    socket.addEventListener('error', onError);
+    this.#socketListeners = { socket, onMessage, onClose, onError };
+  }
+
+  detachSocket() {
+    const detached = this.socket;
+    if (this.#socketListeners) {
+      const { socket, onMessage, onClose, onError } = this.#socketListeners;
+      if (typeof socket?.removeEventListener === 'function') {
+        socket.removeEventListener('message', onMessage);
+        socket.removeEventListener('close', onClose);
+        socket.removeEventListener('error', onError);
+      }
+      this.#socketListeners = null;
+    }
+    this.socket = null;
+    return detached;
   }
 
   isConnected() {
@@ -448,9 +505,8 @@ export class CdpClient {
       pending.reject(new Error('WebView DevTools connection closed for reconnect/shutdown.'));
     }
     this.pending.clear();
-    if (this.socket) {
-      const prev = this.socket;
-      this.socket = null;
+    const prev = this.detachSocket();
+    if (prev) {
       try {
         prev.close();
       } catch {
@@ -525,8 +581,7 @@ async function openAndVerifyTarget({
                   return false;
                 }
               }
-              verifiedSocket = tempClient.socket;
-              tempClient.socket = null;
+              verifiedSocket = tempClient.detachSocket();
               return true;
             } catch (error) {
               await tempClient.close();

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { strToU8, zipSync } from 'fflate';
 import {
   auditApkArchive,
+  auditApkSigningCertificate,
   auditManifestXml,
   auditNetworkSecurityConfigXml,
   auditReleaseArtifacts,
@@ -364,6 +365,31 @@ describe('Offline artifact & minimal-permission audit', () => {
 
       const summary = auditReleaseArtifacts(tmpRoot, []);
       expect(summary.apkPath).toContain('app-release-unsigned.apk');
+      expect(summary.signed).toBe(false);
+
+      // Signed release APK triggers certificate verification
+      fs.rmSync(
+        path.join(tmpRoot, 'android/app/build/outputs/apk/release/app-release-unsigned.apk'),
+      );
+      writeFixture(
+        'android/app/build/outputs/apk/release/Folio-v0.5.0-beta.1-release.apk',
+        cleanApk,
+      );
+      const signedSummary = auditReleaseArtifacts(tmpRoot, [], {
+        runCommand: (_cmd: string, args: string[]) => {
+          expect(args).toContain('verify');
+          expect(args).toContain('--print-certs');
+          return [
+            'Signer #1 certificate DN: CN=Folio Release, O=LocalFiction',
+            'Signer #1 certificate SHA-256 digest: 0cce9656dcfcc439564f71418cce015c2cab428193a5654ad46670573b0a040d',
+          ].join('\n');
+        },
+      });
+      expect(signedSummary.apkPath).toContain('Folio-v0.5.0-beta.1-release.apk');
+      expect(signedSummary.signed).toBe(true);
+      expect(signedSummary.signingCertSha256).toBe(
+        '0cce9656dcfcc439564f71418cce015c2cab428193a5654ad46670573b0a040d',
+      );
 
       writeFixture(
         'android/app/build/intermediates/packaged_manifests/release/processReleaseManifestForPackage/AndroidManifest.xml',
@@ -376,5 +402,44 @@ describe('Offline artifact & minimal-permission audit', () => {
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
+  });
+
+  it('verifies release APK signing certificate SHA-256 and rejects Android Debug or mismatched certs', () => {
+    const validOutput = [
+      'Signer #1 certificate DN: CN=Folio, OU=Release, O=Folio',
+      'Signer #1 certificate SHA-256 digest: 0cce9656dcfcc439564f71418cce015c2cab428193a5654ad46670573b0a040d',
+    ].join('\n');
+
+    const cert = auditApkSigningCertificate({
+      apkPath: '/tmp/Folio-v0.5.0-beta.1-release.apk',
+      runCommand: (_cmd: string, args: string[]) => {
+        expect(args).toEqual(['verify', '--print-certs', '/tmp/Folio-v0.5.0-beta.1-release.apk']);
+        return validOutput;
+      },
+    });
+    expect(cert.sha256).toBe('0cce9656dcfcc439564f71418cce015c2cab428193a5654ad46670573b0a040d');
+    expect(cert.signed).toBe(true);
+
+    expect(() =>
+      auditApkSigningCertificate({
+        apkPath: '/tmp/app-release.apk',
+        runCommand: () =>
+          [
+            'Signer #1 certificate DN: CN=Android Debug, O=Android, C=US',
+            'Signer #1 certificate SHA-256 digest: 0cce9656dcfcc439564f71418cce015c2cab428193a5654ad46670573b0a040d',
+          ].join('\n'),
+      }),
+    ).toThrow(/Android Debug/i);
+
+    expect(() =>
+      auditApkSigningCertificate({
+        apkPath: '/tmp/app-release.apk',
+        runCommand: () =>
+          [
+            'Signer #1 certificate DN: CN=Wrong Cert',
+            'Signer #1 certificate SHA-256 digest: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+          ].join('\n'),
+      }),
+    ).toThrow(/SHA-256|mismatch/i);
   });
 });

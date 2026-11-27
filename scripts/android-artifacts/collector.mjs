@@ -1,12 +1,12 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  adbArgs,
+  defaultRunCommand,
+  readDeviceUiHierarchy,
+} from '../android-driver/cdp-client.mjs';
 import { mergeTimelineEvents, parseLogcatLines } from './timeline.mjs';
-
-function defaultRunCommand(command, args, options = {}) {
-  const encoding = options.encoding === 'buffer' ? null : 'utf8';
-  return execFileSync(command, args, { encoding });
-}
 
 function writeJsonFile(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -21,20 +21,6 @@ function writeJsonlFile(filePath, records) {
 
 function safeFileSegment(value) {
   return String(value).replace(/[^A-Za-z0-9._-]+/g, '_');
-}
-
-function readDeviceUiHierarchy(runCommand, serial) {
-  const remotePath = `/sdcard/lfh-ui-${Date.now()}.xml`;
-  try {
-    runCommand('adb', ['-s', serial, 'shell', 'uiautomator', 'dump', remotePath]);
-    return String(runCommand('adb', ['-s', serial, 'exec-out', 'cat', remotePath]) ?? '');
-  } finally {
-    try {
-      runCommand('adb', ['-s', serial, 'shell', 'rm', '-f', remotePath], { allowFailure: true });
-    } catch {
-      // Ignore cleanup failure for transient dump path
-    }
-  }
 }
 
 export function createRunArtifactCollector({
@@ -157,15 +143,13 @@ export function createRunArtifactCollector({
         const maxDurationSec = options.maxRecordSec ?? 90;
         const remoteMp4Path = `/sdcard/lfh-${safeFileSegment(suite)}-${safeFileSegment(runId)}-${safeFileSegment(scenarioId)}.mp4`;
         const localMp4Path = path.join(state.dir, 'screenrecord.mp4');
-        const args = [
-          '-s',
-          serial,
+        const args = adbArgs(serial, [
           'shell',
           'screenrecord',
           '--time-limit',
           String(maxDurationSec),
           remoteMp4Path,
-        ];
+        ]);
 
         let child = null;
         if (typeof spawnProcess === 'function') {
@@ -201,7 +185,9 @@ export function createRunArtifactCollector({
         const pngBytes =
           options.screenshotPng !== undefined
             ? options.screenshotPng
-            : execCmd('adb', ['-s', serial, 'exec-out', 'screencap', '-p'], { encoding: 'buffer' });
+            : execCmd('adb', adbArgs(serial, ['exec-out', 'screencap', '-p']), {
+                encoding: 'buffer',
+              });
         if (pngBytes !== null && pngBytes !== undefined) {
           const pngPath = path.join(baseDir, `${prefix}.png`);
           fs.writeFileSync(pngPath, pngBytes);
@@ -228,10 +214,12 @@ export function createRunArtifactCollector({
       }
 
       let uiXml = options.uiXml;
-      if (uiXml === undefined && options.includeUi !== false && serial && !customRunCommandProvided) {
-        uiXml = readDeviceUiHierarchy(execCmd, serial);
-      } else if (uiXml === undefined && options.includeUi === true && serial) {
-        uiXml = readDeviceUiHierarchy(execCmd, serial);
+      if (uiXml === undefined && options.includeUi !== false && serial) {
+        try {
+          uiXml = await readDeviceUiHierarchy(execCmd, serial);
+        } catch {
+          uiXml = '';
+        }
       }
       if (typeof uiXml === 'string' && uiXml.length > 0) {
         const uiPath = path.join(baseDir, `${prefix}.ui.xml`);
@@ -242,7 +230,7 @@ export function createRunArtifactCollector({
       let activityText = options.activityDump;
       if (activityText === undefined && options.includeActivity !== false && serial) {
         activityText = String(
-          execCmd('adb', ['-s', serial, 'shell', 'dumpsys', 'activity', 'activities']) ?? '',
+          execCmd('adb', adbArgs(serial, ['shell', 'dumpsys', 'activity', 'activities'])) ?? '',
         );
       }
       if (typeof activityText === 'string' && activityText.length > 0) {
@@ -298,15 +286,17 @@ export function createRunArtifactCollector({
 
     writeConsoleEvents(scenarioId, consoleEvents = []) {
       const state = ensureScenarioState(scenarioId);
-      const normalized = consoleEvents.map((item) => ({
-        hostTsMs: item.hostTsMs ?? Date.now(),
-        ...(item.rawDeviceTs !== undefined ? { rawDeviceTs: String(item.rawDeviceTs) } : {}),
-        source: item.source === 'cdp_lifecycle' ? 'cdp_lifecycle' : 'cdp_console',
-        scenarioId,
-        level: item.level ?? 'info',
-        event: item.event ?? 'console',
-        ...(item.details ? { details: item.details } : {}),
-      }));
+      const normalized = consoleEvents.map((item) =>
+        sanitizeBundleValue({
+          hostTsMs: item.hostTsMs ?? Date.now(),
+          ...(item.rawDeviceTs !== undefined ? { rawDeviceTs: String(item.rawDeviceTs) } : {}),
+          source: item.source === 'cdp_lifecycle' ? 'cdp_lifecycle' : 'cdp_console',
+          scenarioId,
+          level: item.level ?? 'info',
+          event: item.event ?? 'console',
+          ...(item.details ? { details: item.details } : {}),
+        }),
+      );
       timelineEvents.push(...normalized);
       const consolePath = path.join(state.dir, 'console.jsonl');
       writeJsonlFile(consolePath, normalized);
@@ -366,7 +356,7 @@ export function createRunArtifactCollector({
           }
         }
         try {
-          execCmd('adb', ['-s', serial, 'shell', 'pkill', '-l', '2', 'screenrecord'], {
+          execCmd('adb', adbArgs(serial, ['shell', 'pkill', '-l', '2', 'screenrecord']), {
             allowFailure: true,
           });
         } catch {
@@ -374,7 +364,7 @@ export function createRunArtifactCollector({
         }
 
         if (hardOutcome === 'FAIL') {
-          execCmd('adb', ['-s', serial, 'pull', remoteMp4Path, localMp4Path]);
+          execCmd('adb', adbArgs(serial, ['pull', remoteMp4Path, localMp4Path]));
           if (fs.existsSync(localMp4Path)) {
             state.screenrecord.kept = true;
             registerArtifact(state, localMp4Path);
@@ -387,7 +377,7 @@ export function createRunArtifactCollector({
         }
 
         try {
-          execCmd('adb', ['-s', serial, 'shell', 'rm', '-f', remoteMp4Path], {
+          execCmd('adb', adbArgs(serial, ['shell', 'rm', '-f', remoteMp4Path]), {
             allowFailure: true,
           });
         } catch {
@@ -422,7 +412,7 @@ const SK_KEY_REGEX = /\bsk-(?:proj-|live-|test-|ant-)?[A-Za-z0-9_-]{6,}/;
 const BEARER_TOKEN_REGEX = /\bBearer\s+[A-Za-z0-9._~+/=-]{6,}/i;
 const INLINE_API_KEY_REGEX =
   /(?:"api[_-]?key"|'api[_-]?key'|\bapi[_-]?key)\s*[:=]\s*['"]?(?!\[REDACTED|<redacted>|\*{3,}|null\b|undefined\b)[A-Za-z0-9._-]{4,}/i;
-const SMOKE_WIZARD_MARKERS = ['deepseek-setup-wizard', 'provider-api-key'];
+const SMOKE_WIZARD_MARKERS = ['deepseek-setup-wizard', '#byok-api-key', 'provider-preset-'];
 
 export function scanForPrivacyLeaks(
   payload,
@@ -512,7 +502,11 @@ export function scanForPrivacyLeaks(
 function scrubDiagnosticString(text) {
   return text
     .replace(/\bsk-(?:proj-|live-|test-|ant-)?[A-Za-z0-9_-]{6,}/g, '[REDACTED_KEY]')
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{6,}/gi, 'Bearer [REDACTED_KEY]');
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{6,}/gi, 'Bearer [REDACTED_KEY]')
+    .replace(
+      /((?:"api[_-]?key"|'api[_-]?key'|\bapi[_-]?key)\s*[:=]\s*['"]?)(?!\[REDACTED|<redacted>|\*{3,}|null\b|undefined\b)[A-Za-z0-9._-]{4,}/gi,
+      '$1[REDACTED_KEY]',
+    );
 }
 
 function sanitizeBundleValue(node) {

@@ -412,7 +412,7 @@ describe('android-artifacts collector', () => {
       {
         rawText: 'Authorization: Bearer secret-jwt-token-999 and sk-canary-12345678',
         nested: { apiKey: 'my-secret-value' },
-        dom: { testIds: ['deepseek-setup-wizard', 'provider-api-key'] },
+        dom: { testIds: ['deepseek-setup-wizard', 'provider-preset-deepseek'], selector: '#byok-api-key' },
         storyExcerpt: 'canary-plot-secret-phrase',
       },
       { forbiddenStrings: ['canary-plot-secret-phrase'] },
@@ -424,6 +424,52 @@ describe('android-artifacts collector', () => {
     expect(rules).toContain('sensitive_key_field');
     expect(rules).toContain('smoke_key_wizard_marker');
     expect(rules).toContain('forbidden_string');
+  });
+
+  it('captures .ui.xml via custom runCommand when uiXml is omitted and scrubs console.jsonl secrets', async () => {
+    const rootDir = createTempDir();
+    const collector = createRunArtifactCollector({
+      rootDir,
+      suite: 'e2e',
+      runId: 'run-ui-scrub',
+      deviceMeta: { serial: 'DEVICE-02', apiLevel: 35, displaySizePx: '1080x2400' },
+      runCommand: (_cmd: string, args: string[]) => {
+        if (args.includes('cat')) return '<hierarchy><node text="CapturedViaAdb" /></hierarchy>';
+        if (args.includes('screencap')) return Buffer.from('png');
+        if (args.includes('dumpsys')) return 'topResumedActivity=io.localfiction.harness.e2e/.MainActivity';
+        return '';
+      },
+    });
+
+    await collector.startScenario('E2E-01', { serial: 'DEVICE-02' });
+    const step = await collector.captureStep('E2E-01', 'with-auto-ui', {
+      serial: 'DEVICE-02',
+      domSnapshot: { url: 'http://localhost/' },
+    });
+    expect(step.ui).toBe('scenarios/E2E-01/steps/with-auto-ui.ui.xml');
+    const uiContent = fs.readFileSync(path.join(collector.runDir, step.ui!), 'utf8');
+    expect(uiContent).toContain('CapturedViaAdb');
+
+    collector.writeConsoleEvents('E2E-01', [
+      {
+        hostTsMs: 1_764_224_400_100,
+        level: 'error',
+        event: 'Authorization: Bearer secret-console-token-999 sk-console123456',
+        details: {
+          apiKey: 'sk-nested123456',
+          note: 'failed with sk-inline999999',
+        },
+      },
+    ]);
+    const consoleText = fs.readFileSync(
+      path.join(collector.runDir, 'scenarios', 'E2E-01', 'console.jsonl'),
+      'utf8',
+    );
+    expect(consoleText).not.toContain('secret-console-token-999');
+    expect(consoleText).not.toContain('sk-console123456');
+    expect(consoleText).not.toContain('sk-nested123456');
+    expect(consoleText).not.toContain('sk-inline999999');
+    expect(scanForPrivacyLeaks(consoleText).clean).toBe(true);
   });
 });
 
@@ -460,11 +506,23 @@ describe('android-artifacts llm-reviewer', () => {
       }),
     );
 
-    const runMeta = { suite: 'e2e', runId: 'run-llm' };
+    const runMeta = {
+      suite: 'e2e',
+      runId: 'run-llm',
+      packageId: 'io.localfiction.harness.e2e',
+      deviceMeta: {
+        serial: 'DEVICE-01',
+        apiLevel: 35,
+        displaySizePx: '1080x2400',
+      },
+      clockSync: {
+        clockOffsetMs: 120,
+      },
+    };
     return { rootDir, artifactsRoot, runMeta };
   }
 
-  it('throws in buildLlmReviewInput if a canary secret leaks into review input or disk artifacts', () => {
+  it('throws in buildLlmReviewInput if a canary secret leaks into review input, scenario artifacts, or root timeline.jsonl', () => {
     const { artifactsRoot, runMeta } = setupCaptureFixture();
     fs.writeFileSync(
       path.join(artifactsRoot, 'scenarios', 'E2E-01', 'logcat.txt'),
@@ -486,6 +544,31 @@ describe('android-artifacts llm-reviewer', () => {
       }),
     ).toThrow(/privacy leak/i);
 
+    // Clean logcat, leak inside root timeline.jsonl
+    fs.writeFileSync(
+      path.join(artifactsRoot, 'scenarios', 'E2E-01', 'logcat.txt'),
+      '11-27 06:20:01.000 100 100 I SseStreamClient: clean\n',
+    );
+    fs.writeFileSync(
+      path.join(artifactsRoot, 'timeline.jsonl'),
+      `${JSON.stringify({ hostTsMs: 1000, source: 'cdp_console', scenarioId: 'E2E-01', level: 'info', event: 'sk-timeline-leak-12345' })}\n`,
+    );
+    expect(() =>
+      buildLlmReviewInput({
+        runMeta,
+        artifactsRoot,
+        scenarios: [
+          {
+            scenarioId: 'E2E-01',
+            hardOutcome: 'PASS',
+            assertions: [],
+            artifactPaths: ['scenarios/E2E-01/steps/done.png'],
+          },
+        ],
+      }),
+    ).toThrow(/timeline\.jsonl/i);
+    fs.rmSync(path.join(artifactsRoot, 'timeline.jsonl'));
+
     expect(() =>
       buildLlmReviewInput({
         runMeta,
@@ -504,7 +587,7 @@ describe('android-artifacts llm-reviewer', () => {
     ).toThrow(/privacy leak/i);
   });
 
-  it('enforces Hard Gate (never Fail-to-Pass), visual warning downgrade, SKIPPED_* preservation, and real artifactPath citations', async () => {
+  it('enforces Spec #158 schema, Hard Gate (never Fail-to-Pass), visual warning downgrade, SKIPPED_* preservation, and real artifactPath citations', async () => {
     const { artifactsRoot, runMeta } = setupCaptureFixture();
     const scenarios = [
       {
@@ -528,28 +611,112 @@ describe('android-artifacts llm-reviewer', () => {
     ];
 
     const reviewInput = buildLlmReviewInput({ runMeta, scenarios, artifactsRoot });
+    expect(reviewInput.runId).toBe('run-llm');
+    expect(reviewInput.suite).toBe('e2e');
+    expect(reviewInput.packageId).toBe('io.localfiction.harness.e2e');
+    expect(reviewInput.device).toEqual({
+      serial: 'DEVICE-01',
+      apiLevel: 35,
+      displaySizePx: '1080x2400',
+      clockOffsetMs: 120,
+    });
+    expect(reviewInput.scenarios[0].screenshotPaths).toEqual(['scenarios/E2E-01/steps/done.png']);
+    expect(Array.isArray(reviewInput.scenarios[0].timelineSlice)).toBe(true);
 
-    // Rejects Fail-to-Pass flip
+    // Rejects mismatched runId or mismatched scenario hardOutcome
     expect(() =>
       validateLlmReviewOutput(
         {
-          overallHardGate: 'PASS',
-          llmReviewVerdict: 'CONFIRMED_PASS',
+          runId: 'wrong-run',
+          overallHardGate: 'FAIL',
+          llmReviewVerdict: 'CONFIRMED_FAIL',
           scenarioReviews: [
             {
               scenarioId: 'E2E-01',
+              hardOutcome: 'PASS',
               reviewStatus: 'CONFIRMED_PASS',
               summary: 'ok',
               evidenceCitations: [{ artifactPath: 'scenarios/E2E-01/steps/done.png', observation: 'ok' }],
             },
             {
               scenarioId: 'E2E-06',
+              hardOutcome: 'FAIL',
+              reviewStatus: 'FAIL_ATTRIBUTED',
+              summary: 'failed',
+              evidenceCitations: [{ artifactPath: 'scenarios/E2E-06/failure.png', observation: 'fail' }],
+            },
+            {
+              scenarioId: 'E2E-07',
+              hardOutcome: 'SKIPPED_LOCKSCREEN_PROTECTED',
+              reviewStatus: 'SKIPPED_ACKNOWLEDGED',
+              summary: 'skipped',
+              evidenceCitations: [{ artifactPath: 'scenarios/E2E-07/assertions.json', observation: 'skipped' }],
+            },
+          ],
+        },
+        { reviewInput, artifactsRoot },
+      ),
+    ).toThrow(/runId/i);
+
+    expect(() =>
+      validateLlmReviewOutput(
+        {
+          runId: 'run-llm',
+          overallHardGate: 'FAIL',
+          llmReviewVerdict: 'CONFIRMED_FAIL',
+          scenarioReviews: [
+            {
+              scenarioId: 'E2E-01',
+              hardOutcome: 'PASS',
+              reviewStatus: 'CONFIRMED_PASS',
+              summary: 'ok',
+              evidenceCitations: [{ artifactPath: 'scenarios/E2E-01/steps/done.png', observation: 'ok' }],
+            },
+            {
+              scenarioId: 'E2E-06',
+              hardOutcome: 'PASS',
+              reviewStatus: 'FAIL_ATTRIBUTED',
+              summary: 'forged hardOutcome',
+              evidenceCitations: [{ artifactPath: 'scenarios/E2E-06/failure.png', observation: 'fail' }],
+            },
+            {
+              scenarioId: 'E2E-07',
+              hardOutcome: 'SKIPPED_LOCKSCREEN_PROTECTED',
+              reviewStatus: 'SKIPPED_ACKNOWLEDGED',
+              summary: 'skipped',
+              evidenceCitations: [{ artifactPath: 'scenarios/E2E-07/assertions.json', observation: 'skipped' }],
+            },
+          ],
+        },
+        { reviewInput, artifactsRoot },
+      ),
+    ).toThrow(/hardOutcome/i);
+
+    // Rejects Fail-to-Pass flip
+    expect(() =>
+      validateLlmReviewOutput(
+        {
+          runId: 'run-llm',
+          overallHardGate: 'PASS',
+          llmReviewVerdict: 'CONFIRMED_PASS',
+          scenarioReviews: [
+            {
+              scenarioId: 'E2E-01',
+              hardOutcome: 'PASS',
+              reviewStatus: 'CONFIRMED_PASS',
+              summary: 'ok',
+              evidenceCitations: [{ artifactPath: 'scenarios/E2E-01/steps/done.png', observation: 'ok' }],
+            },
+            {
+              scenarioId: 'E2E-06',
+              hardOutcome: 'FAIL',
               reviewStatus: 'CONFIRMED_PASS',
               summary: 'looks fine visually',
               evidenceCitations: [{ artifactPath: 'scenarios/E2E-06/failure.png', observation: 'ok' }],
             },
             {
               scenarioId: 'E2E-07',
+              hardOutcome: 'SKIPPED_LOCKSCREEN_PROTECTED',
               reviewStatus: 'SKIPPED_ACKNOWLEDGED',
               summary: 'skipped',
               evidenceCitations: [{ artifactPath: 'scenarios/E2E-07/assertions.json', observation: 'skipped' }],
@@ -564,23 +731,27 @@ describe('android-artifacts llm-reviewer', () => {
     expect(() =>
       validateLlmReviewOutput(
         {
+          runId: 'run-llm',
           overallHardGate: 'FAIL',
           llmReviewVerdict: 'CONFIRMED_FAIL',
           scenarioReviews: [
             {
               scenarioId: 'E2E-01',
+              hardOutcome: 'PASS',
               reviewStatus: 'CONFIRMED_PASS',
               summary: 'ok',
               evidenceCitations: [{ artifactPath: 'scenarios/E2E-01/steps/nonexistent.png', observation: 'hallucinated' }],
             },
             {
               scenarioId: 'E2E-06',
+              hardOutcome: 'FAIL',
               reviewStatus: 'FAIL_ATTRIBUTED',
               summary: 'aborted',
               evidenceCitations: [{ artifactPath: 'scenarios/E2E-06/failure.png', observation: 'error' }],
             },
             {
               scenarioId: 'E2E-07',
+              hardOutcome: 'SKIPPED_LOCKSCREEN_PROTECTED',
               reviewStatus: 'SKIPPED_ACKNOWLEDGED',
               summary: 'skipped',
               evidenceCitations: [{ artifactPath: 'scenarios/E2E-07/assertions.json', observation: 'skipped' }],
@@ -596,23 +767,27 @@ describe('android-artifacts llm-reviewer', () => {
       reviewInput,
       artifactsRoot,
       reviewerFn: async () => ({
+        runId: 'run-llm',
         overallHardGate: 'FAIL',
         llmReviewVerdict: 'CONFIRMED_FAIL',
         scenarioReviews: [
           {
             scenarioId: 'E2E-01',
+            hardOutcome: 'PASS',
             reviewStatus: 'CONFIRMED_PASS',
             summary: 'ok',
             evidenceCitations: [{ artifactPath: 'scenarios/E2E-01/steps/done.png', observation: 'ok' }],
           },
           {
             scenarioId: 'E2E-06',
+            hardOutcome: 'FAIL',
             reviewStatus: 'FAIL_ATTRIBUTED',
             summary: 'Native SSE stream aborted after screen-off',
             evidenceCitations: [{ artifactPath: 'scenarios/E2E-06/failure.png', observation: 'banner visible' }],
           },
           {
             scenarioId: 'E2E-07',
+            hardOutcome: 'SKIPPED_LOCKSCREEN_PROTECTED',
             reviewStatus: 'SKIPPED_ACKNOWLEDGED',
             summary: 'Lockscreen PIN active',
             evidenceCitations: [{ artifactPath: 'scenarios/E2E-07/assertions.json', observation: 'skipped' }],
@@ -633,17 +808,20 @@ describe('android-artifacts llm-reviewer', () => {
     expect(() =>
       validateLlmReviewOutput(
         {
+          runId: 'run-llm',
           overallHardGate: 'PASS',
           llmReviewVerdict: 'CONFIRMED_PASS',
           scenarioReviews: [
             {
               scenarioId: 'E2E-01',
+              hardOutcome: 'PASS',
               reviewStatus: 'VISUAL_WARNING_NEEDS_REVIEW',
               summary: 'Bottom button clipped near nav bar',
               evidenceCitations: [{ artifactPath: 'scenarios/E2E-01/steps/done.png', observation: 'clipped' }],
             },
             {
               scenarioId: 'E2E-07',
+              hardOutcome: 'SKIPPED_LOCKSCREEN_PROTECTED',
               reviewStatus: 'CONFIRMED_PASS',
               summary: 'trying to count skip as pass',
               evidenceCitations: [{ artifactPath: 'scenarios/E2E-07/assertions.json', observation: 'skipped' }],
@@ -656,17 +834,20 @@ describe('android-artifacts llm-reviewer', () => {
 
     const downgraded = validateLlmReviewOutput(
       {
+        runId: 'run-llm',
         overallHardGate: 'PASS',
         llmReviewVerdict: 'NEEDS_HUMAN_REVIEW',
         scenarioReviews: [
           {
             scenarioId: 'E2E-01',
+            hardOutcome: 'PASS',
             reviewStatus: 'VISUAL_WARNING_NEEDS_REVIEW',
             summary: 'Bottom button clipped near nav bar',
             evidenceCitations: [{ artifactPath: 'scenarios/E2E-01/steps/done.png', observation: 'clipped' }],
           },
           {
             scenarioId: 'E2E-07',
+            hardOutcome: 'SKIPPED_LOCKSCREEN_PROTECTED',
             reviewStatus: 'SKIPPED_ACKNOWLEDGED',
             summary: 'Skipped due to PIN',
             evidenceCitations: [{ artifactPath: 'scenarios/E2E-07/assertions.json', observation: 'skipped' }],

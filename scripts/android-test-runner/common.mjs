@@ -1,5 +1,12 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import {
+  adbArgs,
+  defaultRunCommand as defaultCommandRunner,
+  readDeviceUiHierarchy,
+} from '../android-driver/index.mjs';
+
+export { adbArgs, defaultCommandRunner };
 
 export const E2E_PACKAGE_ID = 'io.localfiction.harness.e2e';
 export const SMOKE_PACKAGE_ID = 'io.localfiction.harness.smoke';
@@ -57,28 +64,8 @@ export function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function defaultCommandRunner(command, args = [], options = {}) {
-  const encoding = options.encoding === 'buffer' ? null : 'utf8';
-  try {
-    return execFileSync(command, args, {
-      encoding,
-      maxBuffer: 32 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch (error) {
-    if (options.allowFailure) {
-      return options.encoding === 'buffer' ? Buffer.alloc(0) : '';
-    }
-    throw error;
-  }
-}
-
 export function defaultSpawnProcess(command, args = []) {
   return spawn(command, args, { stdio: 'ignore' });
-}
-
-export function adbArgs(serial, rest) {
-  return serial ? ['-s', serial, ...rest] : rest;
 }
 
 export async function runAdb(ctx, rest, options = {}) {
@@ -176,17 +163,7 @@ export async function readWindowFocus(ctx) {
 }
 
 export async function readUiHierarchy(ctx) {
-  const remotePath = `/sdcard/lfh-suite-ui-${Date.now()}.xml`;
-  try {
-    await runAdb(ctx, ['shell', 'uiautomator', 'dump', remotePath]);
-    return String(await runAdb(ctx, ['exec-out', 'cat', remotePath]) ?? '');
-  } finally {
-    try {
-      await runAdb(ctx, ['shell', 'rm', '-f', remotePath], { allowFailure: true });
-    } catch {
-      // Best-effort cleanup of transient uiautomator dump file.
-    }
-  }
+  return readDeviceUiHierarchy(ctx.adbRunner, ctx.serial);
 }
 
 export async function checkLockscreenProtected(ctx) {
@@ -307,9 +284,12 @@ export async function cdpEvaluate(ctx, expr) {
 }
 
 export async function cdpClickSelector(ctx, selector, description = selector) {
+  if (ctx.uiDriver?.clickSelector) {
+    return ctx.uiDriver.clickSelector(ctx, selector, description);
+  }
   const clicked = await cdpEvaluate(
     ctx,
-    `/* @lfh-op clickSelector ${JSON.stringify({ selector })} */ (() => {
+    `(() => {
       const elements = [...document.querySelectorAll(${JSON.stringify(selector)})];
       const element = elements.find((candidate) => {
         const style = getComputedStyle(candidate);
@@ -330,10 +310,19 @@ export async function cdpClickSelector(ctx, selector, description = selector) {
 }
 
 export async function cdpFillInput(ctx, selector, value, description = selector) {
+  if (ctx.uiDriver?.fillInput) {
+    return ctx.uiDriver.fillInput(ctx, selector, value, description);
+  }
   const filled = await cdpEvaluate(
     ctx,
-    `/* @lfh-op fillInput ${JSON.stringify({ selector, value })} */ (() => {
-      const element = document.querySelector(${JSON.stringify(selector)});
+    `(() => {
+      const elements = [...document.querySelectorAll(${JSON.stringify(selector)})];
+      const element = elements.find((candidate) => {
+        const style = getComputedStyle(candidate);
+        return candidate.getClientRects().length > 0 &&
+          style.display !== 'none' &&
+          style.visibility !== 'hidden';
+      }) ?? elements[0];
       if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
         return false;
       }
@@ -354,9 +343,12 @@ export async function cdpFillInput(ctx, selector, value, description = selector)
 }
 
 export async function cdpReadSnapshot(ctx) {
+  if (ctx.uiDriver?.readSnapshot) {
+    return ctx.uiDriver.readSnapshot(ctx);
+  }
   return cdpEvaluate(
     ctx,
-    `/* @lfh-op readSnapshot {} */ (() => {
+    `(() => {
       const testIds = Array.from(document.querySelectorAll('[data-testid]')).map((el) =>
         el.getAttribute('data-testid'),
       );
@@ -372,7 +364,10 @@ export async function cdpReadSnapshot(ctx) {
             scale: window.visualViewport.scale,
           }
         : null;
-      const stage = document.querySelector('.main-stage');
+      const stage =
+        document.querySelector('[data-testid="writing-discussion-timeline"]') ??
+        document.querySelector('[data-testid="character-timeline"]') ??
+        document.querySelector('.main-stage');
       const stageScrollGapPx = stage
         ? Math.max(0, Math.round(stage.scrollHeight - stage.scrollTop - stage.clientHeight))
         : 0;
@@ -389,7 +384,7 @@ export async function cdpReadSnapshot(ctx) {
         stageScrollGapPx,
         drawerOpen: Boolean(document.querySelector('[data-testid="mobile-library-dialog"][open]')),
         settingsOpen: Boolean(document.querySelector('[data-testid="settings-page"]')),
-        wizardOpen: Boolean(document.querySelector('[data-testid="deepseek-setup-wizard"]')),
+        wizardOpen: Boolean(document.querySelector('[data-testid="deepseek-setup-wizard"][open]')),
         diagnosticsOpen: Boolean(document.querySelector('[data-testid="diagnostics-preview"][open]')),
         modeSwitchDialogOpen: Boolean(document.querySelector('[data-testid="mode-switch-confirm-dialog"][open]')),
         testIds,
@@ -399,11 +394,21 @@ export async function cdpReadSnapshot(ctx) {
 }
 
 export async function cdpQueryElementMetrics(ctx, selector) {
+  if (ctx.uiDriver?.queryElementMetrics) {
+    return ctx.uiDriver.queryElementMetrics(ctx, selector);
+  }
   return cdpEvaluate(
     ctx,
-    `/* @lfh-op queryElementMetrics ${JSON.stringify({ selector })} */ (() => {
-      const el = document.querySelector(${JSON.stringify(selector)});
+    `(() => {
+      const elements = [...document.querySelectorAll(${JSON.stringify(selector)})];
+      const el = elements.find((candidate) => {
+        const style = getComputedStyle(candidate);
+        return candidate.getClientRects().length > 0 &&
+          style.display !== 'none' &&
+          style.visibility !== 'hidden';
+      }) ?? elements[0];
       if (!el) return null;
+      el.scrollIntoView({ block: 'center', inline: 'center' });
       const rect = el.getBoundingClientRect();
       const cx = Math.max(0, Math.min(rect.left + rect.width / 2, window.innerWidth - 1));
       const cy = Math.max(0, Math.min(rect.top + rect.height / 2, window.innerHeight - 1));
@@ -477,11 +482,20 @@ export async function collectScenarioLogsAndBundle(ctx, scenarioId, { windowStar
 
 export async function assertSafeCaptureAllowed(ctx) {
   if (ctx.suite !== 'smoke') return;
+  if (ctx.uiDriver?.isKeyUiVisible) {
+    const keyUiVisible = await ctx.uiDriver.isKeyUiVisible(ctx);
+    if (keyUiVisible) {
+      throw new Error(
+        'SECURITY VIOLATION: Refusing to capture screenshot while API key setup UI is open in .smoke.',
+      );
+    }
+    return;
+  }
   if (!ctx.session?.client) return;
   const keyUiVisible = await cdpEvaluate(
     ctx,
-    `/* @lfh-op checkKeyUiVisible {} */ Boolean(
-      document.querySelector('[data-testid="deepseek-setup-wizard"], [data-testid="provider-api-key"], #byok-api-key, input[name="apiKey"]')
+    `Boolean(
+      document.querySelector('[data-testid="deepseek-setup-wizard"], #byok-api-key, input[name="apiKey"], [data-testid="provider-preset-deepseek"]')
     )`,
   ).catch(() => false);
   if (keyUiVisible) {
@@ -630,6 +644,7 @@ export function buildDefaultHardGateReviewer() {
       if (scenario.hardOutcome === 'FAIL') {
         return {
           scenarioId: scenario.scenarioId,
+          hardOutcome: scenario.hardOutcome,
           reviewStatus: 'FAIL_ATTRIBUTED',
           summary:
             scenario.error ||
@@ -645,6 +660,7 @@ export function buildDefaultHardGateReviewer() {
       if (String(scenario.hardOutcome).startsWith('SKIPPED_')) {
         return {
           scenarioId: scenario.scenarioId,
+          hardOutcome: scenario.hardOutcome,
           reviewStatus: 'SKIPPED_ACKNOWLEDGED',
           summary: `Scenario skipped: ${scenario.hardOutcome}.`,
           evidenceCitations: [
@@ -657,6 +673,7 @@ export function buildDefaultHardGateReviewer() {
       }
       return {
         scenarioId: scenario.scenarioId,
+        hardOutcome: scenario.hardOutcome,
         reviewStatus: 'CONFIRMED_PASS',
         summary: `All hard assertions passed for ${scenario.scenarioId}.`,
         evidenceCitations: [
@@ -669,6 +686,7 @@ export function buildDefaultHardGateReviewer() {
     });
 
     return {
+      runId: reviewInput.runId,
       overallHardGate: hasFail ? 'FAIL' : 'PASS',
       llmReviewVerdict: hasFail ? 'CONFIRMED_FAIL' : 'CONFIRMED_PASS',
       scenarioReviews,

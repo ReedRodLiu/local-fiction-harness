@@ -8,6 +8,7 @@ import {
   E2E_SCENARIO_IDS,
   SMOKE_SCENARIO_IDS,
   createDryRunHarness,
+  parseCliArgs,
   runAndroidSuite,
 } from '../../scripts/android-test-runner/index.mjs';
 
@@ -65,6 +66,7 @@ describe('Android .e2e and .smoke suite orchestrators', () => {
       dryRun: true,
       adbRunner: harness.adbRunner,
       cdpFactory: harness.cdpFactory,
+      uiDriver: harness.uiDriver,
       timings: {
         backgroundHoldMs: 15,
         lockscreenHoldMs: 15,
@@ -105,6 +107,33 @@ describe('Android .e2e and .smoke suite orchestrators', () => {
     expect(fs.existsSync(path.join(result.runDir, 'timeline.jsonl'))).toBe(true);
     expect(fs.existsSync(path.join(result.runDir, 'llm-review-input.json'))).toBe(true);
     expect(fs.existsSync(path.join(result.runDir, 'llm-review-output.json'))).toBe(true);
+
+    const reviewInput = JSON.parse(
+      fs.readFileSync(path.join(result.runDir, 'llm-review-input.json'), 'utf8'),
+    );
+    const reviewOutput = JSON.parse(
+      fs.readFileSync(path.join(result.runDir, 'llm-review-output.json'), 'utf8'),
+    );
+    expect(reviewInput.runId).toBe('test-e2e-pass');
+    expect(reviewInput.suite).toBe('e2e');
+    expect(reviewInput.packageId).toBe('io.localfiction.harness.e2e');
+    expect(reviewInput.device).toMatchObject({
+      serial: 'emulator-5554',
+      clockOffsetMs: expect.any(Number),
+    });
+    expect(reviewOutput.runId).toBe('test-e2e-pass');
+    expect(reviewOutput.scenarioReviews[0].hardOutcome).toBe('PASS');
+
+    // --no-llm-review scope creep removed; scripts contain zero @lfh-op stubs
+    expect(() => parseCliArgs(['--no-llm-review'])).toThrow(/Unknown CLI flag/i);
+    for (const rel of [
+      'scripts/android-test-runner/common.mjs',
+      'scripts/android-test-runner/scenarios-e2e.mjs',
+      'scripts/android-test-runner/scenarios-smoke.mjs',
+    ]) {
+      const src = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+      expect(src).not.toContain('@lfh-op');
+    }
   });
 
   it('marks E2E-06B as SKIPPED_LOCKSCREEN_PROTECTED when device has lockscreen password', async () => {
@@ -142,14 +171,13 @@ describe('Android .e2e and .smoke suite orchestrators', () => {
       dryRun: true,
       only: ['E2E-06A'],
       adbRunner: harness.adbRunner,
-      cdpFactory: async (opts) => {
-        const session = await harness.cdpFactory(opts);
-        const rawEval = session.client.evaluate.bind(session.client);
-        session.client.evaluate = async (expr) => {
-          if (expr.includes('e2eSendTurn')) attemptCount += 1;
-          return rawEval(expr);
-        };
-        return session;
+      cdpFactory: harness.cdpFactory,
+      uiDriver: {
+        ...harness.uiDriver,
+        sendTurn: async (ctx, opts) => {
+          attemptCount += 1;
+          return harness.uiDriver.sendTurn(ctx, opts);
+        },
       },
       timings: { backgroundHoldMs: 10 },
     });
@@ -180,6 +208,7 @@ describe('Android .e2e and .smoke suite orchestrators', () => {
       dryRun: true,
       adbRunner: harnessSkip.adbRunner,
       cdpFactory: harnessSkip.cdpFactory,
+      uiDriver: harnessSkip.uiDriver,
       timings: { smokeBackgroundHoldMs: 10 },
     });
 
@@ -217,6 +246,7 @@ describe('Android .e2e and .smoke suite orchestrators', () => {
       keepStories: true,
       adbRunner: harnessKeep.adbRunner,
       cdpFactory: harnessKeep.cdpFactory,
+      uiDriver: harnessKeep.uiDriver,
       timings: { smokeBackgroundHoldMs: 10 },
     });
     expect(keepRes.scenarios.find((s) => s.scenarioId === 'SMK-06')?.hardOutcome).toBe('PASS');
@@ -237,6 +267,7 @@ describe('Android .e2e and .smoke suite orchestrators', () => {
       only: ['SMK-01', 'SMK-02'],
       adbRunner: harnessFail.adbRunner,
       cdpFactory: harnessFail.cdpFactory,
+      uiDriver: harnessFail.uiDriver,
     });
     expect(failRes.overallHardGate).toBe('FAIL');
     expect(harnessFail.state.stories).toEqual([
@@ -254,17 +285,14 @@ describe('Android .e2e and .smoke suite orchestrators', () => {
       dryRun: true,
       only: ['SMK-01'],
       adbRunner: harnessGuard.adbRunner,
-      cdpFactory: async (opts) => {
-        const session = await harnessGuard.cdpFactory(opts);
-        const origEval = session.client.evaluate.bind(session.client);
-        session.client.evaluate = async (expr) => {
-          if (expr.includes('smokeCreateAndSendTurn')) {
-            // Attempt forbidden loadApiKey call via CDP wrapper
-            await session.client.evaluate('NativeVault.loadApiKey()');
-          }
-          return origEval(expr);
-        };
-        return session;
+      cdpFactory: harnessGuard.cdpFactory,
+      uiDriver: {
+        ...harnessGuard.uiDriver,
+        sendSmokeTurn: async (ctx) => {
+          // Attempt forbidden loadApiKey call via CDP wrapper
+          await ctx.session!.client.evaluate('NativeVault.loadApiKey()');
+          return {};
+        },
       },
     });
     expect(guardFail.overallHardGate).toBe('FAIL');

@@ -1,7 +1,12 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { unzipSync, strFromU8 } from 'fflate';
+
+export const EXPECTED_RELEASE_CERT_SHA256 =
+  '0cce9656dcfcc439564f71418cce015c2cab428193a5654ad46670573b0a040d';
 
 const MAX_APK_BYTES = 20 * 1024 * 1024;
 const DEFAULT_PACKAGE_ID = 'io.localfiction.harness';
@@ -378,6 +383,95 @@ function collectTextFiles(dirPath, prefix = '') {
   return collected;
 }
 
+function resolveApksignerPath() {
+  const pathDirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  for (const dir of pathDirs) {
+    const candidate = path.join(dir, 'apksigner');
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  const sdkRoots = [
+    process.env.ANDROID_HOME,
+    process.env.ANDROID_SDK_ROOT,
+    path.join(os.homedir(), 'Library', 'Android', 'sdk'),
+  ].filter(Boolean);
+  for (const sdkRoot of sdkRoots) {
+    const buildToolsDir = path.join(sdkRoot, 'build-tools');
+    if (!fs.existsSync(buildToolsDir)) continue;
+    const versions = fs
+      .readdirSync(buildToolsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    for (const version of versions) {
+      const candidate = path.join(buildToolsDir, version, 'apksigner');
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function defaultRunApksigner(command, args) {
+  return execFileSync(command, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+export function auditApkSigningCertificate({
+  apkPath,
+  runCommand,
+  expectedSha256 = EXPECTED_RELEASE_CERT_SHA256,
+} = {}) {
+  if (!apkPath) {
+    throw new Error('auditApkSigningCertificate requires apkPath.');
+  }
+  const resolvedApksigner = resolveApksignerPath();
+  if (!resolvedApksigner && typeof runCommand !== 'function') {
+    throw new Error('apksigner binary not found in PATH or Android SDK build-tools.');
+  }
+  const execFn = typeof runCommand === 'function' ? runCommand : defaultRunApksigner;
+  const output = String(
+    execFn(resolvedApksigner ?? 'apksigner', ['verify', '--print-certs', apkPath]) ?? '',
+  );
+
+  if (/CN\s*=\s*Android Debug/i.test(output)) {
+    throw new Error(
+      `Release APK (${path.basename(apkPath)}) must not be signed with CN=Android Debug.`,
+    );
+  }
+
+  const shaMatches = [
+    ...output.matchAll(/certificate SHA-256 digest:\s*([a-fA-F0-9:]+)/gi),
+  ].map((match) => match[1].replace(/:/g, '').toLowerCase());
+  if (shaMatches.length === 0) {
+    throw new Error(
+      `apksigner did not report a certificate SHA-256 digest for ${path.basename(apkPath)}.`,
+    );
+  }
+
+  const normalizedExpected = String(expectedSha256).replace(/:/g, '').toLowerCase();
+  if (!shaMatches.includes(normalizedExpected)) {
+    throw new Error(
+      `Release APK signing certificate SHA-256 mismatch: expected ${normalizedExpected}, got ${shaMatches.join(', ')}.`,
+    );
+  }
+
+  const dnMatch = output.match(/Signer #\d+ certificate DN:\s*(.+)/i);
+  return {
+    signed: true,
+    sha256: normalizedExpected,
+    subjectDn: dnMatch ? dnMatch[1].trim() : null,
+  };
+}
+
+function isSignedReleaseApkFilename(fileName) {
+  return /^Folio-.*-release\.apk$/i.test(fileName) || fileName === 'app-release.apk';
+}
+
 function resolveReleaseApkPath(releaseDir) {
   if (!fs.existsSync(releaseDir)) {
     return null;
@@ -394,7 +488,7 @@ function resolveReleaseApkPath(releaseDir) {
   return path.join(releaseDir, preferred);
 }
 
-export function auditReleaseArtifacts(rootDir = process.cwd(), secretValues = []) {
+export function auditReleaseArtifacts(rootDir = process.cwd(), secretValues = [], options = {}) {
   const mainNscPath = path.join(
     rootDir,
     'android/app/src/main/res/xml/network_security_config.xml',
@@ -454,9 +548,20 @@ export function auditReleaseArtifacts(rootDir = process.cwd(), secretValues = []
     forbidRemoteServerUrl: true,
   });
 
+  const releaseApkName = path.basename(releaseApkPath);
+  const certAudit = isSignedReleaseApkFilename(releaseApkName)
+    ? auditApkSigningCertificate({
+        apkPath: releaseApkPath,
+        runCommand: options.runCommand,
+        expectedSha256: options.expectedSha256,
+      })
+    : { signed: false, sha256: null };
+
   return {
     apkPath: releaseApkPath,
     apkBytes: releaseApkBytes.byteLength,
+    signed: certAudit.signed,
+    ...(certAudit.sha256 ? { signingCertSha256: certAudit.sha256 } : {}),
   };
 }
 

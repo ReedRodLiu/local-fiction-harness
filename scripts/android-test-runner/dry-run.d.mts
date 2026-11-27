@@ -16,6 +16,7 @@ export interface DryRunHarness {
     characterIds: string[];
   };
   adbRunner: AdbRunner;
+  uiDriver: Record<string, (...args: any[]) => Promise<any>>;
   cdpFactory: (opts: {
     serial: string;
     packageId: string;

@@ -1,7 +1,10 @@
 export {
   CdpClient,
+  adbArgs,
   connectToAppWebView,
+  defaultRunCommand,
   discoverWebViewSocket,
+  readDeviceUiHierarchy,
   selectMainCapacitorTarget,
 } from './cdp-client.mjs';
 

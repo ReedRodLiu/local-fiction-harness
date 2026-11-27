@@ -19,7 +19,24 @@ export interface BufferedCdpEvent {
   params: Record<string, unknown>;
 }
 
-export type AdbRunCommand = (command: string, args: string[]) => string | Promise<string>;
+export type AdbRunCommand = (
+  command: string,
+  args: string[],
+  options?: { allowFailure?: boolean; encoding?: 'utf8' | 'buffer'; background?: boolean },
+) => string | Buffer | Promise<string | Buffer>;
+
+export function defaultRunCommand(
+  command: string,
+  args?: string[],
+  options?: { allowFailure?: boolean; encoding?: 'utf8' | 'buffer' },
+): string | Buffer;
+
+export function adbArgs(serial: string | undefined, rest: string[]): string[];
+
+export function readDeviceUiHierarchy(
+  runCommand?: AdbRunCommand,
+  serial?: string,
+): Promise<string>;
 
 export function discoverWebViewSocket(options: {
   serial?: string;
@@ -49,6 +66,7 @@ export class CdpClient {
   ): Promise<CdpClient>;
 
   constructor(socket: WebSocket | null, options?: Record<string, unknown>);
+  detachSocket(): WebSocket | null;
   isConnected(): boolean;
   onEvent(
     method: string,

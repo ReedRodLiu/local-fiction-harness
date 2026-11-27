@@ -11,7 +11,6 @@ export interface ParsedRunnerCliOptions {
   only?: string[];
   artifactsDir?: string;
   label?: string;
-  llmReview: boolean;
 }
 
 export interface RunAndroidSuiteOptions {
@@ -25,7 +24,6 @@ export interface RunAndroidSuiteOptions {
   only?: string[];
   artifactsDir?: string;
   label?: string;
-  llmReview?: boolean;
   lockscreenProtected?: boolean;
   hasCustomProfile?: boolean;
   failScenario?: string;
@@ -38,6 +36,7 @@ export interface RunAndroidSuiteOptions {
     packageId: string;
     runCommand: AdbRunner;
   }) => Promise<AppWebViewSession>;
+  uiDriver?: Record<string, (...args: any[]) => Promise<any>> | null;
   reviewerFn?: (reviewInput: LlmReviewInput) => Promise<LlmReviewOutput> | LlmReviewOutput;
   mockSseFactory?: () => Promise<MockSseServer>;
   spawnProcess?: (command: string, args: string[]) => { kill?: (signal?: string) => void };
@@ -53,7 +52,7 @@ export interface RunAndroidSuiteResult {
   timelineCount: number;
   overallHardGate: 'PASS' | 'FAIL';
   scenarios: ScenarioExecutionResult[];
-  llmReview: LlmReviewOutput | null;
+  llmReview: LlmReviewOutput;
 }
 
 export function parseCliArgs(argv: string[]): ParsedRunnerCliOptions;

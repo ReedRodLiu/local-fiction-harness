@@ -4,10 +4,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   CdpClient,
   OS_EDGE_GUARD_CSS_PX,
+  adbArgs,
   computeSafeSwipeBounds,
   connectToAppWebView,
+  defaultRunCommand,
   discoverWebViewSocket,
   parseDisplayMetrics,
+  readDeviceUiHierarchy,
   removeAdbReverse,
   resolveDomTapPoint,
   resolveOsEdgeBackSwipe,
@@ -542,6 +545,47 @@ describe('Android WebView CDP discovery and reconnect', () => {
     await session.close();
     expect(adbCommands).toContain(`-s emulator-5554 forward --remove tcp:${server2.port}`);
     expect(CdpClient).toBeDefined();
+  });
+
+  it('detaches message/close/error listeners via detachSocket() and exports shared ADB helpers', async () => {
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+    const mockSocket = {
+      readyState: 1,
+      addEventListener(type: string, fn: (...args: unknown[]) => void) {
+        if (!listeners.has(type)) listeners.set(type, new Set());
+        listeners.get(type)!.add(fn);
+      },
+      removeEventListener(type: string, fn: (...args: unknown[]) => void) {
+        listeners.get(type)?.delete(fn);
+      },
+      send() {},
+      close() {},
+    };
+
+    const client = new CdpClient(mockSocket as unknown as WebSocket);
+    expect(listeners.get('message')?.size).toBe(1);
+    expect(listeners.get('close')?.size).toBe(1);
+    expect(listeners.get('error')?.size).toBe(1);
+
+    const detached = client.detachSocket();
+    expect(detached).toBe(mockSocket);
+    expect(listeners.get('message')?.size).toBe(0);
+    expect(listeners.get('close')?.size).toBe(0);
+    expect(listeners.get('error')?.size).toBe(0);
+
+    expect(adbArgs('SER123', ['shell', 'ls'])).toEqual(['-s', 'SER123', 'shell', 'ls']);
+    expect(adbArgs(undefined, ['devices'])).toEqual(['devices']);
+    expect(typeof defaultRunCommand).toBe('function');
+
+    const adbUiCalls: string[] = [];
+    const uiXml = await readDeviceUiHierarchy((_cmd: string, args: string[]) => {
+      adbUiCalls.push(args.join(' '));
+      if (args.includes('cat')) return '<hierarchy><node text="OK" /></hierarchy>';
+      return '';
+    }, 'SER123');
+    expect(uiXml).toContain('<hierarchy>');
+    expect(adbUiCalls.some((c) => c.includes('-s SER123 shell uiautomator dump'))).toBe(true);
+    expect(adbUiCalls.some((c) => c.includes('-s SER123 shell rm -f'))).toBe(true);
   });
 });
 

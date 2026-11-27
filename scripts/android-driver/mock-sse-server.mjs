@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { execFileSync } from 'node:child_process';
+import { adbArgs, defaultRunCommand } from './cdp-client.mjs';
 
 const DEFAULT_MODELS = [
   { id: 'deepseek-chat', object: 'model', owned_by: 'deepseek' },
@@ -23,17 +23,6 @@ const DEFAULT_HALF_REFUSAL_PREFIX =
 const DEFAULT_HALF_REFUSAL_BODY = '抱歉，我不能继续写更具体的内容。';
 const DEFAULT_HALF_REFUSAL_SUMMARY =
   '\n\n```lfh-summary\n对话继续推进，气氛变得紧张。\n```';
-
-function defaultRunCommand(command, args = []) {
-  return execFileSync(command, args, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-}
-
-function adbArgs(serial, rest) {
-  return serial ? ['-s', serial, ...rest] : rest;
-}
 
 function writeChunk(res, text) {
   return new Promise((resolve, reject) => {

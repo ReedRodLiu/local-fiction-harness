@@ -26,6 +26,37 @@ function scanReferencedTextArtifacts({ scenarios, artifactsRoot, forbiddenString
   const resolvedRoot = path.resolve(artifactsRoot);
   const visitedPaths = new Set();
 
+  function scanRelativeFile(relPath) {
+    if (typeof relPath !== 'string' || !relPath.trim()) {
+      return;
+    }
+    const ext = path.extname(relPath).toLowerCase();
+    if (!TEXT_ARTIFACT_EXTENSIONS.has(ext)) {
+      return;
+    }
+    const resolvedFile = path.resolve(resolvedRoot, relPath);
+    if (!isWithinRoot(resolvedRoot, resolvedFile) || visitedPaths.has(resolvedFile)) {
+      return;
+    }
+    visitedPaths.add(resolvedFile);
+    if (!fs.existsSync(resolvedFile)) {
+      return;
+    }
+    const stat = fs.statSync(resolvedFile);
+    if (!stat.isFile() || stat.size > MAX_SCAN_FILE_BYTES) {
+      return;
+    }
+    const rawText = fs.readFileSync(resolvedFile, 'utf8');
+    const scan = scanForPrivacyLeaks(rawText, { forbiddenStrings });
+    if (!scan.clean) {
+      throw formatLeakError(scan.leaks, `artifact "${relPath}"`);
+    }
+  }
+
+  // Always scan root timeline.jsonl and run.json first
+  scanRelativeFile('timeline.jsonl');
+  scanRelativeFile('run.json');
+
   for (const scenario of scenarios) {
     const candidateRelPaths = new Set(
       Array.isArray(scenario.artifactPaths) ? scenario.artifactPaths : [],
@@ -47,32 +78,34 @@ function scanReferencedTextArtifacts({ scenarios, artifactsRoot, forbiddenString
     }
 
     for (const relPath of candidateRelPaths) {
-      if (typeof relPath !== 'string' || !relPath.trim()) {
-        continue;
-      }
-      const ext = path.extname(relPath).toLowerCase();
-      if (!TEXT_ARTIFACT_EXTENSIONS.has(ext)) {
-        continue;
-      }
-      const resolvedFile = path.resolve(resolvedRoot, relPath);
-      if (!isWithinRoot(resolvedRoot, resolvedFile) || visitedPaths.has(resolvedFile)) {
-        continue;
-      }
-      visitedPaths.add(resolvedFile);
-      if (!fs.existsSync(resolvedFile)) {
-        continue;
-      }
-      const stat = fs.statSync(resolvedFile);
-      if (!stat.isFile() || stat.size > MAX_SCAN_FILE_BYTES) {
-        continue;
-      }
-      const rawText = fs.readFileSync(resolvedFile, 'utf8');
-      const scan = scanForPrivacyLeaks(rawText, { forbiddenStrings });
-      if (!scan.clean) {
-        throw formatLeakError(scan.leaks, `artifact "${relPath}"`);
-      }
+      scanRelativeFile(relPath);
     }
   }
+}
+
+function readTimelineEventsByScenario(artifactsRoot) {
+  const timelinePath = path.join(artifactsRoot, 'timeline.jsonl');
+  if (!fs.existsSync(timelinePath)) {
+    return new Map();
+  }
+  const byScenario = new Map();
+  const raw = fs.readFileSync(timelinePath, 'utf8');
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const evt = JSON.parse(trimmed);
+      const id = String(evt?.scenarioId ?? '');
+      if (!id) continue;
+      if (!byScenario.has(id)) {
+        byScenario.set(id, []);
+      }
+      byScenario.get(id).push(evt);
+    } catch {
+      // Ignore malformed lines; privacy scan still reads raw text.
+    }
+  }
+  return byScenario;
 }
 
 export function buildLlmReviewInput({
@@ -88,29 +121,84 @@ export function buildLlmReviewInput({
     throw new Error('buildLlmReviewInput requires a scenarios array.');
   }
 
-  const reviewInput = {
-    schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
-    runMeta: runMeta ?? {},
-    scenarios: scenarios.map((scenario) => ({
-      ...scenario,
-      scenarioId: String(scenario.scenarioId),
-      hardOutcome: scenario.hardOutcome,
-      assertions: Array.isArray(scenario.assertions) ? scenario.assertions : [],
-      artifactPaths: Array.isArray(scenario.artifactPaths) ? scenario.artifactPaths : [],
-    })),
+  const meta = runMeta ?? {};
+  const suite = meta.suite === 'smoke' ? 'smoke' : 'e2e';
+  const runId = String(meta.runId ?? '');
+  const packageId = String(
+    meta.packageId ??
+      meta.deviceMeta?.packageId ??
+      (suite === 'smoke' ? 'io.localfiction.harness.smoke' : 'io.localfiction.harness.e2e'),
+  );
+  const device = {
+    serial: String(meta.deviceMeta?.serial ?? 'unknown'),
+    apiLevel: meta.deviceMeta?.apiLevel ?? null,
+    displaySizePx: meta.deviceMeta?.displaySizePx ?? null,
+    clockOffsetMs: Number(meta.clockSync?.clockOffsetMs ?? 0),
   };
 
-  const inputScan = scanForPrivacyLeaks(reviewInput, { forbiddenStrings });
-  if (!inputScan.clean) {
-    throw formatLeakError(inputScan.leaks, 'llm-review-input');
-  }
+  const timelineByScenario = readTimelineEventsByScenario(artifactsRoot);
+
+  const reviewInput = {
+    schemaVersion: 1,
+    runId,
+    suite,
+    packageId,
+    device,
+    generatedAt: new Date().toISOString(),
+    runMeta: meta,
+    scenarios: scenarios.map((scenario) => {
+      const scenarioId = String(scenario.scenarioId);
+      const artifactPaths = Array.isArray(scenario.artifactPaths) ? scenario.artifactPaths : [];
+      const screenshotPaths = Array.isArray(scenario.screenshotPaths)
+        ? scenario.screenshotPaths
+        : artifactPaths.filter((p) => typeof p === 'string' && p.endsWith('.png'));
+      const logcatRel = `scenarios/${scenarioId}/logcat.txt`;
+      const bundleRel = `scenarios/${scenarioId}/diagnostic-bundle.json`;
+      const videoRel = `scenarios/${scenarioId}/screenrecord.mp4`;
+
+      const logcatExcerptPath =
+        scenario.logcatExcerptPath ??
+        artifactPaths.find((p) => p === logcatRel || p.endsWith('/logcat.txt')) ??
+        (fs.existsSync(path.join(artifactsRoot, logcatRel)) ? logcatRel : undefined);
+      const diagnosticBundlePath =
+        scenario.diagnosticBundlePath !== undefined
+          ? scenario.diagnosticBundlePath
+          : (artifactPaths.find((p) => p === bundleRel || p.endsWith('/diagnostic-bundle.json')) ??
+            (fs.existsSync(path.join(artifactsRoot, bundleRel)) ? bundleRel : null));
+      const videoPath =
+        scenario.videoPath !== undefined
+          ? scenario.videoPath
+          : (artifactPaths.find((p) => p === videoRel || p.endsWith('.mp4')) ??
+            (fs.existsSync(path.join(artifactsRoot, videoRel)) ? videoRel : null));
+      const timelineSlice = Array.isArray(scenario.timelineSlice)
+        ? scenario.timelineSlice
+        : (timelineByScenario.get(scenarioId) ?? []);
+
+      return {
+        ...scenario,
+        scenarioId,
+        hardOutcome: scenario.hardOutcome,
+        assertions: Array.isArray(scenario.assertions) ? scenario.assertions : [],
+        artifactPaths,
+        timelineSlice,
+        screenshotPaths,
+        ...(logcatExcerptPath ? { logcatExcerptPath } : {}),
+        diagnosticBundlePath,
+        videoPath,
+      };
+    }),
+  };
 
   scanReferencedTextArtifacts({
     scenarios: reviewInput.scenarios,
     artifactsRoot,
     forbiddenStrings,
   });
+
+  const inputScan = scanForPrivacyLeaks(reviewInput, { forbiddenStrings });
+  if (!inputScan.clean) {
+    throw formatLeakError(inputScan.leaks, 'llm-review-input');
+  }
 
   return reviewInput;
 }
@@ -127,6 +215,11 @@ export function validateLlmReviewOutput(output, { reviewInput, artifactsRoot }) 
   }
   if (!artifactsRoot) {
     throw new Error('validateLlmReviewOutput requires artifactsRoot.');
+  }
+  if (typeof output.runId !== 'string' || output.runId !== reviewInput.runId) {
+    throw new Error(
+      `LLM review output runId mismatch: expected "${reviewInput.runId}", got "${output.runId}".`,
+    );
   }
   if (!VALID_OVERALL_GATES.has(output.overallHardGate)) {
     throw new Error(`Invalid overallHardGate "${output.overallHardGate}".`);
@@ -186,6 +279,11 @@ export function validateLlmReviewOutput(output, { reviewInput, artifactsRoot }) 
     seenScenarios.add(scenarioId);
 
     const outcome = String(inputScenario.hardOutcome);
+    if (typeof review.hardOutcome !== 'string' || review.hardOutcome !== outcome) {
+      throw new Error(
+        `Scenario "${scenarioId}" hardOutcome mismatch: expected "${outcome}", got "${review.hardOutcome}".`,
+      );
+    }
     if (outcome === 'FAIL') {
       if (review.reviewStatus !== 'FAIL_ATTRIBUTED') {
         throw new Error(
