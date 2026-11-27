@@ -5,6 +5,8 @@ status: accepted
 # 以通用 OpenAI 兼容多服务商档案为默认架构并保留 DeepSeek 一等预设
 
 > 部分修订 [ADR 0009](0009-deepseek-official-guided-byok.md)、[ADR 0014](0014-deepseek-model-selection-and-reasoning-effort.md) 与 [ADR 0016](0016-prompt-pack-and-refusal-governance.md)：解除对 `https://api.deepseek.com` 与官方双模型白名单的强制锁定，将自定义 OpenAI 兼容多服务商档案确立为默认架构，同时保留 DeepSeek 官方作为拥有全套原生增强的一等内置预设。
+>
+> 增补：Android 端第三方服务商免密钥公开网页联网检索兜底策略见 [ADR 0019](0019-android-keyless-public-research-fallback.md)。
 
 ## Decision
 
