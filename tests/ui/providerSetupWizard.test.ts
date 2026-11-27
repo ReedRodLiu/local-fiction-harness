@@ -174,7 +174,7 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
     expect(autoWebMarkup).toMatch(/data-testid="provider-search-preset-auto"[^>]*aria-pressed="true"/);
     expect(autoWebMarkup).not.toContain('data-testid="provider-search-key-input"');
     expect(autoWebMarkup).toContain(
-      '不配搜索也能正常玩；安卓端会自动免费查原作，网页端如需查证可在此选配',
+      '不配搜索也能正常玩；安卓端会自动尝试免费查原作，网页端如需查证可在此选配免费搜索',
     );
 
     const autoAndroidMarkup = renderToStaticMarkup(

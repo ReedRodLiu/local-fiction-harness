@@ -398,7 +398,10 @@ export function SettingsPage({
                 服务商地址：<code>{activeBaseUrl || '未填写'}</code>
               </p>
               <p className="wizard-privacy-note" data-testid="active-provider-research-status">
-                联网检索源：{activeResearchPreset.title}
+                联网检索源：
+                {activeResearchProvider === 'auto'
+                  ? '默认自动（安卓免费查证，网页端需配置搜索）'
+                  : activeResearchPreset.title}
                 {activeProfile && onOpenEditProviderWizard && (
                   <>
                     {' '}

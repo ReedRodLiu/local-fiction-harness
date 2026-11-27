@@ -176,6 +176,13 @@ export function createWizardDraftFromProfile(
   };
 }
 
+const THIRD_PARTY_RESEARCH_LABELS: Record<Exclude<PublicResearchSearchPresetId, 'auto'>, string> = {
+  none: '已关闭联网查证',
+  tavily: 'Tavily 搜索（已配置）',
+  bocha: '博查搜索（已配置）',
+  deepseek_account: '已借用 DeepSeek 账号',
+};
+
 export function resolveProviderCapabilitySummary(options: {
   presetId: ProviderPresetId;
   searchProvider: PublicResearchSearchPresetId;
@@ -193,17 +200,11 @@ export function resolveProviderCapabilitySummary(options: {
     ];
   }
   const researchLabel =
-    options.searchProvider === 'none'
-      ? '已关闭联网查证'
-      : options.searchProvider === 'tavily'
-        ? 'Tavily 搜索（已配置）'
-        : options.searchProvider === 'bocha'
-          ? '博查搜索（已配置）'
-          : options.searchProvider === 'deepseek_account'
-            ? '已借用 DeepSeek 账号'
-            : options.isWebPlatform === false
-              ? '默认自动（安卓端免密钥免费查公开网页）'
-              : '不配搜索也能正常玩；安卓端会自动免费查原作，网页端如需查证可在此选配';
+    options.searchProvider === 'auto'
+      ? options.isWebPlatform === false
+        ? '默认自动（安卓端免密钥免费查公开网页）'
+        : '不配搜索也能正常玩；安卓端会自动尝试免费查原作，网页端如需查证可在此选配免费搜索'
+      : THIRD_PARTY_RESEARCH_LABELS[options.searchProvider];
   const billingLabel = options.hasCustomPricing
     ? '已填写自定义单价，将同时统计节省 Token 与估算花费'
     : '默认统计节省 Token，选填单价后可算花费';
