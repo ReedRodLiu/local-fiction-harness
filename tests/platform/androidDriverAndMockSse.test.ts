@@ -255,7 +255,7 @@ async function startMiniCdpServer(
   onMessage: (msg: { id: number; method: string; params?: Record<string, unknown> }, send: (p: unknown) => void) => void,
 ): Promise<MiniCdpServer> {
   let targets: Array<Record<string, unknown>> = [];
-  const sockets = new Set<import('node:net').Socket>();
+  const sockets = new Set<import('node:stream').Duplex>();
   const connections: MiniCdpServer['connections'] = [];
 
   const server = http.createServer((req, res) => {
