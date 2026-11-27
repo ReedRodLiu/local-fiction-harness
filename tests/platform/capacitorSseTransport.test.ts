@@ -443,4 +443,83 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
       })(),
     ).rejects.toThrow(/原生 SSE 分块数据/);
   });
+
+  it('dispatches openai_responses through shared request builder and SSE parser without changing NativeSsePlugin', async () => {
+    const fake = createFakeNativeSsePlugin();
+    const transport = createCapacitorSseTransport(fake.plugin, () => 'req-resp-1');
+
+    const sseBytes = new TextEncoder().encode(
+      [
+        'event: response.reasoning_summary_text.delta\n',
+        'data: {"type":"response.reasoning_summary_text.delta","delta":"推理摘要。"}\n\n',
+        'event: response.output_text.delta\n',
+        'data: {"type":"response.output_text.delta","delta":"月光落进庭院。"}\n\n',
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":500,"input_tokens_details":{"cached_tokens":200},"output_tokens":80,"output_tokens_details":{"reasoning_tokens":30},"total_tokens":580}}}\n\n',
+      ].join(''),
+    );
+
+    const deltas: Array<{
+      reasoningDelta?: string;
+      contentDelta?: string;
+      finishReason?: string | null;
+      usage?: unknown;
+    }> = [];
+    const run = (async () => {
+      for await (const delta of transport.streamChat({
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-android-oa',
+        model: 'gpt-4.1',
+        reasoningEffort: 'medium',
+        prefixCompletion: { content: '不应触发前缀回显持有' },
+        capabilities: {
+          apiProtocol: 'openai_responses',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [
+          { role: 'system', content: '系统设定' },
+          { role: 'user', content: '进院' },
+        ],
+      })) {
+        deltas.push(delta);
+      }
+    })();
+
+    await vi.waitFor(() => expect(fake.started).toHaveLength(1));
+    expect(fake.started[0]?.url).toBe('https://api.openai.com/v1/responses');
+    expect(JSON.parse(fake.started[0]!.body)).toEqual({
+      model: 'gpt-4.1',
+      stream: true,
+      store: false,
+      instructions: '系统设定',
+      input: [{ role: 'user', content: '进院' }],
+      reasoning: { effort: 'medium', summary: 'auto' },
+    });
+
+    for (let i = 0; i < sseBytes.length; i += 9) {
+      fake.emitChunk('req-resp-1', sseBytes.slice(i, i + 9));
+    }
+    fake.emitComplete('req-resp-1');
+
+    await run;
+    expect(deltas).toEqual([
+      { reasoningDelta: '推理摘要。' },
+      { contentDelta: '月光落进庭院。' },
+      {
+        finishReason: 'stop',
+        usage: {
+          promptTokens: 500,
+          completionTokens: 80,
+          totalTokens: 580,
+          promptCacheHitTokens: 200,
+          promptCacheMissTokens: 300,
+          completionTokensDetails: { reasoningTokens: 30 },
+        },
+      },
+    ]);
+  });
 });

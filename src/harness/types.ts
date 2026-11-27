@@ -99,11 +99,18 @@ export type ProviderPresetId =
   | 'local'
   | 'custom';
 
+export type ProviderApiProtocol =
+  | 'openai_chat'
+  | 'openai_responses'
+  | 'anthropic_messages'
+  | 'gemini_native';
+
 export type ProviderThinkingProtocol = 'deepseek' | 'openai_reasoning_effort';
 
 export type ProviderPrefixProtocol = 'deepseek_beta' | 'standard_assistant_prefill' | 'none';
 
 export interface ProviderCapabilities {
+  apiProtocol?: ProviderApiProtocol;
   thinkingProtocol: ProviderThinkingProtocol;
   prefixProtocol: ProviderPrefixProtocol;
   supportsBalanceQuery: boolean;

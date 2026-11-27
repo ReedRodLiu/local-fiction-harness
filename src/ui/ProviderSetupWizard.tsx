@@ -7,6 +7,7 @@ import {
   PUBLIC_RESEARCH_PRESETS,
   createDefaultId,
   createProviderProfileFromPreset,
+  normalizeProviderApiProtocol,
   normalizeProviderBaseUrl,
   probeAssistantPrefillCompatibility,
   sanitizeApiKeyInput,
@@ -15,6 +16,7 @@ import {
   verifyDeepSeekApiKey,
   verifyProviderConnection,
   type CustomModelPricing,
+  type ProviderApiProtocol,
   type ProviderConnectionVerifyResult,
   type ProviderModelEntry,
   type ProviderPrefixProtocol,
@@ -61,6 +63,7 @@ export interface ProviderWizardDraft {
   inputPriceText: string;
   cacheHitPriceText: string;
   outputPriceText: string;
+  apiProtocol: ProviderApiProtocol;
   prefixProtocol: ProviderPrefixProtocol;
   prefillProbeStatus: 'untested' | 'supported' | 'unsupported';
   searchProvider: PublicResearchSearchPresetId;
@@ -142,6 +145,7 @@ export function createWizardDraftFromPreset(
     inputPriceText: '',
     cacheHitPriceText: '',
     outputPriceText: '',
+    apiProtocol: preset.capabilities.apiProtocol ?? 'openai_chat',
     prefixProtocol: preset.capabilities.prefixProtocol,
     prefillProbeStatus: 'untested',
     searchProvider: options?.publicResearch?.provider ?? 'auto',
@@ -168,6 +172,7 @@ export function createWizardDraftFromProfile(
     inputPriceText: formatPriceInput(pricing?.inputPerMillion),
     cacheHitPriceText: formatPriceInput(pricing?.cacheHitInputPerMillion),
     outputPriceText: formatPriceInput(pricing?.outputPerMillion),
+    apiProtocol: normalizeProviderApiProtocol(profile.capabilities.apiProtocol, 'openai_chat'),
     prefixProtocol: profile.capabilities.prefixProtocol,
     prefillProbeStatus: profile.prefillProbeStatus ?? 'untested',
     searchProvider: publicResearch?.provider ?? 'auto',
@@ -258,6 +263,18 @@ export function buildProviderSaveResultFromDraft(
     ? preset.baseUrl
     : normalizeProviderBaseUrl(options?.overrideBaseUrl ?? draft.baseUrl);
 
+  const apiProtocol: ProviderApiProtocol = isDeepSeek
+    ? (preset.capabilities.apiProtocol ?? 'openai_chat')
+    : normalizeProviderApiProtocol(
+        draft.apiProtocol,
+        preset.capabilities.apiProtocol ?? 'openai_chat',
+      );
+  const prefixProtocol: ProviderPrefixProtocol = isDeepSeek
+    ? preset.capabilities.prefixProtocol
+    : apiProtocol === 'openai_responses' || apiProtocol === 'gemini_native'
+      ? 'none'
+      : draft.prefixProtocol;
+
   const profile = createProviderProfileFromPreset(draft.presetId, {
     id: resolvedId,
     name: isDeepSeek ? preset.name : draft.name.trim() || preset.name,
@@ -269,7 +286,8 @@ export function buildProviderSaveResultFromDraft(
     ...(defaultPricing ? { defaultPricing } : {}),
     capabilities: {
       ...preset.capabilities,
-      prefixProtocol: isDeepSeek ? preset.capabilities.prefixProtocol : draft.prefixProtocol,
+      apiProtocol,
+      prefixProtocol,
     },
     ...(isDeepSeek ? {} : { prefillProbeStatus: draft.prefillProbeStatus }),
   });
@@ -485,6 +503,8 @@ export function ProviderSetupWizard({
 
   const busy = isVerifying || isFetchingModels || isProbingPrefill;
   const isDeepSeek = draft.presetId === 'deepseek';
+  const prefillDisabledByProtocol =
+    draft.apiProtocol === 'openai_responses' || draft.apiProtocol === 'gemini_native';
   const activeSearchPreset =
     PUBLIC_RESEARCH_PRESETS[draft.searchProvider] ?? PUBLIC_RESEARCH_PRESETS.auto;
   const hasCustomPricing =
@@ -997,6 +1017,43 @@ export function ProviderSetupWizard({
         <details className="provider-advanced-details" data-testid="provider-advanced-settings">
           <summary>更多可选设置</summary>
           <div className="provider-advanced-body">
+            {!isDeepSeek && (
+              <div className="field">
+                <label htmlFor="provider-protocol-select">接口协议</label>
+                <select
+                  id="provider-protocol-select"
+                  data-testid="provider-protocol-select"
+                  value={draft.apiProtocol}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const nextProtocol = normalizeProviderApiProtocol(
+                      event.target.value,
+                      'openai_chat',
+                    );
+                    setDraft((prev) => ({
+                      ...prev,
+                      apiProtocol: nextProtocol,
+                      ...(nextProtocol === 'openai_responses' || nextProtocol === 'gemini_native'
+                        ? { prefixProtocol: 'none' }
+                        : {}),
+                    }));
+                  }}
+                >
+                  <option value="openai_chat">OpenAI Chat Completions (/chat/completions)</option>
+                  <option value="openai_responses">OpenAI Responses API (/responses)</option>
+                  <option value="anthropic_messages" disabled>
+                    Anthropic Messages (/v1/messages · 后续支持)
+                  </option>
+                  <option value="gemini_native" disabled>
+                    Google Gemini 原生 (/v1beta · 后续支持)
+                  </option>
+                </select>
+                <span className="wizard-privacy-note">
+                  OpenAI 官方默认使用 Responses API；第三方兼容或旧中转站可切换为 Chat Completions
+                </span>
+              </div>
+            )}
+
             <div className="field">
               <label htmlFor="provider-background-model-input">后台轻量模型（可选）</label>
               <input
@@ -1098,8 +1155,11 @@ export function ProviderSetupWizard({
                   <input
                     type="checkbox"
                     data-testid="provider-prefill-toggle"
-                    checked={draft.prefixProtocol === 'standard_assistant_prefill'}
-                    disabled={busy}
+                    checked={
+                      !prefillDisabledByProtocol &&
+                      draft.prefixProtocol === 'standard_assistant_prefill'
+                    }
+                    disabled={busy || prefillDisabledByProtocol}
                     onChange={(event) => {
                       const enabled = event.target.checked;
                       setDraft((prev) => ({
@@ -1114,7 +1174,7 @@ export function ProviderSetupWizard({
                     type="button"
                     className="btn btn-sm"
                     data-testid="provider-probe-prefill-btn"
-                    disabled={busy}
+                    disabled={busy || prefillDisabledByProtocol}
                     onClick={() => void handleProbePrefill()}
                   >
                     {isProbingPrefill ? '正在探测...' : '测一下支不支持'}
@@ -1131,6 +1191,11 @@ export function ProviderSetupWizard({
                     </span>
                   )}
                 </div>
+                {prefillDisabledByProtocol && (
+                  <span className="wizard-privacy-note">
+                    当前所选接口协议不支持助手预填，已自动使用标准多轮续写
+                  </span>
+                )}
               </div>
             )}
           </div>

@@ -134,6 +134,7 @@ describe('Generic OpenAI-compatible provider validation & prefill probing', () =
   it('normalizes provider base URLs cleanly', () => {
     expect(normalizeProviderBaseUrl('  https://api.openai.com/v1/  ')).toBe('https://api.openai.com/v1');
     expect(normalizeProviderBaseUrl('https://api.openai.com/v1/chat/completions/')).toBe('https://api.openai.com/v1');
+    expect(normalizeProviderBaseUrl('https://api.openai.com/v1/responses/')).toBe('https://api.openai.com/v1');
     expect(normalizeProviderBaseUrl('https://openrouter.ai/api/v1/models')).toBe('https://openrouter.ai/api/v1');
     expect(normalizeProviderBaseUrl(' /__dev_llm_proxy/ ')).toBe('/__dev_llm_proxy');
   });

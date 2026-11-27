@@ -744,4 +744,52 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     const parsedAuto = parseAndValidateFolioBackup(autoJson);
     expect(parsedAuto.providerLibrary?.publicResearch).toEqual({ provider: 'auto' });
   });
+
+  it('round-trips capabilities.apiProtocol, defaults omitted apiProtocol to openai_chat, and downgrades unknown presetId to custom', () => {
+    const openai = createProviderProfileFromPreset('openai', {
+      id: 'oa-resp',
+      apiKey: 'sk-oa-SECRET',
+    });
+    const json = exportFolioBackupV3({
+      stories: [],
+      workspace: emptyWorkspace(),
+      providerLibrary: {
+        version: 2,
+        activeProviderId: 'oa-resp',
+        profiles: [openai],
+        reasoningEffort: 'none',
+      },
+    });
+    expect(json).not.toContain('sk-oa-SECRET');
+
+    const parsed = parseAndValidateFolioBackup(json);
+    expect(parsed.providerLibrary?.profiles[0]?.capabilities.apiProtocol).toBe('openai_responses');
+
+    // Legacy backup without apiProtocol falls back to openai_chat
+    const legacy = JSON.parse(json);
+    delete legacy.providerLibrary.profiles[0].capabilities.apiProtocol;
+    const parsedLegacy = parseAndValidateFolioBackup(JSON.stringify(legacy));
+    expect(parsedLegacy.providerLibrary?.profiles[0]?.capabilities.apiProtocol).toBe('openai_chat');
+
+    // Unknown presetId downgrades smoothly to 'custom' while keeping capabilities.apiProtocol
+    const futureBackup = JSON.parse(json);
+    futureBackup.providerLibrary.profiles[0].presetId = 'future_provider_2027';
+    futureBackup.providerLibrary.profiles[0].capabilities.apiProtocol = 'anthropic_messages';
+    const parsedFuture = parseAndValidateFolioBackup(JSON.stringify(futureBackup));
+    expect(parsedFuture.providerLibrary?.profiles[0]?.presetId).toBe('custom');
+    expect(parsedFuture.providerLibrary?.profiles[0]?.capabilities.apiProtocol).toBe(
+      'anthropic_messages',
+    );
+
+    // Unknown presetId must STILL reject embedded apiKey secrets
+    const poisonedFuture = JSON.parse(json);
+    poisonedFuture.providerLibrary.profiles[0].presetId = 'future_provider_2027';
+    poisonedFuture.providerLibrary.profiles[0].apiKey = 'sk-leak-999';
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(poisonedFuture))).toThrow(/apiKey|密钥/);
+
+    // Invalid apiProtocol throws validation error
+    const invalidProtocol = JSON.parse(json);
+    invalidProtocol.providerLibrary.profiles[0].capabilities.apiProtocol = 'invalid_proto';
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(invalidProtocol))).toThrow(/apiProtocol/);
+  });
 });

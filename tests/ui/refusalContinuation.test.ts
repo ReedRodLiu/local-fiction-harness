@@ -144,4 +144,42 @@ describe('Capability-driven refusal continuation', () => {
       },
     ]);
   });
+
+  it('downgrades prefix completion to standard assistant+user continuation for openai_responses', async () => {
+    const requests: LlmStreamRequest[] = [];
+    await streamPrefixContinuation({
+      transport: {
+        async *streamChat(req) {
+          requests.push(req);
+          yield { contentDelta: '续写成功。', finishReason: 'stop' };
+        },
+      },
+      config: {
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-oa',
+        model: 'gpt-4.1',
+        reasoningEffort: 'none',
+        memoryOnly: false,
+        capabilities: {
+          apiProtocol: 'openai_responses',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'standard_assistant_prefill',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+      },
+      messages: [{ role: 'user', content: '继续' }],
+      prefixContent: '前文半句。',
+    });
+
+    expect(requests[0]?.prefixCompletion).toBeUndefined();
+    expect(requests[0]?.messages.slice(-2)).toEqual([
+      { role: 'assistant', content: '前文半句。' },
+      {
+        role: 'user',
+        content: '请紧接上一句自然续写后续正文，不要重复已写内容，也不要输出说明或免责声明。',
+      },
+    ]);
+  });
 });

@@ -53,6 +53,7 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
     expect(markup).not.toContain('data-testid="provider-model-input"');
     expect(markup).not.toContain('data-testid="provider-public-research-section"');
     expect(markup).not.toContain('data-testid="provider-probe-prefill-btn"');
+    expect(markup).not.toContain('data-testid="provider-protocol-select"');
 
     // 3-line plain-language capability summary
     expect(markup).toContain('data-testid="provider-capability-summary"');
@@ -135,6 +136,7 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
     expect(tavilyMarkup).toContain('已填写自定义单价');
 
     // Third-party advanced controls
+    expect(tavilyMarkup).toContain('data-testid="provider-protocol-select"');
     expect(tavilyMarkup).toContain('data-testid="provider-pricing-currency"');
     expect(tavilyMarkup).toContain('data-testid="provider-pricing-input"');
     expect(tavilyMarkup).toContain('data-testid="provider-pricing-cache-input"');
@@ -334,6 +336,51 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
       hasDeepSeekProfileInLibrary: true,
     });
     expect(editedDsSave.profile.defaultModel).toBe('deepseek-v4-pro');
+  });
+
+  it('switches and persists apiProtocol on OpenAI and custom drafts while keeping DeepSeek locked to openai_chat', () => {
+    const oaDraft = createWizardDraftFromPreset('openai', { apiKey: 'sk-oa' });
+    expect(oaDraft.apiProtocol).toBe('openai_responses');
+    expect(oaDraft.backgroundModel).toBe('gpt-4o-mini');
+    expect(buildProviderSaveResultFromDraft(oaDraft).profile.capabilities.apiProtocol).toBe(
+      'openai_responses',
+    );
+
+    const oaChatDraft = { ...oaDraft, apiProtocol: 'openai_chat' as const };
+    expect(buildProviderSaveResultFromDraft(oaChatDraft).profile.capabilities.apiProtocol).toBe(
+      'openai_chat',
+    );
+
+    const customDraft = createWizardDraftFromPreset('custom', { apiKey: 'sk-c' });
+    expect(customDraft.apiProtocol).toBe('openai_chat');
+    const customResponses = buildProviderSaveResultFromDraft({
+      ...customDraft,
+      baseUrl: 'https://relay.example.com/v1',
+      defaultModel: 'gpt-4.1',
+      apiProtocol: 'openai_responses',
+      prefixProtocol: 'standard_assistant_prefill',
+    });
+    expect(customResponses.profile.capabilities.apiProtocol).toBe('openai_responses');
+    expect(customResponses.profile.capabilities.prefixProtocol).toBe('none');
+
+    // Legacy profile without apiProtocol loads into draft as openai_chat
+    const legacyDraft = createWizardDraftFromProfile({
+      id: 'legacy-oa',
+      name: 'Legacy OpenAI',
+      presetId: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-legacy',
+      models: [{ id: 'gpt-4o' }],
+      defaultModel: 'gpt-4o',
+      capabilities: {
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    });
+    expect(legacyDraft.apiProtocol).toBe('openai_chat');
   });
 
   it('never contains jailbreak or bypass prompt text in wizard source', () => {
