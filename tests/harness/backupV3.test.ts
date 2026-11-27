@@ -816,6 +816,26 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     expect(parsedAnthropic.providerLibrary?.profiles[0]?.capabilities.prefixProtocol).toBe(
       'standard_assistant_prefill',
     );
+
+    // Gemini preset round-trips with gemini_native and strips apiKey
+    const gemini = createProviderProfileFromPreset('gemini', {
+      id: 'gem-1',
+      apiKey: 'AIza-SECRET-GEMINI',
+    });
+    const geminiJson = exportFolioBackupV3({
+      stories: [],
+      workspace: emptyWorkspace(),
+      providerLibrary: {
+        version: 2,
+        activeProviderId: 'gem-1',
+        profiles: [gemini],
+        reasoningEffort: 'none',
+      },
+    });
+    expect(geminiJson).not.toContain('AIza-SECRET-GEMINI');
+    const parsedGemini = parseAndValidateFolioBackup(geminiJson);
+    expect(parsedGemini.providerLibrary?.profiles[0]?.presetId).toBe('gemini');
+    expect(parsedGemini.providerLibrary?.profiles[0]?.capabilities.apiProtocol).toBe('gemini_native');
   });
 
   it('roundtrips all new domestic/overseas presets and thinkingDialect across v3 backups and rejects invalid thinkingDialect', () => {

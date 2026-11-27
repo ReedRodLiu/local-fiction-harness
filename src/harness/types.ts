@@ -95,6 +95,7 @@ export type ProviderPresetId =
   | 'deepseek'
   | 'openai'
   | 'anthropic'
+  | 'gemini'
   | 'xai'
   | 'groq'
   | 'moonshot'

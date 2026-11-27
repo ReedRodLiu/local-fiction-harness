@@ -235,6 +235,177 @@ function parseResponsesUsage(raw: {
     : undefined;
 }
 
+function parseGeminiUsage(raw: {
+  promptTokenCount?: unknown;
+  candidatesTokenCount?: unknown;
+  thoughtsTokenCount?: unknown;
+  cachedContentTokenCount?: unknown;
+  totalTokenCount?: unknown;
+} | undefined): LlmUsage | undefined {
+  if (!raw) return undefined;
+  const promptTokens = optionalTokenCount(raw.promptTokenCount);
+  const candidatesTokens = optionalTokenCount(raw.candidatesTokenCount);
+  const thoughtsTokens = optionalTokenCount(raw.thoughtsTokenCount);
+  const completionTokens =
+    candidatesTokens !== undefined
+      ? candidatesTokens + (thoughtsTokens ?? 0)
+      : thoughtsTokens;
+  const totalTokens = optionalTokenCount(raw.totalTokenCount);
+  const cachedTokens = optionalTokenCount(raw.cachedContentTokenCount);
+  const promptCacheHitTokens = cachedTokens;
+  const promptCacheMissTokens =
+    cachedTokens !== undefined && promptTokens !== undefined
+      ? Math.max(0, promptTokens - cachedTokens)
+      : undefined;
+  const usage: LlmUsage = {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    promptCacheHitTokens,
+    promptCacheMissTokens,
+    ...(thoughtsTokens === undefined
+      ? {}
+      : { completionTokensDetails: { reasoningTokens: thoughtsTokens } }),
+  };
+  return usage.promptTokens !== undefined ||
+    usage.completionTokens !== undefined ||
+    usage.totalTokens !== undefined ||
+    usage.promptCacheHitTokens !== undefined ||
+    usage.promptCacheMissTokens !== undefined ||
+    usage.completionTokensDetails !== undefined
+    ? usage
+    : undefined;
+}
+
+function mapGeminiFinishReason(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const upper = raw.trim().toUpperCase();
+  if (!upper) return undefined;
+  if (upper === 'STOP') return 'stop';
+  if (upper === 'MAX_TOKENS') return 'length';
+  if (
+    upper === 'SAFETY' ||
+    upper === 'RECITATION' ||
+    upper === 'BLOCKLIST' ||
+    upper === 'PROHIBITED_CONTENT' ||
+    upper === 'SPII' ||
+    upper === 'IMAGE_SAFETY' ||
+    upper === 'IMAGE_PROHIBITED_CONTENT'
+  ) {
+    return 'content_filter';
+  }
+  return upper.toLowerCase();
+}
+
+function parseGeminiEventData(dataText: string): {
+  delta?: LlmStreamDelta;
+  usage?: LlmUsage;
+} {
+  const trimmed = dataText.trim();
+  if (!trimmed || trimmed === '[DONE]') {
+    return {};
+  }
+
+  let parsed: {
+    error?: { message?: string };
+    promptFeedback?: { blockReason?: unknown };
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          text?: unknown;
+          thought?: unknown;
+        }>;
+      };
+      finishReason?: unknown;
+    }>;
+    usageMetadata?: {
+      promptTokenCount?: unknown;
+      candidatesTokenCount?: unknown;
+      thoughtsTokenCount?: unknown;
+      cachedContentTokenCount?: unknown;
+      totalTokenCount?: unknown;
+    };
+  };
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return {};
+  }
+
+  if (parsed.error) {
+    throw new Error(parsed.error.message || 'Gemini API returned an SSE error payload.');
+  }
+
+  const usage = parseGeminiUsage(parsed.usageMetadata);
+  const candidate = parsed.candidates?.[0];
+  const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+  const reasoningParts: string[] = [];
+  const contentParts: string[] = [];
+
+  for (const part of parts) {
+    if (!part || typeof part.text !== 'string') continue;
+    if (part.thought === true) {
+      reasoningParts.push(part.text);
+    } else {
+      contentParts.push(part.text);
+    }
+  }
+
+  const reasoningDelta = reasoningParts.length > 0 ? reasoningParts.join('') : undefined;
+  const contentDelta = contentParts.length > 0 ? contentParts.join('') : undefined;
+  const finishReason =
+    mapGeminiFinishReason(candidate?.finishReason) ??
+    (!candidate && typeof parsed.promptFeedback?.blockReason === 'string'
+      ? 'content_filter'
+      : undefined);
+
+  if (
+    reasoningDelta === undefined &&
+    contentDelta === undefined &&
+    finishReason === undefined
+  ) {
+    return usage ? { usage } : {};
+  }
+
+  return {
+    delta: {
+      ...(reasoningDelta !== undefined ? { reasoningDelta } : {}),
+      ...(contentDelta !== undefined ? { contentDelta } : {}),
+      ...(finishReason !== undefined ? { finishReason } : {}),
+    },
+    ...(usage ? { usage } : {}),
+  };
+}
+
+/**
+ * Parses a Google Gemini :streamGenerateContent?alt=sse stream into normalized deltas,
+ * separating thought parts from content parts and coalescing cumulative usageMetadata.
+ */
+export async function* parseGeminiSseStream(
+  chunks: AsyncIterable<Uint8Array | string>,
+): AsyncIterable<LlmStreamDelta> {
+  let pendingUsage: LlmUsage | undefined;
+  for await (const frame of iterateSseFrames(chunks)) {
+    const parsed = parseGeminiEventData(frame.data);
+    if (parsed.usage) {
+      pendingUsage = parsed.usage;
+    }
+    if (!parsed.delta) {
+      continue;
+    }
+    if (parsed.delta.finishReason !== undefined && pendingUsage) {
+      const usage = pendingUsage;
+      pendingUsage = undefined;
+      yield { ...parsed.delta, usage };
+    } else {
+      yield parsed.delta;
+    }
+  }
+  if (pendingUsage) {
+    yield { usage: pendingUsage };
+  }
+}
+
 async function* iterateSseFrames(
   chunks: AsyncIterable<Uint8Array | string>,
 ): AsyncIterable<{ event?: string; data: string }> {
@@ -642,6 +813,26 @@ export function resolveResponsesUrl(baseUrl: string): string {
     return `${cleaned.slice(0, -'/chat/completions'.length)}/responses`;
   }
   return `${cleaned}/responses`;
+}
+
+export function stripGeminiActionSuffix(url: string): string {
+  return url
+    .replace(/\/models\/[^/?#]+:(?:streamGenerateContent|generateContent)(?:\?.*)?$/i, '')
+    .replace(/\/[^/?#]+:(?:streamGenerateContent|generateContent)(?:\?.*)?$/i, '');
+}
+
+export function resolveGeminiStreamUrl(baseUrl: string, model: string): string {
+  const cleaned = stripGeminiActionSuffix(baseUrl.trim().replace(/\/+$/, ''))
+    .replace(/\/models$/i, '')
+    .replace(/\/+$/, '');
+  if (!cleaned) {
+    throw new Error('Model Base URL cannot be empty.');
+  }
+  const strippedModel = model.trim().replace(/^models\//i, '');
+  if (!strippedModel) {
+    throw new Error('Model ID cannot be empty.');
+  }
+  return `${cleaned}/models/${encodeURIComponent(strippedModel)}:streamGenerateContent?alt=sse`;
 }
 
 export function resolveChatCompletionsUrl(baseUrl: string): string {
@@ -1134,6 +1325,98 @@ export function buildAnthropicMessagesRequest(req: LlmStreamRequest): {
   };
 }
 
+function resolveGeminiThinkingConfig(
+  model: string,
+  effort: ReasoningEffort,
+): Record<string, unknown> | undefined {
+  const lower = model.trim().replace(/^models\//i, '').toLowerCase();
+  if (lower.includes('gemini-3')) {
+    if (effort === 'none') {
+      return { thinkingLevel: lower.includes('pro') ? 'low' : 'minimal' };
+    }
+    return {
+      includeThoughts: true,
+      thinkingLevel: effort === 'low' ? 'low' : effort === 'medium' ? 'medium' : 'high',
+    };
+  }
+  if (/^gemini-(?:1\.|2\.0-)/.test(lower) && !lower.includes('thinking')) {
+    return undefined;
+  }
+  if (effort === 'none') {
+    const requiresNonZeroBudget =
+      lower.includes('2.5-pro') || (lower.includes('pro') && !lower.includes('flash'));
+    return { thinkingBudget: requiresNonZeroBudget ? 128 : 0 };
+  }
+  const thinkingBudget = effort === 'low' ? 2048 : effort === 'medium' ? 8192 : 16384;
+  return {
+    includeThoughts: true,
+    thinkingBudget,
+  };
+}
+
+/**
+ * Builds a Google Gemini native :streamGenerateContent?alt=sse request using
+ * x-goog-api-key header authentication (never query params) and merged user/model turns.
+ */
+export function buildGeminiNativeRequest(req: LlmStreamRequest): {
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+} {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+  };
+  if (req.apiKey.trim()) {
+    headers['x-goog-api-key'] = req.apiKey.trim();
+  }
+
+  const systemParts: string[] = [];
+  const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+
+  for (const msg of req.messages) {
+    if (msg.role === 'system') {
+      if (msg.content.trim()) {
+        systemParts.push(msg.content);
+      }
+      continue;
+    }
+    const role: 'user' | 'model' = msg.role === 'assistant' ? 'model' : 'user';
+    const previous = contents.at(-1);
+    if (previous && previous.role === role) {
+      const prevText = previous.parts[0]?.text ?? '';
+      previous.parts[0] = {
+        text: prevText && msg.content ? `${prevText}\n\n${msg.content}` : prevText || msg.content,
+      };
+    } else {
+      contents.push({ role, parts: [{ text: msg.content }] });
+    }
+  }
+
+  const systemText = systemParts.join('\n\n');
+  const effort = normalizeReasoningEffort(req.reasoningEffort ?? req.reasoning_effort, 'none');
+  const thinkingConfig = resolveGeminiThinkingConfig(req.model, effort);
+  const maxOutputTokens =
+    req.maxOutputTokens && req.maxOutputTokens > 0
+      ? Math.max(1, Math.floor(req.maxOutputTokens))
+      : undefined;
+
+  const generationConfig: Record<string, unknown> = {
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+    ...(thinkingConfig !== undefined ? { thinkingConfig } : {}),
+  };
+
+  return {
+    url: resolveGeminiStreamUrl(req.baseUrl, req.model),
+    headers,
+    body: JSON.stringify({
+      ...(systemText ? { systemInstruction: { parts: [{ text: systemText }] } } : {}),
+      contents,
+      ...(Object.keys(generationConfig).length > 0 ? { generationConfig } : {}),
+    }),
+  };
+}
+
 /**
  * Dispatches streaming request construction by the profile's apiProtocol so Web
  * and Android NativeSse transports share identical wire payloads.
@@ -1150,6 +1433,9 @@ export function buildProviderStreamRequest(req: LlmStreamRequest): {
   }
   if (protocol === 'anthropic_messages') {
     return { protocol, ...buildAnthropicMessagesRequest(req) };
+  }
+  if (protocol === 'gemini_native') {
+    return { protocol, ...buildGeminiNativeRequest(req) };
   }
   if (protocol === 'openai_chat') {
     return { protocol, ...buildOpenAiChatRequest(req) };
@@ -1170,6 +1456,9 @@ export function parseProviderSseStream(
   }
   if (protocol === 'anthropic_messages') {
     return parseAnthropicSseStream(chunks);
+  }
+  if (protocol === 'gemini_native') {
+    return parseGeminiSseStream(chunks);
   }
   if (protocol === 'openai_chat') {
     return parseOpenAiSseStream(chunks);

@@ -606,4 +606,74 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
       },
     ]);
   });
+
+  it('dispatches gemini_native through shared request builder and SSE parser without changing NativeSsePlugin', async () => {
+    const fake = createFakeNativeSsePlugin();
+    const transport = createCapacitorSseTransport(fake.plugin, () => 'req-gem-1');
+
+    const sseBytes = new TextEncoder().encode(
+      [
+        'data: {"candidates":[{"content":{"role":"model","parts":[{"thought":true,"text":"推理片段。"},{"text":"湖面泛起涟漪。"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":400,"cachedContentTokenCount":100,"candidatesTokenCount":50,"thoughtsTokenCount":20,"totalTokenCount":470}}\n\n',
+      ].join(''),
+    );
+
+    const deltas: Array<{
+      reasoningDelta?: string;
+      contentDelta?: string;
+      finishReason?: string | null;
+      usage?: unknown;
+    }> = [];
+    const run = (async () => {
+      for await (const delta of transport.streamChat({
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: 'AIza-android-gem',
+        model: 'gemini-2.5-flash',
+        reasoningEffort: 'low',
+        prefixCompletion: { content: '不应触发前缀回显持有' },
+        capabilities: {
+          apiProtocol: 'gemini_native',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [
+          { role: 'system', content: '系统设定' },
+          { role: 'user', content: '走近湖边' },
+        ],
+      })) {
+        deltas.push(delta);
+      }
+    })();
+
+    await vi.waitFor(() => expect(fake.started).toHaveLength(1));
+    expect(fake.started[0]?.url).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+    );
+    expect(fake.started[0]?.headers['x-goog-api-key']).toBe('AIza-android-gem');
+    expect(fake.started[0]?.headers.Authorization).toBeUndefined();
+
+    for (let i = 0; i < sseBytes.length; i += 10) {
+      fake.emitChunk('req-gem-1', sseBytes.slice(i, i + 10));
+    }
+    fake.emitComplete('req-gem-1');
+
+    await run;
+    expect(deltas).toEqual([
+      {
+        reasoningDelta: '推理片段。',
+        contentDelta: '湖面泛起涟漪。',
+        finishReason: 'stop',
+        usage: {
+          promptTokens: 400,
+          completionTokens: 70,
+          totalTokens: 470,
+          promptCacheHitTokens: 100,
+          promptCacheMissTokens: 300,
+          completionTokensDetails: { reasoningTokens: 20 },
+        },
+      },
+    ]);
+  });
 });
