@@ -481,3 +481,21 @@ export type BinaryFetchLike = (
     signal?: AbortSignalLike;
   },
 ) => Promise<BinaryFetchResponseLike>;
+
+export interface PublicTextFetchResult {
+  ok: boolean;
+  status: number;
+  finalUrl?: string;
+  text: string;
+  truncated?: boolean;
+}
+
+export type PublicTextFetcher = (
+  url: string,
+  options?: {
+    headers?: Record<string, string>;
+    maxBytes?: number;
+    timeoutMs?: number;
+    signal?: AbortSignalLike;
+  },
+) => Promise<PublicTextFetchResult>;
