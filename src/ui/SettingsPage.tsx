@@ -288,10 +288,10 @@ export function SettingsPage({
     return entries;
   })();
 
-  const resolvedPublicResearch = config.publicResearch ?? providerLibrary?.publicResearch;
+  const activeResearchProvider =
+    config.publicResearch?.provider ?? providerLibrary?.publicResearch?.provider ?? 'auto';
   const activeResearchPreset =
-    PUBLIC_RESEARCH_PRESETS[resolvedPublicResearch?.provider ?? 'none'] ??
-    PUBLIC_RESEARCH_PRESETS.none;
+    PUBLIC_RESEARCH_PRESETS[activeResearchProvider] ?? PUBLIC_RESEARCH_PRESETS.auto;
 
   const activePreset = promptPackLibrary.activePackId
     ? promptPackLibrary.packs.find((pack) => pack.id === promptPackLibrary.activePackId) ??
@@ -398,7 +398,10 @@ export function SettingsPage({
                 服务商地址：<code>{activeBaseUrl || '未填写'}</code>
               </p>
               <p className="wizard-privacy-note" data-testid="active-provider-research-status">
-                联网检索源：{activeResearchPreset.title}
+                联网检索源：
+                {activeResearchProvider === 'auto'
+                  ? '默认自动（安卓免费查证，网页端需配置搜索）'
+                  : activeResearchPreset.title}
                 {activeProfile && onOpenEditProviderWizard && (
                   <>
                     {' '}

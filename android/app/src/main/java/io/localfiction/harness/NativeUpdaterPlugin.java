@@ -32,7 +32,9 @@ public class NativeUpdaterPlugin extends Plugin {
     private static final String UPDATES_DIR_NAME = "updates";
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
 
-    private final ApkUpdateClient updateClient = new ApkUpdateClient();
+    private final ApkUpdateClient updateClient = new ApkUpdateClient(
+        BuildConfig.ALLOW_LOOPBACK_HTTP
+    );
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     @PluginMethod

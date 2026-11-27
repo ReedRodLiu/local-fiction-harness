@@ -1,6 +1,6 @@
 {
   "name": "local-fiction-harness",
-  "version": "0.5.0-beta.1",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -24,7 +24,12 @@
     "android:sync": "npm run audit:version && npm run build && npx cap sync android",
     "android:test": "cd android && ./gradlew testDebugUnitTest",
     "android:build": "npm run android:sync && cd android && ./gradlew --offline :app:testDebugUnitTest --rerun-tasks assembleDebug",
+    "android:build:e2e": "npm run android:sync && cd android && ./gradlew --offline assembleE2e",
+    "android:build:smoke": "npm run android:sync && cd android && ./gradlew --offline assembleSmoke",
+    "android:build:release": "npm run android:sync && cd android && ./gradlew --offline assembleRelease",
     "test:android-back": "npm run android:build && node scripts/android-back-regression.mjs",
+    "test:android-e2e": "node scripts/android-e2e.mjs",
+    "test:android-smoke": "node scripts/android-smoke.mjs",
     "audit:artifacts": "node scripts/audit-artifacts.mjs",
     "audit:ui": "node scripts/audit-ui-tokens.mjs",
     "audit:version": "node scripts/check-version-sync.mjs",

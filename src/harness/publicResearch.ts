@@ -6,6 +6,7 @@ import type {
   ModelConfig,
   PublicResearchConfig,
   PublicResearchSearchPresetId,
+  PublicTextFetcher,
   TurnNode,
 } from './types.ts';
 import { createBackgroundModelConfig, isOfficialDeepSeekUrl } from './keyConfig.ts';
@@ -22,11 +23,18 @@ export interface PublicResearchPresetMeta {
 export const PUBLIC_RESEARCH_PRESETS: Readonly<
   Record<PublicResearchSearchPresetId, PublicResearchPresetMeta>
 > = {
+  auto: {
+    id: 'auto',
+    title: '默认自动',
+    description: 'DeepSeek 账号走官方联网；第三方在安卓端自动免费查公开网页，网页端需自配搜索',
+    quotaHint: '安卓端免密钥免费使用',
+    requiresApiKey: false,
+  },
   none: {
     id: 'none',
-    title: '不开启',
+    title: '关闭联网查证',
     description: '仅使用模型自身知识推进设定与创作，不发起联网搜索',
-    quotaHint: '无需额外配置',
+    quotaHint: '不发起联网请求',
     requiresApiKey: false,
   },
   deepseek_account: {
@@ -455,8 +463,17 @@ export interface SearchApiPublicResearchOptions {
   timeoutMs?: number;
 }
 
+export interface AndroidKeylessPublicResearchOptions {
+  textFetcher: PublicTextFetcher;
+  transport: LlmTransport;
+  maxSources?: number;
+  timeoutMs?: number;
+  now?: () => number;
+}
+
 export interface RoutedPublicResearchOptions {
-  fetcher: FetchLike;
+  fetcher?: FetchLike;
+  textFetcher?: PublicTextFetcher;
   transport: LlmTransport;
   resolveSearchConfig?: () => PublicResearchConfig | undefined;
   resolveDeepSeekApiKey?: (profileId?: string) => string | undefined;
@@ -1130,6 +1147,300 @@ export function createBochaPublicResearchProvider(
   );
 }
 
+const MAX_KEYLESS_PAGE_CHARS = 12_000;
+const ANTI_BOT_RE = /(?:captcha|verify you are human|unusual traffic|请完成安全验证|robot check)/i;
+
+interface KeylessSearchCandidate {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+function decodeHtmlEntities(input: string): string {
+  return input
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&#x27;/gi, "'")
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&#(\d+);/g, (_, dec: string) => {
+      const code = Number.parseInt(dec, 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : _;
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => {
+      const code = Number.parseInt(hex, 16);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : _;
+    });
+}
+
+function stripHtmlToText(html: string, maxChars = MAX_KEYLESS_PAGE_CHARS): string {
+  const withoutNoise = html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ');
+  return fitUnicode(decodeHtmlEntities(withoutNoise).replace(/\s+/g, ' ').trim(), maxChars);
+}
+
+function isAntiBotOrCaptchaPage(text: string): boolean {
+  return ANTI_BOT_RE.test(text);
+}
+
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function decodeBase64UrlUtf8(encoded: string): string | null {
+  try {
+    const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+    const bytes: number[] = [];
+    for (let i = 0; i < normalized.length; i += 4) {
+      const c1 = BASE64_ALPHABET.indexOf(normalized[i]!);
+      const c2 = i + 1 < normalized.length ? BASE64_ALPHABET.indexOf(normalized[i + 1]!) : -1;
+      if (c1 < 0 || c2 < 0) return null;
+      bytes.push((c1 << 2) | (c2 >> 4));
+      if (i + 2 < normalized.length) {
+        const c3 = BASE64_ALPHABET.indexOf(normalized[i + 2]!);
+        if (c3 < 0) return null;
+        bytes.push(((c2 & 0x0f) << 4) | (c3 >> 2));
+        if (i + 3 < normalized.length) {
+          const c4 = BASE64_ALPHABET.indexOf(normalized[i + 3]!);
+          if (c4 < 0) return null;
+          bytes.push(((c3 & 0x03) << 6) | c4);
+        }
+      }
+    }
+    const percentEncoded = bytes
+      .map((byte) => `%${byte.toString(16).padStart(2, '0')}`)
+      .join('');
+    return decodeURIComponent(percentEncoded);
+  } catch {
+    return null;
+  }
+}
+
+function isBlockedSearchHost(url: string, blockedDomains: readonly string[]): boolean {
+  const match = /^https:\/\/([^/?#:]+)/i.exec(url.trim());
+  if (!match) return true;
+  const host = match[1].toLowerCase();
+  return blockedDomains.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+function resolveBingCandidateUrl(rawHref: string): string | null {
+  let href = decodeHtmlEntities(rawHref).trim();
+  if (href.startsWith('//')) href = `https:${href}`;
+  const ckMatch = /^https:\/\/(?:www\.|cn\.)?bing\.com\/ck\/a\b/i.exec(href);
+  if (ckMatch) {
+    const uMatch = /[?&]u=([^&]+)/i.exec(href);
+    if (!uMatch) return null;
+    const rawU = decodeURIComponent(uMatch[1]);
+    if (rawU.startsWith('a1')) {
+      const decoded = decodeBase64UrlUtf8(rawU.slice(2));
+      if (!decoded) return null;
+      href = decoded;
+    } else {
+      href = rawU;
+    }
+  }
+  if (!isPublicHttpUrl(href)) return null;
+  if (isBlockedSearchHost(href, ['bing.com', 'microsoft.com', 'msn.com'])) return null;
+  return href;
+}
+
+function resolveDuckDuckGoCandidateUrl(rawHref: string): string | null {
+  let href = decodeHtmlEntities(rawHref).trim();
+  if (href.startsWith('//')) href = `https:${href}`;
+  const uddgMatch = /[?&]uddg=([^&]+)/i.exec(href);
+  if (uddgMatch) {
+    try {
+      href = decodeURIComponent(uddgMatch[1]);
+    } catch {
+      return null;
+    }
+  }
+  if (!isPublicHttpUrl(href)) return null;
+  if (isBlockedSearchHost(href, ['duckduckgo.com'])) return null;
+  return href;
+}
+
+function collectSearchCandidates(
+  rows: Iterable<{ rawHref: string; rawTitle: string; rawSnippet: string }>,
+  resolveUrl: (rawHref: string) => string | null,
+  maxSources: number,
+): KeylessSearchCandidate[] {
+  const output: KeylessSearchCandidate[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const url = resolveUrl(row.rawHref);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    const title = stripHtmlToText(row.rawTitle, 200) || url;
+    const snippet = stripHtmlToText(row.rawSnippet, 400);
+    output.push({ title, url, snippet });
+    if (output.length >= maxSources) break;
+  }
+  return output;
+}
+
+function parseBingSearchResults(html: string, maxSources: number): KeylessSearchCandidate[] {
+  const rows: Array<{ rawHref: string; rawTitle: string; rawSnippet: string }> = [];
+  const algoRe = /<li\b[^>]*class="[^"]*\bb_algo\b[^"]*"[^>]*>([\s\S]*?)<\/li>/gi;
+  for (const match of html.matchAll(algoRe)) {
+    const block = match[1] ?? '';
+    const linkMatch = /<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
+    if (!linkMatch) continue;
+    const snippetMatch = /<p\b[^>]*>([\s\S]*?)<\/p>/i.exec(block);
+    rows.push({
+      rawHref: linkMatch[1],
+      rawTitle: linkMatch[2],
+      rawSnippet: snippetMatch?.[1] ?? '',
+    });
+  }
+  if (rows.length === 0) {
+    const anchorRe = /<a\b[^>]*href="(https:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    for (const match of html.matchAll(anchorRe)) {
+      rows.push({
+        rawHref: match[1],
+        rawTitle: match[2],
+        rawSnippet: '',
+      });
+    }
+  }
+  return collectSearchCandidates(rows, resolveBingCandidateUrl, maxSources);
+}
+
+function parseDuckDuckGoSearchResults(html: string, maxSources: number): KeylessSearchCandidate[] {
+  const rows: Array<{ rawHref: string; rawTitle: string; rawSnippet: string }> = [];
+  const linkRe = /<a\b[^>]*class="[^"]*\bresult__a\b[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>([\s\S]{0,800})/gi;
+  for (const match of html.matchAll(linkRe)) {
+    const tail = match[3] ?? '';
+    const snippetMatch = /class="[^"]*\bresult__snippet\b[^"]*"[^>]*>([\s\S]*?)<\/(?:a|div|span)>/i.exec(tail);
+    rows.push({
+      rawHref: match[1],
+      rawTitle: match[2],
+      rawSnippet: snippetMatch?.[1] ?? '',
+    });
+  }
+  return collectSearchCandidates(rows, resolveDuckDuckGoCandidateUrl, maxSources);
+}
+
+async function searchKeylessCandidates(
+  query: string,
+  textFetcher: PublicTextFetcher,
+  maxSources: number,
+  timeoutMs: number,
+  signal: AbortSignalLike,
+): Promise<KeylessSearchCandidate[]> {
+  const encodedQuery = encodeURIComponent(query);
+  try {
+    const bingRes = await textFetcher(`https://cn.bing.com/search?q=${encodedQuery}`, {
+      timeoutMs,
+      signal,
+    });
+    if (bingRes.ok && bingRes.text.trim() && !isAntiBotOrCaptchaPage(bingRes.text)) {
+      const bingCandidates = parseBingSearchResults(bingRes.text, maxSources);
+      if (bingCandidates.length > 0) return bingCandidates;
+    }
+  } catch (error) {
+    if (signal.aborted) throw error;
+  }
+
+  if (signal.aborted) return [];
+  try {
+    const ddgRes = await textFetcher(`https://html.duckduckgo.com/html/?q=${encodedQuery}`, {
+      timeoutMs,
+      signal,
+    });
+    if (ddgRes.ok && ddgRes.text.trim() && !isAntiBotOrCaptchaPage(ddgRes.text)) {
+      return parseDuckDuckGoSearchResults(ddgRes.text, maxSources);
+    }
+  } catch (error) {
+    if (signal.aborted) throw error;
+  }
+  return [];
+}
+
+async function fetchKeylessPageContent(
+  url: string,
+  textFetcher: PublicTextFetcher,
+  timeoutMs: number,
+  signal: AbortSignalLike,
+): Promise<string | null> {
+  try {
+    const jinaRes = await textFetcher(`https://r.jina.ai/${url}`, {
+      headers: { Accept: 'text/markdown, text/plain' },
+      timeoutMs,
+      signal,
+    });
+    if (
+      jinaRes.ok &&
+      jinaRes.status !== 429 &&
+      jinaRes.text.trim() &&
+      !isAntiBotOrCaptchaPage(jinaRes.text)
+    ) {
+      return fitUnicode(jinaRes.text.trim(), MAX_KEYLESS_PAGE_CHARS);
+    }
+  } catch (error) {
+    if (signal.aborted) throw error;
+  }
+
+  if (signal.aborted) return null;
+  try {
+    const directRes = await textFetcher(url, { timeoutMs, signal });
+    if (!directRes.ok || !directRes.text.trim() || isAntiBotOrCaptchaPage(directRes.text)) {
+      return null;
+    }
+    const extracted = stripHtmlToText(directRes.text, MAX_KEYLESS_PAGE_CHARS);
+    return extracted || null;
+  } catch (error) {
+    if (signal.aborted) throw error;
+    return null;
+  }
+}
+
+export function createAndroidKeylessPublicResearchProvider(
+  options: AndroidKeylessPublicResearchOptions,
+): PublicResearchProvider {
+  const now = options.now ?? (() => Date.now());
+  const maxSources = Math.max(1, Math.min(3, Math.floor(options.maxSources ?? 2)));
+  const timeoutMs = Math.max(1, Math.floor(options.timeoutMs ?? 10_000));
+
+  return {
+    async resolve(request) {
+      if (request.signal?.aborted) return null;
+      return withResearchTimeout(request.signal, timeoutMs, async (signal) => {
+        try {
+          const query = buildPublicResearchQuery(request.identity);
+          const candidates = await searchKeylessCandidates(
+            query,
+            options.textFetcher,
+            maxSources,
+            timeoutMs,
+            signal,
+          );
+          if (candidates.length === 0) return null;
+
+          const fetched: FetchedSource[] = [];
+          for (const item of candidates) {
+            if (signal.aborted) return null;
+            const content = await fetchKeylessPageContent(
+              item.url,
+              options.textFetcher,
+              timeoutMs,
+              signal,
+            );
+            if (!content) continue;
+            fetched.push({ title: item.title, url: item.url, content });
+          }
+          return await synthesizePublicResearch(request, fetched, options.transport, now, signal);
+        } catch (error) {
+          if (request.signal?.aborted) throw error;
+          return null;
+        }
+      });
+    },
+  };
+}
+
 /**
  * Routes public research across DeepSeek official builtin search, borrowed DeepSeek
  * account credentials, Tavily, and Bocha while enforcing strict host isolation.
@@ -1141,10 +1452,6 @@ export function createRoutedPublicResearchProvider(
     async resolve(request) {
       if (request.signal?.aborted) return null;
 
-      if (supportsDeepSeekBuiltinSearch(request.config) && request.config.apiKey.trim()) {
-        return createDeepSeekPublicResearchProvider(options).resolve(request);
-      }
-
       let searchConfig: PublicResearchConfig | undefined;
       try {
         searchConfig = request.config.publicResearch ?? options.resolveSearchConfig?.();
@@ -1153,11 +1460,20 @@ export function createRoutedPublicResearchProvider(
         return null;
       }
 
-      if (!searchConfig || searchConfig.provider === 'none') {
+      if (searchConfig?.provider === 'none') {
         return null;
       }
 
-      if (searchConfig.provider === 'deepseek_account') {
+      if (supportsDeepSeekBuiltinSearch(request.config) && request.config.apiKey.trim()) {
+        if (!options.fetcher) return null;
+        return createDeepSeekPublicResearchProvider({
+          ...options,
+          fetcher: options.fetcher,
+        }).resolve(request);
+      }
+
+      if (searchConfig?.provider === 'deepseek_account') {
+        if (!options.fetcher) return null;
         let deepSeekKey = searchConfig.apiKey?.trim();
         if (!deepSeekKey) {
           try {
@@ -1170,25 +1486,41 @@ export function createRoutedPublicResearchProvider(
         if (!deepSeekKey) return null;
         return createDeepSeekPublicResearchProvider({
           ...options,
+          fetcher: options.fetcher,
           searchApiKey: deepSeekKey,
         }).resolve(request);
       }
 
-      if (searchConfig.provider === 'tavily') {
+      if (searchConfig?.provider === 'tavily') {
+        if (!options.fetcher) return null;
         const tavilyKey = searchConfig.apiKey?.trim();
         if (!tavilyKey) return null;
         return createTavilyPublicResearchProvider({
           ...options,
+          fetcher: options.fetcher,
           apiKey: tavilyKey,
         }).resolve(request);
       }
 
-      if (searchConfig.provider === 'bocha') {
+      if (searchConfig?.provider === 'bocha') {
+        if (!options.fetcher) return null;
         const bochaKey = searchConfig.apiKey?.trim();
         if (!bochaKey) return null;
         return createBochaPublicResearchProvider({
           ...options,
+          fetcher: options.fetcher,
           apiKey: bochaKey,
+        }).resolve(request);
+      }
+
+      if (!searchConfig || searchConfig.provider === 'auto') {
+        if (!options.textFetcher) return null;
+        return createAndroidKeylessPublicResearchProvider({
+          textFetcher: options.textFetcher,
+          transport: options.transport,
+          maxSources: options.maxSources,
+          timeoutMs: options.timeoutMs,
+          now: options.now,
         }).resolve(request);
       }
 

@@ -1,5 +1,6 @@
 package io.localfiction.harness;
 
+import android.content.pm.ApplicationInfo;
 import android.os.Bundle;
 import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
@@ -36,7 +37,14 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativeBinaryPlugin.class);
         registerPlugin(NativeVaultPlugin.class);
         registerPlugin(NativeUpdaterPlugin.class);
+        registerPlugin(NativeHttpPlugin.class);
         super.onCreate(savedInstanceState);
+        WebView.setWebContentsDebuggingEnabled(
+            shouldEnableWebViewDebugging(
+                BuildConfig.ALLOW_WEBVIEW_DEBUGGING,
+                getApplicationInfo().flags
+            )
+        );
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
@@ -135,6 +143,10 @@ public class MainActivity extends BridgeActivity {
         );
         activeExitFlushCoordinator = coordinator;
         coordinator.flushAndFinish("exit-" + (++exitFlushSeq));
+    }
+
+    static boolean shouldEnableWebViewDebugging(boolean buildConfigAllowed, int applicationFlags) {
+        return buildConfigAllowed && (applicationFlags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
     }
 
     private static int parseBackMode(String result) {

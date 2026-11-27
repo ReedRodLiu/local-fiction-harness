@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   PUBLIC_RESEARCH_PRESETS,
+  createAndroidKeylessPublicResearchProvider,
   createBochaPublicResearchProvider,
   createDeepSeekPublicResearchProvider,
   createFictionHarness,
@@ -24,6 +25,7 @@ import {
   type LlmStreamRequest,
   type LlmTransport,
   type ModelConfig,
+  type PublicTextFetcher,
   type TurnNode,
 } from '../../src/harness/index.ts';
 
@@ -1641,11 +1643,17 @@ describe('public character research', () => {
     expect(payloads[1]).toContain('说话短促');
   });
 
-  it('exports public research preset metadata for none, deepseek_account, tavily, and bocha', () => {
+  it('exports public research preset metadata for auto, none, deepseek_account, tavily, and bocha', () => {
+    expect((PUBLIC_RESEARCH_PRESETS as Record<string, unknown>).auto).toMatchObject({
+      title: '默认自动',
+      description: 'DeepSeek 账号走官方联网；第三方在安卓端自动免费查公开网页，网页端需自配搜索',
+      quotaHint: '安卓端免密钥免费使用',
+      requiresApiKey: false,
+    });
     expect(PUBLIC_RESEARCH_PRESETS.none).toMatchObject({
-      title: '不开启',
+      title: '关闭联网查证',
       description: '仅使用模型自身知识推进设定与创作，不发起联网搜索',
-      quotaHint: '无需额外配置',
+      quotaHint: '不发起联网请求',
       requiresApiKey: false,
     });
     expect(PUBLIC_RESEARCH_PRESETS.deepseek_account).toMatchObject({
@@ -2166,5 +2174,232 @@ describe('public character research', () => {
     await expect(
       abortingProvider.resolve({ identity, config: baseThirdParty, signal: externalSignal }),
     ).rejects.toThrow('aborted');
+  });
+
+  it('searches cn.bing.com and reads via r.jina.ai without leaking API keys in keyless provider', async () => {
+    const calls: Array<{ url: string; headers?: Record<string, string> }> = [];
+    const bingTarget = 'https://wiki.example/edward';
+    const encodedTarget = `a1${Buffer.from(bingTarget, 'utf8').toString('base64url')}`;
+    const textFetcher = vi.fn<PublicTextFetcher>(async (url, opts) => {
+      calls.push({ url, headers: opts?.headers });
+      if (url.startsWith('https://cn.bing.com/search?q=')) {
+        return {
+          ok: true,
+          status: 200,
+          text: [
+            '<ul>',
+            '<li class="b_algo"><h2><a href="https://cn.bing.com/internal">Bing内部</a></h2><p>跳过</p></li>',
+            `<li class="b_algo"><h2><a href="https://www.bing.com/ck/a?u=${encodedTarget}">爱德华角色档案</a></h2><div class="b_caption"><p>钢之炼金术师角色介绍</p></div></li>`,
+            '<li class="b_algo"><h2><a href="http://127.0.0.1/local">本地地址</a></h2><p>跳过</p></li>',
+            '</ul>',
+          ].join(''),
+        };
+      }
+      if (url === `https://r.jina.ai/${bingTarget}`) {
+        return {
+          ok: true,
+          status: 200,
+          text: '# 爱德华·艾尔利克\n说话直接，称呼阿尔冯斯为阿尔。',
+        };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    const transport: LlmTransport = {
+      async *streamChat() {
+        yield { contentDelta: '### 爱德华·艾尔利克\n- 称呼弟弟为阿尔，说话直接。', finishReason: 'stop' };
+      },
+    };
+    const provider = createAndroidKeylessPublicResearchProvider({
+      textFetcher,
+      transport,
+      now: () => 5678,
+    });
+    const thirdPartyConfig: ModelConfig = {
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o',
+      apiKey: 'sk-secret-never-send',
+      memoryOnly: false,
+    };
+
+    const ref = await provider.resolve({
+      identity: {
+        work: '钢之炼金术师',
+        version: '2003 动画版',
+        timeline: '第 51 集结局后',
+        characters: ['爱德华·艾尔利克'],
+      },
+      config: thirdPartyConfig,
+    });
+
+    expect(ref).toMatchObject({
+      fetchedAt: 5678,
+      sources: [{ title: '爱德华角色档案', url: bingTarget }],
+      summary: '### 爱德华·艾尔利克\n- 称呼弟弟为阿尔，说话直接。',
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.url).toContain('https://cn.bing.com/search?q=');
+    expect(calls[1]).toEqual({
+      url: `https://r.jina.ai/${bingTarget}`,
+      headers: { Accept: 'text/markdown, text/plain' },
+    });
+    expect(JSON.stringify(calls)).not.toContain('sk-secret-never-send');
+  });
+
+  it('falls back to DuckDuckGo and direct HTML extraction when Bing hits CAPTCHA and Jina returns 429', async () => {
+    const ddgTarget = 'https://fandom.example/edward';
+    const textFetcher = vi.fn<PublicTextFetcher>(async (url) => {
+      if (url.startsWith('https://cn.bing.com/search?q=')) {
+        return { ok: true, status: 200, text: '<html><body>Please verify you are human (CAPTCHA)</body></html>' };
+      }
+      if (url.startsWith('https://html.duckduckgo.com/html/?q=')) {
+        return {
+          ok: true,
+          status: 200,
+          text: `<div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent(ddgTarget)}">Fandom Edward</a><a class="result__snippet">爱德华·艾尔利克简介</a></div>`,
+        };
+      }
+      if (url === `https://r.jina.ai/${ddgTarget}`) {
+        return { ok: false, status: 429, text: 'Rate limit exceeded' };
+      }
+      if (url === ddgTarget) {
+        return {
+          ok: true,
+          status: 200,
+          text: '<html><head><style>body{color:red}</style><script>alert(1)</script></head><body><noscript>nojs</noscript><h1>爱德华·艾尔利克</h1><p>使用机械铠的年轻炼金术师。</p></body></html>',
+        };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    let seenContent = '';
+    const transport: LlmTransport = {
+      async *streamChat(req) {
+        seenContent = req.messages.map((m) => m.content).join('\n');
+        yield { contentDelta: '### 爱德华·艾尔利克\n- 使用机械铠。', finishReason: 'stop' };
+      },
+    };
+    const provider = createAndroidKeylessPublicResearchProvider({ textFetcher, transport, now: () => 9999 });
+
+    const ref = await provider.resolve({
+      identity: {
+        work: '钢之炼金术师',
+        version: '2003 动画版',
+        timeline: '第 51 集结局后',
+        characters: ['爱德华·艾尔利克'],
+      },
+      config: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o', apiKey: 'sk-test', memoryOnly: false },
+    });
+
+    expect(ref?.sources).toEqual([{ title: 'Fandom Edward', url: ddgTarget }]);
+    expect(seenContent).toContain('使用机械铠的年轻炼金术师');
+    expect(seenContent).not.toContain('alert(1)');
+    expect(seenContent).not.toContain('color:red');
+  });
+
+  it('silently returns null when both Bing and DuckDuckGo hit anti-bot or network failures', async () => {
+    const textFetcher = vi.fn<PublicTextFetcher>(async (url) => {
+      if (url.startsWith('https://cn.bing.com/search?q=')) {
+        return { ok: true, status: 200, text: '<div>请完成安全验证</div>' };
+      }
+      return { ok: true, status: 200, text: '<div>Unusual traffic detected</div>' };
+    });
+    const transport: LlmTransport = {
+      async *streamChat() {
+        throw new Error('must not synthesize when no sources');
+      },
+    };
+    const provider = createAndroidKeylessPublicResearchProvider({ textFetcher, transport });
+
+    await expect(
+      provider.resolve({
+        identity: {
+          work: '钢之炼金术师',
+          version: '2003 动画版',
+          timeline: '第 51 集结局后',
+          characters: ['爱德华·艾尔利克'],
+        },
+        config: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o', apiKey: 'sk-test', memoryOnly: false },
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('routes auto to textFetcher when provided, skips on none even for DeepSeek official, and skips auto without textFetcher', async () => {
+    const fetchCalls: string[] = [];
+    const fetcher: FetchLike = async (url) => {
+      fetchCalls.push(url);
+      throw new Error(`Unexpected fetch: ${url}`);
+    };
+    const textCalls: string[] = [];
+    const textFetcher: PublicTextFetcher = async (url) => {
+      textCalls.push(url);
+      if (url.startsWith('https://cn.bing.com/search?q=')) {
+        return {
+          ok: true,
+          status: 200,
+          text: '<li class="b_algo"><h2><a href="https://wiki.example/ed">爱德华</a></h2><p>简介</p></li>',
+        };
+      }
+      if (url === 'https://r.jina.ai/https://wiki.example/ed') {
+        return { ok: true, status: 200, text: '爱德华·艾尔利克使用机械铠。' };
+      }
+      throw new Error(`Unexpected textFetcher URL: ${url}`);
+    };
+    const transport: LlmTransport = {
+      async *streamChat() {
+        yield { contentDelta: '### 爱德华·艾尔利克\n- 使用机械铠。', finishReason: 'stop' };
+      },
+    };
+    const identity = {
+      work: '钢之炼金术师',
+      version: '2003 动画版',
+      timeline: '第 51 集结局后',
+      characters: ['爱德华·艾尔利克'],
+    };
+    const thirdParty: ModelConfig = {
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o',
+      apiKey: 'sk-openai-secret',
+      memoryOnly: false,
+      capabilities: {
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    };
+
+    const androidRouted = createRoutedPublicResearchProvider({
+      fetcher,
+      textFetcher,
+      transport,
+      now: () => 3333,
+    });
+
+    // 'none' must disable search even for DeepSeek official
+    await expect(
+      androidRouted.resolve({
+        identity,
+        config: { ...testConfig, publicResearch: { provider: 'none' } },
+      }),
+    ).resolves.toBeNull();
+    expect(fetchCalls).toEqual([]);
+    expect(textCalls).toEqual([]);
+
+    // 'auto' (explicit or undefined) on third-party routes to textFetcher on Android
+    const autoRef = await androidRouted.resolve({
+      identity,
+      config: { ...thirdParty, publicResearch: { provider: 'auto' } },
+    });
+    expect(autoRef?.fetchedAt).toBe(3333);
+    expect(autoRef?.sources).toEqual([{ title: '爱德华', url: 'https://wiki.example/ed' }]);
+    expect(textCalls).toHaveLength(2);
+    expect(fetchCalls).toEqual([]);
+
+    // Web (no textFetcher) silently returns null for 'auto'
+    const webRouted = createRoutedPublicResearchProvider({ fetcher, transport });
+    await expect(
+      webRouted.resolve({ identity, config: { ...thirdParty, publicResearch: { provider: 'auto' } } }),
+    ).resolves.toBeNull();
+    expect(fetchCalls).toEqual([]);
   });
 });

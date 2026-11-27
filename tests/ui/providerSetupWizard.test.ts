@@ -143,7 +143,7 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
     expect(tavilyMarkup).toContain('data-testid="provider-probe-prefill-btn"');
     expect(tavilyMarkup).toContain('暂不支持，已保持通用稳定模式');
 
-    // When search preset is 'none', search API key input is hidden and summary encourages optional setup
+    // When search preset is 'none', search API key input is hidden and summary shows disabled state
     const noneMarkup = renderToStaticMarkup(
       createElement(ProviderSetupWizard, {
         open: true,
@@ -154,9 +154,54 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
         onExitComplete: vi.fn(),
       }),
     );
+    expect(noneMarkup).toContain('data-testid="provider-search-preset-auto"');
+    expect(noneMarkup).toMatch(/data-testid="provider-search-preset-none"[^>]*aria-pressed="true"/);
     expect(noneMarkup).not.toContain('data-testid="provider-search-key-input"');
-    expect(noneMarkup).toContain('可选：配免费搜索即可用（不配也能正常玩）');
+    expect(noneMarkup).toContain('已关闭联网查证');
     expect(noneMarkup).toContain('默认统计节省 Token，选填单价后可算花费');
+
+    // When search preset is omitted (defaults to 'auto'), Web and Android show distinct plain-language copy
+    const autoWebMarkup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        initialProfile: createProviderProfileFromPreset('local', { id: 'local-auto-web' }),
+        isWebPlatform: true,
+        onSaveProfile: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+    expect(autoWebMarkup).toMatch(/data-testid="provider-search-preset-auto"[^>]*aria-pressed="true"/);
+    expect(autoWebMarkup).not.toContain('data-testid="provider-search-key-input"');
+    expect(autoWebMarkup).toContain(
+      '不配搜索也能正常玩；安卓端会自动尝试免费查原作，网页端如需查证可在此选配免费搜索',
+    );
+
+    const autoAndroidMarkup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        initialProfile: createProviderProfileFromPreset('local', { id: 'local-auto-android' }),
+        isWebPlatform: false,
+        onSaveProfile: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+    expect(autoAndroidMarkup).toMatch(/data-testid="provider-search-preset-auto"[^>]*aria-pressed="true"/);
+    expect(autoAndroidMarkup).toContain('默认自动（安卓端免密钥免费查公开网页）');
+
+    // DeepSeek with explicit 'none' displays disabled research summary
+    const dsNoneMarkup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        initialProfile: createProviderProfileFromPreset('deepseek', { id: 'ds-none' }),
+        initialPublicResearch: { provider: 'none' },
+        onSaveProfile: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+    expect(dsNoneMarkup).toContain('已关闭联网查证');
   });
 
   it('blocks fallback save on 401/format errors and enables fallback save on network_error or models_unsupported', async () => {
@@ -260,9 +305,23 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
       expect(localFallback.saveResult.profile.baseUrl).toBe('http://localhost:11434/v1');
     }
 
-    // Build preserves empty pricing when unset
+    // Build preserves empty pricing when unset and emits publicResearch: { provider: 'auto' } by default
     const cleanSave = buildProviderSaveResultFromDraft(localDraft);
     expect(cleanSave.profile.defaultPricing).toBeUndefined();
+    expect(localDraft.searchProvider).toBe('auto');
+    expect(cleanSave.publicResearch).toEqual({ provider: 'auto' });
+
+    // Explicit 'none' is preserved across draft and saveResult
+    const noneDraft = createWizardDraftFromPreset('openai', {
+      publicResearch: { provider: 'none' },
+    });
+    expect(noneDraft.searchProvider).toBe('none');
+    expect(buildProviderSaveResultFromDraft(noneDraft).publicResearch).toEqual({ provider: 'none' });
+
+    // Profile draft defaults to 'auto' when publicResearch is omitted and preserves explicit 'none'
+    const oaProfile = createProviderProfileFromPreset('openai', { id: 'oa-default' });
+    expect(createWizardDraftFromProfile(oaProfile).searchProvider).toBe('auto');
+    expect(createWizardDraftFromProfile(oaProfile, { provider: 'none' }).searchProvider).toBe('none');
 
     // Editing a DeepSeek profile set to deepseek-v4-pro preserves deepseek-v4-pro as defaultModel
     const proDeepSeek = createProviderProfileFromPreset('deepseek', {

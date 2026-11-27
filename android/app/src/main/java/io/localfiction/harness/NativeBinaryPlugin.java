@@ -10,7 +10,9 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "NativeBinary")
 public class NativeBinaryPlugin extends Plugin {
     private static final long DEFAULT_MAX_BYTES = 100L * 1024L * 1024L;
-    private final BinaryDownloadClient downloadClient = new BinaryDownloadClient();
+    private final BinaryDownloadClient downloadClient = new BinaryDownloadClient(
+        BuildConfig.ALLOW_LOOPBACK_HTTP
+    );
 
     @PluginMethod
     public void startDownload(PluginCall call) {

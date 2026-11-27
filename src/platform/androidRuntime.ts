@@ -12,10 +12,12 @@ import {
   type LlmTransport,
   type PlatformRuntime,
   type PublicResearchProvider,
+  type PublicTextFetcher,
   type SecretStore,
   type StoryStorage,
 } from '../harness/index.ts';
 import { createCapacitorBinaryDownloader } from './capacitorBinaryDownloader.ts';
+import { createCapacitorTextFetcher } from './capacitorHttpText.ts';
 import { createCapacitorSseTransport } from './capacitorSseTransport.ts';
 import { createCapacitorAppUpdater } from './capacitorUpdater.ts';
 import {
@@ -35,6 +37,7 @@ export interface AndroidRuntimeOptions {
   diagnosticsStorage?: KeyValueStorage;
   promptPackStorage?: KeyValueStorage;
   publicResearch?: PublicResearchProvider;
+  textFetcher?: PublicTextFetcher;
   appUpdater?: AppUpdater;
 }
 
@@ -77,15 +80,17 @@ export function createAndroidPlatformRuntime(
     diagnostics,
   );
   const webFetch = (globalThis as { fetch?: FetchLike }).fetch;
+  const textFetcher = options.textFetcher ?? createCapacitorTextFetcher();
   return {
     platform: 'android',
     diagnostics,
     promptPackStorage,
     transport,
-    publicResearch: options.publicResearch ?? (webFetch ? createRoutedPublicResearchProvider({
+    publicResearch: options.publicResearch ?? createRoutedPublicResearchProvider({
       fetcher: webFetch,
+      textFetcher,
       transport,
-    }) : undefined),
+    }),
     binaryDownloader: options.binaryDownloader ?? createCapacitorBinaryDownloader(),
     storyStorage: createDiagnosticStoryStorage(
       options.storyStorage ?? createAndroidStoryStorage(),
