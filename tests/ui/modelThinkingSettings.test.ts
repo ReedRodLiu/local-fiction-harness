@@ -180,4 +180,55 @@ describe('Ticket #164 T5: SettingsPage multi-profile, global default model & uni
     expect(resolveNextThinkingToggleEffort('high', 'deepseek')).toBe('none');
     expect(resolveNextThinkingToggleEffort('medium', 'openai_reasoning_effort')).toBe('none');
   });
+
+  it('defaults active-provider-research-status to 默认自动 when unconfigured and shows 关闭联网查证 when disabled', () => {
+    const openaiProfile = createProviderProfileFromPreset('openai', {
+      id: 'openai-research-test',
+      apiKey: 'sk-oa-test',
+    });
+
+    const autoMarkup = renderSettings({
+      providerLibrary: {
+        version: 2,
+        activeProviderId: openaiProfile.id,
+        profiles: [openaiProfile],
+        reasoningEffort: 'none',
+      },
+      config: {
+        baseUrl: openaiProfile.baseUrl,
+        model: openaiProfile.defaultModel,
+        reasoningEffort: 'none',
+        apiKey: openaiProfile.apiKey,
+        memoryOnly: false,
+        providerId: openaiProfile.id,
+        providerPresetId: openaiProfile.presetId,
+        capabilities: openaiProfile.capabilities,
+      },
+    });
+    expect(autoMarkup).toContain('data-testid="active-provider-research-status"');
+    expect(autoMarkup).toContain('默认自动');
+    expect(autoMarkup).not.toContain('关闭联网查证');
+
+    const disabledMarkup = renderSettings({
+      providerLibrary: {
+        version: 2,
+        activeProviderId: openaiProfile.id,
+        profiles: [openaiProfile],
+        reasoningEffort: 'none',
+        publicResearch: { provider: 'none' },
+      },
+      config: {
+        baseUrl: openaiProfile.baseUrl,
+        model: openaiProfile.defaultModel,
+        reasoningEffort: 'none',
+        apiKey: openaiProfile.apiKey,
+        memoryOnly: false,
+        providerId: openaiProfile.id,
+        providerPresetId: openaiProfile.presetId,
+        capabilities: openaiProfile.capabilities,
+        publicResearch: { provider: 'none' },
+      },
+    });
+    expect(disabledMarkup).toContain('关闭联网查证');
+  });
 });
