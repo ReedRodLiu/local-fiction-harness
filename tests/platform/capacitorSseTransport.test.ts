@@ -443,4 +443,237 @@ describe('Capacitor NativeSse LlmTransport contract', () => {
       })(),
     ).rejects.toThrow(/原生 SSE 分块数据/);
   });
+
+  it('dispatches openai_responses through shared request builder and SSE parser without changing NativeSsePlugin', async () => {
+    const fake = createFakeNativeSsePlugin();
+    const transport = createCapacitorSseTransport(fake.plugin, () => 'req-resp-1');
+
+    const sseBytes = new TextEncoder().encode(
+      [
+        'event: response.reasoning_summary_text.delta\n',
+        'data: {"type":"response.reasoning_summary_text.delta","delta":"推理摘要。"}\n\n',
+        'event: response.output_text.delta\n',
+        'data: {"type":"response.output_text.delta","delta":"月光落进庭院。"}\n\n',
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":500,"input_tokens_details":{"cached_tokens":200},"output_tokens":80,"output_tokens_details":{"reasoning_tokens":30},"total_tokens":580}}}\n\n',
+      ].join(''),
+    );
+
+    const deltas: Array<{
+      reasoningDelta?: string;
+      contentDelta?: string;
+      finishReason?: string | null;
+      usage?: unknown;
+    }> = [];
+    const run = (async () => {
+      for await (const delta of transport.streamChat({
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-android-oa',
+        model: 'gpt-4.1',
+        reasoningEffort: 'medium',
+        prefixCompletion: { content: '不应触发前缀回显持有' },
+        capabilities: {
+          apiProtocol: 'openai_responses',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [
+          { role: 'system', content: '系统设定' },
+          { role: 'user', content: '进院' },
+        ],
+      })) {
+        deltas.push(delta);
+      }
+    })();
+
+    await vi.waitFor(() => expect(fake.started).toHaveLength(1));
+    expect(fake.started[0]?.url).toBe('https://api.openai.com/v1/responses');
+    expect(JSON.parse(fake.started[0]!.body)).toEqual({
+      model: 'gpt-4.1',
+      stream: true,
+      store: false,
+      instructions: '系统设定',
+      input: [{ role: 'user', content: '进院' }],
+      reasoning: { effort: 'medium', summary: 'auto' },
+    });
+
+    for (let i = 0; i < sseBytes.length; i += 9) {
+      fake.emitChunk('req-resp-1', sseBytes.slice(i, i + 9));
+    }
+    fake.emitComplete('req-resp-1');
+
+    await run;
+    expect(deltas).toEqual([
+      { reasoningDelta: '推理摘要。' },
+      { contentDelta: '月光落进庭院。' },
+      {
+        finishReason: 'stop',
+        usage: {
+          promptTokens: 500,
+          completionTokens: 80,
+          totalTokens: 580,
+          promptCacheHitTokens: 200,
+          promptCacheMissTokens: 300,
+          completionTokensDetails: { reasoningTokens: 30 },
+        },
+      },
+    ]);
+  });
+
+  it('dispatches anthropic_messages through shared request builder and SSE parser without changing NativeSsePlugin', async () => {
+    const fake = createFakeNativeSsePlugin();
+    const transport = createCapacitorSseTransport(fake.plugin, () => 'req-ant-1');
+
+    const sseBytes = new TextEncoder().encode(
+      [
+        'event: message_start\n',
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":120,"cache_read_input_tokens":30,"cache_creation_input_tokens":10,"output_tokens":1}}}\n\n',
+        'event: content_block_delta\n',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"思考中。"}}\n\n',
+        'event: content_block_delta\n',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"廊灯亮起。"}}\n\n',
+        'event: message_delta\n',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":25}}\n\n',
+        'event: message_stop\n',
+        'data: {"type":"message_stop"}\n\n',
+      ].join(''),
+    );
+
+    const deltas: Array<{
+      reasoningDelta?: string;
+      contentDelta?: string;
+      finishReason?: string | null;
+      usage?: unknown;
+    }> = [];
+    const run = (async () => {
+      for await (const delta of transport.streamChat({
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'sk-android-ant',
+        model: 'claude-sonnet-4-5',
+        reasoningEffort: 'low',
+        prefixCompletion: { content: '不应附带预填' },
+        capabilities: {
+          apiProtocol: 'anthropic_messages',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'standard_assistant_prefill',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [
+          { role: 'system', content: '设定' },
+          { role: 'user', content: '进门' },
+        ],
+      })) {
+        deltas.push(delta);
+      }
+    })();
+
+    await vi.waitFor(() => expect(fake.started).toHaveLength(1));
+    expect(fake.started[0]?.url).toBe('https://api.anthropic.com/v1/messages');
+    expect(fake.started[0]?.headers['x-api-key']).toBe('sk-android-ant');
+    expect(fake.started[0]?.headers['anthropic-version']).toBe('2023-06-01');
+    expect(JSON.parse(fake.started[0]!.body)).toEqual({
+      model: 'claude-sonnet-4-5',
+      stream: true,
+      max_tokens: 4096,
+      system: '设定',
+      messages: [{ role: 'user', content: '进门' }],
+      thinking: { type: 'enabled', budget_tokens: 2048 },
+    });
+
+    for (let i = 0; i < sseBytes.length; i += 10) {
+      fake.emitChunk('req-ant-1', sseBytes.slice(i, i + 10));
+    }
+    fake.emitComplete('req-ant-1');
+
+    await run;
+    expect(deltas).toEqual([
+      { reasoningDelta: '思考中。' },
+      { contentDelta: '廊灯亮起。' },
+      {
+        finishReason: 'stop',
+        usage: {
+          promptTokens: 160,
+          completionTokens: 25,
+          totalTokens: 185,
+          promptCacheHitTokens: 30,
+          promptCacheMissTokens: 130,
+        },
+      },
+    ]);
+  });
+
+  it('dispatches gemini_native through shared request builder and SSE parser without changing NativeSsePlugin', async () => {
+    const fake = createFakeNativeSsePlugin();
+    const transport = createCapacitorSseTransport(fake.plugin, () => 'req-gem-1');
+
+    const sseBytes = new TextEncoder().encode(
+      [
+        'data: {"candidates":[{"content":{"role":"model","parts":[{"thought":true,"text":"推理片段。"},{"text":"湖面泛起涟漪。"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":400,"cachedContentTokenCount":100,"candidatesTokenCount":50,"thoughtsTokenCount":20,"totalTokenCount":470}}\n\n',
+      ].join(''),
+    );
+
+    const deltas: Array<{
+      reasoningDelta?: string;
+      contentDelta?: string;
+      finishReason?: string | null;
+      usage?: unknown;
+    }> = [];
+    const run = (async () => {
+      for await (const delta of transport.streamChat({
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: 'AIza-android-gem',
+        model: 'gemini-2.5-flash',
+        reasoningEffort: 'low',
+        prefixCompletion: { content: '不应触发前缀回显持有' },
+        capabilities: {
+          apiProtocol: 'gemini_native',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [
+          { role: 'system', content: '系统设定' },
+          { role: 'user', content: '走近湖边' },
+        ],
+      })) {
+        deltas.push(delta);
+      }
+    })();
+
+    await vi.waitFor(() => expect(fake.started).toHaveLength(1));
+    expect(fake.started[0]?.url).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+    );
+    expect(fake.started[0]?.headers['x-goog-api-key']).toBe('AIza-android-gem');
+    expect(fake.started[0]?.headers.Authorization).toBeUndefined();
+
+    for (let i = 0; i < sseBytes.length; i += 10) {
+      fake.emitChunk('req-gem-1', sseBytes.slice(i, i + 10));
+    }
+    fake.emitComplete('req-gem-1');
+
+    await run;
+    expect(deltas).toEqual([
+      {
+        reasoningDelta: '推理片段。',
+        contentDelta: '湖面泛起涟漪。',
+        finishReason: 'stop',
+        usage: {
+          promptTokens: 400,
+          completionTokens: 70,
+          totalTokens: 470,
+          promptCacheHitTokens: 100,
+          promptCacheMissTokens: 300,
+          completionTokensDetails: { reasoningTokens: 20 },
+        },
+      },
+    ]);
+  });
 });

@@ -40,6 +40,7 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
       defaultModel: 'deepseek-flash',
       backgroundModel: 'deepseek-flash',
       capabilities: {
+        apiProtocol: 'openai_chat',
         thinkingProtocol: 'deepseek',
         prefixProtocol: 'deepseek_beta',
         supportsBalanceQuery: true,
@@ -51,9 +52,58 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
     expect(PROVIDER_PRESETS.openai).toMatchObject({
       name: 'OpenAI',
       baseUrl: 'https://api.openai.com/v1',
-      models: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }],
-      defaultModel: 'gpt-4o',
+      models: [
+        { id: 'gpt-4.1' },
+        { id: 'gpt-4o' },
+        { id: 'gpt-4o-mini' },
+        { id: 'o4-mini' },
+      ],
+      defaultModel: 'gpt-4.1',
+      backgroundModel: 'gpt-4o-mini',
       capabilities: {
+        apiProtocol: 'openai_responses',
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    });
+
+    expect(PROVIDER_PRESETS.anthropic).toMatchObject({
+      presetId: 'anthropic',
+      name: 'Anthropic (Claude)',
+      baseUrl: 'https://api.anthropic.com/v1',
+      models: [
+        { id: 'claude-sonnet-4-5' },
+        { id: 'claude-opus-4-1' },
+        { id: 'claude-haiku-4-5' },
+      ],
+      defaultModel: 'claude-sonnet-4-5',
+      backgroundModel: 'claude-haiku-4-5',
+      capabilities: {
+        apiProtocol: 'anthropic_messages',
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'standard_assistant_prefill',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    });
+
+    expect(PROVIDER_PRESETS.gemini).toMatchObject({
+      presetId: 'gemini',
+      name: 'Google (Gemini)',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      models: [
+        { id: 'gemini-2.5-flash' },
+        { id: 'gemini-2.5-pro' },
+        { id: 'gemini-2.5-flash-lite' },
+      ],
+      defaultModel: 'gemini-2.5-flash',
+      backgroundModel: 'gemini-2.5-flash-lite',
+      capabilities: {
+        apiProtocol: 'gemini_native',
         thinkingProtocol: 'openai_reasoning_effort',
         prefixProtocol: 'none',
         supportsBalanceQuery: false,
@@ -65,21 +115,28 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
     expect(PROVIDER_PRESETS.openrouter).toMatchObject({
       name: 'OpenRouter',
       baseUrl: 'https://openrouter.ai/api/v1',
-      models: [{ id: 'openai/gpt-4o-mini' }],
+      models: [{ id: 'openai/gpt-4o-mini' }, { id: 'anthropic/claude-sonnet-4' }],
       defaultModel: 'openai/gpt-4o-mini',
+      backgroundModel: 'openai/gpt-4o-mini',
+      consoleUrl: 'https://openrouter.ai/keys',
     });
 
     expect(PROVIDER_PRESETS.siliconflow).toMatchObject({
       name: '硅基流动',
       baseUrl: 'https://api.siliconflow.cn/v1',
-      models: [{ id: 'deepseek-ai/DeepSeek-V3' }],
+      models: [
+        { id: 'deepseek-ai/DeepSeek-V3' },
+        { id: 'Qwen/Qwen2.5-72B-Instruct' },
+      ],
       defaultModel: 'deepseek-ai/DeepSeek-V3',
+      backgroundModel: 'Qwen/Qwen2.5-7B-Instruct',
+      consoleUrl: 'https://cloud.siliconflow.cn/account/ak',
     });
 
     expect(PROVIDER_PRESETS.local).toMatchObject({
       name: '本地服务（Ollama / LM Studio）',
       baseUrl: 'http://localhost:11434/v1',
-      models: [{ id: 'llama3.2' }],
+      models: [{ id: 'llama3.2' }, { id: 'qwen2.5' }],
       defaultModel: 'llama3.2',
     });
 
@@ -92,7 +149,7 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
 
     const p1 = createProviderProfileFromPreset('openai', { id: 'p-openai', apiKey: 'sk-1' });
     p1.models.push({ id: 'o3-mini' });
-    expect(PROVIDER_PRESETS.openai.models).toHaveLength(2);
+    expect(PROVIDER_PRESETS.openai.models).toHaveLength(4);
 
     const defLib = createDefaultProviderLibrary();
     expect(defLib.version).toBe(2);
@@ -100,6 +157,51 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
     expect(defLib.profiles).toHaveLength(1);
     expect(defLib.activeProviderId).toBe(defLib.profiles[0]!.id);
     expect(defLib.profiles[0]!.presetId).toBe('deepseek');
+  });
+
+  it('includes all 13 additional overseas and domestic presets with models, backgroundModel, consoleUrl, setupHint, and thinkingDialect', () => {
+    const newPresetIds = [
+      'xai',
+      'groq',
+      'moonshot',
+      'zhipu',
+      'dashscope',
+      'volcengine',
+      'minimax',
+      'qianfan',
+      'hunyuan',
+      'spark',
+      'sensenova',
+      'stepfun',
+      'lingyi',
+    ] as const;
+
+    for (const id of newPresetIds) {
+      const preset = PROVIDER_PRESETS[id];
+      expect(preset.presetId).toBe(id);
+      expect(preset.baseUrl).toMatch(/^https:\/\//);
+      expect(preset.models.length).toBeGreaterThanOrEqual(2);
+      expect(preset.models.length).toBeLessThanOrEqual(4);
+      expect(preset.defaultModel).toBeTruthy();
+      expect(preset.backgroundModel).toBeTruthy();
+      expect(preset.consoleUrl).toMatch(/^https:\/\//);
+      expect(preset.capabilities.apiProtocol).toBe('openai_chat');
+      expect(preset.capabilities.thinkingProtocol).toBe('openai_reasoning_effort');
+
+      const profile = createProviderProfileFromPreset(id, { id: `p-${id}`, apiKey: 'k-test' });
+      expect(profile.presetId).toBe(id);
+      expect(profile.defaultModel).toBe(preset.defaultModel);
+      expect(profile.backgroundModel).toBe(preset.backgroundModel);
+    }
+
+    expect(PROVIDER_PRESETS.dashscope.capabilities.thinkingDialect).toBe('enable_thinking');
+    expect(PROVIDER_PRESETS.zhipu.capabilities.thinkingDialect).toBe('thinking_type_enabled');
+    expect(PROVIDER_PRESETS.volcengine.capabilities.thinkingDialect).toBe('thinking_type_enabled');
+    expect(PROVIDER_PRESETS.openai.consoleUrl).toMatch(/^https:\/\//);
+    expect(PROVIDER_PRESETS.openai.setupHint).toBeTruthy();
+    expect(PROVIDER_PRESETS.volcengine.setupHint).toContain('ep-');
+    expect(PROVIDER_PRESETS.spark.setupHint).toContain('APIPassword');
+    expect(PROVIDER_PRESETS.dashscope.setupHint).toBeTruthy();
   });
 
   it('encodes and decodes lfh-secrets-v2 envelopes and legacy raw keys', () => {
@@ -155,6 +257,7 @@ describe('AsyncProviderLibraryStore persistence, memoryOnly purge, and legacy mi
         createProviderProfileFromPreset('openai', {
           id: 'openai-1',
           apiKey: 'sk-openai-secret',
+          defaultModel: 'gpt-4o',
           defaultPricing: {
             currency: 'USD',
             inputPerMillion: 2.5,
@@ -300,6 +403,7 @@ describe('AsyncProviderLibraryStore persistence, memoryOnly purge, and legacy mi
       apiKey: 'sk-relay-999',
       memoryOnly: false,
       capabilities: {
+        apiProtocol: 'openai_chat',
         thinkingProtocol: 'openai_reasoning_effort',
         prefixProtocol: 'none',
         supportsBalanceQuery: false,
@@ -307,6 +411,46 @@ describe('AsyncProviderLibraryStore persistence, memoryOnly purge, and legacy mi
         supportsBuiltinPricing: false,
       },
     });
+  });
+
+  it('defaults omitted capabilities.apiProtocol to openai_chat when loading legacy stored profiles', async () => {
+    const kv = createMemoryKv();
+    kv.setItem(
+      'lfh.model_config.meta',
+      JSON.stringify({
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o',
+        providerId: 'openai-legacy',
+        providerPresetId: 'openai',
+        providerLibrary: {
+          version: 2,
+          activeProviderId: 'openai-legacy',
+          reasoningEffort: 'none',
+          profiles: [
+            {
+              id: 'openai-legacy',
+              name: 'OpenAI',
+              presetId: 'openai',
+              baseUrl: 'https://api.openai.com/v1',
+              models: [{ id: 'gpt-4o' }],
+              defaultModel: 'gpt-4o',
+              capabilities: {
+                thinkingProtocol: 'openai_reasoning_effort',
+                prefixProtocol: 'none',
+                supportsBalanceQuery: false,
+                supportsBuiltinSearch: false,
+                supportsBuiltinPricing: false,
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    const store = createAsyncProviderLibraryStore(createKeyValueSecretStore(kv));
+    const loaded = await store.load();
+    expect(loaded.profiles[0]?.capabilities.apiProtocol).toBe('openai_chat');
+    expect(projectActiveModelConfig(loaded).capabilities?.apiProtocol).toBe('openai_chat');
   });
 });
 
@@ -328,6 +472,7 @@ describe('projectActiveModelConfig', () => {
         createProviderProfileFromPreset('openai', {
           id: 'openai-1',
           apiKey: 'sk-openai',
+          defaultModel: 'gpt-4o',
           backgroundModel: 'gpt-4o-mini',
           defaultPricing: {
             currency: 'USD',

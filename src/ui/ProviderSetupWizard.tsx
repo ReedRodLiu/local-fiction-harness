@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { ExternalLink, RefreshCw } from 'lucide-react';
+import { ChevronDown, ExternalLink, RefreshCw, Search, X } from 'lucide-react';
 import { isDevProxyBaseUrl } from '../platform/devProxy.ts';
 import {
+  ANTHROPIC_CONSOLE_KEYS_URL,
   DEEPSEEK_OFFICIAL_KEYS_URL,
   PROVIDER_PRESETS,
   PUBLIC_RESEARCH_PRESETS,
   createDefaultId,
   createProviderProfileFromPreset,
+  normalizeProviderApiProtocol,
   normalizeProviderBaseUrl,
   probeAssistantPrefillCompatibility,
   sanitizeApiKeyInput,
@@ -15,11 +17,13 @@ import {
   verifyDeepSeekApiKey,
   verifyProviderConnection,
   type CustomModelPricing,
+  type ProviderApiProtocol,
   type ProviderConnectionVerifyResult,
   type ProviderModelEntry,
   type ProviderPrefixProtocol,
   type ProviderPresetId,
   type ProviderProfile,
+  type ProviderThinkingDialect,
   type PublicResearchConfig,
   type PublicResearchSearchPresetId,
 } from '../harness/index.ts';
@@ -61,6 +65,8 @@ export interface ProviderWizardDraft {
   inputPriceText: string;
   cacheHitPriceText: string;
   outputPriceText: string;
+  apiProtocol: ProviderApiProtocol;
+  thinkingDialect?: ProviderThinkingDialect;
   prefixProtocol: ProviderPrefixProtocol;
   prefillProbeStatus: 'untested' | 'supported' | 'unsupported';
   searchProvider: PublicResearchSearchPresetId;
@@ -68,18 +74,161 @@ export interface ProviderWizardDraft {
   searchDeepSeekProfileId?: string;
 }
 
-const PRESET_CARDS: ReadonlyArray<{
-  presetId: ProviderPresetId;
+export interface ProviderPresetCategoryGroup {
+  id: 'recommended' | 'domestic' | 'overseas' | 'aggregated_local_custom';
   label: string;
-  badge?: string;
-}> = [
-  { presetId: 'deepseek', label: 'DeepSeek', badge: '官方推荐' },
-  { presetId: 'openai', label: 'OpenAI' },
-  { presetId: 'openrouter', label: 'OpenRouter' },
-  { presetId: 'siliconflow', label: '硅基流动' },
-  { presetId: 'local', label: '本地服务' },
-  { presetId: 'custom', label: '自定义' },
+  presetIds: readonly ProviderPresetId[];
+}
+
+export const PROVIDER_PRESET_CATEGORIES: readonly ProviderPresetCategoryGroup[] = [
+  {
+    id: 'recommended',
+    label: '推荐与内置',
+    presetIds: ['deepseek'],
+  },
+  {
+    id: 'domestic',
+    label: '国内大模型',
+    presetIds: [
+      'moonshot',
+      'zhipu',
+      'dashscope',
+      'volcengine',
+      'minimax',
+      'qianfan',
+      'hunyuan',
+      'spark',
+      'sensenova',
+      'stepfun',
+      'lingyi',
+    ],
+  },
+  {
+    id: 'overseas',
+    label: '海外大模型',
+    presetIds: ['openai', 'anthropic', 'gemini', 'xai', 'groq'],
+  },
+  {
+    id: 'aggregated_local_custom',
+    label: '聚合・本地・自定义',
+    presetIds: ['openrouter', 'siliconflow', 'local', 'custom'],
+  },
 ];
+
+const PRESET_SEARCH_KEYWORDS: Readonly<Record<ProviderPresetId, readonly string[]>> = {
+  deepseek: ['deepseek', '深度求索', 'ds', '官方推荐'],
+  moonshot: ['moonshot', 'kimi', '月之暗面'],
+  zhipu: ['zhipu', 'glm', '智谱', 'bigmodel'],
+  dashscope: ['dashscope', 'qwen', '通义千问', '百炼', '阿里云', 'aliyun'],
+  volcengine: ['volcengine', 'ark', 'doubao', '火山方舟', '豆包', 'volces'],
+  minimax: ['minimax', 'minimaxi', '海螺'],
+  qianfan: ['qianfan', 'ernie', '文心', '百度', '千帆', 'baidubce'],
+  hunyuan: ['hunyuan', 'tencent', '腾讯', '混元'],
+  spark: ['spark', 'xfyun', 'xf-yun', '讯飞', '星火'],
+  sensenova: ['sensenova', 'sensecore', '商汤', '日日新'],
+  stepfun: ['stepfun', 'step', '阶跃星辰'],
+  lingyi: ['lingyi', 'yi', '零一万物', 'lingyiwanwu'],
+  openai: ['openai', 'chatgpt', 'gpt', 'o4', 'responses'],
+  anthropic: ['anthropic', 'claude', 'sonnet', 'opus', 'haiku'],
+  gemini: ['gemini', 'google', 'aistudio', '谷歌'],
+  xai: ['xai', 'grok'],
+  groq: ['groq', 'llama'],
+  openrouter: ['openrouter', '聚合', '路由'],
+  siliconflow: ['siliconflow', '硅基流动'],
+  local: ['local', 'ollama', 'lm studio', 'lmstudio', '本地', 'localhost'],
+  custom: ['custom', 'relay', '中转', '自定义', '兼容'],
+};
+
+interface ProviderSubscriptionNoticeSpec {
+  testId: string;
+  message: string;
+  linkUrl: string;
+  linkLabel: string;
+  linkTestId?: string;
+  hintTestId?: string;
+  matches: (draft: Pick<ProviderWizardDraft, 'presetId' | 'apiProtocol'>) => boolean;
+}
+
+const PROVIDER_SUBSCRIPTION_NOTICES: readonly ProviderSubscriptionNoticeSpec[] = [
+  {
+    testId: 'provider-gemini-billing-note',
+    message:
+      'Google AI Studio 提供免费测试额度；消费级 Gemini AI Pro 会员订阅不包含 API 调用额度，需在开发者平台创建 API Key。',
+    linkUrl: 'https://aistudio.google.com/apikey',
+    linkLabel: '前往 Google AI Studio 获取 API Key',
+    matches: (draft) => draft.presetId === 'gemini' || draft.apiProtocol === 'gemini_native',
+  },
+  {
+    testId: 'anthropic-subscription-notice',
+    message:
+      'Claude Pro / Max 网页会员订阅不含 API 调用额度，需在 Anthropic Console 创建按量 API Key。',
+    linkUrl: ANTHROPIC_CONSOLE_KEYS_URL,
+    linkLabel: '前往 Anthropic Console 获取 API Key',
+    linkTestId: 'anthropic-console-keys-link',
+    matches: (draft) => draft.presetId === 'anthropic',
+  },
+  {
+    testId: 'openai-subscription-notice',
+    message:
+      PROVIDER_PRESETS.openai.setupHint ??
+      'ChatGPT Plus/Pro 消费级订阅不含 API 调用额度，需在 OpenAI Platform 单独创建 API Key 并充值。',
+    linkUrl: PROVIDER_PRESETS.openai.consoleUrl ?? 'https://platform.openai.com/api-keys',
+    linkLabel: '前往 OpenAI Platform 获取 API Key',
+    linkTestId: 'provider-console-link',
+    hintTestId: 'provider-setup-hint',
+    matches: (draft) => draft.presetId === 'openai',
+  },
+];
+
+function resolveProviderSubscriptionNotice(
+  draft: Pick<ProviderWizardDraft, 'presetId' | 'apiProtocol'>,
+): ProviderSubscriptionNoticeSpec | null {
+  return PROVIDER_SUBSCRIPTION_NOTICES.find((entry) => entry.matches(draft)) ?? null;
+}
+
+/**
+ * Returns whether the preset picker panel should start expanded for the given wizard mode.
+ */
+export function resolveInitialPresetPickerOpen(mode: 'onboarding' | 'add' | 'edit'): boolean {
+  return mode === 'add';
+}
+
+/**
+ * Filters the 4 categorized provider preset groups by Chinese/English name, presetId,
+ * baseUrl domain, models, or curated aliases.
+ */
+export function filterProviderPresetGroups(query: string): ProviderPresetCategoryGroup[] {
+  const terms = query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (terms.length === 0) {
+    return PROVIDER_PRESET_CATEGORIES.map((group) => ({ ...group }));
+  }
+
+  const matchesPreset = (presetId: ProviderPresetId): boolean => {
+    const spec = PROVIDER_PRESETS[presetId];
+    if (!spec) return false;
+    const searchable = [
+      spec.presetId,
+      spec.name,
+      spec.baseUrl,
+      spec.defaultModel,
+      ...(spec.backgroundModel ? [spec.backgroundModel] : []),
+      ...spec.models.map((m) => `${m.id} ${m.label ?? ''}`),
+      ...(PRESET_SEARCH_KEYWORDS[presetId] ?? []),
+    ]
+      .join(' ')
+      .toLowerCase();
+    return terms.every((term) => searchable.includes(term));
+  };
+
+  return PROVIDER_PRESET_CATEGORIES.map((group) => ({
+    ...group,
+    presetIds: group.presetIds.filter(matchesPreset),
+  })).filter((group) => group.presetIds.length > 0);
+}
 
 const SEARCH_PRESET_ORDER: readonly PublicResearchSearchPresetId[] = [
   'auto',
@@ -142,6 +291,10 @@ export function createWizardDraftFromPreset(
     inputPriceText: '',
     cacheHitPriceText: '',
     outputPriceText: '',
+    apiProtocol: preset.capabilities.apiProtocol ?? 'openai_chat',
+    ...(preset.capabilities.thinkingDialect
+      ? { thinkingDialect: preset.capabilities.thinkingDialect }
+      : {}),
     prefixProtocol: preset.capabilities.prefixProtocol,
     prefillProbeStatus: 'untested',
     searchProvider: options?.publicResearch?.provider ?? 'auto',
@@ -168,6 +321,10 @@ export function createWizardDraftFromProfile(
     inputPriceText: formatPriceInput(pricing?.inputPerMillion),
     cacheHitPriceText: formatPriceInput(pricing?.cacheHitInputPerMillion),
     outputPriceText: formatPriceInput(pricing?.outputPerMillion),
+    apiProtocol: normalizeProviderApiProtocol(profile.capabilities.apiProtocol, 'openai_chat'),
+    ...(profile.capabilities.thinkingDialect
+      ? { thinkingDialect: profile.capabilities.thinkingDialect }
+      : {}),
     prefixProtocol: profile.capabilities.prefixProtocol,
     prefillProbeStatus: profile.prefillProbeStatus ?? 'untested',
     searchProvider: publicResearch?.provider ?? 'auto',
@@ -258,6 +415,21 @@ export function buildProviderSaveResultFromDraft(
     ? preset.baseUrl
     : normalizeProviderBaseUrl(options?.overrideBaseUrl ?? draft.baseUrl);
 
+  const apiProtocol: ProviderApiProtocol = isDeepSeek
+    ? (preset.capabilities.apiProtocol ?? 'openai_chat')
+    : normalizeProviderApiProtocol(
+        draft.apiProtocol,
+        preset.capabilities.apiProtocol ?? 'openai_chat',
+      );
+  const prefixProtocol: ProviderPrefixProtocol = isDeepSeek
+    ? preset.capabilities.prefixProtocol
+    : apiProtocol === 'openai_responses' || apiProtocol === 'gemini_native'
+      ? 'none'
+      : draft.prefixProtocol;
+
+  const thinkingDialect =
+    draft.thinkingDialect ?? preset.capabilities.thinkingDialect;
+
   const profile = createProviderProfileFromPreset(draft.presetId, {
     id: resolvedId,
     name: isDeepSeek ? preset.name : draft.name.trim() || preset.name,
@@ -269,7 +441,9 @@ export function buildProviderSaveResultFromDraft(
     ...(defaultPricing ? { defaultPricing } : {}),
     capabilities: {
       ...preset.capabilities,
-      prefixProtocol: isDeepSeek ? preset.capabilities.prefixProtocol : draft.prefixProtocol,
+      apiProtocol,
+      ...(thinkingDialect ? { thinkingDialect } : {}),
+      prefixProtocol,
     },
     ...(isDeepSeek ? {} : { prefillProbeStatus: draft.prefillProbeStatus }),
   });
@@ -348,6 +522,7 @@ export async function verifyWizardDraftConnection(options: {
   const result: ProviderConnectionVerifyResult = await verifyProviderFn({
     baseUrl: draft.baseUrl,
     apiKey: draft.apiKey,
+    apiProtocol: draft.apiProtocol,
     requireSkPrefix: false,
     allowEmptyKey: true,
     allowRelativeBaseUrl: import.meta.env.DEV && isDevProxyBaseUrl(draft.baseUrl),
@@ -449,6 +624,10 @@ export function ProviderSetupWizard({
   const [draft, setDraft] = useState<ProviderWizardDraft>(() =>
     createInitialDraft({ initialProfile, initialPublicResearch, initialKey }),
   );
+  const [pickerOpen, setPickerOpen] = useState<boolean>(() =>
+    resolveInitialPresetPickerOpen(mode),
+  );
+  const [presetSearch, setPresetSearch] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
@@ -468,13 +647,15 @@ export function ProviderSetupWizard({
     lastProfileIdRef.current = initialProfile?.id;
     if (justOpened || profileChanged) {
       setDraft(createInitialDraft({ initialProfile, initialPublicResearch, initialKey }));
+      setPickerOpen(resolveInitialPresetPickerOpen(mode));
+      setPresetSearch('');
       setErrorMsg(null);
       setAllowFallbackSave(false);
       setFetchModelsMsg(null);
       setPrefillProbeMsg(null);
       setShowKey(false);
     }
-  }, [open, initialProfile, initialPublicResearch, initialKey]);
+  }, [open, mode, initialProfile, initialPublicResearch, initialKey]);
 
   useEffect(() => {
     onVerifyingChange?.(isVerifying);
@@ -484,7 +665,12 @@ export function ProviderSetupWizard({
   }, [isVerifying, onVerifyingChange]);
 
   const busy = isVerifying || isFetchingModels || isProbingPrefill;
+  const activePreset = PROVIDER_PRESETS[draft.presetId] ?? PROVIDER_PRESETS.custom;
+  const totalPresetCount = Object.keys(PROVIDER_PRESETS).length;
+  const filteredPresetGroups = filterProviderPresetGroups(presetSearch);
   const isDeepSeek = draft.presetId === 'deepseek';
+  const prefillDisabledByProtocol =
+    draft.apiProtocol === 'openai_responses' || draft.apiProtocol === 'gemini_native';
   const activeSearchPreset =
     PUBLIC_RESEARCH_PRESETS[draft.searchProvider] ?? PUBLIC_RESEARCH_PRESETS.auto;
   const hasCustomPricing =
@@ -497,6 +683,11 @@ export function ProviderSetupWizard({
     hasCustomPricing,
     isWebPlatform,
   });
+  const subscriptionNotice = resolveProviderSubscriptionNotice(draft);
+  const showGuidanceHint = Boolean(activePreset.setupHint && !subscriptionNotice?.hintTestId);
+  const showGuidanceConsoleLink = Boolean(
+    activePreset.consoleUrl && activePreset.consoleUrl !== subscriptionNotice?.linkUrl,
+  );
 
   const handleSelectPreset = (nextPresetId: ProviderPresetId) => {
     if (busy) return;
@@ -504,6 +695,8 @@ export function ProviderSetupWizard({
     setAllowFallbackSave(false);
     setFetchModelsMsg(null);
     setPrefillProbeMsg(null);
+    setPickerOpen(false);
+    setPresetSearch('');
     setDraft((prev) => {
       const keepKey = prev.presetId === nextPresetId ? prev.apiKey : '';
       return {
@@ -526,7 +719,7 @@ export function ProviderSetupWizard({
   };
 
   const handleOpenPlatform = () => {
-    window.open(DEEPSEEK_OFFICIAL_KEYS_URL, '_blank', 'noopener,noreferrer');
+    window.open(activePreset.consoleUrl ?? DEEPSEEK_OFFICIAL_KEYS_URL, '_blank', 'noopener,noreferrer');
   };
 
   const handleFetchModels = async () => {
@@ -539,6 +732,7 @@ export function ProviderSetupWizard({
     const result = await verifyProviderConnection({
       baseUrl: draft.baseUrl,
       apiKey: draft.apiKey,
+      apiProtocol: draft.apiProtocol,
       requireSkPrefix: false,
       allowEmptyKey: true,
       allowRelativeBaseUrl: import.meta.env.DEV && isDevProxyBaseUrl(draft.baseUrl),
@@ -578,6 +772,7 @@ export function ProviderSetupWizard({
       baseUrl: draft.baseUrl,
       apiKey: draft.apiKey,
       model: probeModel,
+      apiProtocol: draft.apiProtocol,
     });
     setIsProbingPrefill(false);
     setDraft((prev) => ({
@@ -656,7 +851,7 @@ export function ProviderSetupWizard({
             <p className="wizard-subtitle">
               {isDeepSeek
                 ? '连接 DeepSeek · 只需 3 步连接官方服务，API Key 只保存在本机'
-                : '接入 OpenAI 兼容服务商，API Key 只保存在本机'}
+                : '连接所选模型服务商，API Key 只保存在本机'}
             </p>
           </div>
           <button
@@ -676,24 +871,107 @@ export function ProviderSetupWizard({
           </div>
         )}
 
-        <div className="provider-preset-row" role="group" aria-label="选择模型服务预设">
-          {PRESET_CARDS.map((card) => {
-            const active = draft.presetId === card.presetId;
-            return (
-              <button
-                key={card.presetId}
-                type="button"
-                className="provider-preset-card"
-                data-testid={`provider-preset-${card.presetId}`}
-                aria-pressed={active}
-                disabled={busy}
-                onClick={() => handleSelectPreset(card.presetId)}
-              >
-                <span className="provider-preset-label">{card.label}</span>
-                {card.badge && <span className="provider-preset-badge">{card.badge}</span>}
-              </button>
-            );
-          })}
+        <div className="provider-preset-picker">
+          <button
+            type="button"
+            className="provider-preset-picker-trigger"
+            data-testid="provider-preset-picker-trigger"
+            aria-expanded={pickerOpen}
+            disabled={busy}
+            onClick={() => setPickerOpen((prev) => !prev)}
+          >
+            <span className="provider-preset-picker-current">
+              <span className="provider-preset-picker-prefix">当前预设：</span>
+              <span className="provider-preset-label">{activePreset.name}</span>
+              {activePreset.presetId === 'deepseek' && (
+                <span className="provider-preset-badge">官方推荐</span>
+              )}
+            </span>
+            <span className="provider-preset-picker-action">
+              <span>切换服务商（{totalPresetCount} 项）</span>
+              <ChevronDown
+                size={16}
+                strokeWidth={1.75}
+                className={pickerOpen ? 'provider-preset-chevron is-open' : 'provider-preset-chevron'}
+                aria-hidden="true"
+              />
+            </span>
+          </button>
+
+          {pickerOpen && (
+            <div
+              className="provider-preset-picker-panel"
+              data-testid="provider-preset-picker-panel"
+              role="region"
+              aria-label="选择模型服务预设"
+            >
+              <div className="provider-preset-search-row">
+                <Search
+                  size={16}
+                  strokeWidth={1.75}
+                  className="provider-preset-search-icon"
+                  aria-hidden="true"
+                />
+                <input
+                  type="search"
+                  className="provider-preset-search-input"
+                  data-testid="provider-preset-search-input"
+                  aria-label="搜索模型服务商"
+                  placeholder="搜索服务商名称、英文或域名（如 Kimi、百炼、claude）"
+                  value={presetSearch}
+                  disabled={busy}
+                  onChange={(event) => setPresetSearch(event.target.value)}
+                />
+                {presetSearch && (
+                  <button
+                    type="button"
+                    className="icon-button provider-preset-search-clear"
+                    aria-label="清空服务商搜索"
+                    disabled={busy}
+                    onClick={() => setPresetSearch('')}
+                  >
+                    <X size={16} strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+
+              {filteredPresetGroups.length === 0 ? (
+                <p className="wizard-privacy-note provider-preset-empty">
+                  未找到匹配的服务商预设，可清空搜索关键词或选择「自定义服务商」。
+                </p>
+              ) : (
+                <div className="provider-preset-groups">
+                  {filteredPresetGroups.map((group) => (
+                    <section key={group.id} className="provider-preset-group" aria-label={group.label}>
+                      <h4 className="provider-preset-group-title">{group.label}</h4>
+                      <div className="provider-preset-grid" role="group" aria-label={group.label}>
+                        {group.presetIds.map((presetId) => {
+                          const spec = PROVIDER_PRESETS[presetId];
+                          const active = draft.presetId === presetId;
+                          return (
+                            <button
+                              key={presetId}
+                              type="button"
+                              className="provider-preset-card"
+                              data-testid={`provider-preset-${presetId}`}
+                              aria-pressed={active}
+                              disabled={busy}
+                              onClick={() => handleSelectPreset(presetId)}
+                            >
+                              <span className="provider-preset-label">{spec.name}</span>
+                              {presetId === 'deepseek' && (
+                                <span className="provider-preset-badge">官方推荐</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {isDeepSeek ? (
@@ -773,6 +1051,27 @@ export function ProviderSetupWizard({
         ) : (
           <div className="provider-form-stack">
             <div className="wizard-step-card">
+              {(showGuidanceHint || showGuidanceConsoleLink) && (
+                <div className="provider-preset-guidance" data-testid="provider-preset-guidance">
+                  {showGuidanceHint && activePreset.setupHint && (
+                    <p className="wizard-privacy-note" data-testid="provider-setup-hint">
+                      {activePreset.setupHint}
+                    </p>
+                  )}
+                  {showGuidanceConsoleLink && activePreset.consoleUrl && (
+                    <a
+                      className="provider-search-docs-link"
+                      data-testid="provider-console-link"
+                      href={activePreset.consoleUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <span>前往 {activePreset.name} 控制台获取 API Key</span>
+                      <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
+                    </a>
+                  )}
+                </div>
+              )}
               <div className="field">
                 <label htmlFor="provider-name-input">服务名称</label>
                 <input
@@ -796,7 +1095,11 @@ export function ProviderSetupWizard({
                   data-testid="provider-base-url-input"
                   type="url"
                   value={draft.baseUrl}
-                  placeholder="https://api.openai.com/v1"
+                  placeholder={
+                    draft.apiProtocol === 'gemini_native'
+                      ? 'https://generativelanguage.googleapis.com/v1beta'
+                      : 'https://api.openai.com/v1'
+                  }
                   disabled={busy}
                   autoComplete="off"
                   autoCorrect="off"
@@ -818,7 +1121,13 @@ export function ProviderSetupWizard({
                     id="byok-api-key"
                     name="apiKey"
                     type={showKey ? 'text' : 'password'}
-                    placeholder="sk-...（本地服务可不填）"
+                    placeholder={
+                      draft.apiProtocol === 'anthropic_messages'
+                        ? 'sk-ant-...'
+                        : draft.apiProtocol === 'gemini_native'
+                          ? 'AIza...（由 Google AI Studio 创建）'
+                          : 'sk-...（本地服务可不填）'
+                    }
                     value={draft.apiKey}
                     disabled={busy}
                     autoComplete="off"
@@ -843,6 +1152,26 @@ export function ProviderSetupWizard({
                   </button>
                 </div>
               </div>
+
+              {subscriptionNotice && (
+                <BannerAlert tone="info" testId={subscriptionNotice.testId}>
+                  <div className="provider-subscription-notice">
+                    <span data-testid={subscriptionNotice.hintTestId}>
+                      {subscriptionNotice.message}
+                    </span>
+                    <a
+                      className="provider-search-docs-link"
+                      data-testid={subscriptionNotice.linkTestId}
+                      href={subscriptionNotice.linkUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <span>{subscriptionNotice.linkLabel}</span>
+                      <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
+                    </a>
+                  </div>
+                </BannerAlert>
+              )}
 
               <div className="field">
                 <label htmlFor="provider-model-input">常用模型</label>
@@ -997,6 +1326,39 @@ export function ProviderSetupWizard({
         <details className="provider-advanced-details" data-testid="provider-advanced-settings">
           <summary>更多可选设置</summary>
           <div className="provider-advanced-body">
+            {!isDeepSeek && (
+              <div className="field">
+                <label htmlFor="provider-protocol-select">接口协议</label>
+                <select
+                  id="provider-protocol-select"
+                  data-testid="provider-protocol-select"
+                  value={draft.apiProtocol}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const nextProtocol = normalizeProviderApiProtocol(
+                      event.target.value,
+                      'openai_chat',
+                    );
+                    setDraft((prev) => ({
+                      ...prev,
+                      apiProtocol: nextProtocol,
+                      ...(nextProtocol === 'openai_responses' || nextProtocol === 'gemini_native'
+                        ? { prefixProtocol: 'none' }
+                        : {}),
+                    }));
+                  }}
+                >
+                  <option value="openai_chat">OpenAI Chat Completions (/chat/completions)</option>
+                  <option value="openai_responses">OpenAI Responses API (/responses)</option>
+                  <option value="anthropic_messages">Anthropic Messages (/v1/messages)</option>
+                  <option value="gemini_native">Google Gemini 原生 (/v1beta)</option>
+                </select>
+                <span className="wizard-privacy-note">
+                  OpenAI 官方默认 Responses API，Anthropic 默认 Messages API，Google Gemini 默认原生 /v1beta；兼容或中转站可按需切换
+                </span>
+              </div>
+            )}
+
             <div className="field">
               <label htmlFor="provider-background-model-input">后台轻量模型（可选）</label>
               <input
@@ -1098,8 +1460,11 @@ export function ProviderSetupWizard({
                   <input
                     type="checkbox"
                     data-testid="provider-prefill-toggle"
-                    checked={draft.prefixProtocol === 'standard_assistant_prefill'}
-                    disabled={busy}
+                    checked={
+                      !prefillDisabledByProtocol &&
+                      draft.prefixProtocol === 'standard_assistant_prefill'
+                    }
+                    disabled={busy || prefillDisabledByProtocol}
                     onChange={(event) => {
                       const enabled = event.target.checked;
                       setDraft((prev) => ({
@@ -1114,7 +1479,7 @@ export function ProviderSetupWizard({
                     type="button"
                     className="btn btn-sm"
                     data-testid="provider-probe-prefill-btn"
-                    disabled={busy}
+                    disabled={busy || prefillDisabledByProtocol}
                     onClick={() => void handleProbePrefill()}
                   >
                     {isProbingPrefill ? '正在探测...' : '测一下支不支持'}
@@ -1131,6 +1496,17 @@ export function ProviderSetupWizard({
                     </span>
                   )}
                 </div>
+                {prefillDisabledByProtocol ? (
+                  <span className="wizard-privacy-note">
+                    当前所选接口协议不支持助手预填，已自动使用标准多轮续写
+                  </span>
+                ) : (
+                  draft.apiProtocol === 'anthropic_messages' && (
+                    <span className="wizard-privacy-note">
+                      Anthropic 原生协议在未开启思考时支持助手尾段预填；开启思考后将自动降级为标准多轮续写
+                    </span>
+                  )
+                )}
               </div>
             )}
           </div>

@@ -94,17 +94,45 @@ export type OfficialDeepSeekModel = 'deepseek-flash' | 'deepseek-v4-pro';
 export type ProviderPresetId =
   | 'deepseek'
   | 'openai'
+  | 'anthropic'
+  | 'gemini'
+  | 'xai'
+  | 'groq'
+  | 'moonshot'
+  | 'zhipu'
+  | 'dashscope'
+  | 'volcengine'
+  | 'minimax'
+  | 'qianfan'
+  | 'hunyuan'
+  | 'spark'
+  | 'sensenova'
+  | 'stepfun'
+  | 'lingyi'
   | 'openrouter'
   | 'siliconflow'
   | 'local'
   | 'custom';
 
+export type ProviderApiProtocol =
+  | 'openai_chat'
+  | 'openai_responses'
+  | 'anthropic_messages'
+  | 'gemini_native';
+
 export type ProviderThinkingProtocol = 'deepseek' | 'openai_reasoning_effort';
+
+export type ProviderThinkingDialect =
+  | 'standard'
+  | 'enable_thinking'
+  | 'thinking_type_enabled';
 
 export type ProviderPrefixProtocol = 'deepseek_beta' | 'standard_assistant_prefill' | 'none';
 
 export interface ProviderCapabilities {
+  apiProtocol?: ProviderApiProtocol;
   thinkingProtocol: ProviderThinkingProtocol;
+  thinkingDialect?: ProviderThinkingDialect;
   prefixProtocol: ProviderPrefixProtocol;
   supportsBalanceQuery: boolean;
   supportsBuiltinSearch: boolean;

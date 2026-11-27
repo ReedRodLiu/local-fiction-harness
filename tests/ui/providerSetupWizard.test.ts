@@ -5,15 +5,19 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  PROVIDER_PRESETS,
   PUBLIC_RESEARCH_PRESETS,
   createProviderProfileFromPreset,
 } from '../../src/harness/index.ts';
 import { DeepSeekSetupWizard } from '../../src/ui/DeepSeekSetupWizard.tsx';
 import {
+  PROVIDER_PRESET_CATEGORIES,
   ProviderSetupWizard,
   buildProviderSaveResultFromDraft,
   createWizardDraftFromPreset,
   createWizardDraftFromProfile,
+  filterProviderPresetGroups,
+  resolveInitialPresetPickerOpen,
   validateWizardFallbackSave,
   verifyWizardDraftConnection,
 } from '../../src/ui/ProviderSetupWizard.tsx';
@@ -21,8 +25,8 @@ import {
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const readUiSource = (fileName: string) => readFileSync(join(repoRoot, 'src', 'ui', fileName), 'utf8');
 
-describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
-  it('renders 6 preset cards, ultra-simple DeepSeek first-class flow, 3-line summary, and collapsed advanced details', () => {
+describe('Ticket #164 T5 & Ticket #181: ProviderSetupWizard & DeepSeekSetupWizard', () => {
+  it('renders single-row collapsed preset picker in onboarding mode, ultra-simple DeepSeek first-class flow, 3-line summary, and collapsed advanced details', () => {
     const markup = renderToStaticMarkup(
       createElement(ProviderSetupWizard, {
         open: true,
@@ -43,16 +47,21 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
     expect(markup).toContain('id="byok-api-key"');
     expect(markup).toContain('data-testid="wizard-verify-save-btn"');
 
-    for (const presetId of ['deepseek', 'openai', 'openrouter', 'siliconflow', 'local', 'custom']) {
-      expect(markup).toContain(`data-testid="provider-preset-${presetId}"`);
-    }
-    expect(markup).toMatch(/data-testid="provider-preset-deepseek"[^>]*aria-pressed="true"/);
+    expect(markup).toContain('data-testid="provider-preset-picker-trigger"');
+    expect(markup).toMatch(/data-testid="provider-preset-picker-trigger"[^>]*aria-expanded="false"/);
+    expect(markup).toContain('DeepSeek 官方');
+    expect(markup).toContain('官方推荐');
+    expect(markup).toContain('切换服务商（21 项）');
+    expect(markup).not.toContain('data-testid="provider-preset-picker-panel"');
+    expect(markup).not.toContain('data-testid="provider-preset-search-input"');
+    expect(markup).not.toContain('data-testid="provider-preset-deepseek"');
 
     // DeepSeek first-class view hides third-party Base URL / model / public research clutter
     expect(markup).not.toContain('data-testid="provider-base-url-input"');
     expect(markup).not.toContain('data-testid="provider-model-input"');
     expect(markup).not.toContain('data-testid="provider-public-research-section"');
     expect(markup).not.toContain('data-testid="provider-probe-prefill-btn"');
+    expect(markup).not.toContain('data-testid="provider-protocol-select"');
 
     // 3-line plain-language capability summary
     expect(markup).toContain('data-testid="provider-capability-summary"');
@@ -91,6 +100,59 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
     expect(markup).toContain('value="sk-123456"');
   });
 
+  it('supports expandable 4-category 21-preset picker, search filtering, and mode-sensitive initial expansion', () => {
+    expect(resolveInitialPresetPickerOpen('add')).toBe(true);
+    expect(resolveInitialPresetPickerOpen('onboarding')).toBe(false);
+    expect(resolveInitialPresetPickerOpen('edit')).toBe(false);
+
+    expect(PROVIDER_PRESET_CATEGORIES.map((group) => group.label)).toEqual([
+      '推荐与内置',
+      '国内大模型',
+      '海外大模型',
+      '聚合・本地・自定义',
+    ]);
+    const flattenedIds = PROVIDER_PRESET_CATEGORIES.flatMap((group) => group.presetIds);
+    expect(flattenedIds).toHaveLength(21);
+    expect(new Set(flattenedIds)).toEqual(new Set(Object.keys(PROVIDER_PRESETS)));
+
+    expect(
+      filterProviderPresetGroups('Kimi').flatMap((g) => g.presetIds),
+    ).toEqual(['moonshot']);
+    expect(
+      filterProviderPresetGroups('百炼').flatMap((g) => g.presetIds),
+    ).toEqual(['dashscope']);
+    expect(
+      filterProviderPresetGroups('googleapis.com').flatMap((g) => g.presetIds),
+    ).toEqual(['gemini']);
+    expect(
+      filterProviderPresetGroups('volcengine').flatMap((g) => g.presetIds),
+    ).toEqual(['volcengine']);
+    expect(filterProviderPresetGroups('nonexistent-provider-xyz')).toEqual([]);
+
+    const addMarkup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        mode: 'add',
+        onSaveProfile: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+
+    expect(addMarkup).toMatch(
+      /data-testid="provider-preset-picker-trigger"[^>]*aria-expanded="true"/,
+    );
+    expect(addMarkup).toContain('data-testid="provider-preset-picker-panel"');
+    expect(addMarkup).toContain('data-testid="provider-preset-search-input"');
+    for (const label of ['推荐与内置', '国内大模型', '海外大模型', '聚合・本地・自定义']) {
+      expect(addMarkup).toContain(label);
+    }
+    for (const presetId of Object.keys(PROVIDER_PRESETS)) {
+      expect(addMarkup).toContain(`data-testid="provider-preset-${presetId}"`);
+    }
+    expect(addMarkup).toMatch(/data-testid="provider-preset-deepseek"[^>]*aria-pressed="true"/);
+  });
+
   it('renders third-party fields, optional public research presets, 3-line capability summary, and prefill probe controls', () => {
     const openaiProfile = createProviderProfileFromPreset('openai', {
       id: 'openai-1',
@@ -112,7 +174,11 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
       }),
     );
 
-    expect(tavilyMarkup).toMatch(/data-testid="provider-preset-openai"[^>]*aria-pressed="true"/);
+    expect(tavilyMarkup).toMatch(
+      /data-testid="provider-preset-picker-trigger"[^>]*aria-expanded="false"/,
+    );
+    expect(tavilyMarkup).toContain('OpenAI');
+    expect(tavilyMarkup).not.toContain('data-testid="provider-preset-picker-panel"');
     expect(tavilyMarkup).toContain('data-testid="provider-name-input"');
     expect(tavilyMarkup).toContain('data-testid="provider-base-url-input"');
     expect(tavilyMarkup).toContain('https://api.openai.com/v1');
@@ -135,6 +201,7 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
     expect(tavilyMarkup).toContain('已填写自定义单价');
 
     // Third-party advanced controls
+    expect(tavilyMarkup).toContain('data-testid="provider-protocol-select"');
     expect(tavilyMarkup).toContain('data-testid="provider-pricing-currency"');
     expect(tavilyMarkup).toContain('data-testid="provider-pricing-input"');
     expect(tavilyMarkup).toContain('data-testid="provider-pricing-cache-input"');
@@ -334,6 +401,197 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
       hasDeepSeekProfileInLibrary: true,
     });
     expect(editedDsSave.profile.defaultModel).toBe('deepseek-v4-pro');
+  });
+
+  it('switches and persists apiProtocol on OpenAI and custom drafts while keeping DeepSeek locked to openai_chat', () => {
+    const oaDraft = createWizardDraftFromPreset('openai', { apiKey: 'sk-oa' });
+    expect(oaDraft.apiProtocol).toBe('openai_responses');
+    expect(oaDraft.backgroundModel).toBe('gpt-4o-mini');
+    expect(buildProviderSaveResultFromDraft(oaDraft).profile.capabilities.apiProtocol).toBe(
+      'openai_responses',
+    );
+
+    const oaChatDraft = { ...oaDraft, apiProtocol: 'openai_chat' as const };
+    expect(buildProviderSaveResultFromDraft(oaChatDraft).profile.capabilities.apiProtocol).toBe(
+      'openai_chat',
+    );
+
+    const customDraft = createWizardDraftFromPreset('custom', { apiKey: 'sk-c' });
+    expect(customDraft.apiProtocol).toBe('openai_chat');
+    const customResponses = buildProviderSaveResultFromDraft({
+      ...customDraft,
+      baseUrl: 'https://relay.example.com/v1',
+      defaultModel: 'gpt-4.1',
+      apiProtocol: 'openai_responses',
+      prefixProtocol: 'standard_assistant_prefill',
+    });
+    expect(customResponses.profile.capabilities.apiProtocol).toBe('openai_responses');
+    expect(customResponses.profile.capabilities.prefixProtocol).toBe('none');
+
+    // Legacy profile without apiProtocol loads into draft as openai_chat
+    const legacyDraft = createWizardDraftFromProfile({
+      id: 'legacy-oa',
+      name: 'Legacy OpenAI',
+      presetId: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-legacy',
+      models: [{ id: 'gpt-4o' }],
+      defaultModel: 'gpt-4o',
+      capabilities: {
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    });
+    expect(legacyDraft.apiProtocol).toBe('openai_chat');
+  });
+
+  it('renders Anthropic preset with subscription-vs-API-Key notice, console link, enabled anthropic_messages protocol, and forwards apiProtocol during verification', async () => {
+    const anthropicProfile = createProviderProfileFromPreset('anthropic', {
+      id: 'anthropic-1',
+      apiKey: 'sk-ant-123',
+    });
+    const markup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        initialProfile: anthropicProfile,
+        mode: 'edit',
+        onSaveProfile: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+
+    expect(markup).toMatch(
+      /data-testid="provider-preset-picker-trigger"[^>]*aria-expanded="false"/,
+    );
+    expect(markup).toContain('Anthropic (Claude)');
+    expect(markup).not.toContain('data-testid="provider-preset-picker-panel"');
+    expect(markup).toContain('https://api.anthropic.com/v1');
+    expect(markup).toContain('data-testid="anthropic-subscription-notice"');
+    expect(markup).toMatch(/Claude Pro\s*\/\s*Max/);
+    expect(markup.match(/https:\/\/console\.anthropic\.com\/settings\/keys/g)).toHaveLength(1);
+    expect(markup).toContain('data-testid="anthropic-console-keys-link"');
+    expect(markup).toContain('value="anthropic_messages"');
+    expect(markup).not.toMatch(/value="anthropic_messages"[^>]*disabled/);
+
+    const draft = createWizardDraftFromPreset('anthropic', { apiKey: 'sk-ant-999' });
+    expect(draft.apiProtocol).toBe('anthropic_messages');
+    expect(draft.prefixProtocol).toBe('standard_assistant_prefill');
+    expect(draft.backgroundModel).toBe('claude-haiku-4-5');
+
+    let capturedProtocol: string | undefined;
+    const outcome = await verifyWizardDraftConnection({
+      draft,
+      verifyProviderImpl: async (opts) => {
+        capturedProtocol = opts.apiProtocol;
+        return {
+          status: 'valid',
+          key: 'sk-ant-999',
+          baseUrl: 'https://api.anthropic.com/v1',
+          models: ['claude-sonnet-4-5', 'claude-haiku-4-5'],
+        };
+      },
+    });
+    expect(capturedProtocol).toBe('anthropic_messages');
+    expect(outcome.ok).toBe(true);
+    expect(outcome.saveResult?.profile.presetId).toBe('anthropic');
+    expect(outcome.saveResult?.profile.capabilities.apiProtocol).toBe('anthropic_messages');
+    expect(outcome.saveResult?.profile.capabilities.prefixProtocol).toBe(
+      'standard_assistant_prefill',
+    );
+  });
+
+  it('supports Gemini preset with Google AI Studio note/link, enabled gemini_native option, and apiProtocol forwarding', async () => {
+    const geminiDraft = createWizardDraftFromPreset('gemini', { apiKey: 'AIza-gem-1' });
+    expect(geminiDraft.apiProtocol).toBe('gemini_native');
+    expect(geminiDraft.backgroundModel).toBe('gemini-2.5-flash-lite');
+    expect(geminiDraft.prefixProtocol).toBe('none');
+
+    const geminiProfile = createProviderProfileFromPreset('gemini', {
+      id: 'gem-1',
+      apiKey: 'AIza-gem-1',
+    });
+    const markup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        initialProfile: geminiProfile,
+        mode: 'edit',
+        onSaveProfile: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+
+    expect(markup).toMatch(
+      /data-testid="provider-preset-picker-trigger"[^>]*aria-expanded="false"/,
+    );
+    expect(markup).toContain('Google (Gemini)');
+    expect(markup).not.toContain('data-testid="provider-preset-picker-panel"');
+    expect(markup.match(/data-testid="provider-gemini-billing-note"/g)).toHaveLength(1);
+    expect(markup.match(/https:\/\/aistudio\.google\.com\/apikey/g)).toHaveLength(1);
+    expect(markup).toContain('Google AI Studio');
+    expect(markup).toContain('免费');
+    expect(markup).toContain('Gemini AI Pro');
+    expect(markup).not.toMatch(/<option[^>]*value="gemini_native"[^>]*disabled/);
+
+    let seenProtocol: string | undefined;
+    const verified = await verifyWizardDraftConnection({
+      draft: geminiDraft,
+      verifyProviderImpl: async (opts) => {
+        seenProtocol = opts.apiProtocol;
+        return {
+          status: 'valid',
+          key: 'AIza-gem-1',
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          models: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+        };
+      },
+    });
+    expect(seenProtocol).toBe('gemini_native');
+    expect(verified.ok).toBe(true);
+    expect(verified.saveResult?.profile.presetId).toBe('gemini');
+    expect(verified.saveResult?.profile.capabilities.apiProtocol).toBe('gemini_native');
+    expect(verified.saveResult?.profile.capabilities.prefixProtocol).toBe('none');
+  });
+
+  it('displays preset console link and setupHint for presets with special guidance and preserves thinkingDialect on save', () => {
+    for (const presetId of ['volcengine', 'spark', 'dashscope', 'openai'] as const) {
+      const profile = createProviderProfileFromPreset(presetId, { id: `p-${presetId}` });
+      const markup = renderToStaticMarkup(
+        createElement(ProviderSetupWizard, {
+          open: true,
+          initialProfile: profile,
+          mode: 'edit',
+          onSaveProfile: vi.fn(),
+          onCancel: vi.fn(),
+          onExitComplete: vi.fn(),
+        }),
+      );
+
+      expect(markup).toContain('data-testid="provider-console-link"');
+      expect(markup).toContain(PROVIDER_PRESETS[presetId].consoleUrl!);
+      expect(markup).toContain('data-testid="provider-setup-hint"');
+      expect(markup).toContain(PROVIDER_PRESETS[presetId].setupHint!);
+      if (presetId === 'openai') {
+        expect(markup.match(/data-testid="openai-subscription-notice"/g)).toHaveLength(1);
+        expect(markup.match(/https:\/\/platform\.openai\.com\/api-keys/g)).toHaveLength(1);
+      }
+    }
+
+    const dashDraft = createWizardDraftFromPreset('dashscope', { apiKey: 'sk-dash' });
+    const dashSave = buildProviderSaveResultFromDraft(dashDraft);
+    expect(dashSave.profile.capabilities.thinkingDialect).toBe('enable_thinking');
+
+    const arkProfile = createProviderProfileFromPreset('volcengine', {
+      id: 'ark-1',
+      apiKey: 'ark-key',
+    });
+    const arkDraft = createWizardDraftFromProfile(arkProfile);
+    const arkSave = buildProviderSaveResultFromDraft(arkDraft);
+    expect(arkSave.profile.capabilities.thinkingDialect).toBe('thinking_type_enabled');
   });
 
   it('never contains jailbreak or bypass prompt text in wizard source', () => {

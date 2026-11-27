@@ -2,9 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   applyPrefixEchoCursor,
   buildOpenAiChatRequest,
+  buildProviderStreamRequest,
   createOpenAiTransport,
+  createProviderProfileFromPreset,
   parseOpenAiSseStream,
+  resolveAnthropicMessagesUrl,
   resolveBetaChatCompletionsUrl,
+  resolveEffectivePrefixProtocol,
+  resolveGeminiStreamUrl,
+  resolveResponsesUrl,
+  resolveStreamPrefillContent,
   type LlmStreamDelta,
 } from '../../src/harness/index.ts';
 
@@ -669,5 +676,841 @@ describe('Multi-provider capability-driven OpenAI request & usage parsing', () =
       promptCacheHitTokens: 600,
       promptCacheMissTokens: 400,
     });
+  });
+});
+
+describe('OpenAI Responses API multi-protocol dispatch & streaming', () => {
+  it('resolves /responses URLs idempotently and strips /chat/completions', () => {
+    expect(resolveResponsesUrl('https://api.openai.com/v1')).toBe('https://api.openai.com/v1/responses');
+    expect(resolveResponsesUrl('https://api.openai.com/v1/')).toBe('https://api.openai.com/v1/responses');
+    expect(resolveResponsesUrl('https://api.openai.com/v1/responses')).toBe('https://api.openai.com/v1/responses');
+    expect(resolveResponsesUrl('https://api.openai.com/v1/chat/completions')).toBe(
+      'https://api.openai.com/v1/responses',
+    );
+  });
+
+  it('builds openai_responses payloads with store:false, instructions+input, and reasoning mapping', () => {
+    const offReq = buildProviderStreamRequest({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-oa-1',
+      model: 'gpt-4.1',
+      reasoningEffort: 'none',
+      includeUsage: true,
+      maxOutputTokens: 2048,
+      prefixCompletion: { content: '不应发送预填' },
+      capabilities: {
+        apiProtocol: 'openai_responses',
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'standard_assistant_prefill',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+      messages: [
+        { role: 'system', content: '系统规则一' },
+        { role: 'system', content: '系统规则二' },
+        { role: 'user', content: '开场' },
+        { role: 'assistant', content: '回应' },
+        { role: 'user', content: '继续' },
+      ],
+    });
+
+    expect(offReq.protocol).toBe('openai_responses');
+    expect(offReq.url).toBe('https://api.openai.com/v1/responses');
+    expect(offReq.headers.Authorization).toBe('Bearer sk-oa-1');
+    const offBody = JSON.parse(offReq.body) as Record<string, unknown>;
+    expect(offBody).toEqual({
+      model: 'gpt-4.1',
+      stream: true,
+      store: false,
+      instructions: '系统规则一\n\n系统规则二',
+      input: [
+        { role: 'user', content: '开场' },
+        { role: 'assistant', content: '回应' },
+        { role: 'user', content: '继续' },
+      ],
+      max_output_tokens: 2048,
+    });
+    expect(offBody).not.toHaveProperty('reasoning');
+    expect(offBody).not.toHaveProperty('stream_options');
+    expect(offBody).not.toHaveProperty('messages');
+
+    const onReq = buildProviderStreamRequest({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-oa-1',
+      model: 'o4-mini',
+      reasoningEffort: 'max',
+      capabilities: {
+        apiProtocol: 'openai_responses',
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+      messages: [{ role: 'user', content: '推理一下' }],
+    });
+    const onBody = JSON.parse(onReq.body) as Record<string, unknown>;
+    expect(onBody).not.toHaveProperty('instructions');
+    expect(onBody.reasoning).toEqual({ effort: 'high', summary: 'auto' });
+  });
+
+  it('streams reasoning summary deltas, output text deltas, and normalized usage from OpenAI Responses SSE', async () => {
+    const encoder = new TextEncoder();
+    const ssePayload = [
+      'event: response.created\n',
+      'data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}\n\n',
+      'event: response.reasoning_summary_text.delta\n',
+      'data: {"type":"response.reasoning_summary_text.delta","delta":"先梳理线索。"}\n\n',
+      'event: response.reasoning_text.delta\n',
+      'data: {"type":"response.reasoning_text.delta","delta":"再核对动机。"}\n\n',
+      'event: response.output_text.delta\n',
+      'data: {"type":"response.output_text.delta","delta":"雨夜中的"}\n\n',
+      'event: response.output_text.delta\n',
+      'data: {"type":"response.output_text.delta","delta":"钟声响起。"}\n\n',
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1000,"input_tokens_details":{"cached_tokens":750},"output_tokens":180,"output_tokens_details":{"reasoning_tokens":60},"total_tokens":1180}}}\n\n',
+    ].join('');
+    const bytes = encoder.encode(ssePayload);
+
+    const transport = createOpenAiTransport(async (url, init) => {
+      expect(url).toBe('https://api.openai.com/v1/responses');
+      expect(JSON.parse(init.body)).toMatchObject({
+        model: 'gpt-4.1',
+        store: false,
+        stream: true,
+      });
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+        body: (async function* () {
+          // Split across UTF-8 multi-byte boundaries
+          for (let i = 0; i < bytes.length; i += 7) {
+            yield bytes.slice(i, i + 7);
+          }
+        })(),
+      };
+    });
+
+    const deltas = await collect(
+      transport.streamChat({
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-oa-1',
+        model: 'gpt-4.1',
+        reasoningEffort: 'medium',
+        prefixCompletion: { content: '雨夜' },
+        capabilities: {
+          apiProtocol: 'openai_responses',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [{ role: 'user', content: '继续' }],
+      }),
+    );
+
+    expect(deltas.map((d) => d.reasoningDelta ?? '').join('')).toBe('先梳理线索。再核对动机。');
+    expect(deltas.map((d) => d.contentDelta ?? '').join('')).toBe('雨夜中的钟声响起。');
+    const last = deltas.at(-1);
+    expect(last?.finishReason).toBe('stop');
+    expect(last?.usage).toEqual({
+      promptTokens: 1000,
+      completionTokens: 180,
+      totalTokens: 1180,
+      promptCacheHitTokens: 750,
+      promptCacheMissTokens: 250,
+      completionTokensDetails: { reasoningTokens: 60 },
+    });
+  });
+
+  it('maps incomplete responses to length/content_filter and surfaces response.failed / error events', async () => {
+    const encoder = new TextEncoder();
+    const incompleteTransport = createOpenAiTransport(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '',
+      body: (async function* () {
+        yield encoder.encode(
+          'data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}\n\n',
+        );
+      })(),
+    }));
+    const incompleteDeltas = await collect(
+      incompleteTransport.streamChat({
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-oa-1',
+        model: 'gpt-4.1',
+        capabilities: {
+          apiProtocol: 'openai_responses',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    );
+    expect(incompleteDeltas.at(-1)?.finishReason).toBe('length');
+
+    const failedTransport = createOpenAiTransport(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '',
+      body: (async function* () {
+        yield encoder.encode(
+          'event: response.failed\ndata: {"type":"response.failed","response":{"status":"failed","error":{"message":"Quota exceeded"}}}\n\n',
+        );
+      })(),
+    }));
+    const { error } = await collectUntilError(
+      failedTransport.streamChat({
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-oa-1',
+        model: 'gpt-4.1',
+        capabilities: {
+          apiProtocol: 'openai_responses',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'none',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('Quota exceeded');
+  });
+});
+
+describe('Anthropic Messages protocol adapter', () => {
+  it('resolves /messages URLs idempotently', () => {
+    expect(resolveAnthropicMessagesUrl('https://api.anthropic.com')).toBe(
+      'https://api.anthropic.com/v1/messages',
+    );
+    expect(resolveAnthropicMessagesUrl('https://api.anthropic.com/')).toBe(
+      'https://api.anthropic.com/v1/messages',
+    );
+    expect(resolveAnthropicMessagesUrl('https://api.anthropic.com/v1')).toBe(
+      'https://api.anthropic.com/v1/messages',
+    );
+    expect(resolveAnthropicMessagesUrl('https://api.anthropic.com/v1/')).toBe(
+      'https://api.anthropic.com/v1/messages',
+    );
+    expect(resolveAnthropicMessagesUrl('https://api.anthropic.com/v1/messages')).toBe(
+      'https://api.anthropic.com/v1/messages',
+    );
+    expect(resolveAnthropicMessagesUrl('https://relay.example.com/anthropic/')).toBe(
+      'https://relay.example.com/anthropic/messages',
+    );
+  });
+
+  it('builds anthropic_messages requests with headers, top-level system, consecutive role merge, and prefill when thinking is OFF', () => {
+    const req = buildProviderStreamRequest({
+      baseUrl: 'https://api.anthropic.com/v1',
+      apiKey: 'sk-ant-123',
+      model: 'claude-sonnet-4-5',
+      reasoningEffort: 'none',
+      prefixCompletion: { content: '夜色渐浓，' },
+      capabilities: {
+        apiProtocol: 'anthropic_messages',
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'standard_assistant_prefill',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+      messages: [
+        { role: 'system', content: '世界观' },
+        { role: 'system', content: '文风要求' },
+        { role: 'user', content: '第一句' },
+        { role: 'user', content: '补充一句' },
+        { role: 'assistant', content: '回应一' },
+        { role: 'assistant', content: '回应二' },
+        { role: 'user', content: '继续' },
+      ],
+    });
+
+    expect(req.protocol).toBe('anthropic_messages');
+    expect(req.url).toBe('https://api.anthropic.com/v1/messages');
+    expect(req.headers['x-api-key']).toBe('sk-ant-123');
+    expect(req.headers.Authorization).toBeUndefined();
+    expect(req.headers['anthropic-version']).toBe('2023-06-01');
+    expect(req.headers['anthropic-dangerous-direct-browser-access']).toBe('true');
+
+    const body = JSON.parse(req.body) as Record<string, unknown>;
+    expect(body).toEqual({
+      model: 'claude-sonnet-4-5',
+      stream: true,
+      max_tokens: 4096,
+      system: '世界观\n\n文风要求',
+      messages: [
+        { role: 'user', content: '第一句\n\n补充一句' },
+        { role: 'assistant', content: '回应一\n\n回应二' },
+        { role: 'user', content: '继续' },
+        { role: 'assistant', content: '夜色渐浓，' },
+      ],
+    });
+    expect(body).not.toHaveProperty('thinking');
+  });
+
+  it('enables thinking budget_tokens, ensures max_tokens > budget_tokens, and auto-disables assistant prefill when thinking is ON', () => {
+    const capabilities = {
+      apiProtocol: 'anthropic_messages' as const,
+      thinkingProtocol: 'openai_reasoning_effort' as const,
+      prefixProtocol: 'standard_assistant_prefill' as const,
+      supportsBalanceQuery: false,
+      supportsBuiltinSearch: false,
+      supportsBuiltinPricing: false,
+    };
+
+    expect(
+      resolveEffectivePrefixProtocol({
+        baseUrl: 'https://api.anthropic.com/v1',
+        capabilities,
+        reasoningEffort: 'none',
+      }),
+    ).toBe('standard_assistant_prefill');
+    expect(
+      resolveEffectivePrefixProtocol({
+        baseUrl: 'https://api.anthropic.com/v1',
+        capabilities,
+        reasoningEffort: 'low',
+      }),
+    ).toBe('none');
+
+    const cases = [
+      { effort: 'low' as const, budget: 2048 },
+      { effort: 'medium' as const, budget: 8192 },
+      { effort: 'high' as const, budget: 16384 },
+      { effort: 'max' as const, budget: 16384 },
+    ];
+    for (const { effort, budget } of cases) {
+      const streamReq = {
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'sk-ant-123',
+        model: 'claude-sonnet-4-5',
+        reasoningEffort: effort,
+        maxOutputTokens: 4096,
+        prefixCompletion: { content: '严禁发送的预填' },
+        capabilities,
+        messages: [{ role: 'user' as const, content: '请推理' }],
+      };
+      expect(resolveStreamPrefillContent(streamReq)).toBe('');
+      const built = buildProviderStreamRequest(streamReq);
+      const body = JSON.parse(built.body) as {
+        thinking?: { type: string; budget_tokens: number };
+        max_tokens: number;
+        messages: Array<{ role: string; content: string }>;
+        system?: string;
+      };
+      expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: budget });
+      expect(body.max_tokens).toBeGreaterThan(budget);
+      expect(body).not.toHaveProperty('system');
+      expect(body.messages).toEqual([{ role: 'user', content: '请推理' }]);
+    }
+  });
+
+  it('streams thinking_delta, text_delta, normalized cache usage, and prefix continuation from Anthropic SSE', async () => {
+    const encoder = new TextEncoder();
+    const anthropicCaps = {
+      apiProtocol: 'anthropic_messages' as const,
+      thinkingProtocol: 'openai_reasoning_effort' as const,
+      prefixProtocol: 'standard_assistant_prefill' as const,
+      supportsBalanceQuery: false,
+      supportsBuiltinSearch: false,
+      supportsBuiltinPricing: false,
+    };
+
+    const sseThinkingPayload = [
+      'event: message_start\n',
+      'data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","usage":{"input_tokens":100,"cache_creation_input_tokens":20,"cache_read_input_tokens":50,"output_tokens":1}}}\n\n',
+      'event: content_block_start\n',
+      'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n',
+      'event: content_block_delta\n',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"先分析人物动机。"}}\n\n',
+      'event: content_block_stop\n',
+      'data: {"type":"content_block_stop","index":0}\n\n',
+      'event: content_block_start\n',
+      'data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}\n\n',
+      'event: content_block_delta\n',
+      'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"窗外"}}\n\n',
+      'event: content_block_delta\n',
+      'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"雨声渐歇。"}}\n\n',
+      'event: message_delta\n',
+      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":80}}\n\n',
+      'event: message_stop\n',
+      'data: {"type":"message_stop"}\n\n',
+    ].join('');
+    const bytes = encoder.encode(sseThinkingPayload);
+
+    const transport = createOpenAiTransport(async (url, init) => {
+      expect(url).toBe('https://api.anthropic.com/v1/messages');
+      expect(init.headers['x-api-key']).toBe('sk-ant-1');
+      expect(init.headers['anthropic-version']).toBe('2023-06-01');
+      expect(init.headers['anthropic-dangerous-direct-browser-access']).toBe('true');
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+        body: (async function* () {
+          for (let i = 0; i < bytes.length; i += 11) {
+            yield bytes.slice(i, i + 11);
+          }
+        })(),
+      };
+    });
+
+    // When thinking is ON, prefixCompletion must NOT hold "窗外" or fail echo confirmation
+    const deltas = await collect(
+      transport.streamChat({
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'sk-ant-1',
+        model: 'claude-sonnet-4-5',
+        reasoningEffort: 'medium',
+        prefixCompletion: { content: '窗外的雨' },
+        capabilities: anthropicCaps,
+        messages: [{ role: 'user', content: '继续' }],
+      }),
+    );
+
+    expect(deltas.map((d) => d.reasoningDelta ?? '').join('')).toBe('先分析人物动机。');
+    expect(deltas.map((d) => d.contentDelta ?? '').join('')).toBe('窗外雨声渐歇。');
+    expect(deltas.at(-1)).toEqual({
+      finishReason: 'stop',
+      usage: {
+        promptTokens: 170,
+        completionTokens: 80,
+        totalTokens: 250,
+        promptCacheHitTokens: 50,
+        promptCacheMissTokens: 120,
+      },
+    });
+
+    // When thinking is OFF and prefill is used, Anthropic continues directly after prefill and cursor synthesizes it once
+    const prefillTransport = createOpenAiTransport(async (_url, init) => {
+      const body = JSON.parse(init.body) as { messages: Array<{ role: string; content: string }> };
+      expect(body.messages.at(-1)).toEqual({ role: 'assistant', content: '夜色渐浓，' });
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+        body: (async function* () {
+          yield encoder.encode(
+            [
+              'event: message_start\n',
+              'data: {"type":"message_start","message":{"usage":{"input_tokens":40,"output_tokens":0}}}\n\n',
+              'event: content_block_delta\n',
+              'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"远处的钟声响了。"}}\n\n',
+              'event: message_delta\n',
+              'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":12}}\n\n',
+              'event: message_stop\n',
+              'data: {"type":"message_stop"}\n\n',
+            ].join(''),
+          );
+        })(),
+      };
+    });
+    const prefillDeltas = await collect(
+      prefillTransport.streamChat({
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'sk-ant-1',
+        model: 'claude-sonnet-4-5',
+        reasoningEffort: 'none',
+        prefixCompletion: { content: '夜色渐浓，' },
+        capabilities: anthropicCaps,
+        messages: [{ role: 'user', content: '继续' }],
+      }),
+    );
+    expect(prefillDeltas.map((d) => d.contentDelta ?? '').join('')).toBe('夜色渐浓，远处的钟声响了。');
+    expect(prefillDeltas.at(-1)).toEqual({
+      finishReason: 'length',
+      usage: {
+        promptTokens: 40,
+        completionTokens: 12,
+        totalTokens: 52,
+      },
+    });
+  });
+
+  it('surfaces Anthropic SSE error events with the upstream message', async () => {
+    const encoder = new TextEncoder();
+    const errorTransport = createOpenAiTransport(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '',
+      body: (async function* () {
+        yield encoder.encode(
+          'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n',
+        );
+      })(),
+    }));
+
+    const { error } = await collectUntilError(
+      errorTransport.streamChat({
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'sk-ant-1',
+        model: 'claude-sonnet-4-5',
+        capabilities: {
+          apiProtocol: 'anthropic_messages',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'standard_assistant_prefill',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('Overloaded');
+  });
+});
+
+describe('gemini_native wire protocol', () => {
+  const geminiCaps = {
+    apiProtocol: 'gemini_native' as const,
+    thinkingProtocol: 'openai_reasoning_effort' as const,
+    prefixProtocol: 'standard_assistant_prefill' as const,
+    supportsBalanceQuery: false,
+    supportsBuiltinSearch: false,
+    supportsBuiltinPricing: false,
+  };
+
+  it('resolves Gemini stream URL without exposing API key in query string', () => {
+    expect(
+      resolveGeminiStreamUrl('https://generativelanguage.googleapis.com/v1beta/', 'models/gemini-2.5-flash'),
+    ).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+    );
+    expect(
+      resolveGeminiStreamUrl('https://generativelanguage.googleapis.com/v1beta/models', 'gemini-2.5-pro'),
+    ).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse',
+    );
+  });
+
+  it('builds gemini_native payloads with x-goog-api-key header, merged contents, and model-aware thinkingConfig', () => {
+    const offFlash = buildProviderStreamRequest({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: '  AIza-test-key-123  ',
+      model: 'models/gemini-2.5-flash',
+      reasoningEffort: 'none',
+      maxOutputTokens: 4096,
+      prefixCompletion: { content: '不应发送的预填' },
+      capabilities: geminiCaps,
+      messages: [
+        { role: 'system', content: '规则一' },
+        { role: 'system', content: '规则二' },
+        { role: 'user', content: '第一句' },
+        { role: 'user', content: '第二句' },
+        { role: 'assistant', content: 'AI回复一' },
+        { role: 'assistant', content: 'AI回复二' },
+        { role: 'user', content: '继续' },
+      ],
+    });
+
+    expect(offFlash.protocol).toBe('gemini_native');
+    expect(offFlash.url).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+    );
+    expect(offFlash.url).not.toContain('AIza-test-key-123');
+    expect(offFlash.url).not.toContain('key=');
+    expect(offFlash.headers['x-goog-api-key']).toBe('AIza-test-key-123');
+    expect(offFlash.headers.Authorization).toBeUndefined();
+
+    expect(JSON.parse(offFlash.body)).toEqual({
+      systemInstruction: { parts: [{ text: '规则一\n\n规则二' }] },
+      contents: [
+        { role: 'user', parts: [{ text: '第一句\n\n第二句' }] },
+        { role: 'model', parts: [{ text: 'AI回复一\n\nAI回复二' }] },
+        { role: 'user', parts: [{ text: '继续' }] },
+      ],
+      generationConfig: {
+        maxOutputTokens: 4096,
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    });
+
+    const offPro = buildProviderStreamRequest({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: 'AIza-pro',
+      model: 'gemini-2.5-pro',
+      reasoningEffort: 'none',
+      capabilities: geminiCaps,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    const offProBody = JSON.parse(offPro.body) as Record<string, unknown>;
+    expect(offProBody).not.toHaveProperty('systemInstruction');
+    expect(offProBody.generationConfig).toEqual({
+      thinkingConfig: { thinkingBudget: 128 },
+    });
+
+    const offGemini3 = buildProviderStreamRequest({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: 'AIza-3',
+      model: 'gemini-3-flash-preview',
+      reasoningEffort: 'none',
+      capabilities: geminiCaps,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    expect(JSON.parse(offGemini3.body).generationConfig).toEqual({
+      thinkingConfig: { thinkingLevel: 'minimal' },
+    });
+
+    for (const [effort, budget] of [
+      ['low', 2048],
+      ['medium', 8192],
+      ['high', 16384],
+      ['max', 16384],
+    ] as const) {
+      const onReq = buildProviderStreamRequest({
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: 'AIza-on',
+        model: 'gemini-2.5-flash',
+        reasoningEffort: effort,
+        capabilities: geminiCaps,
+        messages: [{ role: 'user', content: 'think' }],
+      });
+      expect(JSON.parse(onReq.body).generationConfig).toEqual({
+        thinkingConfig: { includeThoughts: true, thinkingBudget: budget },
+      });
+    }
+  });
+
+  it('omits thinkingConfig for non-thinking Gemini-API models like gemma-3-27b-it when thinking is OFF and ON', () => {
+    for (const model of ['gemma-3-27b-it', 'learnlm-1.5-pro-experimental', 'gemini-2.0-flash']) {
+      for (const reasoningEffort of ['none', 'medium'] as const) {
+        const built = buildProviderStreamRequest({
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          apiKey: 'AIza-non-thinking',
+          model,
+          reasoningEffort,
+          capabilities: geminiCaps,
+          messages: [{ role: 'user', content: 'hi' }],
+        });
+        const body = JSON.parse(built.body) as Record<string, unknown>;
+        expect(body).not.toHaveProperty('generationConfig');
+      }
+    }
+
+    const withMaxTokens = buildProviderStreamRequest({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: 'AIza-gemma',
+      model: 'gemma-3-27b-it',
+      reasoningEffort: 'none',
+      maxOutputTokens: 2048,
+      capabilities: geminiCaps,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    expect(JSON.parse(withMaxTokens.body).generationConfig).toEqual({
+      maxOutputTokens: 2048,
+    });
+  });
+
+  it('streams thought parts, content parts, finishReason mapping, and coalesced usageMetadata from Gemini SSE', async () => {
+    const encoder = new TextEncoder();
+    const ssePayload = [
+      'data: {"candidates":[{"content":{"role":"model","parts":[{"thought":true,"text":"先整理线索。"}]},"index":0}],"usageMetadata":{"promptTokenCount":1000,"cachedContentTokenCount":750,"thoughtsTokenCount":30,"totalTokenCount":1030}}\n\n',
+      'data: {"candidates":[{"content":{"role":"model","parts":[{"thought":true,"text":"确认动机。"},{"text":"夜雨"}]},"index":0}],"usageMetadata":{"promptTokenCount":1000,"cachedContentTokenCount":750,"candidatesTokenCount":40,"thoughtsTokenCount":60,"totalTokenCount":1100}}\n\n',
+      'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"敲响了窗棂。"}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":1000,"cachedContentTokenCount":750,"candidatesTokenCount":120,"thoughtsTokenCount":60,"totalTokenCount":1180}}\n\n',
+    ].join('');
+    const bytes = encoder.encode(ssePayload);
+
+    const transport = createOpenAiTransport(async (url, init) => {
+      expect(url).toBe(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+      );
+      expect(init.headers['x-goog-api-key']).toBe('AIza-stream-key');
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+        body: (async function* () {
+          for (let i = 0; i < bytes.length; i += 11) {
+            yield bytes.slice(i, i + 11);
+          }
+        })(),
+      };
+    });
+
+    const deltas = await collect(
+      transport.streamChat({
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: 'AIza-stream-key',
+        model: 'gemini-2.5-flash',
+        reasoningEffort: 'medium',
+        prefixCompletion: { content: '不应被持有' },
+        capabilities: geminiCaps,
+        messages: [{ role: 'user', content: '继续' }],
+      }),
+    );
+
+    expect(deltas.map((d) => d.reasoningDelta ?? '').join('')).toBe('先整理线索。确认动机。');
+    expect(deltas.map((d) => d.contentDelta ?? '').join('')).toBe('夜雨敲响了窗棂。');
+    const usageDeltas = deltas.filter((d) => d.usage !== undefined);
+    expect(usageDeltas).toHaveLength(1);
+    const last = deltas.at(-1);
+    expect(last?.finishReason).toBe('stop');
+    expect(last?.usage).toEqual({
+      promptTokens: 1000,
+      completionTokens: 180,
+      totalTokens: 1180,
+      promptCacheHitTokens: 750,
+      promptCacheMissTokens: 250,
+      completionTokensDetails: { reasoningTokens: 60 },
+    });
+  });
+
+  it('maps Gemini MAX_TOKENS/SAFETY finishReason and surfaces SSE error payloads', async () => {
+    const encoder = new TextEncoder();
+    const safetyTransport = createOpenAiTransport(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '',
+      body: (async function* () {
+        yield encoder.encode(
+          'data: {"candidates":[{"content":{"parts":[{"text":"部分"}]},"finishReason":"MAX_TOKENS"}]}\n\n',
+        );
+        yield encoder.encode(
+          'data: {"candidates":[{"finishReason":"SAFETY"}]}\n\n',
+        );
+      })(),
+    }));
+    const deltas = await collect(
+      safetyTransport.streamChat({
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: 'AIza-1',
+        model: 'gemini-2.5-flash',
+        capabilities: geminiCaps,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    );
+    expect(deltas.map((d) => d.finishReason)).toEqual(['length', 'content_filter']);
+
+    const errTransport = createOpenAiTransport(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '',
+      body: (async function* () {
+        yield encoder.encode(
+          'data: {"error":{"code":429,"message":"Resource has been exhausted"}}\n\n',
+        );
+      })(),
+    }));
+    const { error } = await collectUntilError(
+      errTransport.streamChat({
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: 'AIza-1',
+        model: 'gemini-2.5-flash',
+        capabilities: geminiCaps,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('Resource has been exhausted');
+  });
+});
+
+describe('Third-party openai_chat thinking dialects (Slice 4)', () => {
+  it('strictly omits all thinking/reasoning fields when thinking is OFF across all third-party presets', () => {
+    const thirdPartyIds = [
+      'xai',
+      'groq',
+      'moonshot',
+      'zhipu',
+      'dashscope',
+      'volcengine',
+      'minimax',
+      'qianfan',
+      'hunyuan',
+      'spark',
+      'sensenova',
+      'stepfun',
+      'lingyi',
+      'openrouter',
+      'siliconflow',
+      'local',
+    ] as const;
+
+    for (const presetId of thirdPartyIds) {
+      const profile = createProviderProfileFromPreset(presetId, { apiKey: 'k-test' });
+      const built = buildOpenAiChatRequest({
+        baseUrl: profile.baseUrl,
+        apiKey: profile.apiKey,
+        model: profile.defaultModel,
+        reasoningEffort: 'none',
+        capabilities: profile.capabilities,
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+      const body = JSON.parse(built.body) as Record<string, unknown>;
+      expect(body).not.toHaveProperty('thinking');
+      expect(body).not.toHaveProperty('reasoning_effort');
+      expect(body).not.toHaveProperty('enable_thinking');
+    }
+  });
+
+  it('emits verified vendor-specific thinking dialects when thinking is ON', () => {
+    const dashscopeProfile = createProviderProfileFromPreset('dashscope', { apiKey: 'sk-dash' });
+    const dashOn = JSON.parse(
+      buildOpenAiChatRequest({
+        baseUrl: dashscopeProfile.baseUrl,
+        apiKey: dashscopeProfile.apiKey,
+        model: dashscopeProfile.defaultModel,
+        reasoningEffort: 'medium',
+        capabilities: dashscopeProfile.capabilities,
+        messages: [{ role: 'user', content: 'hi' }],
+      }).body,
+    ) as Record<string, unknown>;
+    expect(dashOn.enable_thinking).toBe(true);
+    expect(dashOn).not.toHaveProperty('thinking');
+    expect(dashOn).not.toHaveProperty('reasoning_effort');
+
+    for (const dialectPreset of ['zhipu', 'volcengine'] as const) {
+      const profile = createProviderProfileFromPreset(dialectPreset, { apiKey: 'sk-vendor' });
+      const onBody = JSON.parse(
+        buildOpenAiChatRequest({
+          baseUrl: profile.baseUrl,
+          apiKey: profile.apiKey,
+          model: profile.defaultModel,
+          reasoningEffort: 'high',
+          capabilities: profile.capabilities,
+          messages: [{ role: 'user', content: 'hi' }],
+        }).body,
+      ) as Record<string, unknown>;
+      expect(onBody.thinking).toEqual({ type: 'enabled' });
+      expect(onBody).not.toHaveProperty('enable_thinking');
+      expect(onBody).not.toHaveProperty('reasoning_effort');
+    }
+
+    for (const standardPreset of ['xai', 'groq', 'moonshot', 'minimax', 'qianfan', 'hunyuan', 'spark'] as const) {
+      const profile = createProviderProfileFromPreset(standardPreset, { apiKey: 'sk-std' });
+      const onBody = JSON.parse(
+        buildOpenAiChatRequest({
+          baseUrl: profile.baseUrl,
+          apiKey: profile.apiKey,
+          model: profile.defaultModel,
+          reasoningEffort: 'max',
+          capabilities: profile.capabilities,
+          messages: [{ role: 'user', content: 'hi' }],
+        }).body,
+      ) as Record<string, unknown>;
+      expect(onBody.reasoning_effort).toBe('high');
+      expect(onBody).not.toHaveProperty('thinking');
+      expect(onBody).not.toHaveProperty('enable_thinking');
+    }
   });
 });

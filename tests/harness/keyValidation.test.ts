@@ -134,7 +134,18 @@ describe('Generic OpenAI-compatible provider validation & prefill probing', () =
   it('normalizes provider base URLs cleanly', () => {
     expect(normalizeProviderBaseUrl('  https://api.openai.com/v1/  ')).toBe('https://api.openai.com/v1');
     expect(normalizeProviderBaseUrl('https://api.openai.com/v1/chat/completions/')).toBe('https://api.openai.com/v1');
+    expect(normalizeProviderBaseUrl('https://api.openai.com/v1/responses/')).toBe('https://api.openai.com/v1');
     expect(normalizeProviderBaseUrl('https://openrouter.ai/api/v1/models')).toBe('https://openrouter.ai/api/v1');
+    expect(
+      normalizeProviderBaseUrl(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+      ),
+    ).toBe('https://generativelanguage.googleapis.com/v1beta');
+    expect(
+      normalizeProviderBaseUrl(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent/',
+      ),
+    ).toBe('https://generativelanguage.googleapis.com/v1beta');
     expect(normalizeProviderBaseUrl(' /__dev_llm_proxy/ ')).toBe('/__dev_llm_proxy');
   });
 
@@ -313,5 +324,201 @@ describe('Generic OpenAI-compatible provider validation & prefill probing', () =
       message: '当前服务商暂不支持增强续写，已保持通用稳定模式',
       statusCode: 400,
     });
+  });
+
+  it('normalizes Anthropic /messages URLs, verifies GET /models with x-api-key + CORS headers, and probes /messages prefill', async () => {
+    expect(normalizeProviderBaseUrl('https://api.anthropic.com/v1/messages/')).toBe(
+      'https://api.anthropic.com/v1',
+    );
+
+    const verified = await verifyProviderConnection({
+      baseUrl: 'https://api.anthropic.com/v1/messages',
+      apiKey: ' sk-ant-key-1 ',
+      apiProtocol: 'anthropic_messages',
+      fetchImpl: async (url, init) => {
+        expect(url).toBe('https://api.anthropic.com/v1/models');
+        expect(init.method).toBe('GET');
+        expect(init.headers['x-api-key']).toBe('sk-ant-key-1');
+        expect(init.headers['anthropic-version']).toBe('2023-06-01');
+        expect(init.headers['anthropic-dangerous-direct-browser-access']).toBe('true');
+        expect(init.headers.Authorization).toBeUndefined();
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              data: [
+                { id: 'claude-sonnet-4-5', type: 'model' },
+                { id: 'claude-haiku-4-5', type: 'model' },
+              ],
+            }),
+        };
+      },
+    });
+    expect(verified).toEqual({
+      status: 'valid',
+      key: 'sk-ant-key-1',
+      baseUrl: 'https://api.anthropic.com/v1',
+      models: ['claude-sonnet-4-5', 'claude-haiku-4-5'],
+    });
+
+    const probeSupported = await probeAssistantPrefillCompatibility({
+      baseUrl: 'https://api.anthropic.com/v1',
+      apiKey: 'sk-ant-key-1',
+      model: 'claude-sonnet-4-5',
+      apiProtocol: 'anthropic_messages',
+      fetchImpl: async (url, init) => {
+        expect(url).toBe('https://api.anthropic.com/v1/messages');
+        expect(init.method).toBe('POST');
+        expect(init.headers['x-api-key']).toBe('sk-ant-key-1');
+        expect(init.headers['anthropic-version']).toBe('2023-06-01');
+        expect(init.headers['anthropic-dangerous-direct-browser-access']).toBe('true');
+        expect(init.headers.Authorization).toBeUndefined();
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => JSON.stringify({ content: [{ type: 'text', text: '落了下来。' }] }),
+          body: null,
+        };
+      },
+    });
+    expect(probeSupported).toEqual({
+      supported: true,
+      message: '当前服务商支持增强续写',
+    });
+
+    const bareOriginVerified = await verifyProviderConnection({
+      baseUrl: 'https://api.anthropic.com',
+      apiKey: 'sk-ant-bare-1',
+      apiProtocol: 'anthropic_messages',
+      fetchImpl: async (url) => {
+        expect(url).toBe('https://api.anthropic.com/v1/models');
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ data: [{ id: 'claude-sonnet-4-5' }] }),
+        };
+      },
+    });
+    expect(bareOriginVerified).toEqual({
+      status: 'valid',
+      key: 'sk-ant-bare-1',
+      baseUrl: 'https://api.anthropic.com',
+      models: ['claude-sonnet-4-5'],
+    });
+  });
+
+  it('verifies gemini_native connections via x-goog-api-key, filters generateContent chat models, and strips models/ prefix', async () => {
+    const valid = await verifyProviderConnection({
+      baseUrl:
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+      apiKey: '  AIza-gem-test-999  ',
+      apiProtocol: 'gemini_native',
+      fetchImpl: async (url, init) => {
+        expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models');
+        expect(url).not.toContain('AIza-gem-test-999');
+        expect(url).not.toContain('key=');
+        expect(init.method).toBe('GET');
+        expect(init.headers['x-goog-api-key']).toBe('AIza-gem-test-999');
+        expect(init.headers.Authorization).toBeUndefined();
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              models: [
+                {
+                  name: 'models/gemini-2.5-flash',
+                  supportedGenerationMethods: ['generateContent', 'countTokens'],
+                },
+                {
+                  name: 'models/gemini-2.5-pro',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
+                  name: 'models/gemini-embedding-001',
+                  supportedGenerationMethods: ['embedContent'],
+                },
+                {
+                  name: 'models/text-embedding-004',
+                  supportedGenerationMethods: ['generateContent', 'embedContent'],
+                },
+                {
+                  name: 'models/imagen-3.0-generate-002',
+                  supportedGenerationMethods: ['generateContent', 'predict'],
+                },
+                {
+                  name: 'models/gemini-2.5-flash-preview-tts',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
+                  name: 'models/veo-2.0-generate-001',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
+                  name: 'models/aqa',
+                  supportedGenerationMethods: ['generateAnswer', 'generateContent'],
+                },
+                {
+                  name: 'models/gemini-2.5-flash',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+              ],
+            }),
+        };
+      },
+    });
+
+    expect(valid).toEqual({
+      status: 'valid',
+      key: 'AIza-gem-test-999',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      models: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+    });
+
+    const invalid400 = await verifyProviderConnection({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: 'AIza-bad',
+      apiProtocol: 'gemini_native',
+      fetchImpl: async () => ({
+        ok: false,
+        status: 400,
+        text: async () =>
+          JSON.stringify({
+            error: {
+              code: 400,
+              message: 'API key not valid. Please pass a valid API key.',
+              status: 'INVALID_ARGUMENT',
+              details: [{ reason: 'API_KEY_INVALID' }],
+            },
+          }),
+      }),
+    });
+    expect(invalid400.status).toBe('invalid_key');
+  });
+
+  it('short-circuits prefill probe without network call for openai_responses and gemini_native protocols', async () => {
+    for (const apiProtocol of ['openai_responses', 'gemini_native'] as const) {
+      let called = false;
+      const result = await probeAssistantPrefillCompatibility({
+        baseUrl:
+          apiProtocol === 'gemini_native'
+            ? 'https://generativelanguage.googleapis.com/v1beta'
+            : 'https://api.openai.com/v1',
+        apiKey: 'sk-test-no-probe',
+        model: apiProtocol === 'gemini_native' ? 'gemini-2.5-flash' : 'gpt-4.1',
+        apiProtocol,
+        fetchImpl: async () => {
+          called = true;
+          throw new Error('fetchImpl must not be called for non-prefill protocols');
+        },
+      });
+      expect(called).toBe(false);
+      expect(result).toEqual({
+        supported: false,
+        message: '当前服务商暂不支持增强续写，已保持通用稳定模式',
+      });
+    }
   });
 });

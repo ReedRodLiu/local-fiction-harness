@@ -8,7 +8,13 @@ import {
   type WritingSuggestion,
 } from './creative.ts';
 import { createDefaultId } from './id.ts';
-import { isReasoningEffort } from './keyConfig.ts';
+import {
+  DEFAULT_PROVIDER_API_PROTOCOL,
+  PROVIDER_PRESETS,
+  isProviderApiProtocol,
+  isProviderThinkingDialect,
+  isReasoningEffort,
+} from './keyConfig.ts';
 import {
   documentVersion,
   validateDocumentReads,
@@ -32,6 +38,7 @@ import {
 import type {
   CustomModelPricing,
   GenerationPreference,
+  ProviderApiProtocol,
   ProviderCapabilities,
   ProviderLibrary,
   ProviderLibraryMeta,
@@ -199,14 +206,9 @@ function sanitizeStoryForExport(story: Story): Story {
   });
 }
 
-const VALID_PROVIDER_PRESET_IDS = new Set<ProviderPresetId>([
-  'deepseek',
-  'openai',
-  'openrouter',
-  'siliconflow',
-  'local',
-  'custom',
-]);
+const VALID_PROVIDER_PRESET_IDS = new Set<ProviderPresetId>(
+  Object.keys(PROVIDER_PRESETS) as ProviderPresetId[],
+);
 const VALID_PUBLIC_RESEARCH_PROVIDERS = new Set<PublicResearchSearchPresetId>([
   'auto',
   'none',
@@ -288,8 +290,18 @@ function validateProviderCapabilities(raw: unknown, context: string): ProviderCa
   if (!isRecord(raw)) {
     throw new Error(`${context} 的 capabilities 必须为对象。`);
   }
+  let apiProtocol: ProviderApiProtocol = DEFAULT_PROVIDER_API_PROTOCOL;
+  if (raw.apiProtocol !== undefined) {
+    if (!isProviderApiProtocol(raw.apiProtocol)) {
+      throw new Error(`${context} 的 capabilities.apiProtocol 无效。`);
+    }
+    apiProtocol = raw.apiProtocol;
+  }
   if (raw.thinkingProtocol !== 'deepseek' && raw.thinkingProtocol !== 'openai_reasoning_effort') {
     throw new Error(`${context} 的 capabilities.thinkingProtocol 无效。`);
+  }
+  if (raw.thinkingDialect !== undefined && !isProviderThinkingDialect(raw.thinkingDialect)) {
+    throw new Error(`${context} 的 capabilities.thinkingDialect 无效。`);
   }
   if (
     raw.prefixProtocol !== 'deepseek_beta' &&
@@ -306,7 +318,9 @@ function validateProviderCapabilities(raw: unknown, context: string): ProviderCa
     throw new Error(`${context} 的 capabilities 布尔字段无效。`);
   }
   return {
+    apiProtocol,
     thinkingProtocol: raw.thinkingProtocol,
+    ...(raw.thinkingDialect !== undefined ? { thinkingDialect: raw.thinkingDialect } : {}),
     prefixProtocol: raw.prefixProtocol,
     supportsBalanceQuery: raw.supportsBalanceQuery,
     supportsBuiltinSearch: raw.supportsBuiltinSearch,
@@ -340,12 +354,13 @@ function validateProviderProfileMeta(raw: unknown, index: number): ProviderProfi
   if (typeof raw.name !== 'string') {
     throw new Error(`${context} 缺少有效 name。`);
   }
-  if (
-    typeof raw.presetId !== 'string' ||
-    !VALID_PROVIDER_PRESET_IDS.has(raw.presetId as ProviderPresetId)
-  ) {
+  if (typeof raw.presetId !== 'string' || !raw.presetId.trim()) {
     throw new Error(`${context} 的 presetId 无效。`);
   }
+  const rawPresetId = raw.presetId.trim();
+  const presetId: ProviderPresetId = VALID_PROVIDER_PRESET_IDS.has(rawPresetId as ProviderPresetId)
+    ? (rawPresetId as ProviderPresetId)
+    : 'custom';
   if (typeof raw.baseUrl !== 'string') {
     throw new Error(`${context} 的 baseUrl 必须为字符串。`);
   }
@@ -380,7 +395,7 @@ function validateProviderProfileMeta(raw: unknown, index: number): ProviderProfi
   return {
     id: raw.id.trim(),
     name: raw.name,
-    presetId: raw.presetId as ProviderPresetId,
+    presetId,
     baseUrl: raw.baseUrl,
     models,
     defaultModel: raw.defaultModel,

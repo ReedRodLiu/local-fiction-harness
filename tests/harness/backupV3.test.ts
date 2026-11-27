@@ -744,4 +744,132 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     const parsedAuto = parseAndValidateFolioBackup(autoJson);
     expect(parsedAuto.providerLibrary?.publicResearch).toEqual({ provider: 'auto' });
   });
+
+  it('round-trips capabilities.apiProtocol, defaults omitted apiProtocol to openai_chat, and downgrades unknown presetId to custom', () => {
+    const openai = createProviderProfileFromPreset('openai', {
+      id: 'oa-resp',
+      apiKey: 'sk-oa-SECRET',
+    });
+    const json = exportFolioBackupV3({
+      stories: [],
+      workspace: emptyWorkspace(),
+      providerLibrary: {
+        version: 2,
+        activeProviderId: 'oa-resp',
+        profiles: [openai],
+        reasoningEffort: 'none',
+      },
+    });
+    expect(json).not.toContain('sk-oa-SECRET');
+
+    const parsed = parseAndValidateFolioBackup(json);
+    expect(parsed.providerLibrary?.profiles[0]?.capabilities.apiProtocol).toBe('openai_responses');
+
+    // Legacy backup without apiProtocol falls back to openai_chat
+    const legacy = JSON.parse(json);
+    delete legacy.providerLibrary.profiles[0].capabilities.apiProtocol;
+    const parsedLegacy = parseAndValidateFolioBackup(JSON.stringify(legacy));
+    expect(parsedLegacy.providerLibrary?.profiles[0]?.capabilities.apiProtocol).toBe('openai_chat');
+
+    // Unknown presetId downgrades smoothly to 'custom' while keeping capabilities.apiProtocol
+    const futureBackup = JSON.parse(json);
+    futureBackup.providerLibrary.profiles[0].presetId = 'future_provider_2027';
+    futureBackup.providerLibrary.profiles[0].capabilities.apiProtocol = 'anthropic_messages';
+    const parsedFuture = parseAndValidateFolioBackup(JSON.stringify(futureBackup));
+    expect(parsedFuture.providerLibrary?.profiles[0]?.presetId).toBe('custom');
+    expect(parsedFuture.providerLibrary?.profiles[0]?.capabilities.apiProtocol).toBe(
+      'anthropic_messages',
+    );
+
+    // Unknown presetId must STILL reject embedded apiKey secrets
+    const poisonedFuture = JSON.parse(json);
+    poisonedFuture.providerLibrary.profiles[0].presetId = 'future_provider_2027';
+    poisonedFuture.providerLibrary.profiles[0].apiKey = 'sk-leak-999';
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(poisonedFuture))).toThrow(/apiKey|密钥/);
+
+    // Invalid apiProtocol throws validation error
+    const invalidProtocol = JSON.parse(json);
+    invalidProtocol.providerLibrary.profiles[0].capabilities.apiProtocol = 'invalid_proto';
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(invalidProtocol))).toThrow(/apiProtocol/);
+
+    // Anthropic preset round-trips cleanly without stripping presetId
+    const anthropic = createProviderProfileFromPreset('anthropic', {
+      id: 'anthropic-1',
+      apiKey: 'sk-ant-SECRET',
+    });
+    const anthropicJson = exportFolioBackupV3({
+      stories: [],
+      workspace: emptyWorkspace(),
+      providerLibrary: {
+        version: 2,
+        activeProviderId: 'anthropic-1',
+        profiles: [anthropic],
+        reasoningEffort: 'none',
+      },
+    });
+    expect(anthropicJson).not.toContain('sk-ant-SECRET');
+    const parsedAnthropic = parseAndValidateFolioBackup(anthropicJson);
+    expect(parsedAnthropic.providerLibrary?.profiles[0]?.presetId).toBe('anthropic');
+    expect(parsedAnthropic.providerLibrary?.profiles[0]?.capabilities.apiProtocol).toBe(
+      'anthropic_messages',
+    );
+    expect(parsedAnthropic.providerLibrary?.profiles[0]?.capabilities.prefixProtocol).toBe(
+      'standard_assistant_prefill',
+    );
+
+    // Gemini preset round-trips with gemini_native and strips apiKey
+    const gemini = createProviderProfileFromPreset('gemini', {
+      id: 'gem-1',
+      apiKey: 'AIza-SECRET-GEMINI',
+    });
+    const geminiJson = exportFolioBackupV3({
+      stories: [],
+      workspace: emptyWorkspace(),
+      providerLibrary: {
+        version: 2,
+        activeProviderId: 'gem-1',
+        profiles: [gemini],
+        reasoningEffort: 'none',
+      },
+    });
+    expect(geminiJson).not.toContain('AIza-SECRET-GEMINI');
+    const parsedGemini = parseAndValidateFolioBackup(geminiJson);
+    expect(parsedGemini.providerLibrary?.profiles[0]?.presetId).toBe('gemini');
+    expect(parsedGemini.providerLibrary?.profiles[0]?.capabilities.apiProtocol).toBe('gemini_native');
+  });
+
+  it('roundtrips all new domestic/overseas presets and thinkingDialect across v3 backups and rejects invalid thinkingDialect', () => {
+    const dashscope = createProviderProfileFromPreset('dashscope', { id: 'p-dashscope', apiKey: 'sk-ds-1' });
+    const zhipu = createProviderProfileFromPreset('zhipu', { id: 'p-zhipu', apiKey: 'sk-zp-1' });
+    const volcengine = createProviderProfileFromPreset('volcengine', { id: 'p-ark', apiKey: 'sk-ark-1' });
+    const spark = createProviderProfileFromPreset('spark', { id: 'p-spark', apiKey: 'sk-spark-1' });
+    const xai = createProviderProfileFromPreset('xai', { id: 'p-xai', apiKey: 'sk-xai-1' });
+
+    const json = exportFolioBackupV3({
+      stories: [],
+      workspace: emptyWorkspace(),
+      providerLibrary: {
+        version: 2,
+        activeProviderId: 'p-dashscope',
+        profiles: [dashscope, zhipu, volcengine, spark, xai],
+        reasoningEffort: 'none',
+      },
+    });
+
+    const parsed = parseAndValidateFolioBackup(json);
+    expect(parsed.providerLibrary?.profiles.map((p) => p.presetId)).toEqual([
+      'dashscope',
+      'zhipu',
+      'volcengine',
+      'spark',
+      'xai',
+    ]);
+    expect(parsed.providerLibrary?.profiles[0]?.capabilities.thinkingDialect).toBe('enable_thinking');
+    expect(parsed.providerLibrary?.profiles[1]?.capabilities.thinkingDialect).toBe('thinking_type_enabled');
+    expect(parsed.providerLibrary?.profiles[2]?.capabilities.thinkingDialect).toBe('thinking_type_enabled');
+
+    const invalidDialect = JSON.parse(json);
+    invalidDialect.providerLibrary.profiles[0].capabilities.thinkingDialect = 'unknown_dialect';
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(invalidDialect))).toThrow(/thinkingDialect/);
+  });
 });

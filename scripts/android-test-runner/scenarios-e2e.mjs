@@ -408,6 +408,23 @@ async function readTurnState(ctx) {
   );
 }
 
+async function ensurePresetPickerExpanded(ctx) {
+  if (ctx.uiDriver?.clickSelector) {
+    const snap = await cdpReadSnapshot(ctx);
+    if (snap?.presetPickerOpen === false) {
+      await cdpClickSelector(ctx, '[data-testid="provider-preset-picker-trigger"]', 'expand preset picker');
+    }
+    return;
+  }
+  const needsExpand = await cdpEvaluate(
+    ctx,
+    `Boolean(document.querySelector('[data-testid="provider-preset-picker-trigger"][aria-expanded="false"]'))`,
+  );
+  if (needsExpand) {
+    await cdpClickSelector(ctx, '[data-testid="provider-preset-picker-trigger"]', 'expand preset picker');
+  }
+}
+
 async function ensureMockProfileConnected(ctx) {
   await openSettingsPage(ctx);
   const state = await readProviderState(ctx);
@@ -421,6 +438,7 @@ async function ensureMockProfileConnected(ctx) {
     '[data-testid="open-setup-wizard-btn"], [data-testid="add-provider-profile-btn"]',
     'open provider wizard',
   );
+  await ensurePresetPickerExpanded(ctx);
   await cdpClickSelector(
     ctx,
     '[data-testid="provider-preset-custom"], [data-testid="provider-preset-local"]',
@@ -449,6 +467,7 @@ async function runE2E01(ctx, { addAssertion }) {
   const mockUrl = getMockDeviceBaseUrl(ctx);
   await openSettingsPage(ctx);
   await cdpClickSelector(ctx, '[data-testid="open-setup-wizard-btn"]', 'open setup wizard');
+  await ensurePresetPickerExpanded(ctx);
   await cdpClickSelector(ctx, '[data-testid="provider-preset-custom"]', 'custom preset');
   await cdpFillInput(ctx, '[data-testid="provider-name-input"]', '本地 Mock 1', 'profile 1 name');
   await cdpFillInput(ctx, '[data-testid="provider-base-url-input"]', mockUrl, 'profile 1 base url');
@@ -464,6 +483,7 @@ async function runE2E01(ctx, { addAssertion }) {
   );
 
   await cdpClickSelector(ctx, '[data-testid="add-provider-profile-btn"]', 'add second profile');
+  await ensurePresetPickerExpanded(ctx);
   await cdpClickSelector(ctx, '[data-testid="provider-preset-custom"]', 'custom preset 2');
   await cdpFillInput(ctx, '[data-testid="provider-name-input"]', '本地 Mock 2', 'profile 2 name');
   await cdpFillInput(ctx, '[data-testid="provider-base-url-input"]', mockUrl, 'profile 2 base url');

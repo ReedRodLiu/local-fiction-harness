@@ -144,4 +144,140 @@ describe('Capability-driven refusal continuation', () => {
       },
     ]);
   });
+
+  it('downgrades prefix completion to standard assistant+user continuation for openai_responses', async () => {
+    const requests: LlmStreamRequest[] = [];
+    await streamPrefixContinuation({
+      transport: {
+        async *streamChat(req) {
+          requests.push(req);
+          yield { contentDelta: '续写成功。', finishReason: 'stop' };
+        },
+      },
+      config: {
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-oa',
+        model: 'gpt-4.1',
+        reasoningEffort: 'none',
+        memoryOnly: false,
+        capabilities: {
+          apiProtocol: 'openai_responses',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'standard_assistant_prefill',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+      },
+      messages: [{ role: 'user', content: '继续' }],
+      prefixContent: '前文半句。',
+    });
+
+    expect(requests[0]?.prefixCompletion).toBeUndefined();
+    expect(requests[0]?.messages.slice(-2)).toEqual([
+      { role: 'assistant', content: '前文半句。' },
+      {
+        role: 'user',
+        content: '请紧接上一句自然续写后续正文，不要重复已写内容，也不要输出说明或免责声明。',
+      },
+    ]);
+  });
+
+  it('uses native assistant prefill on anthropic_messages when thinking is OFF and downgrades when thinking is ON', async () => {
+    const anthropicCaps = {
+      apiProtocol: 'anthropic_messages' as const,
+      thinkingProtocol: 'openai_reasoning_effort' as const,
+      prefixProtocol: 'standard_assistant_prefill' as const,
+      supportsBalanceQuery: false,
+      supportsBuiltinSearch: false,
+      supportsBuiltinPricing: false,
+    };
+
+    const offRequests: LlmStreamRequest[] = [];
+    await streamPrefixContinuation({
+      transport: {
+        async *streamChat(req) {
+          offRequests.push(req);
+          yield { contentDelta: '门外站着一个人。', finishReason: 'stop' };
+        },
+      },
+      config: {
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'sk-ant',
+        model: 'claude-sonnet-4-5',
+        reasoningEffort: 'none',
+        memoryOnly: false,
+        capabilities: anthropicCaps,
+      },
+      messages: [{ role: 'user', content: '继续' }],
+      prefixContent: '前文半句。',
+    });
+    expect(offRequests[0]?.prefixCompletion).toEqual({ content: '前文半句。' });
+
+    const onRequests: LlmStreamRequest[] = [];
+    await streamPrefixContinuation({
+      transport: {
+        async *streamChat(req) {
+          onRequests.push(req);
+          yield { contentDelta: '门外站着一个人。', finishReason: 'stop' };
+        },
+      },
+      config: {
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'sk-ant',
+        model: 'claude-sonnet-4-5',
+        reasoningEffort: 'high',
+        memoryOnly: false,
+        capabilities: anthropicCaps,
+      },
+      messages: [{ role: 'user', content: '继续' }],
+      prefixContent: '前文半句。',
+    });
+    expect(onRequests[0]?.prefixCompletion).toBeUndefined();
+    expect(onRequests[0]?.messages.slice(-2)).toEqual([
+      { role: 'assistant', content: '前文半句。' },
+      {
+        role: 'user',
+        content: '请紧接上一句自然续写后续正文，不要重复已写内容，也不要输出说明或免责声明。',
+      },
+    ]);
+  });
+
+  it('downgrades prefix completion to standard assistant+user continuation for gemini_native', async () => {
+    const requests: LlmStreamRequest[] = [];
+    await streamPrefixContinuation({
+      transport: {
+        async *streamChat(req) {
+          requests.push(req);
+          yield { contentDelta: '续写成功。', finishReason: 'stop' };
+        },
+      },
+      config: {
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: 'AIza-gem',
+        model: 'gemini-2.5-flash',
+        reasoningEffort: 'none',
+        memoryOnly: false,
+        capabilities: {
+          apiProtocol: 'gemini_native',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'standard_assistant_prefill',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+      },
+      messages: [{ role: 'user', content: '继续' }],
+      prefixContent: '前文半句。',
+    });
+
+    expect(requests[0]?.prefixCompletion).toBeUndefined();
+    expect(requests[0]?.messages.slice(-2)).toEqual([
+      { role: 'assistant', content: '前文半句。' },
+      {
+        role: 'user',
+        content: '请紧接上一句自然续写后续正文，不要重复已写内容，也不要输出说明或免责声明。',
+      },
+    ]);
+  });
 });
