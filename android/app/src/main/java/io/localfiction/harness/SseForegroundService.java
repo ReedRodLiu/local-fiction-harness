@@ -19,17 +19,33 @@ import androidx.core.content.ContextCompat;
  * shuts down immediately once all active streams complete, fail, or are aborted.
  */
 public class SseForegroundService extends Service {
-    static final String ACTION_START = "io.localfiction.harness.action.START_SSE_KEEPALIVE";
+    static final String ACTION_START_SUFFIX = ".action.START_SSE_KEEPALIVE";
+    static final String ACTION_START = "io.localfiction.harness" + ACTION_START_SUFFIX;
     private static final String CHANNEL_ID = "folio_sse_keepalive";
     private static final String CHANNEL_NAME = "后台流式生成保活";
     private static final int NOTIFICATION_ID = 14801;
+
+    static String buildStartAction(Context context) {
+        if (context == null) {
+            return ACTION_START;
+        }
+        return buildStartAction(context.getPackageName());
+    }
+
+    static String buildStartAction(String packageName) {
+        String resolvedPackage = (packageName != null && !packageName.trim().isEmpty())
+            ? packageName.trim()
+            : "io.localfiction.harness";
+        return resolvedPackage + ACTION_START_SUFFIX;
+    }
 
     static void startKeepalive(Context context) {
         if (context == null) {
             return;
         }
         Context appContext = context.getApplicationContext();
-        Intent intent = new Intent(appContext, SseForegroundService.class).setAction(ACTION_START);
+        Intent intent = new Intent(appContext, SseForegroundService.class)
+            .setAction(buildStartAction(appContext));
         try {
             ContextCompat.startForegroundService(appContext, intent);
         } catch (RuntimeException ignored) {

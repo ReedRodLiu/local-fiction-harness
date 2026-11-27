@@ -1,8 +1,13 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { strToU8, zipSync } from 'fflate';
 import {
   auditApkArchive,
   auditManifestXml,
+  auditNetworkSecurityConfigXml,
+  auditReleaseArtifacts,
   auditTextAssets,
   extractEnvSecretValues,
 } from '../../scripts/audit-artifacts.mjs';
@@ -114,5 +119,262 @@ describe('Offline artifact & minimal-permission audit', () => {
     expect(extractAndroidVersionName("versionName '1.2.3'")).toBe('1.2.3');
     const sync = verifyVersionSync(process.cwd());
     expect(sync.packageVersion).toBe(sync.androidVersionName);
+  });
+
+  it('supports dynamic packageId permission allowlisting and release debuggable/networkSecurityConfig manifest checks', () => {
+    const e2eManifest = `
+      <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+        <application
+          android:allowBackup="false"
+          android:networkSecurityConfig="@xml/network_security_config"
+          android:debuggable="true"></application>
+        <uses-permission android:name="android.permission.INTERNET" />
+        <uses-permission android:name="io.localfiction.harness.e2e.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+      </manifest>
+    `;
+    expect(() =>
+      auditManifestXml(e2eManifest, {
+        packageId: 'io.localfiction.harness.e2e',
+        requireNetworkSecurityConfig: true,
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      auditManifestXml(e2eManifest, {
+        packageId: 'io.localfiction.harness',
+      }),
+    ).toThrow(/io\.localfiction\.harness\.e2e\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION/);
+
+    expect(() =>
+      auditManifestXml(e2eManifest, {
+        packageId: 'io.localfiction.harness.e2e',
+        forbidDebuggable: true,
+      }),
+    ).toThrow(/debuggable/i);
+
+    const missingNscManifest = `
+      <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+        <application android:allowBackup="false"></application>
+      </manifest>
+    `;
+    expect(() =>
+      auditManifestXml(missingNscManifest, {
+        requireNetworkSecurityConfig: true,
+      }),
+    ).toThrow(/networkSecurityConfig/i);
+  });
+
+  it('validates strict release/smoke network_security_config.xml vs e2e loopback-only config', () => {
+    const strictConfig = `<?xml version="1.0" encoding="utf-8"?>
+      <network-security-config>
+        <base-config cleartextTrafficPermitted="false">
+          <trust-anchors>
+            <certificates src="system" />
+          </trust-anchors>
+        </base-config>
+      </network-security-config>
+    `;
+    const e2eConfig = `<?xml version="1.0" encoding="utf-8"?>
+      <network-security-config>
+        <base-config cleartextTrafficPermitted="false">
+          <trust-anchors>
+            <certificates src="system" />
+          </trust-anchors>
+        </base-config>
+        <domain-config cleartextTrafficPermitted="true">
+          <domain includeSubdomains="false">127.0.0.1</domain>
+          <domain includeSubdomains="false">localhost</domain>
+        </domain-config>
+      </network-security-config>
+    `;
+    const externalCleartextConfig = `<?xml version="1.0" encoding="utf-8"?>
+      <network-security-config>
+        <base-config cleartextTrafficPermitted="false" />
+        <domain-config cleartextTrafficPermitted="true">
+          <domain includeSubdomains="false">api.example.com</domain>
+        </domain-config>
+      </network-security-config>
+    `;
+    const userCaConfig = `<?xml version="1.0" encoding="utf-8"?>
+      <network-security-config>
+        <base-config cleartextTrafficPermitted="false">
+          <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+          </trust-anchors>
+        </base-config>
+      </network-security-config>
+    `;
+
+    expect(() =>
+      auditNetworkSecurityConfigXml(strictConfig, { forbidCleartext: true }),
+    ).not.toThrow();
+    expect(() =>
+      auditNetworkSecurityConfigXml(e2eConfig, { forbidCleartext: true }),
+    ).toThrow(/cleartext|127\.0\.0\.1|domain-config/i);
+    expect(() =>
+      auditNetworkSecurityConfigXml(e2eConfig, { allowLoopbackOnly: true }),
+    ).not.toThrow();
+    expect(() =>
+      auditNetworkSecurityConfigXml(externalCleartextConfig, { allowLoopbackOnly: true }),
+    ).toThrow(/api\.example\.com/);
+    expect(() =>
+      auditNetworkSecurityConfigXml(userCaConfig, { forbidCleartext: true }),
+    ).toThrow(/user/i);
+  });
+
+  it('enforces release APK checks for WebView debugging, remote server.url, debuggable manifest, and cleartext network config', () => {
+    const cleanReleaseApk = zipSync({
+      'AndroidManifest.xml': strToU8(
+        '<manifest><application android:allowBackup="false" android:networkSecurityConfig="@xml/network_security_config" /></manifest>',
+      ),
+      'res/xml/network_security_config.xml': strToU8(
+        '<network-security-config><base-config cleartextTrafficPermitted="false" /></network-security-config>',
+      ),
+      'assets/public/index.html': strToU8('<html></html>'),
+      'assets/capacitor.config.json': strToU8(
+        JSON.stringify({ plugins: { CapacitorHttp: { enabled: false } } }),
+      ),
+    });
+
+    const releaseOptions = {
+      forbidDebuggable: true,
+      forbidCleartextNetworkConfig: true,
+      forbidWebViewDebugging: true,
+      forbidRemoteServerUrl: true,
+    };
+
+    expect(() => auditApkArchive(cleanReleaseApk, [], releaseOptions)).not.toThrow();
+
+    const webviewDebugApk = zipSync({
+      'AndroidManifest.xml': strToU8(
+        '<manifest><application android:allowBackup="false" /></manifest>',
+      ),
+      'res/xml/network_security_config.xml': strToU8(
+        '<network-security-config><base-config cleartextTrafficPermitted="false" /></network-security-config>',
+      ),
+      'assets/public/index.html': strToU8('<html></html>'),
+      'assets/capacitor.config.json': strToU8(
+        JSON.stringify({
+          android: { webContentsDebuggingEnabled: true },
+          plugins: { CapacitorHttp: { enabled: false } },
+        }),
+      ),
+    });
+    expect(() => auditApkArchive(webviewDebugApk, [], releaseOptions)).toThrow(
+      /webContentsDebuggingEnabled/i,
+    );
+
+    const remoteUrlApk = zipSync({
+      'AndroidManifest.xml': strToU8(
+        '<manifest><application android:allowBackup="false" /></manifest>',
+      ),
+      'res/xml/network_security_config.xml': strToU8(
+        '<network-security-config><base-config cleartextTrafficPermitted="false" /></network-security-config>',
+      ),
+      'assets/public/index.html': strToU8('<html></html>'),
+      'assets/capacitor.config.json': strToU8(
+        JSON.stringify({
+          server: { url: 'http://192.168.1.5:5173' },
+          plugins: { CapacitorHttp: { enabled: false } },
+        }),
+      ),
+    });
+    expect(() => auditApkArchive(remoteUrlApk, [], releaseOptions)).toThrow(/server\.url/i);
+
+    const cleartextApk = zipSync({
+      'AndroidManifest.xml': strToU8(
+        '<manifest><application android:allowBackup="false" /></manifest>',
+      ),
+      'res/xml/network_security_config.xml': strToU8(
+        '<network-security-config><base-config cleartextTrafficPermitted="false" /><domain-config cleartextTrafficPermitted="true"><domain>127.0.0.1</domain></domain-config></network-security-config>',
+      ),
+      'assets/public/index.html': strToU8('<html></html>'),
+      'assets/capacitor.config.json': strToU8(
+        JSON.stringify({ plugins: { CapacitorHttp: { enabled: false } } }),
+      ),
+    });
+    expect(() => auditApkArchive(cleartextApk, [], releaseOptions)).toThrow(
+      /cleartext|127\.0\.0\.1|domain-config/i,
+    );
+
+    const obfuscatedResourceReleaseApk = zipSync({
+      'AndroidManifest.xml': strToU8(
+        '<manifest><application android:allowBackup="false" /></manifest>',
+      ),
+      'res/8G.xml': strToU8(
+        '<network-security-config><base-config cleartextTrafficPermitted="false" /></network-security-config>',
+      ),
+      'assets/public/index.html': strToU8('<html></html>'),
+      'assets/capacitor.config.json': strToU8(
+        JSON.stringify({ plugins: { CapacitorHttp: { enabled: false } } }),
+      ),
+    });
+    expect(() =>
+      auditApkArchive(obfuscatedResourceReleaseApk, [], releaseOptions),
+    ).not.toThrow();
+  });
+
+  it('audits release build artifacts directory for merged manifest, network security config, and release APK', () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lfh-release-audit-'));
+    try {
+      const writeFixture = (relPath: string, content: string | Uint8Array) => {
+        const abs = path.join(tmpRoot, relPath);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, content);
+      };
+
+      const cleanManifest = `
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+          <application
+            android:allowBackup="false"
+            android:networkSecurityConfig="@xml/network_security_config" />
+          <uses-permission android:name="android.permission.INTERNET" />
+          <uses-permission android:name="io.localfiction.harness.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+        </manifest>
+      `;
+      const cleanNsc = `<?xml version="1.0" encoding="utf-8"?>
+        <network-security-config>
+          <base-config cleartextTrafficPermitted="false">
+            <trust-anchors><certificates src="system" /></trust-anchors>
+          </base-config>
+        </network-security-config>
+      `;
+      const cleanApk = zipSync({
+        'AndroidManifest.xml': strToU8(cleanManifest),
+        'res/xml/network_security_config.xml': strToU8(cleanNsc),
+        'assets/public/index.html': strToU8('<html></html>'),
+        'assets/capacitor.config.json': strToU8(
+          JSON.stringify({ plugins: { CapacitorHttp: { enabled: false } } }),
+        ),
+      });
+
+      writeFixture(
+        'android/app/src/main/res/xml/network_security_config.xml',
+        cleanNsc,
+      );
+      writeFixture(
+        'android/app/build/intermediates/packaged_manifests/release/processReleaseManifestForPackage/AndroidManifest.xml',
+        cleanManifest,
+      );
+      writeFixture(
+        'android/app/build/outputs/apk/release/app-release-unsigned.apk',
+        cleanApk,
+      );
+
+      const summary = auditReleaseArtifacts(tmpRoot, []);
+      expect(summary.apkPath).toContain('app-release-unsigned.apk');
+
+      writeFixture(
+        'android/app/build/intermediates/packaged_manifests/release/processReleaseManifestForPackage/AndroidManifest.xml',
+        cleanManifest.replace(
+          'android:allowBackup="false"',
+          'android:allowBackup="false" android:debuggable="true"',
+        ),
+      );
+      expect(() => auditReleaseArtifacts(tmpRoot, [])).toThrow(/debuggable/i);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
   });
 });
