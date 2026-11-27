@@ -2,6 +2,7 @@ import type { DiagnosticCollector } from './diagnostics.ts';
 import {
   ANTHROPIC_API_VERSION,
   resolveAnthropicMessagesUrl,
+  resolveAnthropicModelsUrl,
   resolveChatCompletionsUrl,
   stripGeminiActionSuffix,
 } from './sse.ts';
@@ -765,7 +766,11 @@ export async function verifyProviderConnection(options: {
       Accept: 'application/json',
     });
 
-    const res = await fetchFn(`${baseUrl}/models`, {
+    const modelsUrl =
+      apiProtocol === 'anthropic_messages'
+        ? resolveAnthropicModelsUrl(baseUrl)
+        : `${baseUrl}/models`;
+    const res = await fetchFn(modelsUrl, {
       method: 'GET',
       headers,
       ...(controller ? { signal: controller.signal } : {}),
@@ -848,6 +853,12 @@ export async function probeAssistantPrefillCompatibility(options: {
   fetchImpl?: FetchLike;
   timeoutMs?: number;
 }): Promise<PrefillProbeResult> {
+  if (
+    options.apiProtocol === 'openai_responses' ||
+    options.apiProtocol === 'gemini_native'
+  ) {
+    return { supported: false, message: PREFILL_PROBE_UNSUPPORTED_MESSAGE };
+  }
   const model = options.model.trim();
   const isAnthropic = options.apiProtocol === 'anthropic_messages';
   let url: string;

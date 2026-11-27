@@ -1031,6 +1031,7 @@ async function main() {
     await wizard.getByTestId('provider-preset-search-input').fill('responses');
     await wizard.getByTestId('provider-preset-openai').click();
     await wizard.getByTestId('provider-preset-picker-panel').waitFor({ state: 'detached' });
+    await wizard.getByTestId('openai-subscription-notice').waitFor({ state: 'visible' });
     await wizard.locator('#byok-api-key').fill(OPENAI_API_KEY);
     await wizard.getByTestId('wizard-verify-save-btn').click();
     await wizard.waitFor({ state: 'detached' });

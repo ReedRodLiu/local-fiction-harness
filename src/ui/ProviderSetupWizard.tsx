@@ -139,6 +139,53 @@ const PRESET_SEARCH_KEYWORDS: Readonly<Record<ProviderPresetId, readonly string[
   custom: ['custom', 'relay', '中转', '自定义', '兼容'],
 };
 
+interface ProviderSubscriptionNoticeSpec {
+  testId: string;
+  message: string;
+  linkUrl: string;
+  linkLabel: string;
+  linkTestId?: string;
+  hintTestId?: string;
+  matches: (draft: Pick<ProviderWizardDraft, 'presetId' | 'apiProtocol'>) => boolean;
+}
+
+const PROVIDER_SUBSCRIPTION_NOTICES: readonly ProviderSubscriptionNoticeSpec[] = [
+  {
+    testId: 'provider-gemini-billing-note',
+    message:
+      'Google AI Studio 提供免费测试额度；消费级 Gemini AI Pro 会员订阅不包含 API 调用额度，需在开发者平台创建 API Key。',
+    linkUrl: 'https://aistudio.google.com/apikey',
+    linkLabel: '前往 Google AI Studio 获取 API Key',
+    matches: (draft) => draft.presetId === 'gemini' || draft.apiProtocol === 'gemini_native',
+  },
+  {
+    testId: 'anthropic-subscription-notice',
+    message:
+      'Claude Pro / Max 网页会员订阅不含 API 调用额度，需在 Anthropic Console 创建按量 API Key。',
+    linkUrl: ANTHROPIC_CONSOLE_KEYS_URL,
+    linkLabel: '前往 Anthropic Console 获取 API Key',
+    linkTestId: 'anthropic-console-keys-link',
+    matches: (draft) => draft.presetId === 'anthropic',
+  },
+  {
+    testId: 'openai-subscription-notice',
+    message:
+      PROVIDER_PRESETS.openai.setupHint ??
+      'ChatGPT Plus/Pro 消费级订阅不含 API 调用额度，需在 OpenAI Platform 单独创建 API Key 并充值。',
+    linkUrl: PROVIDER_PRESETS.openai.consoleUrl ?? 'https://platform.openai.com/api-keys',
+    linkLabel: '前往 OpenAI Platform 获取 API Key',
+    linkTestId: 'provider-console-link',
+    hintTestId: 'provider-setup-hint',
+    matches: (draft) => draft.presetId === 'openai',
+  },
+];
+
+function resolveProviderSubscriptionNotice(
+  draft: Pick<ProviderWizardDraft, 'presetId' | 'apiProtocol'>,
+): ProviderSubscriptionNoticeSpec | null {
+  return PROVIDER_SUBSCRIPTION_NOTICES.find((entry) => entry.matches(draft)) ?? null;
+}
+
 /**
  * Returns whether the preset picker panel should start expanded for the given wizard mode.
  */
@@ -636,6 +683,11 @@ export function ProviderSetupWizard({
     hasCustomPricing,
     isWebPlatform,
   });
+  const subscriptionNotice = resolveProviderSubscriptionNotice(draft);
+  const showGuidanceHint = Boolean(activePreset.setupHint && !subscriptionNotice?.hintTestId);
+  const showGuidanceConsoleLink = Boolean(
+    activePreset.consoleUrl && activePreset.consoleUrl !== subscriptionNotice?.linkUrl,
+  );
 
   const handleSelectPreset = (nextPresetId: ProviderPresetId) => {
     if (busy) return;
@@ -999,14 +1051,14 @@ export function ProviderSetupWizard({
         ) : (
           <div className="provider-form-stack">
             <div className="wizard-step-card">
-              {(activePreset.setupHint || activePreset.consoleUrl) && (
+              {(showGuidanceHint || showGuidanceConsoleLink) && (
                 <div className="provider-preset-guidance" data-testid="provider-preset-guidance">
-                  {activePreset.setupHint && (
+                  {showGuidanceHint && activePreset.setupHint && (
                     <p className="wizard-privacy-note" data-testid="provider-setup-hint">
                       {activePreset.setupHint}
                     </p>
                   )}
-                  {activePreset.consoleUrl && (
+                  {showGuidanceConsoleLink && activePreset.consoleUrl && (
                     <a
                       className="provider-search-docs-link"
                       data-testid="provider-console-link"
@@ -1101,39 +1153,20 @@ export function ProviderSetupWizard({
                 </div>
               </div>
 
-              {(draft.presetId === 'gemini' || draft.apiProtocol === 'gemini_native') && (
-                <BannerAlert tone="info" testId="provider-gemini-billing-note">
+              {subscriptionNotice && (
+                <BannerAlert tone="info" testId={subscriptionNotice.testId}>
                   <div className="provider-subscription-notice">
-                    <span>
-                      Google AI Studio 提供免费测试额度；消费级 Gemini AI Pro 会员订阅不包含 API 调用额度，需在开发者平台创建 API Key。
+                    <span data-testid={subscriptionNotice.hintTestId}>
+                      {subscriptionNotice.message}
                     </span>
                     <a
                       className="provider-search-docs-link"
-                      href="https://aistudio.google.com/apikey"
+                      data-testid={subscriptionNotice.linkTestId}
+                      href={subscriptionNotice.linkUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                     >
-                      <span>前往 Google AI Studio 获取 API Key</span>
-                      <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
-                    </a>
-                  </div>
-                </BannerAlert>
-              )}
-
-              {draft.presetId === 'anthropic' && (
-                <BannerAlert tone="info" testId="anthropic-subscription-notice">
-                  <div className="provider-subscription-notice">
-                    <span>
-                      Claude Pro / Max 网页会员订阅不含 API 调用额度，需在 Anthropic Console 创建按量 API Key。
-                    </span>
-                    <a
-                      className="provider-search-docs-link"
-                      data-testid="anthropic-console-keys-link"
-                      href={ANTHROPIC_CONSOLE_KEYS_URL}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <span>前往 Anthropic Console 获取 API Key</span>
+                      <span>{subscriptionNotice.linkLabel}</span>
                       <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
                     </a>
                   </div>

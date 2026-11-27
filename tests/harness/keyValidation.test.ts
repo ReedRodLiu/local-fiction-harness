@@ -387,6 +387,26 @@ describe('Generic OpenAI-compatible provider validation & prefill probing', () =
       supported: true,
       message: '当前服务商支持增强续写',
     });
+
+    const bareOriginVerified = await verifyProviderConnection({
+      baseUrl: 'https://api.anthropic.com',
+      apiKey: 'sk-ant-bare-1',
+      apiProtocol: 'anthropic_messages',
+      fetchImpl: async (url) => {
+        expect(url).toBe('https://api.anthropic.com/v1/models');
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ data: [{ id: 'claude-sonnet-4-5' }] }),
+        };
+      },
+    });
+    expect(bareOriginVerified).toEqual({
+      status: 'valid',
+      key: 'sk-ant-bare-1',
+      baseUrl: 'https://api.anthropic.com',
+      models: ['claude-sonnet-4-5'],
+    });
   });
 
   it('verifies gemini_native connections via x-goog-api-key, filters generateContent chat models, and strips models/ prefix', async () => {
@@ -476,5 +496,29 @@ describe('Generic OpenAI-compatible provider validation & prefill probing', () =
       }),
     });
     expect(invalid400.status).toBe('invalid_key');
+  });
+
+  it('short-circuits prefill probe without network call for openai_responses and gemini_native protocols', async () => {
+    for (const apiProtocol of ['openai_responses', 'gemini_native'] as const) {
+      let called = false;
+      const result = await probeAssistantPrefillCompatibility({
+        baseUrl:
+          apiProtocol === 'gemini_native'
+            ? 'https://generativelanguage.googleapis.com/v1beta'
+            : 'https://api.openai.com/v1',
+        apiKey: 'sk-test-no-probe',
+        model: apiProtocol === 'gemini_native' ? 'gemini-2.5-flash' : 'gpt-4.1',
+        apiProtocol,
+        fetchImpl: async () => {
+          called = true;
+          throw new Error('fetchImpl must not be called for non-prefill protocols');
+        },
+      });
+      expect(called).toBe(false);
+      expect(result).toEqual({
+        supported: false,
+        message: '当前服务商暂不支持增强续写，已保持通用稳定模式',
+      });
+    }
   });
 });

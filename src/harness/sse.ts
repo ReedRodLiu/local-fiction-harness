@@ -145,6 +145,43 @@ function optionalTokenCount(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
+function deriveCacheMissTokens(
+  promptTokens: number | undefined,
+  cachedTokens: number | undefined,
+): number | undefined {
+  return cachedTokens !== undefined && promptTokens !== undefined
+    ? Math.max(0, promptTokens - cachedTokens)
+    : undefined;
+}
+
+function finalizeLlmUsage(fields: {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  promptCacheHitTokens?: number;
+  promptCacheMissTokens?: number;
+  reasoningTokens?: number;
+}): LlmUsage | undefined {
+  const usage: LlmUsage = {
+    promptTokens: fields.promptTokens,
+    completionTokens: fields.completionTokens,
+    totalTokens: fields.totalTokens,
+    promptCacheHitTokens: fields.promptCacheHitTokens,
+    promptCacheMissTokens: fields.promptCacheMissTokens,
+    ...(fields.reasoningTokens === undefined
+      ? {}
+      : { completionTokensDetails: { reasoningTokens: fields.reasoningTokens } }),
+  };
+  return usage.promptTokens !== undefined ||
+    usage.completionTokens !== undefined ||
+    usage.totalTokens !== undefined ||
+    usage.promptCacheHitTokens !== undefined ||
+    usage.promptCacheMissTokens !== undefined ||
+    usage.completionTokensDetails !== undefined
+    ? usage
+    : undefined;
+}
+
 function parseUsage(raw: {
   prompt_tokens?: unknown;
   completion_tokens?: unknown;
@@ -169,28 +206,17 @@ function parseUsage(raw: {
   const promptCacheMissTokens =
     explicitCacheMiss !== undefined
       ? explicitCacheMiss
-      : !hasExplicitCacheHit && openAiCached !== undefined && promptTokens !== undefined
-        ? Math.max(0, promptTokens - openAiCached)
-        : undefined;
-  const reasoningTokens = optionalTokenCount(raw.completion_tokens_details?.reasoning_tokens);
-  const usage: LlmUsage = {
+      : hasExplicitCacheHit
+        ? undefined
+        : deriveCacheMissTokens(promptTokens, openAiCached);
+  return finalizeLlmUsage({
     promptTokens,
     completionTokens: optionalTokenCount(raw.completion_tokens),
     totalTokens: optionalTokenCount(raw.total_tokens),
     promptCacheHitTokens,
     promptCacheMissTokens,
-    ...(reasoningTokens === undefined
-      ? {}
-      : { completionTokensDetails: { reasoningTokens } }),
-  };
-  return usage.promptTokens !== undefined ||
-    usage.completionTokens !== undefined ||
-    usage.totalTokens !== undefined ||
-    usage.promptCacheHitTokens !== undefined ||
-    usage.promptCacheMissTokens !== undefined ||
-    usage.completionTokensDetails !== undefined
-    ? usage
-    : undefined;
+    reasoningTokens: optionalTokenCount(raw.completion_tokens_details?.reasoning_tokens),
+  });
 }
 
 function parseResponsesUsage(raw: {
@@ -206,33 +232,15 @@ function parseResponsesUsage(raw: {
 } | undefined): LlmUsage | undefined {
   if (!raw) return undefined;
   const promptTokens = optionalTokenCount(raw.input_tokens);
-  const completionTokens = optionalTokenCount(raw.output_tokens);
-  const totalTokens = optionalTokenCount(raw.total_tokens);
   const cachedTokens = optionalTokenCount(raw.input_tokens_details?.cached_tokens);
-  const promptCacheHitTokens = cachedTokens;
-  const promptCacheMissTokens =
-    cachedTokens !== undefined && promptTokens !== undefined
-      ? Math.max(0, promptTokens - cachedTokens)
-      : undefined;
-  const reasoningTokens = optionalTokenCount(raw.output_tokens_details?.reasoning_tokens);
-  const usage: LlmUsage = {
+  return finalizeLlmUsage({
     promptTokens,
-    completionTokens,
-    totalTokens,
-    promptCacheHitTokens,
-    promptCacheMissTokens,
-    ...(reasoningTokens === undefined
-      ? {}
-      : { completionTokensDetails: { reasoningTokens } }),
-  };
-  return usage.promptTokens !== undefined ||
-    usage.completionTokens !== undefined ||
-    usage.totalTokens !== undefined ||
-    usage.promptCacheHitTokens !== undefined ||
-    usage.promptCacheMissTokens !== undefined ||
-    usage.completionTokensDetails !== undefined
-    ? usage
-    : undefined;
+    completionTokens: optionalTokenCount(raw.output_tokens),
+    totalTokens: optionalTokenCount(raw.total_tokens),
+    promptCacheHitTokens: cachedTokens,
+    promptCacheMissTokens: deriveCacheMissTokens(promptTokens, cachedTokens),
+    reasoningTokens: optionalTokenCount(raw.output_tokens_details?.reasoning_tokens),
+  });
 }
 
 function parseGeminiUsage(raw: {
@@ -250,31 +258,15 @@ function parseGeminiUsage(raw: {
     candidatesTokens !== undefined
       ? candidatesTokens + (thoughtsTokens ?? 0)
       : thoughtsTokens;
-  const totalTokens = optionalTokenCount(raw.totalTokenCount);
   const cachedTokens = optionalTokenCount(raw.cachedContentTokenCount);
-  const promptCacheHitTokens = cachedTokens;
-  const promptCacheMissTokens =
-    cachedTokens !== undefined && promptTokens !== undefined
-      ? Math.max(0, promptTokens - cachedTokens)
-      : undefined;
-  const usage: LlmUsage = {
+  return finalizeLlmUsage({
     promptTokens,
     completionTokens,
-    totalTokens,
-    promptCacheHitTokens,
-    promptCacheMissTokens,
-    ...(thoughtsTokens === undefined
-      ? {}
-      : { completionTokensDetails: { reasoningTokens: thoughtsTokens } }),
-  };
-  return usage.promptTokens !== undefined ||
-    usage.completionTokens !== undefined ||
-    usage.totalTokens !== undefined ||
-    usage.promptCacheHitTokens !== undefined ||
-    usage.promptCacheMissTokens !== undefined ||
-    usage.completionTokensDetails !== undefined
-    ? usage
-    : undefined;
+    totalTokens: optionalTokenCount(raw.totalTokenCount),
+    promptCacheHitTokens: cachedTokens,
+    promptCacheMissTokens: deriveCacheMissTokens(promptTokens, cachedTokens),
+    reasoningTokens: thoughtsTokens,
+  });
 }
 
 function mapGeminiFinishReason(raw: unknown): string | undefined {
@@ -787,15 +779,29 @@ export async function* parseAnthropicSseStream(
 
 export const ANTHROPIC_API_VERSION = '2023-06-01';
 
-export function resolveAnthropicMessagesUrl(baseUrl: string): string {
+const BARE_ORIGIN_URL_RE = /^https?:\/\/[^/?#]+$/i;
+
+function resolveAnthropicEndpointUrl(baseUrl: string, endpoint: 'messages' | 'models'): string {
   const cleaned = baseUrl.trim().replace(/\/+$/, '');
   if (!cleaned) {
     throw new Error('Model Base URL cannot be empty.');
   }
-  if (cleaned.endsWith('/messages')) {
+  const suffix = `/${endpoint}`;
+  if (cleaned.endsWith(suffix)) {
     return cleaned;
   }
-  return `${cleaned}/messages`;
+  if (BARE_ORIGIN_URL_RE.test(cleaned)) {
+    return `${cleaned}/v1${suffix}`;
+  }
+  return `${cleaned}${suffix}`;
+}
+
+export function resolveAnthropicMessagesUrl(baseUrl: string): string {
+  return resolveAnthropicEndpointUrl(baseUrl, 'messages');
+}
+
+export function resolveAnthropicModelsUrl(baseUrl: string): string {
+  return resolveAnthropicEndpointUrl(baseUrl, 'models');
 }
 
 export function resolveResponsesUrl(baseUrl: string): string {
@@ -1248,6 +1254,35 @@ const ANTHROPIC_THINKING_BUDGETS: Record<Exclude<ReasoningEffort, 'none'>, numbe
   max: 16384,
 };
 
+function partitionSystemAndMergeTurns(messages: LlmStreamRequest['messages']): {
+  system?: string;
+  turns: Array<{ role: 'user' | 'assistant'; content: string }>;
+} {
+  const systemParts: string[] = [];
+  const turns: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  for (const msg of messages) {
+    if (msg.role === 'system') {
+      if (msg.content.trim()) {
+        systemParts.push(msg.content);
+      }
+      continue;
+    }
+    const previous = turns.at(-1);
+    if (previous && previous.role === msg.role) {
+      previous.content =
+        previous.content && msg.content
+          ? `${previous.content}\n\n${msg.content}`
+          : previous.content || msg.content;
+    } else {
+      turns.push({ role: msg.role, content: msg.content });
+    }
+  }
+  return {
+    ...(systemParts.length > 0 ? { system: systemParts.join('\n\n') } : {}),
+    turns,
+  };
+}
+
 export function buildAnthropicMessagesRequest(req: LlmStreamRequest): {
   url: string;
   headers: Record<string, string>;
@@ -1263,23 +1298,7 @@ export function buildAnthropicMessagesRequest(req: LlmStreamRequest): {
     headers['x-api-key'] = req.apiKey.trim();
   }
 
-  const systemParts: string[] = [];
-  const mergedMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
-  for (const msg of req.messages) {
-    if (msg.role === 'system') {
-      if (msg.content.trim()) {
-        systemParts.push(msg.content);
-      }
-      continue;
-    }
-    const previous = mergedMessages.at(-1);
-    if (previous && previous.role === msg.role) {
-      previous.content = `${previous.content}\n\n${msg.content}`;
-    } else {
-      mergedMessages.push({ role: msg.role, content: msg.content });
-    }
-  }
-  const system = systemParts.length > 0 ? systemParts.join('\n\n') : undefined;
+  const { system, turns: mergedMessages } = partitionSystemAndMergeTurns(req.messages);
 
   const effort = normalizeReasoningEffort(req.reasoningEffort ?? req.reasoning_effort, 'none');
   const requestedMax =
@@ -1325,11 +1344,16 @@ export function buildAnthropicMessagesRequest(req: LlmStreamRequest): {
   };
 }
 
+const GEMINI_THINKING_MODEL_RE = /gemini-(?:2\.5|3|[4-9])|thinking/i;
+
 function resolveGeminiThinkingConfig(
   model: string,
   effort: ReasoningEffort,
 ): Record<string, unknown> | undefined {
   const lower = model.trim().replace(/^models\//i, '').toLowerCase();
+  if (!GEMINI_THINKING_MODEL_RE.test(lower)) {
+    return undefined;
+  }
   if (lower.includes('gemini-3')) {
     if (effort === 'none') {
       return { thinkingLevel: lower.includes('pro') ? 'low' : 'minimal' };
@@ -1338,9 +1362,6 @@ function resolveGeminiThinkingConfig(
       includeThoughts: true,
       thinkingLevel: effort === 'low' ? 'low' : effort === 'medium' ? 'medium' : 'high',
     };
-  }
-  if (/^gemini-(?:1\.|2\.0-)/.test(lower) && !lower.includes('thinking')) {
-    return undefined;
   }
   if (effort === 'none') {
     const requiresNonZeroBudget =
@@ -1371,29 +1392,11 @@ export function buildGeminiNativeRequest(req: LlmStreamRequest): {
     headers['x-goog-api-key'] = req.apiKey.trim();
   }
 
-  const systemParts: string[] = [];
-  const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
-
-  for (const msg of req.messages) {
-    if (msg.role === 'system') {
-      if (msg.content.trim()) {
-        systemParts.push(msg.content);
-      }
-      continue;
-    }
-    const role: 'user' | 'model' = msg.role === 'assistant' ? 'model' : 'user';
-    const previous = contents.at(-1);
-    if (previous && previous.role === role) {
-      const prevText = previous.parts[0]?.text ?? '';
-      previous.parts[0] = {
-        text: prevText && msg.content ? `${prevText}\n\n${msg.content}` : prevText || msg.content,
-      };
-    } else {
-      contents.push({ role, parts: [{ text: msg.content }] });
-    }
-  }
-
-  const systemText = systemParts.join('\n\n');
+  const { system: systemText, turns } = partitionSystemAndMergeTurns(req.messages);
+  const contents = turns.map((turn) => ({
+    role: turn.role === 'assistant' ? ('model' as const) : ('user' as const),
+    parts: [{ text: turn.content }],
+  }));
   const effort = normalizeReasoningEffort(req.reasoningEffort ?? req.reasoning_effort, 'none');
   const thinkingConfig = resolveGeminiThinkingConfig(req.model, effort);
   const maxOutputTokens =

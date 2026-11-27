@@ -472,7 +472,7 @@ describe('Ticket #164 T5 & Ticket #181: ProviderSetupWizard & DeepSeekSetupWizar
     expect(markup).toContain('https://api.anthropic.com/v1');
     expect(markup).toContain('data-testid="anthropic-subscription-notice"');
     expect(markup).toMatch(/Claude Pro\s*\/\s*Max/);
-    expect(markup).toContain('https://console.anthropic.com/settings/keys');
+    expect(markup.match(/https:\/\/console\.anthropic\.com\/settings\/keys/g)).toHaveLength(1);
     expect(markup).toContain('data-testid="anthropic-console-keys-link"');
     expect(markup).toContain('value="anthropic_messages"');
     expect(markup).not.toMatch(/value="anthropic_messages"[^>]*disabled/);
@@ -531,7 +531,7 @@ describe('Ticket #164 T5 & Ticket #181: ProviderSetupWizard & DeepSeekSetupWizar
     expect(markup).toContain('Google (Gemini)');
     expect(markup).not.toContain('data-testid="provider-preset-picker-panel"');
     expect(markup.match(/data-testid="provider-gemini-billing-note"/g)).toHaveLength(1);
-    expect(markup).toContain('https://aistudio.google.com/apikey');
+    expect(markup.match(/https:\/\/aistudio\.google\.com\/apikey/g)).toHaveLength(1);
     expect(markup).toContain('Google AI Studio');
     expect(markup).toContain('免费');
     expect(markup).toContain('Gemini AI Pro');
@@ -575,6 +575,10 @@ describe('Ticket #164 T5 & Ticket #181: ProviderSetupWizard & DeepSeekSetupWizar
       expect(markup).toContain(PROVIDER_PRESETS[presetId].consoleUrl!);
       expect(markup).toContain('data-testid="provider-setup-hint"');
       expect(markup).toContain(PROVIDER_PRESETS[presetId].setupHint!);
+      if (presetId === 'openai') {
+        expect(markup.match(/data-testid="openai-subscription-notice"/g)).toHaveLength(1);
+        expect(markup.match(/https:\/\/platform\.openai\.com\/api-keys/g)).toHaveLength(1);
+      }
     }
 
     const dashDraft = createWizardDraftFromPreset('dashscope', { apiKey: 'sk-dash' });

@@ -892,6 +892,12 @@ describe('OpenAI Responses API multi-protocol dispatch & streaming', () => {
 
 describe('Anthropic Messages protocol adapter', () => {
   it('resolves /messages URLs idempotently', () => {
+    expect(resolveAnthropicMessagesUrl('https://api.anthropic.com')).toBe(
+      'https://api.anthropic.com/v1/messages',
+    );
+    expect(resolveAnthropicMessagesUrl('https://api.anthropic.com/')).toBe(
+      'https://api.anthropic.com/v1/messages',
+    );
     expect(resolveAnthropicMessagesUrl('https://api.anthropic.com/v1')).toBe(
       'https://api.anthropic.com/v1/messages',
     );
@@ -1280,6 +1286,36 @@ describe('gemini_native wire protocol', () => {
         thinkingConfig: { includeThoughts: true, thinkingBudget: budget },
       });
     }
+  });
+
+  it('omits thinkingConfig for non-thinking Gemini-API models like gemma-3-27b-it when thinking is OFF and ON', () => {
+    for (const model of ['gemma-3-27b-it', 'learnlm-1.5-pro-experimental', 'gemini-2.0-flash']) {
+      for (const reasoningEffort of ['none', 'medium'] as const) {
+        const built = buildProviderStreamRequest({
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          apiKey: 'AIza-non-thinking',
+          model,
+          reasoningEffort,
+          capabilities: geminiCaps,
+          messages: [{ role: 'user', content: 'hi' }],
+        });
+        const body = JSON.parse(built.body) as Record<string, unknown>;
+        expect(body).not.toHaveProperty('generationConfig');
+      }
+    }
+
+    const withMaxTokens = buildProviderStreamRequest({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: 'AIza-gemma',
+      model: 'gemma-3-27b-it',
+      reasoningEffort: 'none',
+      maxOutputTokens: 2048,
+      capabilities: geminiCaps,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    expect(JSON.parse(withMaxTokens.body).generationConfig).toEqual({
+      maxOutputTokens: 2048,
+    });
   });
 
   it('streams thought parts, content parts, finishReason mapping, and coalesced usageMetadata from Gemini SSE', async () => {
