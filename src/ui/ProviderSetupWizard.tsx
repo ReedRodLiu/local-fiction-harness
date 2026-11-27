@@ -82,6 +82,7 @@ const PRESET_CARDS: ReadonlyArray<{
 ];
 
 const SEARCH_PRESET_ORDER: readonly PublicResearchSearchPresetId[] = [
+  'auto',
   'none',
   'tavily',
   'bocha',
@@ -143,7 +144,7 @@ export function createWizardDraftFromPreset(
     outputPriceText: '',
     prefixProtocol: preset.capabilities.prefixProtocol,
     prefillProbeStatus: 'untested',
-    searchProvider: options?.publicResearch?.provider ?? 'none',
+    searchProvider: options?.publicResearch?.provider ?? 'auto',
     searchApiKey: options?.publicResearch?.apiKey ?? '',
     searchDeepSeekProfileId: options?.publicResearch?.deepseekProfileId,
   };
@@ -169,7 +170,7 @@ export function createWizardDraftFromProfile(
     outputPriceText: formatPriceInput(pricing?.outputPerMillion),
     prefixProtocol: profile.capabilities.prefixProtocol,
     prefillProbeStatus: profile.prefillProbeStatus ?? 'untested',
-    searchProvider: publicResearch?.provider ?? 'none',
+    searchProvider: publicResearch?.provider ?? 'auto',
     searchApiKey: publicResearch?.apiKey ?? '',
     searchDeepSeekProfileId: publicResearch?.deepseekProfileId,
   };
@@ -179,23 +180,30 @@ export function resolveProviderCapabilitySummary(options: {
   presetId: ProviderPresetId;
   searchProvider: PublicResearchSearchPresetId;
   hasCustomPricing: boolean;
+  isWebPlatform?: boolean;
 }): [string, string, string] {
   const line1 = '💬 聊天、文游与叙事预设：始终可用';
   if (options.presetId === 'deepseek') {
+    const deepseekResearchLabel =
+      options.searchProvider === 'none' ? '已关闭联网查证' : '已随账号自带，免配';
     return [
       line1,
-      '🔍 自动查原作与角色设定：已随账号自带，免配',
+      `🔍 自动查原作与角色设定：${deepseekResearchLabel}`,
       '💰 余额与省费统计：自动查余额与省费',
     ];
   }
   const researchLabel =
-    options.searchProvider === 'tavily'
-      ? 'Tavily 搜索（已配置）'
-      : options.searchProvider === 'bocha'
-        ? '博查搜索（已配置）'
-        : options.searchProvider === 'deepseek_account'
-          ? '已借用 DeepSeek 账号'
-          : '可选：配免费搜索即可用（不配也能正常玩）';
+    options.searchProvider === 'none'
+      ? '已关闭联网查证'
+      : options.searchProvider === 'tavily'
+        ? 'Tavily 搜索（已配置）'
+        : options.searchProvider === 'bocha'
+          ? '博查搜索（已配置）'
+          : options.searchProvider === 'deepseek_account'
+            ? '已借用 DeepSeek 账号'
+            : options.isWebPlatform === false
+              ? '默认自动（安卓端免密钥免费查公开网页）'
+              : '不配搜索也能正常玩；安卓端会自动免费查原作，网页端如需查证可在此选配';
   const billingLabel = options.hasCustomPricing
     ? '已填写自定义单价，将同时统计节省 Token 与估算花费'
     : '默认统计节省 Token，选填单价后可算花费';
@@ -269,7 +277,7 @@ export function buildProviderSaveResultFromDraft(
     return { profile };
   }
 
-  const searchPreset = PUBLIC_RESEARCH_PRESETS[draft.searchProvider] ?? PUBLIC_RESEARCH_PRESETS.none;
+  const searchPreset = PUBLIC_RESEARCH_PRESETS[draft.searchProvider] ?? PUBLIC_RESEARCH_PRESETS.auto;
   const cleanedSearchKey = sanitizeApiKeyInput(draft.searchApiKey);
   const publicResearch: PublicResearchConfig = {
     provider: searchPreset.id,
@@ -477,7 +485,7 @@ export function ProviderSetupWizard({
   const busy = isVerifying || isFetchingModels || isProbingPrefill;
   const isDeepSeek = draft.presetId === 'deepseek';
   const activeSearchPreset =
-    PUBLIC_RESEARCH_PRESETS[draft.searchProvider] ?? PUBLIC_RESEARCH_PRESETS.none;
+    PUBLIC_RESEARCH_PRESETS[draft.searchProvider] ?? PUBLIC_RESEARCH_PRESETS.auto;
   const hasCustomPricing =
     parsePriceInput(draft.inputPriceText) !== undefined ||
     parsePriceInput(draft.outputPriceText) !== undefined ||
@@ -486,6 +494,7 @@ export function ProviderSetupWizard({
     presetId: draft.presetId,
     searchProvider: draft.searchProvider,
     hasCustomPricing,
+    isWebPlatform,
   });
 
   const handleSelectPreset = (nextPresetId: ProviderPresetId) => {

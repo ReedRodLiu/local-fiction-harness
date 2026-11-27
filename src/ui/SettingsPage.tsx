@@ -288,10 +288,10 @@ export function SettingsPage({
     return entries;
   })();
 
-  const resolvedPublicResearch = config.publicResearch ?? providerLibrary?.publicResearch;
+  const activeResearchProvider =
+    config.publicResearch?.provider ?? providerLibrary?.publicResearch?.provider ?? 'auto';
   const activeResearchPreset =
-    PUBLIC_RESEARCH_PRESETS[resolvedPublicResearch?.provider ?? 'none'] ??
-    PUBLIC_RESEARCH_PRESETS.none;
+    PUBLIC_RESEARCH_PRESETS[activeResearchProvider] ?? PUBLIC_RESEARCH_PRESETS.auto;
 
   const activePreset = promptPackLibrary.activePackId
     ? promptPackLibrary.packs.find((pack) => pack.id === promptPackLibrary.activePackId) ??
