@@ -15,6 +15,7 @@ import type {
   ProviderPresetId,
   ProviderProfile,
   ProviderProfileMeta,
+  ProviderThinkingDialect,
   PublicResearchConfig,
   PublicResearchConfigMeta,
   ReasoningEffort,
@@ -63,6 +64,21 @@ export function normalizeProviderApiProtocol(
   return isProviderApiProtocol(value) ? value : fallback;
 }
 
+export function isProviderThinkingDialect(value: unknown): value is ProviderThinkingDialect {
+  return (
+    value === 'standard' ||
+    value === 'enable_thinking' ||
+    value === 'thinking_type_enabled'
+  );
+}
+
+export function normalizeProviderThinkingDialect(
+  value: unknown,
+  fallback: ProviderThinkingDialect = 'standard',
+): ProviderThinkingDialect {
+  return isProviderThinkingDialect(value) ? value : fallback;
+}
+
 export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   baseUrl: 'https://api.deepseek.com',
   model: 'deepseek-flash',
@@ -102,7 +118,23 @@ export interface ProviderPresetSpec {
   models: ProviderModelEntry[];
   defaultModel: string;
   backgroundModel?: string;
+  consoleUrl?: string;
+  setupHint?: string;
   capabilities: ProviderCapabilities;
+}
+
+function makeStandardOpenAiChatCapabilities(
+  thinkingDialect?: ProviderThinkingDialect,
+): ProviderCapabilities {
+  return {
+    apiProtocol: 'openai_chat',
+    thinkingProtocol: 'openai_reasoning_effort',
+    ...(thinkingDialect ? { thinkingDialect } : {}),
+    prefixProtocol: 'none',
+    supportsBalanceQuery: false,
+    supportsBuiltinSearch: false,
+    supportsBuiltinPricing: false,
+  };
 }
 
 export const PROVIDER_PRESETS: Readonly<Record<ProviderPresetId, ProviderPresetSpec>> = {
@@ -116,6 +148,7 @@ export const PROVIDER_PRESETS: Readonly<Record<ProviderPresetId, ProviderPresetS
     ],
     defaultModel: 'deepseek-flash',
     backgroundModel: 'deepseek-flash',
+    consoleUrl: 'https://platform.deepseek.com/api_keys',
     capabilities: {
       apiProtocol: 'openai_chat',
       thinkingProtocol: 'deepseek',
@@ -137,6 +170,8 @@ export const PROVIDER_PRESETS: Readonly<Record<ProviderPresetId, ProviderPresetS
     ],
     defaultModel: 'gpt-4.1',
     backgroundModel: 'gpt-4o-mini',
+    consoleUrl: 'https://platform.openai.com/api-keys',
+    setupHint: 'ChatGPT Plus/Pro 消费级订阅不含 API 调用额度，需在 OpenAI Platform 单独创建 API Key 并充值。',
     capabilities: {
       apiProtocol: 'openai_responses',
       thinkingProtocol: 'openai_reasoning_effort',
@@ -146,50 +181,201 @@ export const PROVIDER_PRESETS: Readonly<Record<ProviderPresetId, ProviderPresetS
       supportsBuiltinPricing: false,
     },
   },
+  xai: {
+    presetId: 'xai',
+    name: 'xAI (Grok)',
+    baseUrl: 'https://api.x.ai/v1',
+    models: [{ id: 'grok-3' }, { id: 'grok-3-mini' }],
+    defaultModel: 'grok-3',
+    backgroundModel: 'grok-3-mini',
+    consoleUrl: 'https://console.x.ai',
+    setupHint: '前往 xAI Console 创建 API Key；需要更低成本或快速摘要时可选 grok-3-mini。',
+    capabilities: makeStandardOpenAiChatCapabilities(),
+  },
+  groq: {
+    presetId: 'groq',
+    name: 'Groq',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    models: [
+      { id: 'llama-3.3-70b-versatile' },
+      { id: 'llama-3.1-8b-instant' },
+    ],
+    defaultModel: 'llama-3.3-70b-versatile',
+    backgroundModel: 'llama-3.1-8b-instant',
+    consoleUrl: 'https://console.groq.com/keys',
+    capabilities: makeStandardOpenAiChatCapabilities(),
+  },
+  moonshot: {
+    presetId: 'moonshot',
+    name: '月之暗面 (Kimi)',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    models: [
+      { id: 'kimi-k2-0905-preview' },
+      { id: 'moonshot-v1-8k' },
+      { id: 'moonshot-v1-32k' },
+    ],
+    defaultModel: 'kimi-k2-0905-preview',
+    backgroundModel: 'moonshot-v1-8k',
+    consoleUrl: 'https://platform.moonshot.cn/console/api-keys',
+    setupHint: 'Kimi 网页/App 会员与开放平台 API 额度独立，请在月之暗面开放平台创建 API Key。',
+    capabilities: makeStandardOpenAiChatCapabilities(),
+  },
+  zhipu: {
+    presetId: 'zhipu',
+    name: '智谱 (GLM)',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    models: [
+      { id: 'glm-4.5' },
+      { id: 'glm-4-plus' },
+      { id: 'glm-4-flash' },
+    ],
+    defaultModel: 'glm-4.5',
+    backgroundModel: 'glm-4-flash',
+    consoleUrl: 'https://open.bigmodel.cn/usercenter/apikeys',
+    setupHint: '开启深度思考时将自动发送智谱官方 thinking 参数；glm-4-flash 可用作免费/低成本后台模型。',
+    capabilities: makeStandardOpenAiChatCapabilities('thinking_type_enabled'),
+  },
+  dashscope: {
+    presetId: 'dashscope',
+    name: '阿里云百炼 (通义千问)',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    models: [
+      { id: 'qwen-plus' },
+      { id: 'qwen-max' },
+      { id: 'qwen-turbo' },
+    ],
+    defaultModel: 'qwen-plus',
+    backgroundModel: 'qwen-turbo',
+    consoleUrl: 'https://bailian.console.aliyun.com/?apiKey=1#/api-key',
+    setupHint: '默认使用中国内地（北京）兼容端点；若使用国际区（新加坡）或子业务空间，请替换为对应地域地址并使用该空间下的 API Key。',
+    capabilities: makeStandardOpenAiChatCapabilities('enable_thinking'),
+  },
+  volcengine: {
+    presetId: 'volcengine',
+    name: '火山方舟 (豆包)',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    models: [
+      { id: 'doubao-seed-1-6-250615' },
+      { id: 'doubao-seed-1-6-flash-250615' },
+    ],
+    defaultModel: 'doubao-seed-1-6-250615',
+    backgroundModel: 'doubao-seed-1-6-flash-250615',
+    consoleUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey',
+    setupHint: '若使用自定义或微调推理接入点，请在「常用模型」中直接填写控制台生成的 ep-xxxxxxxx 接入点 ID。',
+    capabilities: makeStandardOpenAiChatCapabilities('thinking_type_enabled'),
+  },
+  minimax: {
+    presetId: 'minimax',
+    name: 'MiniMax',
+    baseUrl: 'https://api.minimaxi.com/v1',
+    models: [{ id: 'MiniMax-M1' }, { id: 'MiniMax-Text-01' }],
+    defaultModel: 'MiniMax-M1',
+    backgroundModel: 'MiniMax-Text-01',
+    consoleUrl: 'https://platform.minimaxi.com/user-center/basic-information/interface-key',
+    setupHint: '国内开放平台使用 api.minimaxi.com；若使用海外版账号（minimax.io），请将接口地址改为 https://api.minimax.io/v1。',
+    capabilities: makeStandardOpenAiChatCapabilities(),
+  },
+  qianfan: {
+    presetId: 'qianfan',
+    name: '百度千帆',
+    baseUrl: 'https://qianfan.baidubce.com/v2',
+    models: [
+      { id: 'ernie-4.5-turbo-128k' },
+      { id: 'ernie-4.0-8k' },
+      { id: 'ernie-speed-128k' },
+    ],
+    defaultModel: 'ernie-4.5-turbo-128k',
+    backgroundModel: 'ernie-speed-128k',
+    consoleUrl: 'https://console.bce.baidu.com/iam/#/iam/apikey/list',
+    setupHint: '千帆 V2 兼容接口需使用 IAM API Key（bce-v3/...），旧版 AK/SK 无法直接作为 Bearer Key 使用。',
+    capabilities: makeStandardOpenAiChatCapabilities(),
+  },
+  hunyuan: {
+    presetId: 'hunyuan',
+    name: '腾讯混元',
+    baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1',
+    models: [{ id: 'hunyuan-turbos-latest' }, { id: 'hunyuan-lite' }],
+    defaultModel: 'hunyuan-turbos-latest',
+    backgroundModel: 'hunyuan-lite',
+    consoleUrl: 'https://console.cloud.tencent.com/hunyuan/api-key',
+    setupHint: '请在腾讯云混元大模型控制台创建 OpenAI 兼容 API Key（非 SecretId/SecretKey）。',
+    capabilities: makeStandardOpenAiChatCapabilities(),
+  },
+  spark: {
+    presetId: 'spark',
+    name: '讯飞星火',
+    baseUrl: 'https://spark-api-open.xf-yun.com/v1',
+    models: [{ id: '4.0Ultra' }, { id: 'generalv3.5' }, { id: 'lite' }],
+    defaultModel: '4.0Ultra',
+    backgroundModel: 'lite',
+    consoleUrl: 'https://console.xfyun.cn/services/bm35',
+    setupHint: '讯飞星火 OpenAI 兼容接口需填写控制台「HTTP 协议认证」处的 APIPassword（而非 WebSocket APISecret）。',
+    capabilities: makeStandardOpenAiChatCapabilities(),
+  },
+  sensenova: {
+    presetId: 'sensenova',
+    name: '商汤日日新',
+    baseUrl: 'https://token.sensenova.cn/v1',
+    models: [{ id: 'SenseNova-V6-Pro' }, { id: 'SenseNova-V6-Turbo' }],
+    defaultModel: 'SenseNova-V6-Pro',
+    backgroundModel: 'SenseNova-V6-Turbo',
+    consoleUrl: 'https://console.sensecore.cn/aistudio/management/api-key',
+    capabilities: makeStandardOpenAiChatCapabilities(),
+  },
+  stepfun: {
+    presetId: 'stepfun',
+    name: '阶跃星辰',
+    baseUrl: 'https://api.stepfun.com/v1',
+    models: [{ id: 'step-2-16k' }, { id: 'step-1-flash' }],
+    defaultModel: 'step-2-16k',
+    backgroundModel: 'step-1-flash',
+    consoleUrl: 'https://platform.stepfun.com/interface-key',
+    capabilities: makeStandardOpenAiChatCapabilities(),
+  },
+  lingyi: {
+    presetId: 'lingyi',
+    name: '零一万物',
+    baseUrl: 'https://api.lingyiwanwu.com/v1',
+    models: [{ id: 'yi-lightning' }, { id: 'yi-large' }],
+    defaultModel: 'yi-lightning',
+    backgroundModel: 'yi-lightning',
+    consoleUrl: 'https://platform.lingyiwanwu.com/apikeys',
+    capabilities: makeStandardOpenAiChatCapabilities(),
+  },
   openrouter: {
     presetId: 'openrouter',
     name: 'OpenRouter',
     baseUrl: 'https://openrouter.ai/api/v1',
-    models: [{ id: 'openai/gpt-4o-mini' }],
+    models: [
+      { id: 'openai/gpt-4o-mini' },
+      { id: 'anthropic/claude-sonnet-4' },
+    ],
     defaultModel: 'openai/gpt-4o-mini',
-    capabilities: {
-      apiProtocol: 'openai_chat',
-      thinkingProtocol: 'openai_reasoning_effort',
-      prefixProtocol: 'none',
-      supportsBalanceQuery: false,
-      supportsBuiltinSearch: false,
-      supportsBuiltinPricing: false,
-    },
+    backgroundModel: 'openai/gpt-4o-mini',
+    consoleUrl: 'https://openrouter.ai/keys',
+    capabilities: makeStandardOpenAiChatCapabilities(),
   },
   siliconflow: {
     presetId: 'siliconflow',
     name: '硅基流动',
     baseUrl: 'https://api.siliconflow.cn/v1',
-    models: [{ id: 'deepseek-ai/DeepSeek-V3' }],
+    models: [
+      { id: 'deepseek-ai/DeepSeek-V3' },
+      { id: 'Qwen/Qwen2.5-72B-Instruct' },
+    ],
     defaultModel: 'deepseek-ai/DeepSeek-V3',
-    capabilities: {
-      apiProtocol: 'openai_chat',
-      thinkingProtocol: 'openai_reasoning_effort',
-      prefixProtocol: 'none',
-      supportsBalanceQuery: false,
-      supportsBuiltinSearch: false,
-      supportsBuiltinPricing: false,
-    },
+    backgroundModel: 'Qwen/Qwen2.5-7B-Instruct',
+    consoleUrl: 'https://cloud.siliconflow.cn/account/ak',
+    capabilities: makeStandardOpenAiChatCapabilities(),
   },
   local: {
     presetId: 'local',
     name: '本地服务（Ollama / LM Studio）',
     baseUrl: 'http://localhost:11434/v1',
-    models: [{ id: 'llama3.2' }],
+    models: [{ id: 'llama3.2' }, { id: 'qwen2.5' }],
     defaultModel: 'llama3.2',
-    capabilities: {
-      apiProtocol: 'openai_chat',
-      thinkingProtocol: 'openai_reasoning_effort',
-      prefixProtocol: 'none',
-      supportsBalanceQuery: false,
-      supportsBuiltinSearch: false,
-      supportsBuiltinPricing: false,
-    },
+    setupHint: '需先在本地启动 Ollama 或 LM Studio 并开启 OpenAI 兼容服务；API Key 可留空。',
+    capabilities: makeStandardOpenAiChatCapabilities(),
   },
   custom: {
     presetId: 'custom',
@@ -197,14 +383,8 @@ export const PROVIDER_PRESETS: Readonly<Record<ProviderPresetId, ProviderPresetS
     baseUrl: '',
     models: [],
     defaultModel: '',
-    capabilities: {
-      apiProtocol: 'openai_chat',
-      thinkingProtocol: 'openai_reasoning_effort',
-      prefixProtocol: 'none',
-      supportsBalanceQuery: false,
-      supportsBuiltinSearch: false,
-      supportsBuiltinPricing: false,
-    },
+    setupHint: '填写兼容服务商或中转站基础地址；如使用非 Chat Completions 协议，可在下方「更多可选设置」切换接口协议。',
+    capabilities: makeStandardOpenAiChatCapabilities(),
   },
 };
 
@@ -223,6 +403,9 @@ function cloneCapabilities(
   return {
     apiProtocol: normalizeProviderApiProtocol(capabilities.apiProtocol, fallbackProtocol),
     thinkingProtocol: capabilities.thinkingProtocol,
+    ...(capabilities.thinkingDialect && isProviderThinkingDialect(capabilities.thinkingDialect)
+      ? { thinkingDialect: capabilities.thinkingDialect }
+      : {}),
     prefixProtocol: capabilities.prefixProtocol,
     supportsBalanceQuery: Boolean(capabilities.supportsBalanceQuery),
     supportsBuiltinSearch: Boolean(capabilities.supportsBuiltinSearch),

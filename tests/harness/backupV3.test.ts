@@ -792,4 +792,39 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     invalidProtocol.providerLibrary.profiles[0].capabilities.apiProtocol = 'invalid_proto';
     expect(() => parseAndValidateFolioBackup(JSON.stringify(invalidProtocol))).toThrow(/apiProtocol/);
   });
+
+  it('roundtrips all new domestic/overseas presets and thinkingDialect across v3 backups and rejects invalid thinkingDialect', () => {
+    const dashscope = createProviderProfileFromPreset('dashscope', { id: 'p-dashscope', apiKey: 'sk-ds-1' });
+    const zhipu = createProviderProfileFromPreset('zhipu', { id: 'p-zhipu', apiKey: 'sk-zp-1' });
+    const volcengine = createProviderProfileFromPreset('volcengine', { id: 'p-ark', apiKey: 'sk-ark-1' });
+    const spark = createProviderProfileFromPreset('spark', { id: 'p-spark', apiKey: 'sk-spark-1' });
+    const xai = createProviderProfileFromPreset('xai', { id: 'p-xai', apiKey: 'sk-xai-1' });
+
+    const json = exportFolioBackupV3({
+      stories: [],
+      workspace: emptyWorkspace(),
+      providerLibrary: {
+        version: 2,
+        activeProviderId: 'p-dashscope',
+        profiles: [dashscope, zhipu, volcengine, spark, xai],
+        reasoningEffort: 'none',
+      },
+    });
+
+    const parsed = parseAndValidateFolioBackup(json);
+    expect(parsed.providerLibrary?.profiles.map((p) => p.presetId)).toEqual([
+      'dashscope',
+      'zhipu',
+      'volcengine',
+      'spark',
+      'xai',
+    ]);
+    expect(parsed.providerLibrary?.profiles[0]?.capabilities.thinkingDialect).toBe('enable_thinking');
+    expect(parsed.providerLibrary?.profiles[1]?.capabilities.thinkingDialect).toBe('thinking_type_enabled');
+    expect(parsed.providerLibrary?.profiles[2]?.capabilities.thinkingDialect).toBe('thinking_type_enabled');
+
+    const invalidDialect = JSON.parse(json);
+    invalidDialect.providerLibrary.profiles[0].capabilities.thinkingDialect = 'unknown_dialect';
+    expect(() => parseAndValidateFolioBackup(JSON.stringify(invalidDialect))).toThrow(/thinkingDialect/);
+  });
 });

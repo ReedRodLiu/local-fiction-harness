@@ -4,6 +4,7 @@ import {
   buildOpenAiChatRequest,
   buildProviderStreamRequest,
   createOpenAiTransport,
+  createProviderProfileFromPreset,
   parseOpenAiSseStream,
   resolveBetaChatCompletionsUrl,
   resolveResponsesUrl,
@@ -882,5 +883,95 @@ describe('OpenAI Responses API multi-protocol dispatch & streaming', () => {
     );
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain('Quota exceeded');
+  });
+});
+
+describe('Third-party openai_chat thinking dialects (Slice 4)', () => {
+  it('strictly omits all thinking/reasoning fields when thinking is OFF across all third-party presets', () => {
+    const thirdPartyIds = [
+      'xai',
+      'groq',
+      'moonshot',
+      'zhipu',
+      'dashscope',
+      'volcengine',
+      'minimax',
+      'qianfan',
+      'hunyuan',
+      'spark',
+      'sensenova',
+      'stepfun',
+      'lingyi',
+      'openrouter',
+      'siliconflow',
+      'local',
+    ] as const;
+
+    for (const presetId of thirdPartyIds) {
+      const profile = createProviderProfileFromPreset(presetId, { apiKey: 'k-test' });
+      const built = buildOpenAiChatRequest({
+        baseUrl: profile.baseUrl,
+        apiKey: profile.apiKey,
+        model: profile.defaultModel,
+        reasoningEffort: 'none',
+        capabilities: profile.capabilities,
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+      const body = JSON.parse(built.body) as Record<string, unknown>;
+      expect(body).not.toHaveProperty('thinking');
+      expect(body).not.toHaveProperty('reasoning_effort');
+      expect(body).not.toHaveProperty('enable_thinking');
+    }
+  });
+
+  it('emits verified vendor-specific thinking dialects when thinking is ON', () => {
+    const dashscopeProfile = createProviderProfileFromPreset('dashscope', { apiKey: 'sk-dash' });
+    const dashOn = JSON.parse(
+      buildOpenAiChatRequest({
+        baseUrl: dashscopeProfile.baseUrl,
+        apiKey: dashscopeProfile.apiKey,
+        model: dashscopeProfile.defaultModel,
+        reasoningEffort: 'medium',
+        capabilities: dashscopeProfile.capabilities,
+        messages: [{ role: 'user', content: 'hi' }],
+      }).body,
+    ) as Record<string, unknown>;
+    expect(dashOn.enable_thinking).toBe(true);
+    expect(dashOn).not.toHaveProperty('thinking');
+    expect(dashOn).not.toHaveProperty('reasoning_effort');
+
+    for (const dialectPreset of ['zhipu', 'volcengine'] as const) {
+      const profile = createProviderProfileFromPreset(dialectPreset, { apiKey: 'sk-vendor' });
+      const onBody = JSON.parse(
+        buildOpenAiChatRequest({
+          baseUrl: profile.baseUrl,
+          apiKey: profile.apiKey,
+          model: profile.defaultModel,
+          reasoningEffort: 'high',
+          capabilities: profile.capabilities,
+          messages: [{ role: 'user', content: 'hi' }],
+        }).body,
+      ) as Record<string, unknown>;
+      expect(onBody.thinking).toEqual({ type: 'enabled' });
+      expect(onBody).not.toHaveProperty('enable_thinking');
+      expect(onBody).not.toHaveProperty('reasoning_effort');
+    }
+
+    for (const standardPreset of ['xai', 'groq', 'moonshot', 'minimax', 'qianfan', 'hunyuan', 'spark'] as const) {
+      const profile = createProviderProfileFromPreset(standardPreset, { apiKey: 'sk-std' });
+      const onBody = JSON.parse(
+        buildOpenAiChatRequest({
+          baseUrl: profile.baseUrl,
+          apiKey: profile.apiKey,
+          model: profile.defaultModel,
+          reasoningEffort: 'max',
+          capabilities: profile.capabilities,
+          messages: [{ role: 'user', content: 'hi' }],
+        }).body,
+      ) as Record<string, unknown>;
+      expect(onBody.reasoning_effort).toBe('high');
+      expect(onBody).not.toHaveProperty('thinking');
+      expect(onBody).not.toHaveProperty('enable_thinking');
+    }
   });
 });

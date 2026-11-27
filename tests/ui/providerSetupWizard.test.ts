@@ -5,6 +5,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  PROVIDER_PRESETS,
   PUBLIC_RESEARCH_PRESETS,
   createProviderProfileFromPreset,
 } from '../../src/harness/index.ts';
@@ -381,6 +382,39 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
       },
     });
     expect(legacyDraft.apiProtocol).toBe('openai_chat');
+  });
+
+  it('displays preset console link and setupHint for presets with special guidance and preserves thinkingDialect on save', () => {
+    for (const presetId of ['volcengine', 'spark', 'dashscope', 'openai'] as const) {
+      const profile = createProviderProfileFromPreset(presetId, { id: `p-${presetId}` });
+      const markup = renderToStaticMarkup(
+        createElement(ProviderSetupWizard, {
+          open: true,
+          initialProfile: profile,
+          mode: 'edit',
+          onSaveProfile: vi.fn(),
+          onCancel: vi.fn(),
+          onExitComplete: vi.fn(),
+        }),
+      );
+
+      expect(markup).toContain('data-testid="provider-console-link"');
+      expect(markup).toContain(PROVIDER_PRESETS[presetId].consoleUrl!);
+      expect(markup).toContain('data-testid="provider-setup-hint"');
+      expect(markup).toContain(PROVIDER_PRESETS[presetId].setupHint!);
+    }
+
+    const dashDraft = createWizardDraftFromPreset('dashscope', { apiKey: 'sk-dash' });
+    const dashSave = buildProviderSaveResultFromDraft(dashDraft);
+    expect(dashSave.profile.capabilities.thinkingDialect).toBe('enable_thinking');
+
+    const arkProfile = createProviderProfileFromPreset('volcengine', {
+      id: 'ark-1',
+      apiKey: 'ark-key',
+    });
+    const arkDraft = createWizardDraftFromProfile(arkProfile);
+    const arkSave = buildProviderSaveResultFromDraft(arkDraft);
+    expect(arkSave.profile.capabilities.thinkingDialect).toBe('thinking_type_enabled');
   });
 
   it('never contains jailbreak or bypass prompt text in wizard source', () => {

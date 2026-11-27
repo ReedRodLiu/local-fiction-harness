@@ -746,6 +746,20 @@
   gap: 10px;
 }
 
+.provider-preset-guidance {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.provider-preset-guidance .wizard-privacy-note {
+  margin: 0;
+}
+
 .provider-model-input-row {
   display: flex;
   align-items: stretch;

@@ -1,6 +1,7 @@
 import { getTextDecoderCtor, type TextDecoderLike } from './encoding.ts';
 import {
   isOfficialDeepSeekUrl,
+  isProviderThinkingDialect,
   normalizeProviderApiProtocol,
   normalizeReasoningEffort,
 } from './keyConfig.ts';
@@ -15,6 +16,7 @@ import type {
   ProviderApiProtocol,
   ProviderCapabilities,
   ProviderPrefixProtocol,
+  ProviderThinkingDialect,
   ProviderThinkingProtocol,
   ReasoningEffort,
 } from './types.ts';
@@ -646,6 +648,25 @@ function resolveEffectiveThinkingProtocol(req: LlmStreamRequest): ProviderThinki
   );
 }
 
+function resolveHostFromBaseUrl(baseUrl: string): string {
+  const match = baseUrl.trim().match(/^https?:\/\/([^/?#:\s]+)/i);
+  return match ? match[1].toLowerCase() : '';
+}
+
+function resolveEffectiveThinkingDialect(req: LlmStreamRequest): ProviderThinkingDialect {
+  if (isProviderThinkingDialect(req.capabilities?.thinkingDialect)) {
+    return req.capabilities.thinkingDialect;
+  }
+  const host = resolveHostFromBaseUrl(req.baseUrl);
+  if (host === 'dashscope.aliyuncs.com' || host.endsWith('.dashscope.aliyuncs.com')) {
+    return 'enable_thinking';
+  }
+  if (host === 'open.bigmodel.cn' || host === 'ark.cn-beijing.volces.com') {
+    return 'thinking_type_enabled';
+  }
+  return 'standard';
+}
+
 export function resolveEffectivePrefixProtocol(input: {
   baseUrl: string;
   capabilities?: ProviderCapabilities;
@@ -694,6 +715,7 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
   const thinkingProtocol = resolveEffectiveThinkingProtocol(req);
   let thinking: DeepSeekThinkingParam | undefined;
   let reasoning_effort: ReasoningEffort | undefined;
+  let enable_thinking: boolean | undefined;
   let allowReasoning = false;
 
   if (thinkingProtocol === 'deepseek') {
@@ -710,8 +732,15 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
   } else {
     const effort = normalizeReasoningEffort(req.reasoningEffort ?? req.reasoning_effort, 'none');
     if (effort !== 'none') {
-      reasoning_effort = effort === 'max' ? 'high' : effort;
       allowReasoning = true;
+      const dialect = resolveEffectiveThinkingDialect(req);
+      if (dialect === 'enable_thinking') {
+        enable_thinking = true;
+      } else if (dialect === 'thinking_type_enabled') {
+        thinking = { type: 'enabled' };
+      } else {
+        reasoning_effort = effort === 'max' ? 'high' : effort;
+      }
     }
   }
 
@@ -761,6 +790,7 @@ export function buildOpenAiChatRequest(req: LlmStreamRequest): {
       messages,
       stream: true,
       ...(thinking !== undefined ? { thinking } : {}),
+      ...(enable_thinking !== undefined ? { enable_thinking } : {}),
       ...(reasoning_effort !== undefined ? { reasoning_effort } : {}),
       ...(req.includeUsage ? { stream_options: { include_usage: true } } : {}),
       ...(req.maxOutputTokens && req.maxOutputTokens > 0

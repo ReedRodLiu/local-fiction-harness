@@ -22,6 +22,7 @@ import {
   type ProviderPrefixProtocol,
   type ProviderPresetId,
   type ProviderProfile,
+  type ProviderThinkingDialect,
   type PublicResearchConfig,
   type PublicResearchSearchPresetId,
 } from '../harness/index.ts';
@@ -64,6 +65,7 @@ export interface ProviderWizardDraft {
   cacheHitPriceText: string;
   outputPriceText: string;
   apiProtocol: ProviderApiProtocol;
+  thinkingDialect?: ProviderThinkingDialect;
   prefixProtocol: ProviderPrefixProtocol;
   prefillProbeStatus: 'untested' | 'supported' | 'unsupported';
   searchProvider: PublicResearchSearchPresetId;
@@ -146,6 +148,9 @@ export function createWizardDraftFromPreset(
     cacheHitPriceText: '',
     outputPriceText: '',
     apiProtocol: preset.capabilities.apiProtocol ?? 'openai_chat',
+    ...(preset.capabilities.thinkingDialect
+      ? { thinkingDialect: preset.capabilities.thinkingDialect }
+      : {}),
     prefixProtocol: preset.capabilities.prefixProtocol,
     prefillProbeStatus: 'untested',
     searchProvider: options?.publicResearch?.provider ?? 'auto',
@@ -173,6 +178,9 @@ export function createWizardDraftFromProfile(
     cacheHitPriceText: formatPriceInput(pricing?.cacheHitInputPerMillion),
     outputPriceText: formatPriceInput(pricing?.outputPerMillion),
     apiProtocol: normalizeProviderApiProtocol(profile.capabilities.apiProtocol, 'openai_chat'),
+    ...(profile.capabilities.thinkingDialect
+      ? { thinkingDialect: profile.capabilities.thinkingDialect }
+      : {}),
     prefixProtocol: profile.capabilities.prefixProtocol,
     prefillProbeStatus: profile.prefillProbeStatus ?? 'untested',
     searchProvider: publicResearch?.provider ?? 'auto',
@@ -275,6 +283,9 @@ export function buildProviderSaveResultFromDraft(
       ? 'none'
       : draft.prefixProtocol;
 
+  const thinkingDialect =
+    draft.thinkingDialect ?? preset.capabilities.thinkingDialect;
+
   const profile = createProviderProfileFromPreset(draft.presetId, {
     id: resolvedId,
     name: isDeepSeek ? preset.name : draft.name.trim() || preset.name,
@@ -287,6 +298,7 @@ export function buildProviderSaveResultFromDraft(
     capabilities: {
       ...preset.capabilities,
       apiProtocol,
+      ...(thinkingDialect ? { thinkingDialect } : {}),
       prefixProtocol,
     },
     ...(isDeepSeek ? {} : { prefillProbeStatus: draft.prefillProbeStatus }),
@@ -502,6 +514,7 @@ export function ProviderSetupWizard({
   }, [isVerifying, onVerifyingChange]);
 
   const busy = isVerifying || isFetchingModels || isProbingPrefill;
+  const activePreset = PROVIDER_PRESETS[draft.presetId] ?? PROVIDER_PRESETS.custom;
   const isDeepSeek = draft.presetId === 'deepseek';
   const prefillDisabledByProtocol =
     draft.apiProtocol === 'openai_responses' || draft.apiProtocol === 'gemini_native';
@@ -546,7 +559,7 @@ export function ProviderSetupWizard({
   };
 
   const handleOpenPlatform = () => {
-    window.open(DEEPSEEK_OFFICIAL_KEYS_URL, '_blank', 'noopener,noreferrer');
+    window.open(activePreset.consoleUrl ?? DEEPSEEK_OFFICIAL_KEYS_URL, '_blank', 'noopener,noreferrer');
   };
 
   const handleFetchModels = async () => {
@@ -793,6 +806,27 @@ export function ProviderSetupWizard({
         ) : (
           <div className="provider-form-stack">
             <div className="wizard-step-card">
+              {(activePreset.setupHint || activePreset.consoleUrl) && (
+                <div className="provider-preset-guidance" data-testid="provider-preset-guidance">
+                  {activePreset.setupHint && (
+                    <p className="wizard-privacy-note" data-testid="provider-setup-hint">
+                      {activePreset.setupHint}
+                    </p>
+                  )}
+                  {activePreset.consoleUrl && (
+                    <a
+                      className="provider-search-docs-link"
+                      data-testid="provider-console-link"
+                      href={activePreset.consoleUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <span>前往 {activePreset.name} 控制台获取 API Key</span>
+                      <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
+                    </a>
+                  )}
+                </div>
+              )}
               <div className="field">
                 <label htmlFor="provider-name-input">服务名称</label>
                 <input
