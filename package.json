@@ -1,7 +1,6 @@
 {
   "name": "local-fiction-harness",
   "version": "0.5.1",
-  "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -52,5 +51,16 @@
     "typescript": "^5.7.3",
     "vite": "^6.0.11",
     "vitest": "^3.0.5"
+  },
+  "description": "Folio: a local-first interactive fiction and character chat harness.",
+  "license": "MIT",
+  "author": "ReedRodLiu",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ReedRodLiu/local-fiction-harness.git"
+  },
+  "homepage": "https://github.com/ReedRodLiu/local-fiction-harness#readme",
+  "bugs": {
+    "url": "https://github.com/ReedRodLiu/local-fiction-harness/issues"
   }
 }

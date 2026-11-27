@@ -39,3 +39,7 @@ docs/diagnostics/
 # Local private corpus & chat exports (never commit or push)
 docs/文游500篇/
 docs/chatgpt-开源项目商用分析/
+
+# Local agent tooling (not part of the published project)
+.agents/
+AGENTS.md

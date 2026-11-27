@@ -85,3 +85,28 @@ npm run android:build
 ## 数据与费用提示
 
 Folio 是客户端工具。配置 API Key 后，模型请求会发送到你选择的服务商；请检查服务商的隐私政策、计费方式和数据处理规则。导出的 `.folio.json` 不包含 API Key，但可能包含你保存的故事、角色资料和对话，请按包含个人内容的文件妥善保管。
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup, commands, and pull request expectations.
+
+## Environment variables
+
+Copy `.env.example` to `.env.local` for local-only test credentials. Never commit `.env.local` or real keys.
+
+## Testing
+
+```bash
+npm test
+npm run test:e2e
+npm run audit:ui
+npm run audit:version
+```
+
+## Releasing
+
+Release notes are published under `docs/releases/`.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](./LICENSE).
