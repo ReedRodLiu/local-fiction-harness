@@ -94,6 +94,7 @@ export type OfficialDeepSeekModel = 'deepseek-flash' | 'deepseek-v4-pro';
 export type ProviderPresetId =
   | 'deepseek'
   | 'openai'
+  | 'gemini'
   | 'openrouter'
   | 'siliconflow'
   | 'local'

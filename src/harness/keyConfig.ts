@@ -146,6 +146,26 @@ export const PROVIDER_PRESETS: Readonly<Record<ProviderPresetId, ProviderPresetS
       supportsBuiltinPricing: false,
     },
   },
+  gemini: {
+    presetId: 'gemini',
+    name: 'Google (Gemini)',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    models: [
+      { id: 'gemini-2.5-flash' },
+      { id: 'gemini-2.5-pro' },
+      { id: 'gemini-2.5-flash-lite' },
+    ],
+    defaultModel: 'gemini-2.5-flash',
+    backgroundModel: 'gemini-2.5-flash-lite',
+    capabilities: {
+      apiProtocol: 'gemini_native',
+      thinkingProtocol: 'openai_reasoning_effort',
+      prefixProtocol: 'none',
+      supportsBalanceQuery: false,
+      supportsBuiltinSearch: false,
+      supportsBuiltinPricing: false,
+    },
+  },
   openrouter: {
     presetId: 'openrouter',
     name: 'OpenRouter',

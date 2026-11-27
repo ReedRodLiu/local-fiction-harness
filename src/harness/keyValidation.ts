@@ -1,6 +1,6 @@
 import type { DiagnosticCollector } from './diagnostics.ts';
-import { resolveChatCompletionsUrl } from './sse.ts';
-import type { AbortSignalLike, FetchLike, FetchResponseLike } from './types.ts';
+import { resolveChatCompletionsUrl, stripGeminiActionSuffix } from './sse.ts';
+import type { AbortSignalLike, FetchLike, FetchResponseLike, ProviderApiProtocol } from './types.ts';
 
 export const DEEPSEEK_OFFICIAL_KEYS_URL = 'https://platform.deepseek.com/api_keys';
 export const DEEPSEEK_OFFICIAL_TOP_UP_URL = 'https://platform.deepseek.com/top_up';
@@ -539,12 +539,14 @@ export interface PrefillProbeResult {
 const PREFILL_PROBE_UNSUPPORTED_MESSAGE = '当前服务商暂不支持增强续写，已保持通用稳定模式';
 
 /**
- * Normalizes an OpenAI-compatible provider base URL by trimming whitespace and
- * stripping trailing slashes or endpoint suffixes (/chat/completions, /models).
+ * Normalizes a provider base URL by trimming whitespace and stripping trailing
+ * slashes or endpoint suffixes (/chat/completions, /responses, /models, Gemini actions).
  */
 export function normalizeProviderBaseUrl(rawBaseUrl: string): string {
   const trimmed = rawBaseUrl.trim().replace(/\/+$/, '');
-  return trimmed.replace(/\/(?:chat\/completions|responses|models)$/i, '').replace(/\/+$/, '');
+  return stripGeminiActionSuffix(trimmed)
+    .replace(/\/(?:chat\/completions|responses|models)$/i, '')
+    .replace(/\/+$/, '');
 }
 
 function isValidProviderBaseUrl(normalizedBaseUrl: string, allowRelativeBaseUrl = false): boolean {
@@ -601,6 +603,30 @@ async function readJsonPayload(res: {
   return null;
 }
 
+const NON_CHAT_GEMINI_MODEL_RE = /(?:embedding|imagen|(?:^|[^a-z])(?:tts|veo|aqa)(?:$|[^a-z]))/i;
+
+function extractGeminiModelIds(payload: unknown): string[] {
+  if (!isPlainRecord(payload) || !Array.isArray(payload.models)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const models: string[] = [];
+  for (const item of payload.models) {
+    if (!isPlainRecord(item) || typeof item.name !== 'string') continue;
+    if (
+      !Array.isArray(item.supportedGenerationMethods) ||
+      !item.supportedGenerationMethods.includes('generateContent')
+    ) {
+      continue;
+    }
+    const id = item.name.trim().replace(/^models\//i, '');
+    if (!id || NON_CHAT_GEMINI_MODEL_RE.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    models.push(id);
+  }
+  return models;
+}
+
 function extractModelIds(payload: unknown): string[] {
   if (!isPlainRecord(payload) || !Array.isArray(payload.data)) {
     return [];
@@ -617,6 +643,27 @@ function extractModelIds(payload: unknown): string[] {
   return models;
 }
 
+function extractDiscoveredModelIds(payload: unknown, apiProtocol: ProviderApiProtocol): string[] {
+  if (apiProtocol === 'gemini_native' && isPlainRecord(payload) && Array.isArray(payload.models)) {
+    return extractGeminiModelIds(payload);
+  }
+  return extractModelIds(payload);
+}
+
+function resolveVerificationProtocol(
+  baseUrl: string,
+  explicitProtocol?: ProviderApiProtocol,
+): ProviderApiProtocol {
+  if (explicitProtocol) return explicitProtocol;
+  if (
+    /generativelanguage\.googleapis\.com/i.test(baseUrl) &&
+    !/\/openai(?:\/|$)/i.test(baseUrl)
+  ) {
+    return 'gemini_native';
+  }
+  return 'openai_chat';
+}
+
 function isAbortError(err: unknown): boolean {
   return (
     typeof err === 'object' &&
@@ -627,12 +674,13 @@ function isAbortError(err: unknown): boolean {
 }
 
 /**
- * Verifies an OpenAI-compatible provider connection via GET /models and returns
+ * Verifies a provider connection via GET /models and returns
  * structured status, discovered model IDs, and plain-language guidance.
  */
 export async function verifyProviderConnection(options: {
   baseUrl: string;
   apiKey: string;
+  apiProtocol?: ProviderApiProtocol;
   requireSkPrefix?: boolean;
   allowEmptyKey?: boolean;
   allowRelativeBaseUrl?: boolean;
@@ -667,6 +715,7 @@ export async function verifyProviderConnection(options: {
     };
   }
 
+  const apiProtocol = resolveVerificationProtocol(baseUrl, options.apiProtocol);
   const timeoutMs = options.timeoutMs ?? 10000;
   const controller = host.AbortController ? new host.AbortController() : undefined;
   const timer =
@@ -679,7 +728,11 @@ export async function verifyProviderConnection(options: {
       Accept: 'application/json',
     };
     if (format.key) {
-      headers.Authorization = `Bearer ${format.key}`;
+      if (apiProtocol === 'gemini_native') {
+        headers['x-goog-api-key'] = format.key;
+      } else {
+        headers.Authorization = `Bearer ${format.key}`;
+      }
     }
 
     const res = await fetchFn(`${baseUrl}/models`, {
@@ -691,11 +744,25 @@ export async function verifyProviderConnection(options: {
     if (res.ok) {
       let models: string[] = [];
       try {
-        models = extractModelIds(await readJsonPayload(res));
+        models = extractDiscoveredModelIds(await readJsonPayload(res), apiProtocol);
       } catch {
         models = [];
       }
       return { status: 'valid', key: format.key, baseUrl, models };
+    }
+    if (res.status === 400 && apiProtocol === 'gemini_native') {
+      try {
+        const errPayload = await readJsonPayload(res);
+        const serialized = errPayload ? JSON.stringify(errPayload) : '';
+        if (/API_KEY_INVALID|API key not valid/i.test(serialized)) {
+          return {
+            status: 'invalid_key',
+            message: 'API Key 无效或已失效，请确认复制完整，不要复制成钥匙名称。',
+          };
+        }
+      } catch {
+        // Fall through to generic status handling if error payload is unreadable.
+      }
     }
     if (res.status === 401) {
       return {

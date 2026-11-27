@@ -791,5 +791,25 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     const invalidProtocol = JSON.parse(json);
     invalidProtocol.providerLibrary.profiles[0].capabilities.apiProtocol = 'invalid_proto';
     expect(() => parseAndValidateFolioBackup(JSON.stringify(invalidProtocol))).toThrow(/apiProtocol/);
+
+    // Gemini preset round-trips with gemini_native and strips apiKey
+    const gemini = createProviderProfileFromPreset('gemini', {
+      id: 'gem-1',
+      apiKey: 'AIza-SECRET-GEMINI',
+    });
+    const geminiJson = exportFolioBackupV3({
+      stories: [],
+      workspace: emptyWorkspace(),
+      providerLibrary: {
+        version: 2,
+        activeProviderId: 'gem-1',
+        profiles: [gemini],
+        reasoningEffort: 'none',
+      },
+    });
+    expect(geminiJson).not.toContain('AIza-SECRET-GEMINI');
+    const parsedGemini = parseAndValidateFolioBackup(geminiJson);
+    expect(parsedGemini.providerLibrary?.profiles[0]?.presetId).toBe('gemini');
+    expect(parsedGemini.providerLibrary?.profiles[0]?.capabilities.apiProtocol).toBe('gemini_native');
   });
 });

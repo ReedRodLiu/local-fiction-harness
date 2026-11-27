@@ -78,6 +78,7 @@ const PRESET_CARDS: ReadonlyArray<{
 }> = [
   { presetId: 'deepseek', label: 'DeepSeek', badge: '官方推荐' },
   { presetId: 'openai', label: 'OpenAI' },
+  { presetId: 'gemini', label: 'Google Gemini' },
   { presetId: 'openrouter', label: 'OpenRouter' },
   { presetId: 'siliconflow', label: '硅基流动' },
   { presetId: 'local', label: '本地服务' },
@@ -366,6 +367,7 @@ export async function verifyWizardDraftConnection(options: {
   const result: ProviderConnectionVerifyResult = await verifyProviderFn({
     baseUrl: draft.baseUrl,
     apiKey: draft.apiKey,
+    apiProtocol: draft.apiProtocol,
     requireSkPrefix: false,
     allowEmptyKey: true,
     allowRelativeBaseUrl: import.meta.env.DEV && isDevProxyBaseUrl(draft.baseUrl),
@@ -559,6 +561,7 @@ export function ProviderSetupWizard({
     const result = await verifyProviderConnection({
       baseUrl: draft.baseUrl,
       apiKey: draft.apiKey,
+      apiProtocol: draft.apiProtocol,
       requireSkPrefix: false,
       allowEmptyKey: true,
       allowRelativeBaseUrl: import.meta.env.DEV && isDevProxyBaseUrl(draft.baseUrl),
@@ -816,7 +819,11 @@ export function ProviderSetupWizard({
                   data-testid="provider-base-url-input"
                   type="url"
                   value={draft.baseUrl}
-                  placeholder="https://api.openai.com/v1"
+                  placeholder={
+                    draft.apiProtocol === 'gemini_native'
+                      ? 'https://generativelanguage.googleapis.com/v1beta'
+                      : 'https://api.openai.com/v1'
+                  }
                   disabled={busy}
                   autoComplete="off"
                   autoCorrect="off"
@@ -831,6 +838,24 @@ export function ProviderSetupWizard({
                 />
               </div>
 
+              {(draft.presetId === 'gemini' || draft.apiProtocol === 'gemini_native') && (
+                <BannerAlert tone="info" testId="provider-gemini-billing-note">
+                  <p className="wizard-step-desc">
+                    Google AI Studio 提供免费测试额度；消费级 Gemini AI Pro
+                    会员订阅不包含 API 调用额度，需在开发者平台创建 API Key。
+                  </p>
+                  <a
+                    className="provider-search-docs-link"
+                    href="https://aistudio.google.com/apikey"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <span>前往 Google AI Studio 获取 API Key</span>
+                    <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
+                  </a>
+                </BannerAlert>
+              )}
+
               <div className="field">
                 <label htmlFor="byok-api-key">API Key（本地服务可留空）</label>
                 <div className="key-input-row">
@@ -838,7 +863,11 @@ export function ProviderSetupWizard({
                     id="byok-api-key"
                     name="apiKey"
                     type={showKey ? 'text' : 'password'}
-                    placeholder="sk-...（本地服务可不填）"
+                    placeholder={
+                      draft.apiProtocol === 'gemini_native'
+                        ? 'AIza...（由 Google AI Studio 创建）'
+                        : 'sk-...（本地服务可不填）'
+                    }
                     value={draft.apiKey}
                     disabled={busy}
                     autoComplete="off"
@@ -1044,12 +1073,10 @@ export function ProviderSetupWizard({
                   <option value="anthropic_messages" disabled>
                     Anthropic Messages (/v1/messages · 后续支持)
                   </option>
-                  <option value="gemini_native" disabled>
-                    Google Gemini 原生 (/v1beta · 后续支持)
-                  </option>
+                  <option value="gemini_native">Google Gemini 原生 (/v1beta)</option>
                 </select>
                 <span className="wizard-privacy-note">
-                  OpenAI 官方默认使用 Responses API；第三方兼容或旧中转站可切换为 Chat Completions
+                  OpenAI 官方默认使用 Responses API，Google Gemini 默认使用原生 /v1beta 协议；第三方兼容或旧中转站可按需切换
                 </span>
               </div>
             )}

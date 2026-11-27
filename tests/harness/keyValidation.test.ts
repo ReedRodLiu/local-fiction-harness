@@ -136,6 +136,16 @@ describe('Generic OpenAI-compatible provider validation & prefill probing', () =
     expect(normalizeProviderBaseUrl('https://api.openai.com/v1/chat/completions/')).toBe('https://api.openai.com/v1');
     expect(normalizeProviderBaseUrl('https://api.openai.com/v1/responses/')).toBe('https://api.openai.com/v1');
     expect(normalizeProviderBaseUrl('https://openrouter.ai/api/v1/models')).toBe('https://openrouter.ai/api/v1');
+    expect(
+      normalizeProviderBaseUrl(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+      ),
+    ).toBe('https://generativelanguage.googleapis.com/v1beta');
+    expect(
+      normalizeProviderBaseUrl(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent/',
+      ),
+    ).toBe('https://generativelanguage.googleapis.com/v1beta');
     expect(normalizeProviderBaseUrl(' /__dev_llm_proxy/ ')).toBe('/__dev_llm_proxy');
   });
 
@@ -314,5 +324,94 @@ describe('Generic OpenAI-compatible provider validation & prefill probing', () =
       message: '当前服务商暂不支持增强续写，已保持通用稳定模式',
       statusCode: 400,
     });
+  });
+
+  it('verifies gemini_native connections via x-goog-api-key, filters generateContent chat models, and strips models/ prefix', async () => {
+    const valid = await verifyProviderConnection({
+      baseUrl:
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+      apiKey: '  AIza-gem-test-999  ',
+      apiProtocol: 'gemini_native',
+      fetchImpl: async (url, init) => {
+        expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models');
+        expect(url).not.toContain('AIza-gem-test-999');
+        expect(url).not.toContain('key=');
+        expect(init.method).toBe('GET');
+        expect(init.headers['x-goog-api-key']).toBe('AIza-gem-test-999');
+        expect(init.headers.Authorization).toBeUndefined();
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              models: [
+                {
+                  name: 'models/gemini-2.5-flash',
+                  supportedGenerationMethods: ['generateContent', 'countTokens'],
+                },
+                {
+                  name: 'models/gemini-2.5-pro',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
+                  name: 'models/gemini-embedding-001',
+                  supportedGenerationMethods: ['embedContent'],
+                },
+                {
+                  name: 'models/text-embedding-004',
+                  supportedGenerationMethods: ['generateContent', 'embedContent'],
+                },
+                {
+                  name: 'models/imagen-3.0-generate-002',
+                  supportedGenerationMethods: ['generateContent', 'predict'],
+                },
+                {
+                  name: 'models/gemini-2.5-flash-preview-tts',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
+                  name: 'models/veo-2.0-generate-001',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
+                  name: 'models/aqa',
+                  supportedGenerationMethods: ['generateAnswer', 'generateContent'],
+                },
+                {
+                  name: 'models/gemini-2.5-flash',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+              ],
+            }),
+        };
+      },
+    });
+
+    expect(valid).toEqual({
+      status: 'valid',
+      key: 'AIza-gem-test-999',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      models: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+    });
+
+    const invalid400 = await verifyProviderConnection({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: 'AIza-bad',
+      apiProtocol: 'gemini_native',
+      fetchImpl: async () => ({
+        ok: false,
+        status: 400,
+        text: async () =>
+          JSON.stringify({
+            error: {
+              code: 400,
+              message: 'API key not valid. Please pass a valid API key.',
+              status: 'INVALID_ARGUMENT',
+              details: [{ reason: 'API_KEY_INVALID' }],
+            },
+          }),
+      }),
+    });
+    expect(invalid400.status).toBe('invalid_key');
   });
 });

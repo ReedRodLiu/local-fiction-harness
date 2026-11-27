@@ -6,6 +6,7 @@ import {
   createOpenAiTransport,
   parseOpenAiSseStream,
   resolveBetaChatCompletionsUrl,
+  resolveGeminiStreamUrl,
   resolveResponsesUrl,
   type LlmStreamDelta,
 } from '../../src/harness/index.ts';
@@ -882,5 +883,226 @@ describe('OpenAI Responses API multi-protocol dispatch & streaming', () => {
     );
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain('Quota exceeded');
+  });
+});
+
+describe('gemini_native wire protocol', () => {
+  const geminiCaps = {
+    apiProtocol: 'gemini_native' as const,
+    thinkingProtocol: 'openai_reasoning_effort' as const,
+    prefixProtocol: 'standard_assistant_prefill' as const,
+    supportsBalanceQuery: false,
+    supportsBuiltinSearch: false,
+    supportsBuiltinPricing: false,
+  };
+
+  it('resolves Gemini stream URL without exposing API key in query string', () => {
+    expect(
+      resolveGeminiStreamUrl('https://generativelanguage.googleapis.com/v1beta/', 'models/gemini-2.5-flash'),
+    ).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+    );
+    expect(
+      resolveGeminiStreamUrl('https://generativelanguage.googleapis.com/v1beta/models', 'gemini-2.5-pro'),
+    ).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse',
+    );
+  });
+
+  it('builds gemini_native payloads with x-goog-api-key header, merged contents, and model-aware thinkingConfig', () => {
+    const offFlash = buildProviderStreamRequest({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: '  AIza-test-key-123  ',
+      model: 'models/gemini-2.5-flash',
+      reasoningEffort: 'none',
+      maxOutputTokens: 4096,
+      prefixCompletion: { content: '不应发送的预填' },
+      capabilities: geminiCaps,
+      messages: [
+        { role: 'system', content: '规则一' },
+        { role: 'system', content: '规则二' },
+        { role: 'user', content: '第一句' },
+        { role: 'user', content: '第二句' },
+        { role: 'assistant', content: 'AI回复一' },
+        { role: 'assistant', content: 'AI回复二' },
+        { role: 'user', content: '继续' },
+      ],
+    });
+
+    expect(offFlash.protocol).toBe('gemini_native');
+    expect(offFlash.url).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+    );
+    expect(offFlash.url).not.toContain('AIza-test-key-123');
+    expect(offFlash.url).not.toContain('key=');
+    expect(offFlash.headers['x-goog-api-key']).toBe('AIza-test-key-123');
+    expect(offFlash.headers.Authorization).toBeUndefined();
+
+    expect(JSON.parse(offFlash.body)).toEqual({
+      systemInstruction: { parts: [{ text: '规则一\n\n规则二' }] },
+      contents: [
+        { role: 'user', parts: [{ text: '第一句\n\n第二句' }] },
+        { role: 'model', parts: [{ text: 'AI回复一\n\nAI回复二' }] },
+        { role: 'user', parts: [{ text: '继续' }] },
+      ],
+      generationConfig: {
+        maxOutputTokens: 4096,
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    });
+
+    // Pro model falls back to safe minimum 128 when thinking is OFF
+    const offPro = buildProviderStreamRequest({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: 'AIza-pro',
+      model: 'gemini-2.5-pro',
+      reasoningEffort: 'none',
+      capabilities: geminiCaps,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    const offProBody = JSON.parse(offPro.body) as Record<string, unknown>;
+    expect(offProBody).not.toHaveProperty('systemInstruction');
+    expect(offProBody.generationConfig).toEqual({
+      thinkingConfig: { thinkingBudget: 128 },
+    });
+
+    // Gemini 3 uses thinkingLevel
+    const offGemini3 = buildProviderStreamRequest({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: 'AIza-3',
+      model: 'gemini-3-flash-preview',
+      reasoningEffort: 'none',
+      capabilities: geminiCaps,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    expect(JSON.parse(offGemini3.body).generationConfig).toEqual({
+      thinkingConfig: { thinkingLevel: 'minimal' },
+    });
+
+    // Thinking ON maps effort levels to thinkingBudget + includeThoughts: true
+    for (const [effort, budget] of [
+      ['low', 2048],
+      ['medium', 8192],
+      ['high', 16384],
+      ['max', 16384],
+    ] as const) {
+      const onReq = buildProviderStreamRequest({
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: 'AIza-on',
+        model: 'gemini-2.5-flash',
+        reasoningEffort: effort,
+        capabilities: geminiCaps,
+        messages: [{ role: 'user', content: 'think' }],
+      });
+      expect(JSON.parse(onReq.body).generationConfig).toEqual({
+        thinkingConfig: { includeThoughts: true, thinkingBudget: budget },
+      });
+    }
+  });
+
+  it('streams thought parts, content parts, finishReason mapping, and coalesced usageMetadata from Gemini SSE', async () => {
+    const encoder = new TextEncoder();
+    const ssePayload = [
+      'data: {"candidates":[{"content":{"role":"model","parts":[{"thought":true,"text":"先整理线索。"}]},"index":0}],"usageMetadata":{"promptTokenCount":1000,"cachedContentTokenCount":750,"thoughtsTokenCount":30,"totalTokenCount":1030}}\n\n',
+      'data: {"candidates":[{"content":{"role":"model","parts":[{"thought":true,"text":"确认动机。"},{"text":"夜雨"}]},"index":0}],"usageMetadata":{"promptTokenCount":1000,"cachedContentTokenCount":750,"candidatesTokenCount":40,"thoughtsTokenCount":60,"totalTokenCount":1100}}\n\n',
+      'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"敲响了窗棂。"}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":1000,"cachedContentTokenCount":750,"candidatesTokenCount":120,"thoughtsTokenCount":60,"totalTokenCount":1180}}\n\n',
+    ].join('');
+    const bytes = encoder.encode(ssePayload);
+
+    const transport = createOpenAiTransport(async (url, init) => {
+      expect(url).toBe(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+      );
+      expect(init.headers['x-goog-api-key']).toBe('AIza-stream-key');
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+        body: (async function* () {
+          for (let i = 0; i < bytes.length; i += 11) {
+            yield bytes.slice(i, i + 11);
+          }
+        })(),
+      };
+    });
+
+    const deltas = await collect(
+      transport.streamChat({
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: 'AIza-stream-key',
+        model: 'gemini-2.5-flash',
+        reasoningEffort: 'medium',
+        prefixCompletion: { content: '不应被持有' },
+        capabilities: geminiCaps,
+        messages: [{ role: 'user', content: '继续' }],
+      }),
+    );
+
+    expect(deltas.map((d) => d.reasoningDelta ?? '').join('')).toBe('先整理线索。确认动机。');
+    expect(deltas.map((d) => d.contentDelta ?? '').join('')).toBe('夜雨敲响了窗棂。');
+    const usageDeltas = deltas.filter((d) => d.usage !== undefined);
+    expect(usageDeltas).toHaveLength(1);
+    const last = deltas.at(-1);
+    expect(last?.finishReason).toBe('stop');
+    expect(last?.usage).toEqual({
+      promptTokens: 1000,
+      completionTokens: 180,
+      totalTokens: 1180,
+      promptCacheHitTokens: 750,
+      promptCacheMissTokens: 250,
+      completionTokensDetails: { reasoningTokens: 60 },
+    });
+  });
+
+  it('maps Gemini MAX_TOKENS/SAFETY finishReason and surfaces SSE error payloads', async () => {
+    const encoder = new TextEncoder();
+    const safetyTransport = createOpenAiTransport(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '',
+      body: (async function* () {
+        yield encoder.encode(
+          'data: {"candidates":[{"content":{"parts":[{"text":"部分"}]},"finishReason":"MAX_TOKENS"}]}\n\n',
+        );
+        yield encoder.encode(
+          'data: {"candidates":[{"finishReason":"SAFETY"}]}\n\n',
+        );
+      })(),
+    }));
+    const deltas = await collect(
+      safetyTransport.streamChat({
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: 'AIza-1',
+        model: 'gemini-2.5-flash',
+        capabilities: geminiCaps,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    );
+    expect(deltas.map((d) => d.finishReason)).toEqual(['length', 'content_filter']);
+
+    const errTransport = createOpenAiTransport(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '',
+      body: (async function* () {
+        yield encoder.encode(
+          'data: {"error":{"code":429,"message":"Resource has been exhausted"}}\n\n',
+        );
+      })(),
+    }));
+    const { error } = await collectUntilError(
+      errTransport.streamChat({
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: 'AIza-1',
+        model: 'gemini-2.5-flash',
+        capabilities: geminiCaps,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('Resource has been exhausted');
   });
 });

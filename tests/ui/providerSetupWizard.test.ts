@@ -43,7 +43,7 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
     expect(markup).toContain('id="byok-api-key"');
     expect(markup).toContain('data-testid="wizard-verify-save-btn"');
 
-    for (const presetId of ['deepseek', 'openai', 'openrouter', 'siliconflow', 'local', 'custom']) {
+    for (const presetId of ['deepseek', 'openai', 'gemini', 'openrouter', 'siliconflow', 'local', 'custom']) {
       expect(markup).toContain(`data-testid="provider-preset-${presetId}"`);
     }
     expect(markup).toMatch(/data-testid="provider-preset-deepseek"[^>]*aria-pressed="true"/);
@@ -381,6 +381,54 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
       },
     });
     expect(legacyDraft.apiProtocol).toBe('openai_chat');
+  });
+
+  it('supports Gemini preset with Google AI Studio note/link, enabled gemini_native option, and apiProtocol forwarding', async () => {
+    const geminiDraft = createWizardDraftFromPreset('gemini', { apiKey: 'AIza-gem-1' });
+    expect(geminiDraft.apiProtocol).toBe('gemini_native');
+    expect(geminiDraft.backgroundModel).toBe('gemini-2.5-flash-lite');
+    expect(geminiDraft.prefixProtocol).toBe('none');
+
+    const geminiProfile = createProviderProfileFromPreset('gemini', {
+      id: 'gem-1',
+      apiKey: 'AIza-gem-1',
+    });
+    const markup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        initialProfile: geminiProfile,
+        mode: 'edit',
+        onSaveProfile: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+
+    expect(markup).toMatch(/data-testid="provider-preset-gemini"[^>]*aria-pressed="true"/);
+    expect(markup).toContain('https://aistudio.google.com/apikey');
+    expect(markup).toContain('Google AI Studio');
+    expect(markup).toContain('免费');
+    expect(markup).toContain('Gemini AI Pro');
+    expect(markup).not.toMatch(/<option[^>]*value="gemini_native"[^>]*disabled/);
+
+    let seenProtocol: string | undefined;
+    const verified = await verifyWizardDraftConnection({
+      draft: geminiDraft,
+      verifyProviderImpl: async (opts) => {
+        seenProtocol = opts.apiProtocol;
+        return {
+          status: 'valid',
+          key: 'AIza-gem-1',
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          models: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+        };
+      },
+    });
+    expect(seenProtocol).toBe('gemini_native');
+    expect(verified.ok).toBe(true);
+    expect(verified.saveResult?.profile.presetId).toBe('gemini');
+    expect(verified.saveResult?.profile.capabilities.apiProtocol).toBe('gemini_native');
+    expect(verified.saveResult?.profile.capabilities.prefixProtocol).toBe('none');
   });
 
   it('never contains jailbreak or bypass prompt text in wizard source', () => {

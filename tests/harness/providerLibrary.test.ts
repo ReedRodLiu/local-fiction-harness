@@ -70,6 +70,27 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
       },
     });
 
+    expect(PROVIDER_PRESETS.gemini).toMatchObject({
+      presetId: 'gemini',
+      name: 'Google (Gemini)',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      models: [
+        { id: 'gemini-2.5-flash' },
+        { id: 'gemini-2.5-pro' },
+        { id: 'gemini-2.5-flash-lite' },
+      ],
+      defaultModel: 'gemini-2.5-flash',
+      backgroundModel: 'gemini-2.5-flash-lite',
+      capabilities: {
+        apiProtocol: 'gemini_native',
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'none',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+    });
+
     expect(PROVIDER_PRESETS.openrouter).toMatchObject({
       name: 'OpenRouter',
       baseUrl: 'https://openrouter.ai/api/v1',
