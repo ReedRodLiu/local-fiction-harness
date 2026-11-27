@@ -12,6 +12,7 @@ import {
   DEFAULT_PROVIDER_API_PROTOCOL,
   PROVIDER_PRESETS,
   isProviderApiProtocol,
+  isProviderThinkingDialect,
   isReasoningEffort,
 } from './keyConfig.ts';
 import {
@@ -299,6 +300,9 @@ function validateProviderCapabilities(raw: unknown, context: string): ProviderCa
   if (raw.thinkingProtocol !== 'deepseek' && raw.thinkingProtocol !== 'openai_reasoning_effort') {
     throw new Error(`${context} 的 capabilities.thinkingProtocol 无效。`);
   }
+  if (raw.thinkingDialect !== undefined && !isProviderThinkingDialect(raw.thinkingDialect)) {
+    throw new Error(`${context} 的 capabilities.thinkingDialect 无效。`);
+  }
   if (
     raw.prefixProtocol !== 'deepseek_beta' &&
     raw.prefixProtocol !== 'standard_assistant_prefill' &&
@@ -316,6 +320,7 @@ function validateProviderCapabilities(raw: unknown, context: string): ProviderCa
   return {
     apiProtocol,
     thinkingProtocol: raw.thinkingProtocol,
+    ...(raw.thinkingDialect !== undefined ? { thinkingDialect: raw.thinkingDialect } : {}),
     prefixProtocol: raw.prefixProtocol,
     supportsBalanceQuery: raw.supportsBalanceQuery,
     supportsBuiltinSearch: raw.supportsBuiltinSearch,

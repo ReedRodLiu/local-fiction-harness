@@ -55,6 +55,20 @@ const OFFICIAL_MODEL_HOSTS = new Set([
   'api.anthropic.com',
   'generativelanguage.googleapis.com',
   'qianfan.baidubce.com',
+  'api.minimaxi.com',
+  'api.minimax.io',
+  'api.siliconflow.cn',
+  'api.moonshot.cn',
+  'open.bigmodel.cn',
+  'dashscope.aliyuncs.com',
+  'ark.cn-beijing.volces.com',
+  'api.hunyuan.cloud.tencent.com',
+  'spark-api-open.xf-yun.com',
+  'token.sensenova.cn',
+  'api.stepfun.com',
+  'api.lingyiwanwu.com',
+  'api.x.ai',
+  'api.groq.com',
 ]);
 
 const BARE_DOMAIN_FILE_SUFFIXES = new Set(['ts', 'tsx', 'js', 'mjs', 'json', 'java', 'kt', 'css', 'html', 'map']);

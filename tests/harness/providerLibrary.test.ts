@@ -94,21 +94,28 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
     expect(PROVIDER_PRESETS.openrouter).toMatchObject({
       name: 'OpenRouter',
       baseUrl: 'https://openrouter.ai/api/v1',
-      models: [{ id: 'openai/gpt-4o-mini' }],
+      models: [{ id: 'openai/gpt-4o-mini' }, { id: 'anthropic/claude-sonnet-4' }],
       defaultModel: 'openai/gpt-4o-mini',
+      backgroundModel: 'openai/gpt-4o-mini',
+      consoleUrl: 'https://openrouter.ai/keys',
     });
 
     expect(PROVIDER_PRESETS.siliconflow).toMatchObject({
       name: '硅基流动',
       baseUrl: 'https://api.siliconflow.cn/v1',
-      models: [{ id: 'deepseek-ai/DeepSeek-V3' }],
+      models: [
+        { id: 'deepseek-ai/DeepSeek-V3' },
+        { id: 'Qwen/Qwen2.5-72B-Instruct' },
+      ],
       defaultModel: 'deepseek-ai/DeepSeek-V3',
+      backgroundModel: 'Qwen/Qwen2.5-7B-Instruct',
+      consoleUrl: 'https://cloud.siliconflow.cn/account/ak',
     });
 
     expect(PROVIDER_PRESETS.local).toMatchObject({
       name: '本地服务（Ollama / LM Studio）',
       baseUrl: 'http://localhost:11434/v1',
-      models: [{ id: 'llama3.2' }],
+      models: [{ id: 'llama3.2' }, { id: 'qwen2.5' }],
       defaultModel: 'llama3.2',
     });
 
@@ -129,6 +136,51 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
     expect(defLib.profiles).toHaveLength(1);
     expect(defLib.activeProviderId).toBe(defLib.profiles[0]!.id);
     expect(defLib.profiles[0]!.presetId).toBe('deepseek');
+  });
+
+  it('includes all 13 additional overseas and domestic presets with models, backgroundModel, consoleUrl, setupHint, and thinkingDialect', () => {
+    const newPresetIds = [
+      'xai',
+      'groq',
+      'moonshot',
+      'zhipu',
+      'dashscope',
+      'volcengine',
+      'minimax',
+      'qianfan',
+      'hunyuan',
+      'spark',
+      'sensenova',
+      'stepfun',
+      'lingyi',
+    ] as const;
+
+    for (const id of newPresetIds) {
+      const preset = PROVIDER_PRESETS[id];
+      expect(preset.presetId).toBe(id);
+      expect(preset.baseUrl).toMatch(/^https:\/\//);
+      expect(preset.models.length).toBeGreaterThanOrEqual(2);
+      expect(preset.models.length).toBeLessThanOrEqual(4);
+      expect(preset.defaultModel).toBeTruthy();
+      expect(preset.backgroundModel).toBeTruthy();
+      expect(preset.consoleUrl).toMatch(/^https:\/\//);
+      expect(preset.capabilities.apiProtocol).toBe('openai_chat');
+      expect(preset.capabilities.thinkingProtocol).toBe('openai_reasoning_effort');
+
+      const profile = createProviderProfileFromPreset(id, { id: `p-${id}`, apiKey: 'k-test' });
+      expect(profile.presetId).toBe(id);
+      expect(profile.defaultModel).toBe(preset.defaultModel);
+      expect(profile.backgroundModel).toBe(preset.backgroundModel);
+    }
+
+    expect(PROVIDER_PRESETS.dashscope.capabilities.thinkingDialect).toBe('enable_thinking');
+    expect(PROVIDER_PRESETS.zhipu.capabilities.thinkingDialect).toBe('thinking_type_enabled');
+    expect(PROVIDER_PRESETS.volcengine.capabilities.thinkingDialect).toBe('thinking_type_enabled');
+    expect(PROVIDER_PRESETS.openai.consoleUrl).toMatch(/^https:\/\//);
+    expect(PROVIDER_PRESETS.openai.setupHint).toBeTruthy();
+    expect(PROVIDER_PRESETS.volcengine.setupHint).toContain('ep-');
+    expect(PROVIDER_PRESETS.spark.setupHint).toContain('APIPassword');
+    expect(PROVIDER_PRESETS.dashscope.setupHint).toBeTruthy();
   });
 
   it('encodes and decodes lfh-secrets-v2 envelopes and legacy raw keys', () => {

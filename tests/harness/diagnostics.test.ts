@@ -875,8 +875,8 @@ describe('Spec #26 Slice 2: DeepSeek structure radar & breadcrumb wrappers', () 
       apiKey: 'sk-sf-CANARY',
       memoryOnly: false,
     });
-    expect(siliconProfile.hostKind).toBe('relay');
-    expect(siliconProfile.host).toMatch(/^relay_[0-9a-f]{8}$/);
+    expect(siliconProfile.hostKind).toBe('official');
+    expect(siliconProfile.host).toBe('api.siliconflow.cn');
     expect(siliconProfile.model).toBe('deepseek-ai/DeepSeek-V3');
 
     const collector = createDiagnosticCollector({ platform: 'web' });
@@ -923,6 +923,51 @@ describe('Spec #26 Slice 2: DeepSeek structure radar & breadcrumb wrappers', () 
     expect(json).not.toContain('sk-custom-CANARY987654');
     expect(bundle.events[0]?.sanitizedReason).toContain('[REDACTED_KEY]');
     expect(bundle.events[0]?.sanitizedReason).toContain('Bearer [REDACTED]');
+  });
+
+  it('preserves all expanded official preset hostnames in diagnostics while still redacting unlisted relays', () => {
+    const officialHosts = [
+      'api.deepseek.com',
+      'api.openai.com',
+      'openrouter.ai',
+      'api.anthropic.com',
+      'generativelanguage.googleapis.com',
+      'qianfan.baidubce.com',
+      'api.minimaxi.com',
+      'api.minimax.io',
+      'api.siliconflow.cn',
+      'api.moonshot.cn',
+      'open.bigmodel.cn',
+      'dashscope.aliyuncs.com',
+      'ark.cn-beijing.volces.com',
+      'api.hunyuan.cloud.tencent.com',
+      'spark-api-open.xf-yun.com',
+      'token.sensenova.cn',
+      'api.stepfun.com',
+      'api.lingyiwanwu.com',
+      'api.x.ai',
+      'api.groq.com',
+    ];
+
+    for (const host of officialHosts) {
+      const sanitized = sanitizeEndpointProfile({
+        baseUrl: `https://${host}/v1`,
+        model: 'test-model',
+        apiKey: 'sk-secret-canary',
+        memoryOnly: false,
+      });
+      expect(sanitized.hostKind).toBe('official');
+      expect(sanitized.host).toBe(host);
+    }
+
+    const unlisted = sanitizeEndpointProfile({
+      baseUrl: 'https://unlisted-relay.example.net/v1',
+      model: 'test-model',
+      apiKey: 'sk-secret-canary',
+      memoryOnly: false,
+    });
+    expect(unlisted.hostKind).toBe('relay');
+    expect(unlisted.host).toMatch(/^relay_[0-9a-f]{8}$/);
   });
 
 });
