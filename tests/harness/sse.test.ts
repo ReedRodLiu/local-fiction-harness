@@ -5,8 +5,11 @@ import {
   buildProviderStreamRequest,
   createOpenAiTransport,
   parseOpenAiSseStream,
+  resolveAnthropicMessagesUrl,
   resolveBetaChatCompletionsUrl,
+  resolveEffectivePrefixProtocol,
   resolveResponsesUrl,
+  resolveStreamPrefillContent,
   type LlmStreamDelta,
 } from '../../src/harness/index.ts';
 
@@ -882,5 +885,286 @@ describe('OpenAI Responses API multi-protocol dispatch & streaming', () => {
     );
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain('Quota exceeded');
+  });
+});
+
+describe('Anthropic Messages protocol adapter', () => {
+  it('resolves /messages URLs idempotently', () => {
+    expect(resolveAnthropicMessagesUrl('https://api.anthropic.com/v1')).toBe(
+      'https://api.anthropic.com/v1/messages',
+    );
+    expect(resolveAnthropicMessagesUrl('https://api.anthropic.com/v1/')).toBe(
+      'https://api.anthropic.com/v1/messages',
+    );
+    expect(resolveAnthropicMessagesUrl('https://api.anthropic.com/v1/messages')).toBe(
+      'https://api.anthropic.com/v1/messages',
+    );
+    expect(resolveAnthropicMessagesUrl('https://relay.example.com/anthropic/')).toBe(
+      'https://relay.example.com/anthropic/messages',
+    );
+  });
+
+  it('builds anthropic_messages requests with headers, top-level system, consecutive role merge, and prefill when thinking is OFF', () => {
+    const req = buildProviderStreamRequest({
+      baseUrl: 'https://api.anthropic.com/v1',
+      apiKey: 'sk-ant-123',
+      model: 'claude-sonnet-4-5',
+      reasoningEffort: 'none',
+      prefixCompletion: { content: '夜色渐浓，' },
+      capabilities: {
+        apiProtocol: 'anthropic_messages',
+        thinkingProtocol: 'openai_reasoning_effort',
+        prefixProtocol: 'standard_assistant_prefill',
+        supportsBalanceQuery: false,
+        supportsBuiltinSearch: false,
+        supportsBuiltinPricing: false,
+      },
+      messages: [
+        { role: 'system', content: '世界观' },
+        { role: 'system', content: '文风要求' },
+        { role: 'user', content: '第一句' },
+        { role: 'user', content: '补充一句' },
+        { role: 'assistant', content: '回应一' },
+        { role: 'assistant', content: '回应二' },
+        { role: 'user', content: '继续' },
+      ],
+    });
+
+    expect(req.protocol).toBe('anthropic_messages');
+    expect(req.url).toBe('https://api.anthropic.com/v1/messages');
+    expect(req.headers['x-api-key']).toBe('sk-ant-123');
+    expect(req.headers.Authorization).toBeUndefined();
+    expect(req.headers['anthropic-version']).toBe('2023-06-01');
+    expect(req.headers['anthropic-dangerous-direct-browser-access']).toBe('true');
+
+    const body = JSON.parse(req.body) as Record<string, unknown>;
+    expect(body).toEqual({
+      model: 'claude-sonnet-4-5',
+      stream: true,
+      max_tokens: 4096,
+      system: '世界观\n\n文风要求',
+      messages: [
+        { role: 'user', content: '第一句\n\n补充一句' },
+        { role: 'assistant', content: '回应一\n\n回应二' },
+        { role: 'user', content: '继续' },
+        { role: 'assistant', content: '夜色渐浓，' },
+      ],
+    });
+    expect(body).not.toHaveProperty('thinking');
+  });
+
+  it('enables thinking budget_tokens, ensures max_tokens > budget_tokens, and auto-disables assistant prefill when thinking is ON', () => {
+    const capabilities = {
+      apiProtocol: 'anthropic_messages' as const,
+      thinkingProtocol: 'openai_reasoning_effort' as const,
+      prefixProtocol: 'standard_assistant_prefill' as const,
+      supportsBalanceQuery: false,
+      supportsBuiltinSearch: false,
+      supportsBuiltinPricing: false,
+    };
+
+    expect(
+      resolveEffectivePrefixProtocol({
+        baseUrl: 'https://api.anthropic.com/v1',
+        capabilities,
+        reasoningEffort: 'none',
+      }),
+    ).toBe('standard_assistant_prefill');
+    expect(
+      resolveEffectivePrefixProtocol({
+        baseUrl: 'https://api.anthropic.com/v1',
+        capabilities,
+        reasoningEffort: 'low',
+      }),
+    ).toBe('none');
+
+    const cases = [
+      { effort: 'low' as const, budget: 2048 },
+      { effort: 'medium' as const, budget: 8192 },
+      { effort: 'high' as const, budget: 16384 },
+      { effort: 'max' as const, budget: 16384 },
+    ];
+    for (const { effort, budget } of cases) {
+      const streamReq = {
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'sk-ant-123',
+        model: 'claude-sonnet-4-5',
+        reasoningEffort: effort,
+        maxOutputTokens: 4096,
+        prefixCompletion: { content: '严禁发送的预填' },
+        capabilities,
+        messages: [{ role: 'user' as const, content: '请推理' }],
+      };
+      expect(resolveStreamPrefillContent(streamReq)).toBe('');
+      const built = buildProviderStreamRequest(streamReq);
+      const body = JSON.parse(built.body) as {
+        thinking?: { type: string; budget_tokens: number };
+        max_tokens: number;
+        messages: Array<{ role: string; content: string }>;
+        system?: string;
+      };
+      expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: budget });
+      expect(body.max_tokens).toBeGreaterThan(budget);
+      expect(body).not.toHaveProperty('system');
+      expect(body.messages).toEqual([{ role: 'user', content: '请推理' }]);
+    }
+  });
+
+  it('streams thinking_delta, text_delta, normalized cache usage, and prefix continuation from Anthropic SSE', async () => {
+    const encoder = new TextEncoder();
+    const anthropicCaps = {
+      apiProtocol: 'anthropic_messages' as const,
+      thinkingProtocol: 'openai_reasoning_effort' as const,
+      prefixProtocol: 'standard_assistant_prefill' as const,
+      supportsBalanceQuery: false,
+      supportsBuiltinSearch: false,
+      supportsBuiltinPricing: false,
+    };
+
+    const sseThinkingPayload = [
+      'event: message_start\n',
+      'data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","usage":{"input_tokens":100,"cache_creation_input_tokens":20,"cache_read_input_tokens":50,"output_tokens":1}}}\n\n',
+      'event: content_block_start\n',
+      'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n',
+      'event: content_block_delta\n',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"先分析人物动机。"}}\n\n',
+      'event: content_block_stop\n',
+      'data: {"type":"content_block_stop","index":0}\n\n',
+      'event: content_block_start\n',
+      'data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}\n\n',
+      'event: content_block_delta\n',
+      'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"窗外"}}\n\n',
+      'event: content_block_delta\n',
+      'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"雨声渐歇。"}}\n\n',
+      'event: message_delta\n',
+      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":80}}\n\n',
+      'event: message_stop\n',
+      'data: {"type":"message_stop"}\n\n',
+    ].join('');
+    const bytes = encoder.encode(sseThinkingPayload);
+
+    const transport = createOpenAiTransport(async (url, init) => {
+      expect(url).toBe('https://api.anthropic.com/v1/messages');
+      expect(init.headers['x-api-key']).toBe('sk-ant-1');
+      expect(init.headers['anthropic-version']).toBe('2023-06-01');
+      expect(init.headers['anthropic-dangerous-direct-browser-access']).toBe('true');
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+        body: (async function* () {
+          for (let i = 0; i < bytes.length; i += 11) {
+            yield bytes.slice(i, i + 11);
+          }
+        })(),
+      };
+    });
+
+    // When thinking is ON, prefixCompletion must NOT hold "窗外" or fail echo confirmation
+    const deltas = await collect(
+      transport.streamChat({
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'sk-ant-1',
+        model: 'claude-sonnet-4-5',
+        reasoningEffort: 'medium',
+        prefixCompletion: { content: '窗外的雨' },
+        capabilities: anthropicCaps,
+        messages: [{ role: 'user', content: '继续' }],
+      }),
+    );
+
+    expect(deltas.map((d) => d.reasoningDelta ?? '').join('')).toBe('先分析人物动机。');
+    expect(deltas.map((d) => d.contentDelta ?? '').join('')).toBe('窗外雨声渐歇。');
+    expect(deltas.at(-1)).toEqual({
+      finishReason: 'stop',
+      usage: {
+        promptTokens: 170,
+        completionTokens: 80,
+        totalTokens: 250,
+        promptCacheHitTokens: 50,
+        promptCacheMissTokens: 120,
+      },
+    });
+
+    // When thinking is OFF and prefill is used, Anthropic continues directly after prefill and cursor synthesizes it once
+    const prefillTransport = createOpenAiTransport(async (_url, init) => {
+      const body = JSON.parse(init.body) as { messages: Array<{ role: string; content: string }> };
+      expect(body.messages.at(-1)).toEqual({ role: 'assistant', content: '夜色渐浓，' });
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+        body: (async function* () {
+          yield encoder.encode(
+            [
+              'event: message_start\n',
+              'data: {"type":"message_start","message":{"usage":{"input_tokens":40,"output_tokens":0}}}\n\n',
+              'event: content_block_delta\n',
+              'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"远处的钟声响了。"}}\n\n',
+              'event: message_delta\n',
+              'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":12}}\n\n',
+              'event: message_stop\n',
+              'data: {"type":"message_stop"}\n\n',
+            ].join(''),
+          );
+        })(),
+      };
+    });
+    const prefillDeltas = await collect(
+      prefillTransport.streamChat({
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'sk-ant-1',
+        model: 'claude-sonnet-4-5',
+        reasoningEffort: 'none',
+        prefixCompletion: { content: '夜色渐浓，' },
+        capabilities: anthropicCaps,
+        messages: [{ role: 'user', content: '继续' }],
+      }),
+    );
+    expect(prefillDeltas.map((d) => d.contentDelta ?? '').join('')).toBe('夜色渐浓，远处的钟声响了。');
+    expect(prefillDeltas.at(-1)).toEqual({
+      finishReason: 'length',
+      usage: {
+        promptTokens: 40,
+        completionTokens: 12,
+        totalTokens: 52,
+      },
+    });
+  });
+
+  it('surfaces Anthropic SSE error events with the upstream message', async () => {
+    const encoder = new TextEncoder();
+    const errorTransport = createOpenAiTransport(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '',
+      body: (async function* () {
+        yield encoder.encode(
+          'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n',
+        );
+      })(),
+    }));
+
+    const { error } = await collectUntilError(
+      errorTransport.streamChat({
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'sk-ant-1',
+        model: 'claude-sonnet-4-5',
+        capabilities: {
+          apiProtocol: 'anthropic_messages',
+          thinkingProtocol: 'openai_reasoning_effort',
+          prefixProtocol: 'standard_assistant_prefill',
+          supportsBalanceQuery: false,
+          supportsBuiltinSearch: false,
+          supportsBuiltinPricing: false,
+        },
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('Overloaded');
   });
 });

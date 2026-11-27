@@ -746,6 +746,12 @@
   gap: 10px;
 }
 
+.provider-subscription-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .provider-model-input-row {
   display: flex;
   align-items: stretch;

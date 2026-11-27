@@ -43,7 +43,15 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
     expect(markup).toContain('id="byok-api-key"');
     expect(markup).toContain('data-testid="wizard-verify-save-btn"');
 
-    for (const presetId of ['deepseek', 'openai', 'openrouter', 'siliconflow', 'local', 'custom']) {
+    for (const presetId of [
+      'deepseek',
+      'openai',
+      'anthropic',
+      'openrouter',
+      'siliconflow',
+      'local',
+      'custom',
+    ]) {
       expect(markup).toContain(`data-testid="provider-preset-${presetId}"`);
     }
     expect(markup).toMatch(/data-testid="provider-preset-deepseek"[^>]*aria-pressed="true"/);
@@ -381,6 +389,58 @@ describe('Ticket #164 T5: ProviderSetupWizard & DeepSeekSetupWizard', () => {
       },
     });
     expect(legacyDraft.apiProtocol).toBe('openai_chat');
+  });
+
+  it('renders Anthropic preset with subscription-vs-API-Key notice, console link, enabled anthropic_messages protocol, and forwards apiProtocol during verification', async () => {
+    const anthropicProfile = createProviderProfileFromPreset('anthropic', {
+      id: 'anthropic-1',
+      apiKey: 'sk-ant-123',
+    });
+    const markup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        initialProfile: anthropicProfile,
+        mode: 'edit',
+        onSaveProfile: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+
+    expect(markup).toMatch(/data-testid="provider-preset-anthropic"[^>]*aria-pressed="true"/);
+    expect(markup).toContain('https://api.anthropic.com/v1');
+    expect(markup).toContain('data-testid="anthropic-subscription-notice"');
+    expect(markup).toMatch(/Claude Pro\s*\/\s*Max/);
+    expect(markup).toContain('https://console.anthropic.com/settings/keys');
+    expect(markup).toContain('data-testid="anthropic-console-keys-link"');
+    expect(markup).toContain('value="anthropic_messages"');
+    expect(markup).not.toMatch(/value="anthropic_messages"[^>]*disabled/);
+
+    const draft = createWizardDraftFromPreset('anthropic', { apiKey: 'sk-ant-999' });
+    expect(draft.apiProtocol).toBe('anthropic_messages');
+    expect(draft.prefixProtocol).toBe('standard_assistant_prefill');
+    expect(draft.backgroundModel).toBe('claude-haiku-4-5');
+
+    let capturedProtocol: string | undefined;
+    const outcome = await verifyWizardDraftConnection({
+      draft,
+      verifyProviderImpl: async (opts) => {
+        capturedProtocol = opts.apiProtocol;
+        return {
+          status: 'valid',
+          key: 'sk-ant-999',
+          baseUrl: 'https://api.anthropic.com/v1',
+          models: ['claude-sonnet-4-5', 'claude-haiku-4-5'],
+        };
+      },
+    });
+    expect(capturedProtocol).toBe('anthropic_messages');
+    expect(outcome.ok).toBe(true);
+    expect(outcome.saveResult?.profile.presetId).toBe('anthropic');
+    expect(outcome.saveResult?.profile.capabilities.apiProtocol).toBe('anthropic_messages');
+    expect(outcome.saveResult?.profile.capabilities.prefixProtocol).toBe(
+      'standard_assistant_prefill',
+    );
   });
 
   it('never contains jailbreak or bypass prompt text in wizard source', () => {

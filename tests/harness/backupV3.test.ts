@@ -791,5 +791,30 @@ describe('.folio.json v3 full backup, legacy .lfh.json compat & non-destructive 
     const invalidProtocol = JSON.parse(json);
     invalidProtocol.providerLibrary.profiles[0].capabilities.apiProtocol = 'invalid_proto';
     expect(() => parseAndValidateFolioBackup(JSON.stringify(invalidProtocol))).toThrow(/apiProtocol/);
+
+    // Anthropic preset round-trips cleanly without stripping presetId
+    const anthropic = createProviderProfileFromPreset('anthropic', {
+      id: 'anthropic-1',
+      apiKey: 'sk-ant-SECRET',
+    });
+    const anthropicJson = exportFolioBackupV3({
+      stories: [],
+      workspace: emptyWorkspace(),
+      providerLibrary: {
+        version: 2,
+        activeProviderId: 'anthropic-1',
+        profiles: [anthropic],
+        reasoningEffort: 'none',
+      },
+    });
+    expect(anthropicJson).not.toContain('sk-ant-SECRET');
+    const parsedAnthropic = parseAndValidateFolioBackup(anthropicJson);
+    expect(parsedAnthropic.providerLibrary?.profiles[0]?.presetId).toBe('anthropic');
+    expect(parsedAnthropic.providerLibrary?.profiles[0]?.capabilities.apiProtocol).toBe(
+      'anthropic_messages',
+    );
+    expect(parsedAnthropic.providerLibrary?.profiles[0]?.capabilities.prefixProtocol).toBe(
+      'standard_assistant_prefill',
+    );
   });
 });
