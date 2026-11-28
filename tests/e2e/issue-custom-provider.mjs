@@ -660,7 +660,7 @@ async function main() {
     for (const groupLabel of ['推荐与内置', '国内大模型', '海外大模型', '聚合・本地・自定义']) {
       await pickerPanel.getByRole('heading', { name: groupLabel }).waitFor();
     }
-    assert.equal(await pickerPanel.locator('button[data-testid^="provider-preset-"]').count(), 21);
+    assert.equal(await pickerPanel.locator('button[data-testid^="provider-preset-"]').count(), 30);
 
     // Search filter narrows by Chinese/English alias and resets cleanly
     const presetSearchInput = wizard.getByTestId('provider-preset-search-input');

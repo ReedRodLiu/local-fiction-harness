@@ -1189,6 +1189,11 @@ describe('gemini_native wire protocol', () => {
 
   it('resolves Gemini stream URL without exposing API key in query string', () => {
     expect(
+      resolveGeminiStreamUrl('https://generativelanguage.googleapis.com', 'gemini-2.5-flash'),
+    ).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+    );
+    expect(
       resolveGeminiStreamUrl('https://generativelanguage.googleapis.com/v1beta/', 'models/gemini-2.5-flash'),
     ).toBe(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
@@ -1431,15 +1436,24 @@ describe('Third-party openai_chat thinking dialects (Slice 4)', () => {
       'xai',
       'groq',
       'moonshot',
+      'moonshot_coding',
       'zhipu',
+      'zhipu_coding',
       'dashscope',
+      'dashscope_coding',
       'volcengine',
+      'volcengine_coding',
       'minimax',
+      'minimax_token_plan',
       'qianfan',
+      'qianfan_token_plan',
       'hunyuan',
+      'hunyuan_coding',
       'spark',
       'sensenova',
+      'sensenova_token_plan',
       'stepfun',
+      'stepfun_plan',
       'lingyi',
       'openrouter',
       'siliconflow',

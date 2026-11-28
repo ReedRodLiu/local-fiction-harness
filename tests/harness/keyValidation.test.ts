@@ -409,14 +409,14 @@ describe('Generic OpenAI-compatible provider validation & prefill probing', () =
     });
   });
 
-  it('verifies gemini_native connections via x-goog-api-key, filters generateContent chat models, and strips models/ prefix', async () => {
+  it('verifies gemini_native connections via x-goog-api-key, paginates models, filters non-chat models, and strips models/ prefix', async () => {
     const valid = await verifyProviderConnection({
       baseUrl:
         'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
       apiKey: '  AIza-gem-test-999  ',
       apiProtocol: 'gemini_native',
       fetchImpl: async (url, init) => {
-        expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models');
+        expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000');
         expect(url).not.toContain('AIza-gem-test-999');
         expect(url).not.toContain('key=');
         expect(init.method).toBe('GET');
@@ -453,6 +453,34 @@ describe('Generic OpenAI-compatible provider validation & prefill probing', () =
                   supportedGenerationMethods: ['generateContent'],
                 },
                 {
+                  name: 'models/gemini-2.5-flash-image',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
+                  name: 'models/nano-banana-pro-preview',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
+                  name: 'models/lyria-3.5',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
+                  name: 'models/gemini-3.5-transcribe',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
+                  name: 'models/gemini-robotics-er-2-preview',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
+                  name: 'models/gemini-2.5-computer-use-preview-10-2025',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
+                  name: 'models/deep-research-preview-04-2026',
+                  supportedGenerationMethods: ['generateContent'],
+                },
+                {
                   name: 'models/veo-2.0-generate-001',
                   supportedGenerationMethods: ['generateContent'],
                 },
@@ -476,6 +504,118 @@ describe('Generic OpenAI-compatible provider validation & prefill probing', () =
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       models: ['gemini-2.5-flash', 'gemini-2.5-pro'],
     });
+
+    // Bare origin appends /v1beta and follows nextPageToken pagination with AQ. key format
+    const pagedCalls: string[] = [];
+    const bareAndPaged = await verifyProviderConnection({
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      apiKey: 'AQ.test-key-123',
+      apiProtocol: 'gemini_native',
+      fetchImpl: async (url, init) => {
+        pagedCalls.push(url);
+        expect(init.headers['x-goog-api-key']).toBe('AQ.test-key-123');
+        if (!url.includes('pageToken=')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () =>
+              JSON.stringify({
+                models: [
+                  { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] },
+                ],
+                nextPageToken: 'page-2-tok',
+              }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              models: [
+                { name: 'models/gemini-4-hydrogen', supportedGenerationMethods: ['generateContent'] },
+              ],
+            }),
+        };
+      },
+    });
+    expect(pagedCalls).toEqual([
+      'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000',
+      'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&pageToken=page-2-tok',
+    ]);
+    expect(bareAndPaged).toEqual({
+      status: 'valid',
+      key: 'AQ.test-key-123',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      models: ['gemini-2.5-flash', 'gemini-4-hydrogen'],
+    });
+
+    // Page-2 network throw preserves already-fetched page-1 models
+    const partialPaged = await verifyProviderConnection({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: 'AQ.partial-page-2',
+      apiProtocol: 'gemini_native',
+      fetchImpl: async (url) => {
+        if (!url.includes('pageToken=')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () =>
+              JSON.stringify({
+                models: [
+                  { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] },
+                ],
+                nextPageToken: 'page-2-fail',
+              }),
+          };
+        }
+        throw new Error('page 2 transient failure');
+      },
+    });
+    expect(partialPaged).toEqual({
+      status: 'valid',
+      key: 'AQ.partial-page-2',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      models: ['gemini-2.5-flash'],
+    });
+
+    // Empty-key 403 returns clear API-key prompt instead of quota_or_blocked
+    const empty403 = await verifyProviderConnection({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: '',
+      allowEmptyKey: true,
+      apiProtocol: 'gemini_native',
+      fetchImpl: async () => ({
+        ok: false,
+        status: 403,
+        text: async () =>
+          JSON.stringify({
+            error: { code: 403, status: 'PERMISSION_DENIED', details: [{ reason: 'ACCESS_DENIED' }] },
+          }),
+      }),
+    });
+    expect(empty403).toEqual({
+      status: 'invalid_key',
+      message: '请先填写有效的 Gemini API Key（AIza... 或 AQ....）。',
+    });
+
+    // Does not auto-detect gemini_native when protocol is omitted or openai_chat
+    let seenAuthHeader: string | undefined;
+    await verifyProviderConnection({
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      apiKey: 'AQ.openai-compat',
+      fetchImpl: async (url, init) => {
+        expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/openai/models');
+        seenAuthHeader = init.headers.Authorization;
+        expect(init.headers['x-goog-api-key']).toBeUndefined();
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ data: [{ id: 'models/gemini-2.5-flash' }] }),
+        };
+      },
+    });
+    expect(seenAuthHeader).toBe('Bearer AQ.openai-compat');
 
     const invalid400 = await verifyProviderConnection({
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',

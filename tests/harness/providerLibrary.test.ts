@@ -159,20 +159,29 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
     expect(defLib.profiles[0]!.presetId).toBe('deepseek');
   });
 
-  it('includes all 13 additional overseas and domestic presets with models, backgroundModel, consoleUrl, setupHint, and thinkingDialect', () => {
+  it('includes all 13 additional overseas and domestic presets plus 9 token subscription presets with models, backgroundModel, consoleUrl, setupHint, and thinkingDialect', () => {
     const newPresetIds = [
       'xai',
       'groq',
       'moonshot',
+      'moonshot_coding',
       'zhipu',
+      'zhipu_coding',
       'dashscope',
+      'dashscope_coding',
       'volcengine',
+      'volcengine_coding',
       'minimax',
+      'minimax_token_plan',
       'qianfan',
+      'qianfan_token_plan',
       'hunyuan',
+      'hunyuan_coding',
       'spark',
       'sensenova',
+      'sensenova_token_plan',
       'stepfun',
+      'stepfun_plan',
       'lingyi',
     ] as const;
 
@@ -195,8 +204,15 @@ describe('Provider presets, default library, and multi-secret envelope', () => {
     }
 
     expect(PROVIDER_PRESETS.dashscope.capabilities.thinkingDialect).toBe('enable_thinking');
+    expect(PROVIDER_PRESETS.dashscope_coding.capabilities.thinkingDialect).toBe('enable_thinking');
     expect(PROVIDER_PRESETS.zhipu.capabilities.thinkingDialect).toBe('thinking_type_enabled');
+    expect(PROVIDER_PRESETS.zhipu_coding.capabilities.thinkingDialect).toBe('thinking_type_enabled');
     expect(PROVIDER_PRESETS.volcengine.capabilities.thinkingDialect).toBe('thinking_type_enabled');
+    expect(PROVIDER_PRESETS.volcengine_coding.capabilities.thinkingDialect).toBe('thinking_type_enabled');
+    expect(PROVIDER_PRESETS.sensenova.baseUrl).toBe('https://api.sensenova.cn/v1');
+    expect(PROVIDER_PRESETS.sensenova_token_plan.baseUrl).toBe('https://token.sensenova.cn/v1');
+    expect(PROVIDER_PRESETS.moonshot_coding.baseUrl).toBe('https://api.kimi.com/coding/v1');
+    expect(PROVIDER_PRESETS.hunyuan_coding.baseUrl).toBe('https://api.lkeap.cloud.tencent.com/coding/v3');
     expect(PROVIDER_PRESETS.openai.consoleUrl).toMatch(/^https:\/\//);
     expect(PROVIDER_PRESETS.openai.setupHint).toBeTruthy();
     expect(PROVIDER_PRESETS.volcengine.setupHint).toContain('ep-');

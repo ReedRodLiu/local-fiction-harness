@@ -51,7 +51,7 @@ describe('Ticket #164 T5 & Ticket #181: ProviderSetupWizard & DeepSeekSetupWizar
     expect(markup).toMatch(/data-testid="provider-preset-picker-trigger"[^>]*aria-expanded="false"/);
     expect(markup).toContain('DeepSeek 官方');
     expect(markup).toContain('官方推荐');
-    expect(markup).toContain('切换服务商（21 项）');
+    expect(markup).toContain('切换服务商（30 项）');
     expect(markup).not.toContain('data-testid="provider-preset-picker-panel"');
     expect(markup).not.toContain('data-testid="provider-preset-search-input"');
     expect(markup).not.toContain('data-testid="provider-preset-deepseek"');
@@ -100,7 +100,7 @@ describe('Ticket #164 T5 & Ticket #181: ProviderSetupWizard & DeepSeekSetupWizar
     expect(markup).toContain('value="sk-123456"');
   });
 
-  it('supports expandable 4-category 21-preset picker, search filtering, and mode-sensitive initial expansion', () => {
+  it('supports expandable 4-category 30-preset picker with side-by-side billing channels, search filtering, and mode-sensitive initial expansion', () => {
     expect(resolveInitialPresetPickerOpen('add')).toBe(true);
     expect(resolveInitialPresetPickerOpen('onboarding')).toBe(false);
     expect(resolveInitialPresetPickerOpen('edit')).toBe(false);
@@ -112,21 +112,39 @@ describe('Ticket #164 T5 & Ticket #181: ProviderSetupWizard & DeepSeekSetupWizar
       '聚合・本地・自定义',
     ]);
     const flattenedIds = PROVIDER_PRESET_CATEGORIES.flatMap((group) => group.presetIds);
-    expect(flattenedIds).toHaveLength(21);
+    expect(flattenedIds).toHaveLength(30);
     expect(new Set(flattenedIds)).toEqual(new Set(Object.keys(PROVIDER_PRESETS)));
 
     expect(
       filterProviderPresetGroups('Kimi').flatMap((g) => g.presetIds),
-    ).toEqual(['moonshot']);
+    ).toEqual(['moonshot', 'moonshot_coding']);
     expect(
       filterProviderPresetGroups('百炼').flatMap((g) => g.presetIds),
-    ).toEqual(['dashscope']);
+    ).toEqual(['dashscope', 'dashscope_coding']);
     expect(
       filterProviderPresetGroups('googleapis.com').flatMap((g) => g.presetIds),
     ).toEqual(['gemini']);
     expect(
       filterProviderPresetGroups('volcengine').flatMap((g) => g.presetIds),
-    ).toEqual(['volcengine']);
+    ).toEqual(['volcengine', 'volcengine_coding']);
+    expect(
+      filterProviderPresetGroups('Step Plan').flatMap((g) => g.presetIds),
+    ).toEqual(['stepfun_plan']);
+    expect(
+      filterProviderPresetGroups('Kimi Code').flatMap((g) => g.presetIds),
+    ).toEqual(['moonshot_coding']);
+    expect(
+      filterProviderPresetGroups('Token Plan').flatMap((g) => g.presetIds),
+    ).toEqual([
+      'zhipu_coding',
+      'dashscope_coding',
+      'volcengine_coding',
+      'minimax_token_plan',
+      'qianfan_token_plan',
+      'hunyuan_coding',
+      'sensenova_token_plan',
+      'stepfun_plan',
+    ]);
     expect(filterProviderPresetGroups('nonexistent-provider-xyz')).toEqual([]);
 
     const addMarkup = renderToStaticMarkup(
@@ -580,6 +598,19 @@ describe('Ticket #164 T5 & Ticket #181: ProviderSetupWizard & DeepSeekSetupWizar
         expect(markup.match(/https:\/\/platform\.openai\.com\/api-keys/g)).toHaveLength(1);
       }
     }
+
+    const geminiProfile = createProviderProfileFromPreset('gemini', { id: 'p-gemini' });
+    const geminiMarkup = renderToStaticMarkup(
+      createElement(ProviderSetupWizard, {
+        open: true,
+        initialProfile: geminiProfile,
+        mode: 'edit',
+        onSaveProfile: vi.fn(),
+        onCancel: vi.fn(),
+        onExitComplete: vi.fn(),
+      }),
+    );
+    expect(geminiMarkup).toContain('AIza... 或 AQ....（由 Google AI Studio 创建）');
 
     const dashDraft = createWizardDraftFromPreset('dashscope', { apiKey: 'sk-dash' });
     const dashSave = buildProviderSaveResultFromDraft(dashDraft);

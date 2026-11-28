@@ -91,15 +91,24 @@ export const PROVIDER_PRESET_CATEGORIES: readonly ProviderPresetCategoryGroup[] 
     label: '国内大模型',
     presetIds: [
       'moonshot',
+      'moonshot_coding',
       'zhipu',
+      'zhipu_coding',
       'dashscope',
+      'dashscope_coding',
       'volcengine',
+      'volcengine_coding',
       'minimax',
+      'minimax_token_plan',
       'qianfan',
+      'qianfan_token_plan',
       'hunyuan',
+      'hunyuan_coding',
       'spark',
       'sensenova',
+      'sensenova_token_plan',
       'stepfun',
+      'stepfun_plan',
       'lingyi',
     ],
   },
@@ -117,16 +126,25 @@ export const PROVIDER_PRESET_CATEGORIES: readonly ProviderPresetCategoryGroup[] 
 
 const PRESET_SEARCH_KEYWORDS: Readonly<Record<ProviderPresetId, readonly string[]>> = {
   deepseek: ['deepseek', '深度求索', 'ds', '官方推荐'],
-  moonshot: ['moonshot', 'kimi', '月之暗面'],
-  zhipu: ['zhipu', 'glm', '智谱', 'bigmodel'],
-  dashscope: ['dashscope', 'qwen', '通义千问', '百炼', '阿里云', 'aliyun'],
-  volcengine: ['volcengine', 'ark', 'doubao', '火山方舟', '豆包', 'volces'],
-  minimax: ['minimax', 'minimaxi', '海螺'],
-  qianfan: ['qianfan', 'ernie', '文心', '百度', '千帆', 'baidubce'],
-  hunyuan: ['hunyuan', 'tencent', '腾讯', '混元'],
+  moonshot: ['moonshot', 'kimi', '月之暗面', '按量'],
+  moonshot_coding: ['moonshot', 'kimi', 'kimicode', 'kimi code', '月之暗面', 'coding', 'token'],
+  zhipu: ['zhipu', 'glm', '智谱', 'bigmodel', '按量'],
+  zhipu_coding: ['zhipu', 'glm', '智谱', 'bigmodel', 'coding', 'token'],
+  dashscope: ['dashscope', 'qwen', '通义千问', '百炼', '阿里云', 'aliyun', '按量'],
+  dashscope_coding: ['dashscope', 'qwen', '通义千问', '百炼', '阿里云', 'aliyun', 'coding', 'token'],
+  volcengine: ['volcengine', 'ark', 'doubao', '火山方舟', '豆包', 'volces', '按量'],
+  volcengine_coding: ['volcengine', 'ark', 'doubao', '火山方舟', '豆包', 'volces', 'coding', 'token'],
+  minimax: ['minimax', 'minimaxi', '海螺', '按量'],
+  minimax_token_plan: ['minimax', 'minimaxi', '海螺', 'token', 'coding', 'subscription'],
+  qianfan: ['qianfan', 'ernie', '文心', '百度', '千帆', 'baidubce', '按量'],
+  qianfan_token_plan: ['qianfan', 'ernie', '文心', '百度', '千帆', 'baidubce', 'token', 'coding'],
+  hunyuan: ['hunyuan', 'tencent', '腾讯', '混元', '按量'],
+  hunyuan_coding: ['hunyuan', 'tencent', 'lkeap', '腾讯', '混元', '腾讯云', 'coding', 'token'],
   spark: ['spark', 'xfyun', 'xf-yun', '讯飞', '星火'],
-  sensenova: ['sensenova', 'sensecore', '商汤', '日日新'],
-  stepfun: ['stepfun', 'step', '阶跃星辰'],
+  sensenova: ['sensenova', 'sensecore', '商汤', '日日新', '按量'],
+  sensenova_token_plan: ['sensenova', 'sensecore', '商汤', '日日新', 'token'],
+  stepfun: ['stepfun', 'step', '阶跃星辰', '按量'],
+  stepfun_plan: ['stepfun', 'step', 'step plan', '阶跃星辰', 'token'],
   lingyi: ['lingyi', 'yi', '零一万物', 'lingyiwanwu'],
   openai: ['openai', 'chatgpt', 'gpt', 'o4', 'responses'],
   anthropic: ['anthropic', 'claude', 'sonnet', 'opus', 'haiku'],
@@ -1125,7 +1143,7 @@ export function ProviderSetupWizard({
                       draft.apiProtocol === 'anthropic_messages'
                         ? 'sk-ant-...'
                         : draft.apiProtocol === 'gemini_native'
-                          ? 'AIza...（由 Google AI Studio 创建）'
+                          ? 'AIza... 或 AQ....（由 Google AI Studio 创建）'
                           : 'sk-...（本地服务可不填）'
                     }
                     value={draft.apiKey}
