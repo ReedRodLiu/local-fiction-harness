@@ -12,12 +12,12 @@ import { verifyIssue145SpotlightTutorial } from './issue-145-spotlight-tutorial.
 const require = createRequire(import.meta.url);
 const playwrightCorePath =
   process.env.PLAYWRIGHT_CORE_PATH ||
-  '/Users/liuyuxuan/.npm-global/lib/node_modules/@playwright/cli/node_modules/playwright-core';
+  path.join(process.env.HOME || '', '.npm-global/lib/node_modules/@playwright/cli/node_modules/playwright-core');
 const { chromium } = require(playwrightCorePath);
 
 const BROWSER_CANDIDATES = [
   process.env.E2E_BROWSER_PATH,
-  '/Users/liuyuxuan/Library/Caches/ms-playwright/chromium-1248/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+  path.join(process.env.HOME || '', 'Library/Caches/ms-playwright/chromium-1248/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
   '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
 ].filter(Boolean);
 

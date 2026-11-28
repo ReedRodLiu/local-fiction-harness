@@ -40,6 +40,8 @@ npm ci
 npm run dev
 ```
 
+打开 Vite 提示的本地地址后，在应用设置中填写你自己的模型 API Key，即可开始使用。开发时请不要把 API Key 写入仓库或提交到 Git。
+
 构建网页资源：
 
 ```bash
@@ -52,7 +54,7 @@ npm run build
 npm run android:build
 ```
 
-`npm run android:build` 会同步网页资源、运行 Android 单元测试并生成调试 APK。面向用户分发时，请使用已发布的签名 APK；当前 Release 页面仅提供源码归档。签名私钥和密码只应保存在本地，不要提交到仓库。
+`npm run android:build` 会同步网页资源、运行 Android 单元测试并生成调试 APK。面向用户分发时，请使用已发布的签名 APK；当前 Release 页面提供源码归档与签名 Android APK。签名私钥和密码只应保存在本地，不要提交到仓库。
 
 ## 项目文档
 

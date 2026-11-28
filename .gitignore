@@ -50,3 +50,6 @@ docs/research/
 
 # Internal development tickets (kept locally, not published)
 wayfinder/tickets/
+
+# Generated TypeScript declaration files
+*.d.mts

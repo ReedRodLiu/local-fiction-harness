@@ -12,13 +12,13 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const viteBinary = path.join(path.dirname(require.resolve('vite/package.json')), 'bin/vite.js');
 const playwrightCorePath =
   process.env.PLAYWRIGHT_CORE_PATH ||
-  '/Users/liuyuxuan/.npm-global/lib/node_modules/@playwright/cli/node_modules/playwright-core';
+  path.join(process.env.HOME || '', '.npm-global/lib/node_modules/@playwright/cli/node_modules/playwright-core');
 const { chromium } = require(playwrightCorePath);
 
 const PORT = Number(process.env.LFH_E2E_CUSTOM_PROVIDER_PORT || 4197);
 const BROWSER_CANDIDATES = [
   process.env.E2E_BROWSER_PATH,
-  '/Users/liuyuxuan/Library/Caches/ms-playwright/chromium-1248/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+  path.join(process.env.HOME || '', 'Library/Caches/ms-playwright/chromium-1248/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
   '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
 ].filter(Boolean);
 
