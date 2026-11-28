@@ -8,7 +8,7 @@ Folio 不运行自建模型中转或业务服务器。用户在客户端配置�
 
 仓库已开源。GitHub Releases 提供源码归档与签名 Android APK；请从 Release 页面下载与你设备匹配的 APK，并按 Android 系统提示允许安装来源。
 
-- [Folio V0.5.1 Release](releases/tag/v0.5.1)
+- [Folio V0.5.2 Release](releases/tag/v0.5.2)
 - [全部 Releases](releases)
 
 Android 最低版本设为 Android 7.0（API 24），当前构建目标为 Android API 36。Release 附带 APK 后，按 Android 系统提示允许本次安装来源，再打开 Folio。首次使用需要在应用设置中填写你自己的模型 API Key；模型调用费用由你与模型服务商之间的账户承担。
@@ -26,7 +26,7 @@ Android 最低版本设为 Android 7.0（API 24），当前构建目标为 Andro
 
 ## 版本说明
 
-当前稳定版本为 **V0.5.1**。版本历史与详细变更请见：
+当前稳定版本为 **V0.5.2**。版本历史与详细变更请见：
 
 - [CHANGELOG.md](CHANGELOG.md)
 - [docs/releases/](docs/releases/)
