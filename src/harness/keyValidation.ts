@@ -4,6 +4,7 @@ import {
   resolveAnthropicMessagesUrl,
   resolveAnthropicModelsUrl,
   resolveChatCompletionsUrl,
+  resolveGeminiModelsUrl,
   stripGeminiActionSuffix,
 } from './sse.ts';
 import type {
@@ -615,7 +616,9 @@ async function readJsonPayload(res: {
   return null;
 }
 
-const NON_CHAT_GEMINI_MODEL_RE = /(?:embedding|imagen|(?:^|[^a-z])(?:tts|veo|aqa)(?:$|[^a-z]))/i;
+const NON_CHAT_GEMINI_MODEL_RE =
+  /(?:embedding|imagen|nano-banana|lyria|transcribe|robotics|computer-use|deep-research|(?:^|[^a-z])(?:tts|veo|aqa|image)(?:$|[^a-z]))/i;
+const MAX_GEMINI_MODEL_PAGES = 5;
 
 function extractGeminiModelIds(payload: unknown): string[] {
   if (!isPlainRecord(payload) || !Array.isArray(payload.models)) {
@@ -662,18 +665,8 @@ function extractDiscoveredModelIds(payload: unknown, apiProtocol: ProviderApiPro
   return extractModelIds(payload);
 }
 
-function resolveVerificationProtocol(
-  baseUrl: string,
-  explicitProtocol?: ProviderApiProtocol,
-): ProviderApiProtocol {
-  if (explicitProtocol) return explicitProtocol;
-  if (
-    /generativelanguage\.googleapis\.com/i.test(baseUrl) &&
-    !/\/openai(?:\/|$)/i.test(baseUrl)
-  ) {
-    return 'gemini_native';
-  }
-  return 'openai_chat';
+function resolveVerificationProtocol(explicitProtocol?: ProviderApiProtocol): ProviderApiProtocol {
+  return explicitProtocol ?? 'openai_chat';
 }
 
 function isAbortError(err: unknown): boolean {
@@ -753,7 +746,7 @@ export async function verifyProviderConnection(options: {
     };
   }
 
-  const apiProtocol = resolveVerificationProtocol(baseUrl, options.apiProtocol);
+  const apiProtocol = resolveVerificationProtocol(options.apiProtocol);
   const timeoutMs = options.timeoutMs ?? 10000;
   const controller = host.AbortController ? new host.AbortController() : undefined;
   const timer =
@@ -769,7 +762,9 @@ export async function verifyProviderConnection(options: {
     const modelsUrl =
       apiProtocol === 'anthropic_messages'
         ? resolveAnthropicModelsUrl(baseUrl)
-        : `${baseUrl}/models`;
+        : apiProtocol === 'gemini_native'
+          ? resolveGeminiModelsUrl(baseUrl)
+          : `${baseUrl}/models`;
     const res = await fetchFn(modelsUrl, {
       method: 'GET',
       headers,
@@ -779,7 +774,42 @@ export async function verifyProviderConnection(options: {
     if (res.ok) {
       let models: string[] = [];
       try {
-        models = extractDiscoveredModelIds(await readJsonPayload(res), apiProtocol);
+        const firstPayload = await readJsonPayload(res);
+        models = extractDiscoveredModelIds(firstPayload, apiProtocol);
+        if (apiProtocol === 'gemini_native' && isPlainRecord(firstPayload)) {
+          const seenModels = new Set(models);
+          let nextPageToken =
+            typeof firstPayload.nextPageToken === 'string' && firstPayload.nextPageToken.trim()
+              ? firstPayload.nextPageToken.trim()
+              : '';
+          let pageCount = 1;
+          while (nextPageToken && pageCount < MAX_GEMINI_MODEL_PAGES) {
+            pageCount += 1;
+            try {
+              const nextRes = await fetchFn(resolveGeminiModelsUrl(baseUrl, nextPageToken), {
+                method: 'GET',
+                headers,
+                ...(controller ? { signal: controller.signal } : {}),
+              });
+              if (!nextRes.ok) break;
+              const nextPayload = await readJsonPayload(nextRes);
+              for (const id of extractDiscoveredModelIds(nextPayload, apiProtocol)) {
+                if (!seenModels.has(id)) {
+                  seenModels.add(id);
+                  models.push(id);
+                }
+              }
+              nextPageToken =
+                isPlainRecord(nextPayload) &&
+                typeof nextPayload.nextPageToken === 'string' &&
+                nextPayload.nextPageToken.trim()
+                  ? nextPayload.nextPageToken.trim()
+                  : '';
+            } catch {
+              break;
+            }
+          }
+        }
       } catch {
         models = [];
       }
@@ -789,7 +819,7 @@ export async function verifyProviderConnection(options: {
       try {
         const errPayload = await readJsonPayload(res);
         const serialized = errPayload ? JSON.stringify(errPayload) : '';
-        if (/API_KEY_INVALID|API key not valid/i.test(serialized)) {
+        if (/API_KEY_INVALID|API key not valid|ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(serialized)) {
           return {
             status: 'invalid_key',
             message: 'API Key 无效或已失效，请确认复制完整，不要复制成钥匙名称。',
@@ -805,10 +835,19 @@ export async function verifyProviderConnection(options: {
         message: 'API Key 无效或已失效，请确认复制完整，不要复制成钥匙名称。',
       };
     }
+    if (res.status === 403 && apiProtocol === 'gemini_native' && !format.key) {
+      return {
+        status: 'invalid_key',
+        message: '请先填写有效的 Gemini API Key（AIza... 或 AQ....）。',
+      };
+    }
     if (res.status === 402 || res.status === 403) {
       return {
         status: 'quota_or_blocked',
-        message: '当前账户额度不足或密钥权限受限，请前往服务商控制台查看。',
+        message:
+          apiProtocol === 'gemini_native'
+            ? '当前账户额度不足或密钥权限受限，请前往 Google AI Studio 查看。'
+            : '当前账户额度不足或密钥权限受限，请前往服务商控制台查看。',
       };
     }
     if (res.status === 404 || res.status === 405) {

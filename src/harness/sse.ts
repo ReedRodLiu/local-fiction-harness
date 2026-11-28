@@ -827,13 +827,25 @@ export function stripGeminiActionSuffix(url: string): string {
     .replace(/\/[^/?#]+:(?:streamGenerateContent|generateContent)(?:\?.*)?$/i, '');
 }
 
-export function resolveGeminiStreamUrl(baseUrl: string, model: string): string {
+export function normalizeGeminiBaseUrl(baseUrl: string): string {
   const cleaned = stripGeminiActionSuffix(baseUrl.trim().replace(/\/+$/, ''))
     .replace(/\/models$/i, '')
     .replace(/\/+$/, '');
   if (!cleaned) {
     throw new Error('Model Base URL cannot be empty.');
   }
+  return BARE_ORIGIN_URL_RE.test(cleaned) ? `${cleaned}/v1beta` : cleaned;
+}
+
+export function resolveGeminiModelsUrl(baseUrl: string, pageToken?: string): string {
+  const base = normalizeGeminiBaseUrl(baseUrl);
+  return pageToken
+    ? `${base}/models?pageSize=1000&pageToken=${encodeURIComponent(pageToken)}`
+    : `${base}/models?pageSize=1000`;
+}
+
+export function resolveGeminiStreamUrl(baseUrl: string, model: string): string {
+  const cleaned = normalizeGeminiBaseUrl(baseUrl);
   const strippedModel = model.trim().replace(/^models\//i, '');
   if (!strippedModel) {
     throw new Error('Model ID cannot be empty.');
